@@ -34,7 +34,7 @@ class Verifier(object):
         self.constraint_sets = []
 
         if solver == 'gurobi':
-            self.canonicalizer = GurobiCanonicalizer(gurobi_params=solver_params)
+            self.canonicalizer = GurobiCanonicalizer(solver_params=solver_params)
 
         if obbt_handler == 'gurobi':
             self.obbt_handler = GurobiOBBTHandler()
