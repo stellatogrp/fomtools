@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Union
 
 
 def merge_dict(dict1, dict2):
@@ -18,14 +19,13 @@ def merge_dict(dict1, dict2):
     Dict[Variable, np.ndarray | np.matrix]
         A new dictionary containing all keys from d1 and d2.
         If a key appears in both, its value is d1[key] + d2[key].
-
-
-
     """
     merged_dict = {k: v.copy() for k, v in dict1.items()}
 
     for k, v in dict2.items():
         merged_dict[k] = merged_dict.get(k, 0) + v.copy()
+
+        # TODO: Perhaps the values for merged_dict can all be numpy array
         if isinstance(merged_dict[k], np.matrix):
             merged_dict[k] = np.asarray(merged_dict[k])
     return merged_dict
@@ -50,12 +50,11 @@ def prune_dict(my_dict: dict) -> dict:
         contain at least one non-zero values.
 
     """
-    pruned_dict = dict()
-    for k, v in my_dict.items():
+
+    def has_nonzero(arr: Union[np.ndarray, np.matrix]) -> bool:
         try:
-            has_nonzero = not np.allclose(v, 0, atol=1e-9)
+            return not np.allclose(arr, 0, atol=1e-9)
         except ValueError:
-            has_nonzero = v.count_nonzero()
-        if has_nonzero:
-            pruned_dict[k] = v
-    return pruned_dict
+            return arr.count_nonzero()
+
+    return {k: v for k, v in my_dict.items() if has_nonzero(v)}
