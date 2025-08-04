@@ -1,7 +1,7 @@
-from algoverify.linexpr import LinExpr
+from algoverify.linearexpression import LinearExpression
 
 
-class Vector(LinExpr):
+class Vector(LinearExpression):
 
     def __init__(self, n):
         super().__init__(n)

@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.sparse as spa
 
-from algoverify.linexpr import LinExpr
+from algoverify.linearexpression import LinearExpression
 from algoverify.vector import Vector
 
 
@@ -9,7 +9,7 @@ def test_LinExpr_dense():
     np.random.seed(0)
     m = 15
     n = 10
-    x = LinExpr(n)
+    x = LinearExpression(n)
     assert np.linalg.norm(x.decomposition_dict[x] - np.eye(n)) <= 1e-10
     y = Vector(n)
     z = x + y

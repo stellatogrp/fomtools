@@ -78,9 +78,9 @@ class GurobiCanonicalizer(Canonicalizer):
         key = next(iter(leaf.decomposition_dict))
         return self.vector_var_map[key]
 
-    def lin_expr_to_gp_expr(self, linexpr):
+    def lin_expr_to_gp_expr(self, linearexpression):
         gp_expr = None
-        for key, value in linexpr.decomposition_dict.items():
+        for key, value in linearexpression.decomposition_dict.items():
             gp_var = self.vector_var_map[key]
 
             if gp_expr is None:
