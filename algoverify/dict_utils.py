@@ -18,7 +18,7 @@ def merge_dict(dict1: dict, dict2: dict) -> dict:
     -------
     Dict[Variable, np.ndarray | np.matrix]
         A new dictionary containing all keys from d1 and d2.
-        If a key appears in both, its value is d1[key] + d2[key].
+        If a key appears in both, its value is d1[key] + d2[key]
     """
     merged_dict = {k: v.copy() for k, v in dict1.items()}
 
@@ -52,6 +52,10 @@ def prune_dict(my_dict: dict) -> dict:
     """
 
     def has_nonzero(arr: Union[np.ndarray, np.matrix]) -> bool:
+        """
+        Checkgit c if the provided array contains at least one
+        non-zero element.
+        """
         try:
             return not np.allclose(arr, 0, atol=1e-9)
         except ValueError:
