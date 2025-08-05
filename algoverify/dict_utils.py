@@ -53,7 +53,7 @@ def prune_dict(my_dict: dict) -> dict:
 
     def has_nonzero(arr: Union[np.ndarray, np.matrix]) -> bool:
         """
-        Checkgit c if the provided array contains at least one
+        Check if the provided array contains at least one
         non-zero element.
         """
         try:
