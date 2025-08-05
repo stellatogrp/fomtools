@@ -43,7 +43,7 @@ class LinearExpression:
     )
 
     # TODO: ndim and decomposition_dict seem to be mutually exclusive
-    #  (If decomposition dict is we can programmatically figure out ndim. )
+    #  (If decomposition dict is provided, we can programmatically figure out ndim. )
 
     def __init__(self, ndim: int, decomposition_dict: dict = None):
         """
