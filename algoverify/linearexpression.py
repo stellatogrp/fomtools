@@ -1,7 +1,6 @@
 import scipy.sparse as spa
 
 from algoverify.dict_utils import merge_dict, prune_dict
-from algoverify.mat_utils import is_valid_mat
 import numpy as np
 from typing import Union
 
@@ -59,7 +58,8 @@ class LinearExpression:
         Raises
         ------
         ValueError
-            If all the coefficient matrices in the decomposition dict doesn't have the same shape.
+            If all the coefficient matrices in the decomposition dict doesn't have the same number
+            of rows.
 
         """
         self.ndim = ndim
@@ -82,7 +82,6 @@ class LinearExpression:
 
             self.decomposition_dict = decomposition_dict
             self.counter = None
-            # TODO: This can be either true or false, depending on how many entries there are on the decomposition dict
             self.is_leaf = False
 
     def __str__(self):
