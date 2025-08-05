@@ -1,8 +1,9 @@
+from typing import Union
+
+import numpy as np
 import scipy.sparse as spa
 
 from algoverify.dict_utils import merge_dict, prune_dict
-import numpy as np
-from typing import Union
 
 
 class LinearExpression:

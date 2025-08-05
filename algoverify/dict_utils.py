@@ -1,5 +1,6 @@
-import numpy as np
 from typing import Union
+
+import numpy as np
 
 
 def merge_dict(dict1: dict, dict2: dict) -> dict:
