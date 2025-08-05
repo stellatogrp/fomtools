@@ -180,7 +180,7 @@ class LinearExpression:
         TypeError
             If the `scalar` is not an instance of int or float.
         """
-        return self.__mul__(scalar=scalar)
+        return self * scalar
 
     def __truediv__(self, scalar: Union[float, int]) -> "LinearExpression":
         """
@@ -211,7 +211,7 @@ class LinearExpression:
         if scalar == 0:
             raise ZeroDivisionError("Division of LinearExpression by zero is not allowed.")
 
-        return self.__mul__(1 / scalar)
+        return self * (1 / scalar)
 
     def __neg__(self) -> "LinearExpression":
         """
@@ -225,7 +225,7 @@ class LinearExpression:
         LinearExpression
             A new `LinearExpression` object with all coefficient matrices negated.
         """
-        return self.__rmul__(scalar=-1)
+        return self * -1
 
     def __sub__(self, other: "LinearExpression") -> "LinearExpression":
         """
@@ -249,7 +249,7 @@ class LinearExpression:
             If the two `LinearExpression` instances have mismatched dimensions.
 
         """
-        return self.__add__(-other)
+        return self + (-other)
 
     def __matmul__(self, other):
         # TODO
