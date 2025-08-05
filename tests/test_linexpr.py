@@ -40,7 +40,7 @@ def test_LinExpr_dense():
     B = np.random.normal(size=(m, n))
     y = B @ x
 
-    assert y.n == m
+    assert y.ndim == m
     assert not y.is_leaf
 
 

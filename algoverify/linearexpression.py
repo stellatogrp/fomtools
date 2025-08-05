@@ -3,6 +3,7 @@ import scipy.sparse as spa
 from algoverify.dict_utils import merge_dict, prune_dict
 from algoverify.mat_utils import is_valid_mat
 import numpy as np
+from typing import Union
 
 
 class LinearExpression:
@@ -12,7 +13,7 @@ class LinearExpression:
 
     Attributes:
     ----------
-        n : int
+        ndim : int
             The dimension of underlying space, i.e., the size of each coefficient matrix.
 
         is_leaf : bool
@@ -41,96 +42,268 @@ class LinearExpression:
         1000  # this is necessary else numpy will not even look at the @ operator due to precedence
     )
 
-    def __init__(self, n: int, decomposition_dict: dict = None):
+    def __init__(self, ndim: int, decomposition_dict: dict = None):
         """
         Initialize a `LinearExpression` object.
 
         Parameters
         ----------
-        n : int
+        ndim : int
             The dimension of underlying space, i.e., the size of each coefficient matrix.
 
         decomposition_dict : dict or None, optional
-            Mapping from each leaf `LinearExpression` to its coefficient matrix (an nxn sparse
+            A mapping from each leaf `LinearExpression` to its coefficient matrix (an nxn sparse
             matrix). If `decomposition_dict` is None, this object is treated as a leaf and its
-            decomposition is set to :: {self: I_n} :: where `I_n` is the nxn sparse identity
-            matrix.
+            decomposition is set to :: {self: I_n} :: where `I_n` is the nxn identity matrix.
+
+        Raises
+        ------
+        ValueError
+            If all the coefficient matrices in the decomposition dict doesn't have the same shape.
 
         """
-        self.n = n
+        self.ndim = ndim
 
         if decomposition_dict is None:
-            self.decomposition_dict = {self: spa.eye(n)}
+            self.decomposition_dict = {self: spa.eye(ndim)}
             self.counter = LinearExpression.counter
             LinearExpression.counter += 1
             LinearExpression.list_of_leaf_LinExprs.append(self)
 
-            assert self.decomposition_dict[self].shape[1] == n
+            assert self.decomposition_dict[self].shape[1] == ndim
             self.is_leaf = True
         else:
-            assert isinstance(decomposition_dict, dict)
+            shapes = {mat.shape[0] for mat in decomposition_dict.values()}
+            if len(shapes) > 1:
+                raise ValueError(
+                    f"""All coefficient matrices must have the same number of rows; 
+                        found row counts {shapes}"""
+                )
+
             self.decomposition_dict = decomposition_dict
             self.counter = None
+            # TODO: This can be either true or false, depending on how many entries there are on the decomposition dict
             self.is_leaf = False
 
     def __str__(self):
         return f"Var{self.counter}"
 
     def __repr__(self):
-        return f"<LinearExpression {'Leaf' if self.is_leaf else ''}, dim={self.n}>"
+        return f"<LinearExpression {'Leaf' if self.is_leaf else ''}, dim={self.ndim}>"
 
-    def __add__(self, other):
-        assert self.n == other.n
+    def __add__(self, other: "LinearExpression") -> "LinearExpression":
+        """
+        Add two `LinearExpression` objects, ensuring they have the same dimension.
+
+        Parameters
+        ----------
+        other : LinearExpression
+            The expression to add to this one.
+
+        Returns
+        -------
+        LinearExpression
+            A new `LinearExpression` object whose decomposition maps each leaf in the union of both
+            expressiom to the sum of its coefficient matrices, treating any leaf missing from one
+            operand as having a zero coefficient matrix.
+
+        Raises:
+        ------
+        ValueError
+            If the `LinearExpression` objects to be added together does not have the same dimension.
+        """
+        if self.ndim != other.ndim:
+            raise ValueError(f"""Cannot add LinearExpression objects with mismatched dimensions: 
+                             {self.ndim} != {other.ndim} """)
+
         merged_decomposition_dict = merge_dict(self.decomposition_dict, other.decomposition_dict)
 
-        return LinearExpression(self.n, decomposition_dict=prune_dict(merged_decomposition_dict))
+        return LinearExpression(self.ndim, decomposition_dict=prune_dict(merged_decomposition_dict))
 
-    def __rmul__(self, other):
+    def __mul__(self, scalar: Union[float, int]) -> "LinearExpression":
+        """
+        Multiply this `LinearExpression` object by a scalar.
+
+        Parameters
+        ----------
+        scalar : float or int
+            The numeric factor to multiply each coefficient matrix by.
+
+        Returns
+        -------
+        LinearExpression
+            A new `LinearExpression` object in which each leaf’s coefficient matrix is multiplied
+            by the given `scalar`.
+
+        Raises:
+        ------
+        TypeError
+            If the `scalar` is not an instance of int or float.
+
+        """
         try:
             return LinearExpression(
-                n=self.n,
+                ndim=self.ndim,
                 decomposition_dict={
-                    k: v * float(other) for k, v in self.decomposition_dict.items()
+                    k: v * float(scalar) for k, v in self.decomposition_dict.items()
                 },
             )
-        except:
+        except ValueError:
             raise TypeError(
-                f"""LinExprs can only be multiplied by scalar values, got {type(other)}.
-                If intending to use a matrix, use the @ symbol with the matrix on the left"""
+                f"""Can only multiply by int or float, got {type(scalar)}. If intending to use
+                 a matrix, use the @ symbol with the matrix on the left."""
             )
 
-    def __mul__(self, other):
-        return self.__rmul__(other=other)
+    def __rmul__(self, scalar: Union[float, int]) -> "LinearExpression":
+        """
+        Reflected multiplication to support scalar * expression.
 
-    def __truediv__(self, other):
-        return self.__rmul__(1 / other)
+        This method is invoked when a `LinearExpression` object appears on the
+        right-hand side of a `*` operation (e.g. `3 * expr`). It delegates to
+        to `__mul__`, so that both `expr * 3` and `3  * expr` behave identically.
 
-    def __neg__(self):
-        return self.__rmul__(other=-1)
+        Parameters
+        ----------
+        scalar : float or int
+            The numeric factor to multiply each coefficient matrix by.
 
-    def __sub__(self, other):
+        Returns
+        -------
+        LinearExpression
+            A new `LinearExpression` in which each leaf’s coefficient matrix is multiplied
+            by the given `scalar`.
+
+        Raises:
+        ------
+        TypeError
+            If the `scalar` is not an instance of int or float.
+        """
+        return self.__mul__(scalar=scalar)
+
+    def __truediv__(self, scalar: Union[float, int]) -> "LinearExpression":
+        """
+        Divide this LinearExpression by a scalar factor.
+
+        This method is invoked when the expression appears on the left-hand side
+        of a true division (e.g. `expr / 3`).
+
+        Parameters
+        ----------
+        scalar : float or int
+            The numeric divisor to apply to every coefficient matrix.
+
+        Returns
+        -------
+        LinearExpression
+            A new `LinearExpression` in which each leaf's coefficient matrix is divided
+            by the given `scalar`.
+
+        Raises
+        ------
+        TypeError
+            If the `scalar` is not an instance of int or float.
+
+        ZeroDivisionError
+            If `scalar` is zero.
+        """
+        if scalar == 0:
+            raise ZeroDivisionError("Division of LinearExpression by zero is not allowed.")
+
+        return self.__mul__(1 / scalar)
+
+    def __neg__(self) -> "LinearExpression":
+        """
+        Compute the negation of this LinearExpression.
+
+        This method is invoked for unary negation (e.g., `-expr`). It returns a new
+        expression with each coefficient matrix in the decomposition multiplied by -1.
+
+        Returns
+        -------
+        LinearExpression
+            A new `LinearExpression` object with all coefficient matrices negated.
+        """
+        return self.__rmul__(scalar=-1)
+
+    def __sub__(self, other: "LinearExpression") -> "LinearExpression":
+        """
+        Subtract one LinearExpression from another.
+
+        Parameters
+        ----------
+        other : LinearExpression
+            The expression to subtract from this one.
+
+        Returns
+        -------
+        LinearExpression
+            A new `LinearExpression` object whose decomposition maps each leaf in the union of
+            both expression to the difference of its coefficient matrices, treating any leaf
+            missing from one operand as having a zero coefficient matrix.
+
+        Raises
+        ------
+        ValueError
+            If the two `LinearExpression` instances have mismatched dimensions.
+
+        """
         return self.__add__(-other)
 
     def __matmul__(self, other):
         # TODO
         raise NotImplementedError("np matrix or sp matrix should be on the left of the @")
 
-    def __rmatmul__(self, other):
-        if is_valid_mat(other):
-            new_decomposition_dict = dict()
-            for key, value in self.decomposition_dict.items():
-                new_decomposition_dict[key] = other @ value
-            return LinearExpression(other.shape[0], decomposition_dict=new_decomposition_dict)
-        # TODO
-        raise NotImplementedError(
-            f"Object on the left should be np or sp.sparse matrix. Got {type(other)}"
-        )
+    def __rmatmul__(self, matrix: Union[np.ndarray, spa.spmatrix]) -> "LinearExpression":
+        """
+        Multiply this `LinearExpression` object by another matrix.
 
-    def get_output_dim(self):
-        shapes = [v.shape[0] for _, v in self.decomposition_dict.items()]
-        # TODO: Perhaps this can be checked when the decomposition_dict is initialized or updated
-        assert np.allclose(shapes, shapes[0])
-        return shapes[0]
+        This method is called when a `LinearExpression` appears on the right‐hand side
+        of the `@` operator (e.g., `M @ expr`).
+
+        Parameters
+        ----------
+        matrix : numpy.ndarray or scipy.sparse.spmatrix
+            A matrix of shape `(m, n)`—where `n` is this expression’s dimension—to
+            multiply on the left of each coefficient matrix.
+
+        Returns
+        -------
+        LinearExpression
+            A new `LinearExpression` object in which each leaf's coefficient matrix is
+            multiplied by the given `matrix`.
+
+        Raises
+        ------
+        TypeError
+            If `other` is not a NumPy array or SciPy sparse matrix.
+        ValueError
+            If `other.shape[1]` does not match this expression’s dimension `n`.
+        """
+
+        if matrix.shape[1] != self.ndim:
+            raise ValueError(
+                f"""Matrix inner dimension ({matrix.shape[1]}) does not match 
+                    the LinearExpression dimension ({self.ndim})"""
+            )
+
+        try:
+            return LinearExpression(
+                matrix.shape[0],
+                decomposition_dict={k: matrix @ v for k, v in self.decomposition_dict.items()},
+            )
+        except TypeError:
+            raise TypeError(
+                f"""Expected numpy.ndarray or scipy.sparse matrix for multiplication; 
+                got {type(matrix).__name__}. """
+            )
+
+    def get_output_dim(self) -> int:
+        """
+        Return the dimension of this `LinearExpression`. The dimension is given by
+        the number of rows of the coefficient matrices in `decomposition_dict`.
+        """
+
+        return [mat.shape[0] for mat in self.decomposition_dict.values()][0]
 
     def eval(self):
         # TODO

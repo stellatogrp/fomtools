@@ -3,5 +3,5 @@ from algoverify.linearexpression import LinearExpression
 
 class Vector(LinearExpression):
 
-    def __init__(self, n):
-        super().__init__(n)
+    def __init__(self, ndim):
+        super().__init__(ndim)

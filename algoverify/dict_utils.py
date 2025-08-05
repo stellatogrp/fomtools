@@ -2,7 +2,7 @@ import numpy as np
 from typing import Union
 
 
-def merge_dict(dict1, dict2):
+def merge_dict(dict1: dict, dict2: dict) -> dict:
     """
     Merge two dictionaries, summing the values of any
     keys they share.
