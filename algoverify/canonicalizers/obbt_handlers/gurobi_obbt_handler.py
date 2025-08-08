@@ -20,7 +20,7 @@ class GurobiOBBTHandler(object):
         self.step_constr_map = {}
 
     def add_param_var(self, param, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[param] = self.model.addMVar(param.n, lb=lb, ub=ub)
+        self.vector_var_map[param] = self.model.addMVar(param.ndim, lb=lb, ub=ub)
 
     def add_param_stack_var(self, param_stack_var, param_list):
         '''
@@ -33,11 +33,11 @@ class GurobiOBBTHandler(object):
         self.model.update()
 
     def add_initial_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[iterate] = self.model.addMVar(iterate.n, lb=lb, ub=ub)
+        self.vector_var_map[iterate] = self.model.addMVar(iterate.ndim, lb=lb, ub=ub)
         self.model.update()
 
     def add_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[iterate] = self.model.addMVar(iterate.n, lb=lb, ub=ub)
+        self.vector_var_map[iterate] = self.model.addMVar(iterate.ndim, lb=lb, ub=ub)
         self.model.update()
 
     def add_equality_constraint(self, lhs_expr, rhs_expr):

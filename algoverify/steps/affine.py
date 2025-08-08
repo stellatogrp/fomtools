@@ -1,6 +1,6 @@
 import numpy as np
 
-from algoverify.linexpr import LinExpr
+from algoverify.linearexpression import LinearExpression
 from algoverify.steps.step import Step
 
 
@@ -25,4 +25,4 @@ class AffineStep(Step):
             # print(type(Minv_val))
             # print(type(np.squeeze(np.asarray(Minv_val))))
             new_decomp_dict[key] = np.squeeze(np.asarray(Minv_val))
-        return LinExpr(self.lhs_expr.get_output_dim(), is_leaf=False, decomposition_dict=new_decomp_dict)
+        return LinearExpression(self.lhs_expr.get_output_dim(), decomposition_dict=new_decomp_dict)

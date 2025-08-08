@@ -62,7 +62,7 @@ class Verifier(object):
 
         for p in param_list:
             assert p in self.params
-            dim += p.n
+            dim += p.ndim
             lbs.append(self.lower_bounds[p])
             ubs.append(self.upper_bounds[p])
         lb = np.hstack(lbs)

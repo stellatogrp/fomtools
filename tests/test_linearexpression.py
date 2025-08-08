@@ -1,15 +1,15 @@
 import numpy as np
 import scipy.sparse as spa
 
-from algoverify.linexpr import LinExpr
+from algoverify.linearexpression import LinearExpression
 from algoverify.vector import Vector
 
 
-def test_LinExpr_dense():
+def test_LinearExpression_dense():
     np.random.seed(0)
     m = 15
     n = 10
-    x = LinExpr(n)
+    x = LinearExpression(n)
     assert np.linalg.norm(x.decomposition_dict[x] - np.eye(n)) <= 1e-10
     y = Vector(n)
     z = x + y
@@ -40,11 +40,11 @@ def test_LinExpr_dense():
     B = np.random.normal(size=(m, n))
     y = B @ x
 
-    assert y.n == m
+    assert y.ndim == m
     assert not y.is_leaf
 
 
-def test_LinExpr_sparse():
+def test_LinearExpression_sparse():
     m, n = 2, 3
     x = Vector(n)
     A = spa.random(m, n, density=0.4, random_state=10)
@@ -59,7 +59,7 @@ def test_LinExpr_sparse():
     assert spa.linalg.norm(test_expr2.decomposition_dict[y] + 4 * A.T) <= 1e-10
 
 
-def test_composite_linexprs():
+def test_composite_LinearExpressions():
     m, n = 2, 3
     t = 0.1
     np.random.seed(0)

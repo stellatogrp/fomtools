@@ -32,7 +32,7 @@ class GurobiCanonicalizer(Canonicalizer):
         self.obj_constraints = []
 
     def add_param_var(self, param, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[param] = self.model.addMVar(param.n, lb=lb, ub=ub)
+        self.vector_var_map[param] = self.model.addMVar(param.ndim, lb=lb, ub=ub)
         self.model.update()
 
     def add_param_stack_var(self, param_stack_var, param_list):
@@ -46,11 +46,11 @@ class GurobiCanonicalizer(Canonicalizer):
         self.model.update()
 
     def add_initial_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[iterate] = self.model.addMVar(iterate.n, lb=lb, ub=ub)
+        self.vector_var_map[iterate] = self.model.addMVar(iterate.ndim, lb=lb, ub=ub)
         self.model.update()
 
     def add_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[iterate] = self.model.addMVar(iterate.n, lb=lb, ub=ub)
+        self.vector_var_map[iterate] = self.model.addMVar(iterate.ndim, lb=lb, ub=ub)
         self.model.update()
 
     def add_equality_constraint(self, lhs_expr, rhs_expr):
@@ -78,9 +78,9 @@ class GurobiCanonicalizer(Canonicalizer):
         key = next(iter(leaf.decomposition_dict))
         return self.vector_var_map[key]
 
-    def lin_expr_to_gp_expr(self, linexpr):
+    def lin_expr_to_gp_expr(self, linearexpression):
         gp_expr = None
-        for key, value in linexpr.decomposition_dict.items():
+        for key, value in linearexpression.decomposition_dict.items():
             gp_var = self.vector_var_map[key]
 
             if gp_expr is None:
