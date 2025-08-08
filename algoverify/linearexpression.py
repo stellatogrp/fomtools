@@ -80,7 +80,7 @@ class LinearExpression:
             shapes = {mat.shape[0] for mat in decomposition_dict.values()}
             if len(shapes) > 1:
                 raise ValueError(
-                    f"""All coefficient matrices must have the same number of rows; 
+                    f"""All coefficient matrices must have the same number of rows;
                         found row counts {shapes}"""
                 )
 
@@ -116,7 +116,7 @@ class LinearExpression:
             If the `LinearExpression` objects to be added together does not have the same dimension.
         """
         if self.ndim != other.ndim:
-            raise ValueError(f"""Cannot add LinearExpression objects with mismatched dimensions: 
+            raise ValueError(f"""Cannot add LinearExpression objects with mismatched dimensions:
                              {self.ndim} != {other.ndim} """)
 
         merged_decomposition_dict = merge_dict(self.decomposition_dict, other.decomposition_dict)
@@ -285,7 +285,7 @@ class LinearExpression:
 
         if matrix.shape[1] != self.ndim:
             raise ValueError(
-                f"""Matrix inner dimension ({matrix.shape[1]}) does not match 
+                f"""Matrix inner dimension ({matrix.shape[1]}) does not match
                     the LinearExpression dimension ({self.ndim})"""
             )
 
@@ -296,7 +296,7 @@ class LinearExpression:
             )
         except TypeError:
             raise TypeError(
-                f"""Expected numpy.ndarray or scipy.sparse matrix for multiplication; 
+                f"""Expected numpy.ndarray or scipy.sparse matrix for multiplication;
                 got {type(matrix).__name__}. """
             )
 
