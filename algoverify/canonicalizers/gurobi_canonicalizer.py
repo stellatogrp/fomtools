@@ -626,6 +626,23 @@ class GurobiCanonicalizer(Canonicalizer):
         self.model_to_opt.setObjective(gp.quicksum(up) + gp.quicksum(un), gp.GRB.MAXIMIZE)
         self.model_to_opt.update()
 
+    def set_two_norm_objective(self, expr_list):
+        self.model.update()
+        if self.model_to_opt is not None:
+            self.model_to_opt.dispose()
+        self.model_to_opt = self.model.copy()
+
+        obj = 0
+
+        for expr in expr_list:
+            n = expr.get_output_dim()
+            rhs_gp_expr = self.lin_expr_to_gp_expr(expr)
+
+            for i in range(n):
+                obj += rhs_gp_expr[i] ** 2
+        
+        self.model_to_opt.setObjective(obj, gp.GRB.MAXIMIZE)
+        self.model_to_opt.update()
 
     def solve_model(self, steps, lower_bounds, upper_bounds, **kwargs):
         if 'huchette_cuts' in kwargs:

@@ -384,6 +384,27 @@ class Verifier(object):
 
         self.canonicalizer.set_infinity_norm_objective(expr_list, lb_list, ub_list)
 
+    def set_one_norm_objective(self, expr_list):
+
+        if not isinstance(expr_list, list):
+            expr_list = [expr_list]
+
+        lb_list = []
+        ub_list = []
+        for single_expr in expr_list:
+            expr_lb, expr_ub = self.linear_bound_prop(single_expr)
+            lb_list.append(expr_lb)
+            ub_list.append(expr_ub)
+
+        self.canonicalizer.set_one_norm_objective(expr_list, lb_list, ub_list)
+
+    def set_two_norm_objective(self, expr_list):
+
+        if not isinstance(expr_list, list):
+            expr_list = [expr_list]
+
+        self.canonicalizer.set_two_norm_objective(expr_list)
+
     def solve(self, **kwargs):
         # print(self.steps)
         res = self.canonicalizer.solve_model(self.steps, self.lower_bounds, self.upper_bounds, **kwargs)
