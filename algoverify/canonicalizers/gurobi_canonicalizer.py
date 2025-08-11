@@ -592,6 +592,41 @@ class GurobiCanonicalizer(Canonicalizer):
         self.model_to_opt.setObjective(q, gp.GRB.MAXIMIZE)
         self.model_to_opt.update()
 
+    def set_one_norm_objective(self, expr_list, lb_list, ub_list):
+        self.model.update()
+        if self.model_to_opt is not None:
+            self.model_to_opt.dispose()
+        self.model_to_opt = self.model.copy()
+
+        all_up = []
+        all_un = []
+
+        for expr, lb, ub in zip(expr_list, lb_list, ub_list):
+            n = expr.get_output_dim()
+            rhs_gp_expr = self.lin_expr_to_gp_expr(expr)
+
+            up = self.model_to_opt.addMVar(n, ub=np.abs(ub))
+            un = self.model_to_opt.addMVar(n, ub=np.abs(lb))
+
+            self.model_to_opt.addConstr(up - un == rhs_gp_expr)
+
+            for i in range(n):
+                if lb[i] >= 0:
+                    self.model_to_opt.addConstr(un[i] == 0)
+                elif ub[i] < 0:
+                    self.model_to_opt.addConstr(up[i] == 0)
+                else:
+                    vobji = self.model_to_opt.addMVar(1, vtype=gp.GRB.BINARY)
+                    self.model_to_opt.addConstr(up[i] <= np.abs(ub[i]) * vobji)
+                    self.model_to_opt.addConstr(un[i] <= np.abs(lb[i]) * (1-vobji))
+
+            all_up.append(up)
+            all_un.append(un)
+
+        self.model_to_opt.setObjective(gp.quicksum(up) + gp.quicksum(un), gp.GRB.MAXIMIZE)
+        self.model_to_opt.update()
+
+
     def solve_model(self, steps, lower_bounds, upper_bounds, **kwargs):
         if 'huchette_cuts' in kwargs:
             if kwargs['huchette_cuts']:
