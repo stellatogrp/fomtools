@@ -1,0 +1,8 @@
+site_name: Algo Verify
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - API and modules: api.md
+theme: readthedocs
+plugins:
+  - mkdocstrings
