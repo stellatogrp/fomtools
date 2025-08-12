@@ -24,4 +24,5 @@ theme:
         name: Switch to system preference
 
 plugins:
+  - search
   - mkdocstrings
