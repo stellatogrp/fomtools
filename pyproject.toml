@@ -35,6 +35,7 @@ docs = [
        "marimo",
        "mkdocs",
        "mkdocstrings-python",
+       "mkdocs-marimo",
        "mkdocs-material"
 ]
 
