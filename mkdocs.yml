@@ -27,3 +27,4 @@ theme:
 plugins:
   - search
   - mkdocstrings
+  - marimo
