@@ -1,6 +1,6 @@
 /// marimo-embed
     height: 400px
-    mode: read
+    mode: edit
     app_width: wide
 
     ```python
