@@ -36,7 +36,8 @@ docs = [
        "mkdocs",
        "mkdocstrings-python",
        "mkdocs-marimo",
-       "mkdocs-material"
+       "mkdocs-material",
+       "pymdown-extensions"
 ]
 
 [tool.setuptools_scm]
