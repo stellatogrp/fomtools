@@ -23,8 +23,18 @@ class SaturatedLinear(Step):
 
     """
 
-    def __init__(self, lhs_expr, rhs_expr, l, u, relax_binary_vars=False, equality_ranges=None):
-        super().__init__(lhs_expr, rhs_expr, relax_binary_vars=relax_binary_vars)
+    def __init__(
+        self,
+        lhs_expr,
+        rhs_expr,
+        l,
+        u,
+        relax_binary_vars=False,
+        equality_ranges=None,
+        lb=None,
+        ub=None,
+    ):
+        super().__init__(lhs_expr, rhs_expr, relax_binary_vars=relax_binary_vars, lb=lb, ub=ub)
         self.l = l
         self.u = u
 

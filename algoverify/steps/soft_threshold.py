@@ -1,4 +1,5 @@
 from algoverify.steps.step import Step
+import numpy as np
 
 
 class SoftThreshold(Step):
@@ -31,7 +32,7 @@ class SoftThreshold(Step):
         ...
     """
 
-    def __init__(self, lhs, rhs, lam, relax_binary_vars=False):
+    def __init__(self, lhs, rhs, lam, lb=-np.inf, ub=np.inf, relax_binary_vars=False):
         """
         Initialize a `SoftThreshold` object.
 
@@ -49,7 +50,7 @@ class SoftThreshold(Step):
         relax_binary_vars: bool
             ...
         """
-        super().__init__(lhs, rhs, relax_binary_vars=relax_binary_vars)
+        super().__init__(lhs, rhs, relax_binary_vars=relax_binary_vars, lb=lb, ub=ub)
         self.lambd = lam
         self.idx_with_right_binary_vars = set([])
         self.idx_with_left_binary_vars = set([])

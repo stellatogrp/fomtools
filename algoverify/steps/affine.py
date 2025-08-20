@@ -22,8 +22,16 @@ class Affine(Step):
 
     """
 
-    def __init__(self, lhs_expr, rhs_expr, lhs_mat=None, lhs_mat_factorization=None):
-        super().__init__(lhs_expr, rhs_expr)
+    def __init__(
+        self,
+        lhs_expr,
+        rhs_expr,
+        lb=-np.inf,
+        ub=np.inf,
+        lhs_mat=None,
+        lhs_mat_factorization=None,
+    ):
+        super().__init__(lhs_expr, rhs_expr, lb=lb, ub=ub)
         self.lhs_mat = lhs_mat
         if lhs_mat_factorization is None:
             # TODO: implement this

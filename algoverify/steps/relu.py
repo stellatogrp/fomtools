@@ -1,4 +1,5 @@
 from algoverify.steps.step import Step
+import numpy as np
 
 
 class Relu(Step):
@@ -15,8 +16,10 @@ class Relu(Step):
 
     """
 
-    def __init__(self, lhs_expr, rhs_expr, proj_ranges=None, relax_binary_vars=False):
-        super().__init__(lhs_expr, rhs_expr, relax_binary_vars=relax_binary_vars)
+    def __init__(
+        self, lhs_expr, rhs_expr, lb=-np.inf, ub=np.inf, proj_ranges=None, relax_binary_vars=False
+    ):
+        super().__init__(lhs_expr, rhs_expr, relax_binary_vars=relax_binary_vars, lb=lb, ub=ub)
         self.proj_indices = self.process_proj_ranges(proj_ranges)
         self.nonproj_indices = self._process_proj_ranges()
         self.idx_with_binary_vars = set([])

@@ -111,7 +111,12 @@ class Verifier(object):
         iterate = LinearExpression(lhs_mat.shape[0])
         self.iterates.append(iterate)
 
-        step = Affine(lhs_mat @ iterate, rhs_expr, lhs_mat, lhs_mat_factorization)
+        step = Affine(
+            lhs_mat @ iterate,
+            rhs_expr,
+            lhs_mat=lhs_mat,
+            lhs_mat_factorization=lhs_mat_factorization,
+        )
         Minv_rhs = step.Minv_rhs()
 
         iterate_lb, iterate_ub = self.linear_bound_propagation(Minv_rhs)
@@ -138,23 +143,15 @@ class Verifier(object):
             proj_ranges = list_upcast(proj_ranges)
 
         out_iterate = Vector(rhs_expr.get_output_dim())
-        step = Relu(
-            out_iterate, rhs_expr, proj_ranges=proj_ranges, relax_binary_vars=relax_binary_vars
-        )
 
         rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
-        step.update_lb(rhs_lb)
-        step.update_ub(rhs_ub)
-
         relu_rhs_lb = relu(rhs_lb, proj_ranges=proj_ranges)
         relu_rhs_ub = relu(rhs_ub, proj_ranges=proj_ranges)
 
         if self.obbt:
             # obbt_lb, obbt_ub = self.canonicalizer.obbt(rhs_expr)
             obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
-
-            step.update_lb(obbt_lb)
-            step.update_ub(obbt_ub)
+            rhs_lb, rhs_ub = np.minimum(obbt_lb, rhs_lb), np.minimum(obbt_ub, rhs_ub)
 
             relu_obbt_lb = relu(obbt_lb, proj_ranges=proj_ranges)
             relu_obbt_ub = relu(obbt_ub, proj_ranges=proj_ranges)
@@ -164,6 +161,15 @@ class Verifier(object):
         else:
             out_lb = relu_rhs_lb
             out_ub = relu_rhs_ub
+
+        step = Relu(
+            out_iterate,
+            rhs_expr,
+            proj_ranges=proj_ranges,
+            relax_binary_vars=relax_binary_vars,
+            lb=rhs_lb,
+            ub=rhs_ub,
+        )
 
         self.iterates.append(out_iterate)
         self.lower_bounds[out_iterate] = out_lb
@@ -182,11 +188,7 @@ class Verifier(object):
 
     def saturated_linear_step(self, rhs_expr, l, u, relax_binary_vars=False):
         out_iterate = Vector(rhs_expr.get_output_dim())
-        step = SaturatedLinear(out_iterate, rhs_expr, l, u, relax_binary_vars=relax_binary_vars)
-
         rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
-        step.update_lb(rhs_lb)
-        step.update_ub(rhs_ub)
 
         sl_rhs_lb = saturated_linear(rhs_lb, l, u)
         sl_rhs_ub = saturated_linear(rhs_ub, l, u)
@@ -194,9 +196,7 @@ class Verifier(object):
         if self.obbt:
             # obbt_lb, obbt_ub = self.canonicalizer.obbt(rhs_expr)
             obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
-
-            step.update_lb(obbt_lb)
-            step.update_ub(obbt_ub)
+            rhs_lb, rhs_ub = np.minimum(obbt_lb, rhs_lb), np.maximum(obbt_ub, rhs_ub)
 
             sl_obbt_lb = saturated_linear(obbt_lb, l, u)
             sl_obbt_ub = saturated_linear(obbt_ub, l, u)
@@ -206,6 +206,10 @@ class Verifier(object):
         else:
             out_lb = sl_rhs_lb
             out_ub = sl_rhs_ub
+
+        step = SaturatedLinear(
+            out_iterate, rhs_expr, l, u, relax_binary_vars=relax_binary_vars, lb=rhs_lb, ub=rhs_ub
+        )
 
         self.iterates.append(out_iterate)
         self.lower_bounds[out_iterate] = out_lb
@@ -227,18 +231,7 @@ class Verifier(object):
     ):
         assert isinstance(l, Vector) and isinstance(u, Vector)
         out_iterate = Vector(rhs_expr.get_output_dim())
-        step = SaturatedLinear(
-            out_iterate,
-            rhs_expr,
-            l,
-            u,
-            relax_binary_vars=relax_binary_vars,
-            equality_ranges=equality_ranges,
-        )
-
         rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
-        step.update_lb(rhs_lb)
-        step.update_ub(rhs_ub)
 
         l_lb, l_ub = self.lower_bounds[l], self.upper_bounds[l]
         u_lb, u_ub = self.lower_bounds[u], self.upper_bounds[u]
@@ -254,9 +247,7 @@ class Verifier(object):
 
         if self.obbt:
             obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
-
-            step.update_lb(obbt_lb)
-            step.update_ub(obbt_ub)
+            rhs_lb, rhs_ub = np.minimum(obbt_lb, rhs_lb), np.maximum(obbt_ub, rhs_ub)
 
             sl_obbt_lb = saturated_linear(obbt_lb, l_lb, u_ub)
             sl_obbt_ub = saturated_linear(obbt_ub, l_lb, u_ub)
@@ -266,6 +257,17 @@ class Verifier(object):
         else:
             out_lb = sl_rhs_lb
             out_ub = sl_rhs_ub
+
+        step = SaturatedLinear(
+            out_iterate,
+            rhs_expr,
+            l,
+            u,
+            relax_binary_vars=relax_binary_vars,
+            equality_ranges=equality_ranges,
+            lb=rhs_lb,
+            ub=rhs_ub,
+        )
 
         self.iterates.append(out_iterate)
         self.lower_bounds[out_iterate] = out_lb
@@ -288,11 +290,8 @@ class Verifier(object):
 
     def soft_threshold_step(self, rhs_expr, lambd, relax_binary_vars=False):
         out_iterate = Vector(rhs_expr.get_output_dim())
-        step = SoftThreshold(out_iterate, rhs_expr, lambd, relax_binary_vars=relax_binary_vars)
 
         rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
-        step.update_lb(rhs_lb)
-        step.update_ub(rhs_ub)
 
         st_rhs_lb = soft_threshold(rhs_lb, lambd)
         st_rhs_ub = soft_threshold(rhs_ub, lambd)
@@ -300,9 +299,7 @@ class Verifier(object):
         if self.obbt:
             # obbt_lb, obbt_ub = self.canonicalizer.obbt(rhs_expr)
             obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
-
-            step.update_lb(obbt_lb)
-            step.update_ub(obbt_ub)
+            rhs_lb, rhs_ub = np.minimum(obbt_lb, rhs_lb), np.maximum(rhs_ub, obbt_ub)
 
             st_obbt_lb = soft_threshold(obbt_lb, lambd)
             st_obbt_ub = soft_threshold(obbt_ub, lambd)
@@ -312,6 +309,9 @@ class Verifier(object):
         else:
             out_lb = st_rhs_lb
             out_ub = st_rhs_ub
+        step = SoftThreshold(
+            out_iterate, rhs_expr, lambd, relax_binary_vars=relax_binary_vars, lb=rhs_lb, ub=rhs_ub
+        )
 
         self.iterates.append(out_iterate)
         self.lower_bounds[out_iterate] = out_lb
