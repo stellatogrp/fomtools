@@ -2,8 +2,10 @@ import numpy as np
 
 from algoverify.linearexpression import LinearExpression
 from algoverify.steps.step import Step
+from dataclasses import dataclass
 
 
+@dataclass(frozen=True, kw_only=True)
 class Affine(Step):
     """
     An affine operator of the following form:
@@ -22,22 +24,9 @@ class Affine(Step):
 
     """
 
-    def __init__(
-        self,
-        lhs_expr,
-        rhs_expr,
-        lb=-np.inf,
-        ub=np.inf,
-        lhs_mat=None,
-        lhs_mat_factorization=None,
-    ):
-        super().__init__(lhs_expr, rhs_expr, lb=lb, ub=ub)
-        self.lhs_mat = lhs_mat
-        if lhs_mat_factorization is None:
-            # TODO: implement this
-            raise NotImplementedError("not implemented when factorization missing")
-        else:
-            self.lhs_mat_factorization = lhs_mat_factorization
+    lhs_mat: np.matrix
+    lhs_mat_factorization: np.matrix
+    # TODO: the code for when lhs_mat_factorization is missing is not implemented yet, do it
 
     def Minv_rhs(self):
         """
