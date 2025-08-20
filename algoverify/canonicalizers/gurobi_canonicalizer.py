@@ -14,6 +14,7 @@ from algoverify.canonicalizers.huchette_cuts.soft_threshold import (
 )
 from algoverify.steps.relu import ReluStep
 from algoverify.steps.soft_threshold import SoftThresholdStep
+from algoverify.steps.saturated_linear import SaturatedLinearStep
 
 log = logging.getLogger(__name__)
 
@@ -675,6 +676,8 @@ class GurobiCanonicalizer(Canonicalizer):
                 self.relu_huchette_cuts(relaxed_model, step, lower_bounds, upper_bounds, **kwargs)
             elif isinstance(step, SoftThresholdStep):
                 self.soft_threshold_huchette_cuts(relaxed_model, step, lower_bounds, upper_bounds, **kwargs)
+            elif isinstance(step, SaturatedLinearStep):
+                self.saturated_linear_huchette_cuts(relaxed_model, step, lower_bounds, upper_bounds, **kwargs)
 
         self.model_to_opt.update()
 
@@ -694,6 +697,12 @@ class GurobiCanonicalizer(Canonicalizer):
                 # print(Iint, lI, h)
                 new_constr = relu_create_new_constr(w_var[i], A[i, :], y_var, Iint, lI, h, Lhat, Uhat)
                 self.model_to_opt.addConstr(new_constr)
+
+    def saturated_linear_huchette_cuts(self, relaxed_model, step, lower_bounds, upper_bounds, **kwargs):
+        n = step.lhs_expr.get_output_dim()
+
+        w, A, y, l, u, w_var, y_var = self.extract_vecs_for_huchette_cuts(relaxed_model, step, lower_bounds, upper_bounds, **kwargs)
+
 
     def soft_threshold_huchette_cuts(self, relaxed_model, step, lower_bounds, upper_bounds, **kwargs):
         n = step.lhs_expr.get_output_dim()
