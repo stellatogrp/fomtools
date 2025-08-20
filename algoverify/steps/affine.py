@@ -4,25 +4,46 @@ from algoverify.linearexpression import LinearExpression
 from algoverify.steps.step import Step
 
 
-class AffineStep(Step):
+class Affine(Step):
+    """
+    An affine operator of the following form:
+
+    .. math::
+        \[
+        \phi(v,x) = \{ w \in \mathbf{R}^d \mid Mw = By,\ \ y = (v,x) \}
+        \]
+
+    where :math:`$M \in \mathbf{R}^{d \times d}$` is an invertible matrix and
+    :math:`$B \in \mathbf{R}^{d \times (p+d)}$`.
+
+    Attributes:
+    ----------
+
+
+    """
 
     def __init__(self, lhs_expr, rhs_expr, lhs_mat=None, lhs_mat_factorization=None):
-        # self.lhs_expr = lhs_expr
-        # self.rhs_expr = rhs_expr
         super().__init__(lhs_expr, rhs_expr)
         self.lhs_mat = lhs_mat
         if lhs_mat_factorization is None:
             # TODO: implement this
-            raise NotImplementedError('not implemented when factorization missing')
-            # self.lhs_mat_factorization = spa.linalg.factorized(lhs_expr)
+            raise NotImplementedError("not implemented when factorization missing")
         else:
             self.lhs_mat_factorization = lhs_mat_factorization
 
     def Minv_rhs(self):
-        new_decomp_dict = {}
-        for key, val in self.rhs_expr.decomposition_dict.items():
-            Minv_val = np.linalg.solve(self.lhs_mat, val.todense())
-            # print(type(Minv_val))
-            # print(type(np.squeeze(np.asarray(Minv_val))))
-            new_decomp_dict[key] = np.squeeze(np.asarray(Minv_val))
-        return LinearExpression(self.lhs_expr.get_output_dim(), decomposition_dict=new_decomp_dict)
+        """
+
+
+        Returns
+        -------
+            A linear expression object that ..
+
+        """
+        return LinearExpression(
+            self.lhs.get_output_dim(),
+            decomposition_dict={
+                k: np.squeeze(np.asarray(np.linalg.solve(self.lhs_mat, v.todense())))
+                for k, v in self.rhs.decomposition_dict.items()
+            },
+        )

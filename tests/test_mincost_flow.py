@@ -23,7 +23,7 @@ def test_flow():
     print(A.todense())
 
     n_nodes, n_arcs = A.shape
-    print(f'num_arcs: {n_arcs}')
+    print(f"num_arcs: {n_arcs}")
 
     supply_max = 10
     # demand_lb = -5
@@ -56,11 +56,13 @@ def test_flow():
     print(x.value)
     cp_x = x.value
 
-    A_block = spa.bmat([
-        [A_supply, spa.eye(n_supply), None],
-        [A_demand, None, None],
-        [spa.eye(n_arcs), None, spa.eye(n_arcs)]
-    ])
+    A_block = spa.bmat(
+        [
+            [A_supply, spa.eye(n_supply), None],
+            [A_demand, None, None],
+            [spa.eye(n_arcs), None, spa.eye(n_arcs)],
+        ]
+    )
 
     # print(A_block.todense())
     print(A_block.shape)
@@ -88,10 +90,10 @@ def test_flow():
 
     assert np.abs(res - res2) <= 1e-6
 
-    print('2-norm of A:', spa.linalg.norm(A_block, ord=2))
+    print("2-norm of A:", spa.linalg.norm(A_block, ord=2))
 
     t = 0.4 / spa.linalg.norm(A_block, ord=2)
-    print('t:', t)
+    print("t:", t)
 
     m, n = A_block.shape
 
@@ -99,7 +101,7 @@ def test_flow():
     yk = np.zeros(m)
     K = 10000
 
-    print('--testing with vanilla pdhg--')
+    print("--testing with vanilla pdhg--")
     for _ in range(K):
         xkplus1 = np.maximum(xk - t * (c_tilde - A_block.T @ yk), 0)
         ykplus1 = yk - t * (A_block @ (2 * xkplus1 - xk) - b_tilde)
@@ -110,11 +112,11 @@ def test_flow():
         yk = ykplus1
 
     print(xk)
-    print('norm diff:', np.linalg.norm(xk - x_tilde.value))
+    print("norm diff:", np.linalg.norm(xk - x_tilde.value))
     assert np.linalg.norm(xk - x_tilde.value) <= 1e-6
 
     def beta_func(k):
-        return k / (k+3)
+        return k / (k + 3)
 
     def get_vDk_vEk(k, A, t, momentum=True):
         vD = -2 * t * A
@@ -128,11 +130,12 @@ def test_flow():
             vD_k = vD
             vE_k = vE
         return vD_k, vE_k
-    print('--testing with momentum pdhg--')
+
+    print("--testing with momentum pdhg--")
 
     xC = spa.eye(n)
     xD = t * A_block.T
-    xE = - t * spa.eye(n)
+    xE = -t * spa.eye(n)
 
     vC = spa.eye(m)
     # vD = -2 * t * A
@@ -143,7 +146,6 @@ def test_flow():
     vk = np.zeros(m)
 
     for k in range(K):
-
         vD_k, vE_k = get_vDk_vEk(k, A_block, t)
 
         ukplus1 = np.maximum(xC @ uk + xD @ vk + xE @ c_tilde, 0)
@@ -165,13 +167,13 @@ def test_flow():
 
 
 def satlin_pdhg(c, A_supply, A_demand, b_supply, b_demand, u, cp_x):
-    print('cp_x:', cp_x)
+    print("cp_x:", cp_x)
     K = spa.vstack([-A_supply, A_demand])
     q = np.hstack([-b_supply, b_demand])
     t = 0.4 / spa.linalg.norm(K, ord=2)
-    print('t:', t)
-    print('c:', c)
-    print('u:', u)
+    print("t:", t)
+    print("c:", c)
+    print("u:", u)
 
     zk = np.zeros(K.shape[1])
     yk = np.zeros(K.shape[0])
@@ -184,26 +186,26 @@ def satlin_pdhg(c, A_supply, A_demand, b_supply, b_demand, u, cp_x):
         zk = zkplus1
         yk = ykplus1
 
-    print('zK:', zk)
+    print("zK:", zk)
 
     assert np.linalg.norm(cp_x - zk) <= 1e-6
 
 
 def satlin_pdhg_momentum(c, A_supply, A_demand, b_supply, b_demand, u, cp_x):
-    print('momentum test')
+    print("momentum test")
     K = spa.vstack([-A_supply, A_demand])
     q = np.hstack([-b_supply, b_demand])
     t = 0.4 / spa.linalg.norm(K, ord=2)
-    print('t:', t)
-    print('c:', c)
-    print('u:', u)
+    print("t:", t)
+    print("c:", c)
+    print("u:", u)
 
     zk = np.zeros(K.shape[1])
     # ztilde_k = np.zeros(K.shape[1])
     yk = np.zeros(K.shape[0])
 
     K_max = 10000
-    for k in range(1, K_max+1):
+    for k in range(1, K_max + 1):
         zkplus1 = satlin(zk - t * (c - K.T @ yk), 0, u)
         ztilde_kplus1 = zkplus1 + k / (k + 3) * (zkplus1 - zk)
         ykplus1 = proj(yk + t * (q - K @ (2 * ztilde_kplus1 - zk)), A_supply.shape[0])
@@ -211,12 +213,12 @@ def satlin_pdhg_momentum(c, A_supply, A_demand, b_supply, b_demand, u, cp_x):
         zk = zkplus1
         yk = ykplus1
 
-    print('zK:', zk)
+    print("zK:", zk)
     assert np.linalg.norm(cp_x - zk) <= 1e-6
 
 
 def satlin_split_pdhg(c, A_supply, A_demand, b_supply, b_demand, u, cp_x):
-    print('vanilla satlin with split dual vars')
+    print("vanilla satlin with split dual vars")
     # neg_A_supply = -A_supply
     # neg_b_supply = -b_supply
     K = spa.vstack([-A_supply, A_demand])
@@ -236,12 +238,12 @@ def satlin_split_pdhg(c, A_supply, A_demand, b_supply, b_demand, u, cp_x):
         zk = zkplus1
         yk_1 = ykplus1_1
         yk_2 = ykplus1_2
-    print('zK:', zk)
+    print("zK:", zk)
     assert np.linalg.norm(cp_x - zk) <= 1e-6
 
 
 def satlin_split_pdhg_momentum(c, A_supply, A_demand, b_supply, b_demand, u, cp_x):
-    print('vanilla satlin with split dual vars with momentum')
+    print("vanilla satlin with split dual vars with momentum")
     K = spa.vstack([-A_supply, A_demand])
 
     t = 0.4 / spa.linalg.norm(K, ord=2)
@@ -260,7 +262,7 @@ def satlin_split_pdhg_momentum(c, A_supply, A_demand, b_supply, b_demand, u, cp_
         zk = zkplus1
         yk_1 = ykplus1_1
         yk_2 = ykplus1_2
-    print('zK:', zk)
+    print("zK:", zk)
     assert np.linalg.norm(cp_x - zk) <= 1e-6
 
 

@@ -1,27 +1,29 @@
 from algoverify.steps.step import Step
 
 
-class ReluStep(Step):
+class Relu(Step):
+    """
+    Rectified Linear Unit (ReLU) step operator, defined as:
+
+    .. math:: \[(\phi(v,x))_i = \mathbf{ReLU}(a^T y) = \max\{a^T y, 0\}.\]
+
+    It sets all the negative values to zero while keeping the positive ones unchanged.
+
+    Attributes:
+    ----------
+    proj_ranges is a list of index intervals that specify which parts of the output should be projected in the ReLU step
+
+    """
 
     def __init__(self, lhs_expr, rhs_expr, proj_ranges=None, relax_binary_vars=False):
-        # self.lhs_expr = lhs_expr
-        # self.rhs_expr = rhs_expr
-        # self.rhs_lb = None
-        # self.rhs_ub = None
         super().__init__(lhs_expr, rhs_expr, relax_binary_vars=relax_binary_vars)
-        self.proj_ranges = proj_ranges
-        self._process_proj_ranges()
+        self.proj_indices = self.process_proj_ranges(proj_ranges)
+        self.nonproj_indices = self._process_proj_ranges()
         self.idx_with_binary_vars = set([])
 
+    def process_proj_ranges(self, proj_ranges):
+        return {i for (min, max) in proj_ranges for i in range(min, max)}
+
     def _process_proj_ranges(self):
-        nonproj_indices = set(list(range(0, self.rhs_expr.get_output_dim())))
-        proj_indices = set([])
-
-        for curr_range in self.proj_ranges:
-            curr_range_set = set(list(range(curr_range[0], curr_range[1])))
-
-            nonproj_indices -= curr_range_set
-            proj_indices = proj_indices.union(curr_range_set)
-
-        self.nonproj_indices = nonproj_indices
-        self.proj_indices = proj_indices
+        """Partitions indices into projected vs non-projected sets, based on proj_ranges."""
+        return {i for i in range(self.rhs.get_output_dim()) if i not in self.proj_indices}

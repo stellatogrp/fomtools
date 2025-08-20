@@ -14,17 +14,17 @@ def test_verifier():
     c = np.random.uniform(size=(n,))
     b = A @ x_test
 
-    print('testing feasibility of LP')
+    print("testing feasibility of LP")
     x = cp.Variable(n)
     obj = c.T @ x
     constraints = [A @ x == b, x >= 0]
     problem = cp.Problem(cp.Minimize(obj), constraints)
     res = problem.solve(solver=cp.CLARABEL)
-    print(f'x_test: {x_test}')
-    print(f'optimal obj: {res}')
-    print(f'optimal x: {x.value}')
+    print(f"x_test: {x_test}")
+    print(f"optimal obj: {res}")
+    print(f"optimal x: {x.value}")
 
-    print('testing with DR')
+    print("testing with DR")
 
     # xk = np.zeros(n)
     # yk = np.zeros(m)
@@ -54,14 +54,14 @@ def test_verifier():
         xk = xnew
         yk = ynew
 
-    print(f'x from DR: {xk}')
+    print(f"x from DR: {xk}")
 
     VP = Verifier()
 
     # c_param = Verifier.add_param(n, lb=c, ub=c)
     b_offset = 0.1
     c_param = VP.add_param(n, lb=c, ub=c)
-    b_param = VP.add_param(m, lb=b-b_offset, ub=b+b_offset)  # add boxes here when testing
+    b_param = VP.add_param(m, lb=b - b_offset, ub=b + b_offset)  # add boxes here when testing
 
     # VP.add_constraint(ones @ c_param == 1)
 
@@ -70,31 +70,31 @@ def test_verifier():
 
     K = 10
 
-    x = [None for _ in range(K+1)]
-    y = [None for _ in range(K+1)]
+    x = [None for _ in range(K + 1)]
+    y = [None for _ in range(K + 1)]
 
     x[0] = x0
     y[0] = y0
 
     all_res = []
-    for k in range(1, K+1):
+    for k in range(1, K + 1):
         print(k)
 
         # x[k] = VP.add_relu_step(x[k-1] - t * (c_param - A.T @ y[k-1]))  # TODO: replace with relu once implemented
         # y[k] = VP.add_explicit_affine_step(y[k-1] - t * (A @ (2 * x[k] - x[k-1]) - b_param))
 
-        x[k] = VP.relu_step(x[k-1] - t * (c_param - A.T @ y[k-1]))
-        y[k] = y[k-1] - t * (A @ (2 * x[k] - x[k-1]) - b_param)
+        x[k] = VP.relu_step(x[k - 1] - t * (c_param - A.T @ y[k - 1]))
+        y[k] = y[k - 1] - t * (A @ (2 * x[k] - x[k - 1]) - b_param)
 
         # VP.set_zero_objective()
         # up, un, gamma, q = VP.set_infinity_norm_objective(y[k] - y[k-1])
         # VP.set_infinity_norm_objective(x[k] - x[k-1])
-        VP.set_infinity_norm_objective([x[k] - x[k-1], y[k] - y[k-1]])
+        VP.set_infinity_norm_objective([x[k] - x[k - 1], y[k] - y[k - 1]])
         res = VP.solve()
         all_res.append(res)
 
-    print(f'VP resids: {all_res}')
-    print(f'DR resids: {DR_resids[:K]}')
+    print(f"VP resids: {all_res}")
+    print(f"DR resids: {DR_resids[:K]}")
 
     # for k in range(1, K+1):
     #     print(f'k={k}')
@@ -104,16 +104,16 @@ def test_verifier():
     #     print(f'VP_y: {VP.extract_sol(y[k])}')
     #     print(f'VP_y_calc: {VP.extract_sol(y[k-1]) - t * (A @ (2 * VP.extract_sol(x[k]) - VP.extract_sol(x[k-1])) - VP.extract_sol(b_param))}')
 
-    print(f'b_c: {b}')
+    print(f"b_c: {b}")
     print(VP.extract_sol(b_param))
     b_test = VP.extract_sol(b_param)
 
     xK = VP.extract_sol(x[K])
-    xKminus1 = VP.extract_sol(x[K-1])
+    xKminus1 = VP.extract_sol(x[K - 1])
     yK = VP.extract_sol(y[K])
-    yKminus1 = VP.extract_sol(y[K-1])
+    yKminus1 = VP.extract_sol(y[K - 1])
 
-    test_resid = np.max(np.abs(np.hstack([xK-xKminus1, yK-yKminus1])))
+    test_resid = np.max(np.abs(np.hstack([xK - xKminus1, yK - yKminus1])))
     # test_resid = np.max(np.abs(np.hstack([xK-xKminus1])))
     print(test_resid)
 
