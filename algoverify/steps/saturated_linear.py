@@ -1,6 +1,9 @@
 from algoverify.steps.step import Step
+from dataclasses import dataclass
+from functools import cached_property
 
 
+@dataclass(frozen=True, kw_only=True)
 class SaturatedLinear(Step):
     """
     A Saturated Linear operator, defined as:
@@ -23,28 +26,19 @@ class SaturatedLinear(Step):
 
     """
 
-    def __init__(
-        self,
-        lhs_expr,
-        rhs_expr,
-        l,
-        u,
-        relax_binary_vars=False,
-        equality_ranges=None,
-        lb=None,
-        ub=None,
-    ):
-        super().__init__(lhs_expr, rhs_expr, relax_binary_vars=relax_binary_vars, lb=lb, ub=ub)
-        self.l = l
-        self.u = u
+    l: int
+    u: int
+    equality_ranges: list = None
 
-        self.eq_indices = self.process_equality_ranges(equality_ranges)
-        self.eq_indices = self.process_inequality_ranges()
+    def __hash__(self):
+        return hash((self.rhs, self.lhs))
 
-    def process_equality_ranges(self, equality_ranges):
-        if equality_ranges is not None:
-            return {i for (min, max) in equality_ranges for i in range(min, max)}
+    @cached_property
+    def eq_indices(self):
+        if self.equality_ranges is not None:
+            return {i for (min, max) in self.equality_ranges for i in range(min, max)}
         return set()
 
-    def process_inequality_ranges(self):
+    @cached_property
+    def ineq_indices(self):
         return {i for i in range(self.rhs.get_output_dim()) if i not in self.eq_indices}

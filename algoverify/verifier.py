@@ -208,7 +208,13 @@ class Verifier(object):
             out_ub = sl_rhs_ub
 
         step = SaturatedLinear(
-            out_iterate, rhs_expr, l, u, relax_binary_vars=relax_binary_vars, lb=rhs_lb, ub=rhs_ub
+            lhs=out_iterate,
+            rhs=rhs_expr,
+            lb=rhs_lb,
+            ub=rhs_ub,
+            relax_binary_vars=relax_binary_vars,
+            l=l,
+            u=u,
         )
 
         self.iterates.append(out_iterate)
@@ -259,14 +265,14 @@ class Verifier(object):
             out_ub = sl_rhs_ub
 
         step = SaturatedLinear(
-            out_iterate,
-            rhs_expr,
-            l,
-            u,
-            relax_binary_vars=relax_binary_vars,
-            equality_ranges=equality_ranges,
+            lhs=out_iterate,
+            rhs=rhs_expr,
             lb=rhs_lb,
             ub=rhs_ub,
+            relax_binary_vars=relax_binary_vars,
+            l=l,
+            u=u,
+            equality_ranges=equality_ranges,
         )
 
         self.iterates.append(out_iterate)
