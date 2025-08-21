@@ -25,14 +25,24 @@ theme:
 
 plugins:
   - search
-  - mkdocstrings
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          options:
+            docstring_style: numpy
+            docstring_section_style: spacy
+
+            merge_init_into_class: true
+            docstring_options:
+              ignore_init_summary: true
 
 markdown_extensions:
   - pymdownx.superfences
   - pymdownx.arithmatex:
-      generic: true        # outputs \( ... \) and \[ ... \]
-      smart_dollar: true   # lets you use $...$ and $$...$$ in Markdown
+      generic: true    
+      smart_dollar: true
 
 extra_javascript:
-  - javascripts/mathjax.js # Create this file in your docs/javascripts directory
+  - javascripts/mathjax.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
