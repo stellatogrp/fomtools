@@ -34,6 +34,7 @@ class Step:
     ub: float = np.inf
     relax_binary_vars: bool = False
 
+    # TODO: figure out a better way to hash these objects
     def __hash__(self):
         return hash((self.rhs, self.lhs))
 
