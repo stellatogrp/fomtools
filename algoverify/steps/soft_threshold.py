@@ -1,7 +1,9 @@
 from algoverify.steps.step import Step
 import numpy as np
+from dataclasses import dataclass, field
 
 
+@dataclass(frozen=True, kw_only=True)
 class SoftThreshold(Step):
     """
     A soft-thresholding operator for shrinkage, defined as:
@@ -32,25 +34,9 @@ class SoftThreshold(Step):
         ...
     """
 
-    def __init__(self, lhs, rhs, lam, lb=-np.inf, ub=np.inf, relax_binary_vars=False):
-        """
-        Initialize a `SoftThreshold` object.
+    lambd: float
+    idx_with_right_binary_vars: set[int] = field(default_factory=set)
+    idx_with_left_binary_vars: set[int] = field(default_factory=set)
 
-        Parameters
-        ----------
-        lhs:
-            ...
-
-        rhs:
-            ...
-
-        lam: float
-            The threshold (λ) to decide how much to shrink values toward zero. Must be non-negative.
-
-        relax_binary_vars: bool
-            ...
-        """
-        super().__init__(lhs, rhs, relax_binary_vars=relax_binary_vars, lb=lb, ub=ub)
-        self.lambd = lam
-        self.idx_with_right_binary_vars = set([])
-        self.idx_with_left_binary_vars = set([])
+    def __hash__(self):
+        return hash((self.rhs, self.lhs))

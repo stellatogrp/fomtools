@@ -315,8 +315,14 @@ class Verifier(object):
         else:
             out_lb = st_rhs_lb
             out_ub = st_rhs_ub
+
         step = SoftThreshold(
-            out_iterate, rhs_expr, lambd, relax_binary_vars=relax_binary_vars, lb=rhs_lb, ub=rhs_ub
+            lhs=out_iterate,
+            rhs=rhs_expr,
+            lb=rhs_lb,
+            ub=rhs_ub,
+            relax_binary_vars=relax_binary_vars,
+            lambd=lambd,
         )
 
         self.iterates.append(out_iterate)
