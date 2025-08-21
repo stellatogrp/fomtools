@@ -26,3 +26,13 @@ theme:
 plugins:
   - search
   - mkdocstrings
+
+markdown_extensions:
+  - pymdownx.superfences
+  - pymdownx.arithmatex:
+      generic: true        # outputs \( ... \) and \[ ... \]
+      smart_dollar: true   # lets you use $...$ and $$...$$ in Markdown
+
+extra_javascript:
+  - javascripts/mathjax.js # Create this file in your docs/javascripts directory
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
