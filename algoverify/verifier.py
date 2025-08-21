@@ -163,12 +163,12 @@ class Verifier(object):
             out_ub = relu_rhs_ub
 
         step = Relu(
-            out_iterate,
-            rhs_expr,
-            proj_ranges=proj_ranges,
-            relax_binary_vars=relax_binary_vars,
+            lhs=out_iterate,
+            rhs=rhs_expr,
             lb=rhs_lb,
             ub=rhs_ub,
+            relax_binary_vars=relax_binary_vars,
+            proj_ranges=proj_ranges,
         )
 
         self.iterates.append(out_iterate)
