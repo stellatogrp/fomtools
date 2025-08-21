@@ -40,7 +40,7 @@ plugins:
 markdown_extensions:
   - pymdownx.superfences
   - pymdownx.arithmatex:
-      generic: true    
+      generic: true
       smart_dollar: true
 
 extra_javascript:

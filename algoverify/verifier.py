@@ -4,10 +4,7 @@ import numpy as np
 
 from algoverify.canonicalizers.gurobi_canonicalizer import GurobiCanonicalizer
 from algoverify.canonicalizers.obbt_handlers import GurobiOBBTHandler
-from algoverify.steps.affine import Affine
-from algoverify.steps.relu import Relu
-from algoverify.steps.saturated_linear import SaturatedLinear
-from algoverify.steps.soft_threshold import SoftThreshold
+from algoverify.steps.step import Affine, Relu, SaturatedLinear, SoftThreshold
 from algoverify.vector import Vector
 from algoverify.linearexpression import LinearExpression
 
@@ -117,7 +114,7 @@ class Verifier(object):
             lhs_mat=lhs_mat,
             lhs_mat_factorization=lhs_mat_factorization,
         )
-        Minv_rhs = step.Minv_rhs()
+        Minv_rhs = step.lhs_mat_inverse()
 
         iterate_lb, iterate_ub = self.linear_bound_propagation(Minv_rhs)
         assert np.all(iterate_lb <= iterate_ub)

@@ -12,8 +12,7 @@ from algoverify.canonicalizers.huchette_cuts.soft_threshold import (
     st_create_new_neg_constr,
     st_create_new_pos_constr,
 )
-from algoverify.steps.relu import Relu
-from algoverify.steps.soft_threshold import SoftThreshold
+from algoverify.steps.step import Relu, SoftThreshold
 
 log = logging.getLogger(__name__)
 
