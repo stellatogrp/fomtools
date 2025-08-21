@@ -1,7 +1,9 @@
-import numpy as np
-from algoverify.linearexpression import LinearExpression
 from dataclasses import dataclass, field
 from functools import cached_property
+
+import numpy as np
+
+from algoverify.linearexpression import LinearExpression
 
 
 @dataclass(frozen=True)
