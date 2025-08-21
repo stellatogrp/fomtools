@@ -29,7 +29,7 @@ def test_convergence():
     print(x_lstsq)
 
     x = cp.Variable(n)
-    obj = cp.Minimize(0.5 * cp.sum_squares(A @ x - b) + lambd * cp.norm(x, 1))
+    obj = cp.Minimize(.5 * cp.sum_squares(A @ x - b) + lambd * cp.norm(x, 1))
     prob = cp.Problem(obj)
     prob.solve()
     print(x.value)
@@ -46,15 +46,15 @@ def test_convergence():
     print(xk)
     assert np.linalg.norm(xk - x.value) <= 1e-7
 
-    print("--testing fista--")
+    print('--testing fista--')
 
-    betak = 1.0
+    betak = 1.
     xk = np.zeros(n)
     wk = xk
     for _ in range(K):
         xnew = soft_threshold(At @ wk + Bt @ b, lambda_t)
-        beta_new = 0.5 * (1 + np.sqrt(1 + 4 * betak**2))
-        wnew = xnew + (betak - 1) / beta_new * (xnew - xk)
+        beta_new = .5 * (1 + np.sqrt(1 + 4 * betak ** 2))
+        wnew = xnew + (betak - 1)/beta_new * (xnew - xk)
 
         xk = xnew
         betak = beta_new

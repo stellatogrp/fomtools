@@ -21,22 +21,25 @@ def test_dr():
     print(np.linalg.eigvals(P))
 
     A = np.random.normal(size=(m, n))
-    xtest = 1 / n * np.random.normal(size=n)
+    xtest = 1/n * np.random.normal(size=n)
     b = A @ xtest
 
-    print("--testing with cvxpy--")
+    print('--testing with cvxpy--')
     x = cp.Variable(n)
     s = cp.Variable(m)
-    obj = 0.5 * cp.quad_form(x, P) + c.T @ x
+    obj = .5 * cp.quad_form(x, P) + c.T @ x
     constraints = [A @ x + s == b, s >= 0]
     prob = cp.Problem(cp.Minimize(obj), constraints)
     prob.solve()
-    print("optimal x from cp:", x.value)
-    print("optimal s from cp:", s.value)
-    print("optimal y from cp:", constraints[1].dual_value)
+    print('optimal x from cp:', x.value)
+    print('optimal s from cp:', s.value)
+    print('optimal y from cp:', constraints[1].dual_value)
 
-    print("testing with DR splitting:")
-    M = np.block([[P, A.T], [-A, np.zeros((m, m))]])
+    print('testing with DR splitting:')
+    M = np.block([
+        [P, A.T],
+        [-A, np.zeros((m, m))]
+    ])
     lhs = spa.csc_matrix(M) + spa.eye(m + n)
     lhs_factored = spa.linalg.factorized(lhs)
     q = np.hstack([c, b])
@@ -49,7 +52,7 @@ def test_dr():
         utilde = proj(2 * u - zk, n)
         zk = zk + utilde - u
 
-    print("z from DR:", zk)
+    print('z from DR:', zk)
 
     VP = Verifier()
 
@@ -61,28 +64,27 @@ def test_dr():
     z0_init = np.zeros(n + m)
     z0 = VP.add_initial_iterate(m + n, lb=z0_init, ub=z0_init)
     K = 5
-    u = [None for _ in range(K + 1)]
-    utilde = [None for _ in range(K + 1)]
-    z = [None for _ in range(K + 1)]
+    u = [None for _ in range(K+1)]
+    utilde = [None for _ in range(K+1)]
+    z = [None for _ in range(K+1)]
     z[0] = z0
 
     all_res = []
 
     # VP = Verifier()
-    for k in range(1, K + 1):
-        print(f"-K = {k}-")
-        u[k] = VP.implicit_linear_step(
-            lhs.todense(), z[k - 1] - q_param, lhs_mat_factorization=lhs_factored
-        )
-        utilde[k] = VP.relu_step(2 * u[k] - z[k - 1], proj_ranges=(n, n + m))
-        z[k] = z[k - 1] + utilde[k] - u[k]
+    for k in range(1, K+1):
+        print(f'-K = {k}-')
+        u[k] = VP.implicit_linear_step(lhs.todense(), z[k-1] - q_param,
+            lhs_mat_factorization=lhs_factored)
+        utilde[k] = VP.relu_step(2 * u[k] - z[k-1], proj_ranges=(n, n+m))
+        z[k] = z[k-1] + utilde[k] - u[k]
 
-        VP.set_infinity_norm_objective(z[k] - z[k - 1])
+        VP.set_infinity_norm_objective(z[k] - z[k-1])
         res = VP.solve()
         all_res.append(res)
 
-    print(f"opt q_param at last K: {VP.extract_sol(q_param)}")
-    print(f"VP resids: {all_res}")
+    print(f'opt q_param at last K: {VP.extract_sol(q_param)}')
+    print(f'VP resids: {all_res}')
 
     zk = z0_init
     q = VP.extract_sol(q_param)
@@ -98,7 +100,7 @@ def test_dr():
         PGD_resids.append(np.max(np.abs(znew - zk)))
         zk = znew
 
-    print("PGD resids with last K:", PGD_resids)
+    print('PGD resids with last K:', PGD_resids)
 
 
 def proj(v, n):
