@@ -12,12 +12,6 @@ log = logging.getLogger(__name__)
 
 
 class Verifier(object):
-    """
-    Attributes:
-    ----------
-        n_obbt : int
-            The number of optimization-based bound tightening (obbt) ...
-    """
 
     def __init__(
         self,
@@ -38,34 +32,27 @@ class Verifier(object):
         self.steps = []
         self.constraint_sets = []
 
-        if solver == "gurobi":
+        if solver == 'gurobi':
             self.canonicalizer = GurobiCanonicalizer(solver_params=solver_params)
 
-        if obbt_handler == "gurobi":
+        if obbt_handler == 'gurobi':
             self.obbt_handler = GurobiOBBTHandler()
 
         self.lower_bounds = {}
         self.upper_bounds = {}
 
-    def add_term(self, n, arr, lb=-np.inf, ub=np.inf):
-        if np.any(lb > ub):
-            raise ValueError(f"Lower bound {lb} cannot exceed upper bound.")
-        expression = LinearExpression(n)
-        arr.append(expression)
-        self.lower_bounds[expression] = as_array(lb, n)
-        self.upper_bounds[expression] = as_array(ub, n)
-        self.canonicalizer.add_expression(expression, lb, ub)
+    def add_param(self, n, lb=-np.inf, ub=np.inf):
+        assert np.all(lb <= ub)
+        param = Vector(n)
+        self.params.append(param)
+        self.lower_bounds[param] = as_array(lb, n)
+        self.upper_bounds[param] = as_array(ub, n)
+        self.canonicalizer.add_param_var(param, lb=lb, ub=ub)
 
         if self.obbt:
-            self.obbt_handler.add_param_var(expression, lb, ub)
+            self.obbt_handler.add_param_var(param, lb=lb, ub=ub)
 
-        return expression
-
-    def add_param(self, n, lb=-np.inf, ub=np.inf):
-        return self.add_term(n, self.params, lb, ub)
-
-    def add_initial_iterate(self, n, lb=-np.inf, ub=np.inf):
-        return self.add_term(n, self.iterates, lb, ub)
+        return param
 
     def add_param_stack(self, param_list):
         dim = 0
@@ -91,21 +78,37 @@ class Verifier(object):
 
         return param_stack_var
 
+    def add_initial_iterate(self, n, lb=-np.inf, ub=np.inf):
+        assert np.all(lb <= ub)
+        iterate = Vector(n)
+        self.iterates.append(iterate)
+        self.lower_bounds[iterate] = as_array(lb, n)
+        self.upper_bounds[iterate] = as_array(ub, n)
+        self.canonicalizer.add_initial_iterate_var(iterate, lb=lb, ub=ub)
+
+        if self.obbt:
+            self.obbt_handler.add_initial_iterate_var(iterate, lb=lb, ub=ub)
+
+        return iterate
+
+    # def add_iterate(self, n):
+    #     return iterate
+
     def add_step(self, step):
         self.steps.append(step)
 
     def implicit_linear_step(self, lhs_mat, rhs_expr, lhs_mat_factorization=None):
         # need to think about best way to bound prop here/set up the api
-        """
-        Process:
-            - Construct out iterate
-            - Construct affine step object
-            - Do the interval bound propagations as necessary
-            - Add the iterate and constraints to the canonicalizer
-            - Do the OBBT (if self.num_obbt >= 0`)
-            - Return the out iterate Vector object
-        """
-        iterate = LinearExpression(lhs_mat.shape[0])
+        '''
+            Process:
+                - Construct out iterate
+                - Construct affine step object
+                - Do the interval bound propagations as necessary
+                - Add the iterate and constraints to the canonicalizer
+                - Do the OBBT (if self.num_obbt >= 0`)
+                - Return the out iterate Vector object
+        '''
+        iterate = Vector(lhs_mat.shape[0])
         self.iterates.append(iterate)
 
         step = Affine(
@@ -122,7 +125,7 @@ class Verifier(object):
         self.lower_bounds[iterate] = iterate_lb
         self.upper_bounds[iterate] = iterate_ub
 
-        self.canonicalizer.add_expression(iterate, lb=iterate_lb, ub=iterate_ub)
+        self.canonicalizer.add_iterate_var(iterate, lb=iterate_lb, ub=iterate_ub)
         self.canonicalizer.add_equality_constraint(lhs_mat @ iterate, rhs_expr)
 
         if self.obbt:
@@ -172,7 +175,7 @@ class Verifier(object):
         self.lower_bounds[out_iterate] = out_lb
         self.upper_bounds[out_iterate] = out_ub
 
-        self.canonicalizer.add_expression(out_iterate, lb=out_lb, ub=out_ub)
+        self.canonicalizer.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
         self.canonicalizer.add_relu_constraints(step)
 
         if self.obbt:
@@ -218,7 +221,7 @@ class Verifier(object):
         self.lower_bounds[out_iterate] = out_lb
         self.upper_bounds[out_iterate] = out_ub
 
-        self.canonicalizer.add_expression(out_iterate, lb=out_lb, ub=out_ub)
+        self.canonicalizer.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
         self.canonicalizer.add_saturated_linear_constraints(step, out_lb, out_ub)
 
         if self.obbt:
@@ -229,9 +232,7 @@ class Verifier(object):
 
         return out_iterate
 
-    def saturated_linear_param_step(
-        self, rhs_expr, l, u, relax_binary_vars=False, equality_ranges=None
-    ):
+    def saturated_linear_param_step(self, rhs_expr, l, u, relax_binary_vars=False, equality_ranges=None):
         assert isinstance(l, Vector) and isinstance(u, Vector)
         out_iterate = Vector(rhs_expr.get_output_dim())
         rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
@@ -276,16 +277,12 @@ class Verifier(object):
         self.lower_bounds[out_iterate] = out_lb
         self.upper_bounds[out_iterate] = out_ub
 
-        self.canonicalizer.add_expression(out_iterate, lb=out_lb, ub=out_ub)
-        self.canonicalizer.add_saturated_linear_param_constraints(
-            step, out_lb, out_ub, l_lb, l_ub, u_lb, u_ub
-        )
+        self.canonicalizer.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
+        self.canonicalizer.add_saturated_linear_param_constraints(step, out_lb, out_ub, l_lb, l_ub, u_lb, u_ub)
 
         if self.obbt:
             self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
-            self.obbt_handler.add_saturated_linear_param_constraints(
-                step, out_lb, out_ub, l_lb, l_ub, u_lb, u_ub
-            )
+            self.obbt_handler.add_saturated_linear_param_constraints(step, out_lb, out_ub, l_lb, l_ub, u_lb, u_ub)
 
         self.add_step(step)
 
@@ -327,7 +324,7 @@ class Verifier(object):
         self.upper_bounds[out_iterate] = out_ub
 
         # add new iterate and st constraints to canonicalizer
-        self.canonicalizer.add_expression(out_iterate, lb=out_lb, ub=out_ub)
+        self.canonicalizer.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
         self.canonicalizer.add_soft_threshold_constraints(step, out_lb, out_ub)
 
         if self.obbt:
@@ -349,13 +346,9 @@ class Verifier(object):
         C = self.theory_func(k)
         lb, ub = self.linear_bound_propagation(bound_expr)
         if target_expr.is_leaf:
-            self.lower_bounds[target_expr], lb_improv_frac = update_lb(
-                self.lower_bounds[target_expr], lb - C
-            )
-            self.upper_bounds[target_expr], ub_improv_frac = update_ub(
-                self.upper_bounds[target_expr], ub + C
-            )
-            improv_frac = (lb_improv_frac + ub_improv_frac) / 2.0
+            self.lower_bounds[target_expr], lb_improv_frac = update_lb(self.lower_bounds[target_expr], lb - C)
+            self.upper_bounds[target_expr], ub_improv_frac = update_ub(self.upper_bounds[target_expr], lb + C)
+            improv_frac = (lb_improv_frac + ub_improv_frac) / 2.
         self.canonicalizer.add_theory_cut(C, target_expr, lb, ub)
 
         # TODO: think if we might need to safeguard this with nonleaf theory bounds
@@ -398,9 +391,7 @@ class Verifier(object):
 
     def solve(self, **kwargs):
         # print(self.steps)
-        res = self.canonicalizer.solve_model(
-            self.steps, self.lower_bounds, self.upper_bounds, **kwargs
-        )
+        res = self.canonicalizer.solve_model(self.steps, self.lower_bounds, self.upper_bounds, **kwargs)
         return res
 
     def extract_solver_data(self):
@@ -415,9 +406,7 @@ class Verifier(object):
         else:
             raise NotImplementedError
 
-    def post_process(
-        self, var_to_bound, var_for_init_bounds, residual_values, return_improv_frac=True
-    ):
+    def post_process(self, var_to_bound, var_for_init_bounds, residual_values, return_improv_frac=True):
         delta_sum = np.sum(residual_values)
         lower_bounds = self.lower_bounds[var_for_init_bounds]
         upper_bounds = self.upper_bounds[var_for_init_bounds]
@@ -427,7 +416,7 @@ class Verifier(object):
         new_lower_bounds, lb_improv_frac = update_lb(lower_bounds, new_lower_bounds)
         new_upper_bounds, ub_improv_frac = update_ub(upper_bounds, new_upper_bounds)
 
-        improv_frac = (lb_improv_frac + ub_improv_frac) / 2.0
+        improv_frac = (lb_improv_frac + ub_improv_frac) / 2.
         self.canonicalizer.post_process(var_to_bound, new_lower_bounds, new_upper_bounds)
 
         if return_improv_frac:

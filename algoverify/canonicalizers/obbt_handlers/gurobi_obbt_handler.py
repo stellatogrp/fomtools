@@ -7,6 +7,7 @@ log = logging.getLogger(__name__)
 
 
 class GurobiOBBTHandler(object):
+
     def __init__(self):
         self.vector_var_map = {}
         self.model = gp.Model()
@@ -22,9 +23,9 @@ class GurobiOBBTHandler(object):
         self.vector_var_map[param] = self.model.addMVar(param.ndim, lb=lb, ub=ub)
 
     def add_param_stack_var(self, param_stack_var, param_list):
-        """
-        param_stack_var is the VP param object and param_list is the list of previous params to stack
-        """
+        '''
+            param_stack_var is the VP param object and param_list is the list of previous params to stack
+        '''
         prev_var_stack = []
         for p in param_list:
             prev_var_stack.append(self.vector_var_map[p])
@@ -94,8 +95,8 @@ class GurobiOBBTHandler(object):
                 self.model.optimize()
 
                 if self.model.status != gp.GRB.OPTIMAL:
-                    log.info(f"bound tighting failed, GRB model status: {self.model.status}")
-                    log.info(f"i = {i}, sense={sense}")
+                    log.info(f'bound tighting failed, GRB model status: {self.model.status}')
+                    log.info(f'i = {i}, sense={sense}')
                     exit(0)
                     return None
 
@@ -140,12 +141,7 @@ class GurobiOBBTHandler(object):
                 out_constraints.append(self.model.addConstr(lhs_gp_expr[i] == rhs_gp_expr[i]))
             else:
                 out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= 0))
-                out_constraints.append(
-                    self.model.addConstr(
-                        lhs_gp_expr[i]
-                        <= rhs_ub[i] / (rhs_ub[i] - rhs_lb[i]) * (rhs_gp_expr[i] - rhs_lb[i])
-                    )
-                )
+                out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= rhs_ub[i] / (rhs_ub[i] - rhs_lb[i]) * (rhs_gp_expr[i] - rhs_lb[i])))
                 out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= rhs_gp_expr[i]))
 
         self.step_constr_map[step] = out_constraints
@@ -178,47 +174,21 @@ class GurobiOBBTHandler(object):
                     # out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= u[i]))
                     # out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= l[i]))
 
-                    out_constraints.append(
-                        self.model.addConstr(
-                            lhs_gp_expr[i]
-                            <= (u[i] - l[i]) / (u[i] - rhs_lb[i]) * (rhs_gp_expr[i] - u[i]) + u[i]
-                        )
-                    )
-                    out_constraints.append(
-                        self.model.addConstr(
-                            lhs_gp_expr[i]
-                            >= (u[i] - l[i]) / (rhs_ub[i] - l[i]) * (rhs_gp_expr[i] - l[i]) + l[i]
-                        )
-                    )
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= (u[i] - l[i]) / (u[i] - rhs_lb[i]) * (rhs_gp_expr[i] - u[i]) + u[i]))
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= (u[i] - l[i]) / (rhs_ub[i] - l[i]) * (rhs_gp_expr[i] - l[i]) + l[i]))
 
                 elif rhs_lb[i] < l[i] and rhs_ub[i] < u[i]:
                     out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= rhs_gp_expr[i]))
-                    out_constraints.append(
-                        self.model.addConstr(
-                            lhs_gp_expr[i]
-                            <= (rhs_ub[i] - l[i])
-                            / (rhs_ub[i] - rhs_lb[i])
-                            * (rhs_gp_expr[i] - rhs_ub[i])
-                            + rhs_ub[i]
-                        )
-                    )
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= (rhs_ub[i] - l[i]) / (rhs_ub[i] - rhs_lb[i]) * (rhs_gp_expr[i] - rhs_ub[i]) + rhs_ub[i]))
 
                 elif rhs_lb[i] > l[i] and rhs_ub[i] > u[i]:
                     out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= rhs_gp_expr[i]))
 
                     # out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= (u[i] - l[i]) / (rhs_ub[i] - l[i]) * (rhs_gp_expr[i] - l[i]) + l[i]))
-                    out_constraints.append(
-                        self.model.addConstr(
-                            lhs_gp_expr[i]
-                            >= (u[i] - rhs_lb[i])
-                            / (rhs_ub[i] - rhs_lb[i])
-                            * (rhs_gp_expr[i] - rhs_lb[i])
-                            + rhs_lb[i]
-                        )
-                    )
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= (u[i] - rhs_lb[i]) / (rhs_ub[i] - rhs_lb[i]) * (rhs_gp_expr[i] - rhs_lb[i]) + rhs_lb[i]))
 
                 else:
-                    raise RuntimeError("Unreachable code")
+                    raise RuntimeError('Unreachable code')
 
         self.step_constr_map[step] = out_constraints
         self.model.update()
@@ -251,52 +221,20 @@ class GurobiOBBTHandler(object):
                 if rhs_lb[i] < l_ub[i] and rhs_ub[i] <= u_lb[i]:
                     out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= l_gp_var[i]))
                     out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= rhs_gp_expr[i]))
-                    out_constraints.append(
-                        self.model.addConstr(
-                            lhs_gp_expr[i]
-                            <= (rhs_ub[i] - l_ub[i])
-                            / (rhs_ub[i] - rhs_lb[i])
-                            * (rhs_gp_expr[i] - rhs_ub[i])
-                            + rhs_ub[i]
-                        )
-                    )
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= (rhs_ub[i] - l_ub[i]) / (rhs_ub[i] - rhs_lb[i]) * (rhs_gp_expr[i] - rhs_ub[i]) + rhs_ub[i]))
 
                 elif rhs_lb[i] >= l_ub[i] and rhs_ub[i] > u_lb[i]:
                     out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= u_gp_var[i]))
                     out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= rhs_gp_expr[i]))
-                    out_constraints.append(
-                        self.model.addConstr(
-                            lhs_gp_expr[i]
-                            >= (u_lb[i] - rhs_lb[i])
-                            / (rhs_ub[i] - rhs_lb[i])
-                            * (rhs_gp_expr[i] - rhs_lb[i])
-                            + rhs_lb[i]
-                        )
-                    )
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= (u_lb[i] - rhs_lb[i]) / (rhs_ub[i] - rhs_lb[i]) * (rhs_gp_expr[i] - rhs_lb[i]) + rhs_lb[i]))
 
                 else:
                     out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= u_gp_var[i]))
                     out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= l_gp_var[i]))
 
                     # TODO: figure out if these can be u_gp_var/l_gp_var or need to be the upper/lower bounds, resp.
-                    out_constraints.append(
-                        self.model.addConstr(
-                            lhs_gp_expr[i]
-                            <= (u_ub[i] - l_ub[i])
-                            / (u_ub[i] - rhs_lb[i])
-                            * (rhs_gp_expr[i] - u_gp_var[i])
-                            + u_gp_var[i]
-                        )
-                    )
-                    out_constraints.append(
-                        self.model.addConstr(
-                            lhs_gp_expr[i]
-                            >= (u_lb[i] - l_lb[i])
-                            / (rhs_ub[i] - l_lb[i])
-                            * (rhs_gp_expr[i] - l_gp_var[i])
-                            + l_gp_var[i]
-                        )
-                    )
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= (u_ub[i] - l_ub[i]) / (u_ub[i] - rhs_lb[i]) * (rhs_gp_expr[i] - u_gp_var[i]) + u_gp_var[i]))
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= (u_lb[i] - l_lb[i]) / (rhs_ub[i] - l_lb[i]) * (rhs_gp_expr[i] - l_gp_var[i]) + l_gp_var[i]))
 
         self.step_constr_map[step] = out_constraints
         self.model.update()
@@ -317,63 +255,32 @@ class GurobiOBBTHandler(object):
 
         for i in range(n):
             if rhs_lb[i] >= lambd:
-                out_constraints.append(
-                    self.model.addConstr(lhs_gp_expr[i] == rhs_gp_expr[i] - lambd)
-                )
+                out_constraints.append(self.model.addConstr(lhs_gp_expr[i] == rhs_gp_expr[i] - lambd))
             elif rhs_ub[i] <= -lambd:
-                out_constraints.append(
-                    self.model.addConstr(lhs_gp_expr[i] == rhs_gp_expr[i] + lambd)
-                )
+                out_constraints.append(self.model.addConstr(lhs_gp_expr[i] == rhs_gp_expr[i] + lambd))
             elif rhs_lb[i] >= -lambd and rhs_ub[i] <= lambd:
                 out_constraints.append(self.model.addConstr(lhs_gp_expr[i] == 0.0))
             else:
                 if rhs_lb[i] < -lambd and rhs_ub[i] > lambd:
-                    out_constraints.append(
-                        self.model.addConstr(lhs_gp_expr[i] >= rhs_gp_expr[i] - lambd)
-                    )
-                    out_constraints.append(
-                        self.model.addConstr(lhs_gp_expr[i] <= rhs_gp_expr[i] + lambd)
-                    )
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= rhs_gp_expr[i] - lambd))
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= rhs_gp_expr[i] + lambd))
 
-                    out_constraints.append(
-                        self.model.addConstr(
-                            lhs_gp_expr[i]
-                            <= lhs_ub[i] / (rhs_ub[i] + lambd) * (rhs_gp_expr[i] + lambd)
-                        )
-                    )
-                    out_constraints.append(
-                        self.model.addConstr(
-                            lhs_gp_expr[i]
-                            >= lhs_lb[i] / (rhs_lb[i] - lambd) * (rhs_gp_expr[i] - lambd)
-                        )
-                    )
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= lhs_ub[i] / (rhs_ub[i] + lambd) * (rhs_gp_expr[i] + lambd)))
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= lhs_lb[i] / (rhs_lb[i] - lambd) * (rhs_gp_expr[i] - lambd)))
 
                 elif -lambd <= rhs_lb[i] <= lambd and rhs_ub[i] > lambd:
                     out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= 0))
-                    out_constraints.append(
-                        self.model.addConstr(
-                            lhs_gp_expr[i]
-                            <= lhs_ub[i] / (rhs_ub[i] - rhs_lb[i]) * (rhs_gp_expr[i] - rhs_lb[i])
-                        )
-                    )
-                    out_constraints.append(
-                        self.model.addConstr(lhs_gp_expr[i] >= rhs_gp_expr[i] - lambd)
-                    )
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= lhs_ub[i] / (rhs_ub[i] - rhs_lb[i]) * (rhs_gp_expr[i] - rhs_lb[i])))
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= rhs_gp_expr[i] - lambd))
 
                 elif -lambd <= rhs_ub[i] <= lambd and rhs_lb[i] <= -lambd:
+
                     out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= 0))
-                    out_constraints.append(
-                        self.model.addConstr(
-                            lhs_gp_expr[i]
-                            >= lhs_lb[i] / (rhs_lb[i] - rhs_ub[i]) * (rhs_gp_expr[i] - rhs_ub[i])
-                        )
-                    )
-                    out_constraints.append(
-                        self.model.addConstr(lhs_gp_expr[i] <= rhs_gp_expr[i] + lambd)
-                    )
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] >= lhs_lb[i] / (rhs_lb[i] - rhs_ub[i]) * (rhs_gp_expr[i] - rhs_ub[i])))
+                    out_constraints.append(self.model.addConstr(lhs_gp_expr[i] <= rhs_gp_expr[i] + lambd))
 
                 else:
-                    raise RuntimeError("Unreachable code")
+                    raise RuntimeError('Unreachable code')
 
         self.step_constr_map[step] = out_constraints
         self.model.update()

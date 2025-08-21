@@ -11,7 +11,6 @@ def relu_create_new_constr(w, a, y, Iint, lI, h, Lhat, Uhat):
 
     return w <= new_constr
 
-
 def compute_lI(w, x, b, Lhat, Uhat, I, Icomp):
     if I.shape[0] == 0:
         return np.sum(np.multiply(w, Uhat)) + b
@@ -65,9 +64,7 @@ def compute_v(wi, xi, b, Lhat, Uhat):
         # print(Itest)
         # print(Icomp_test)
 
-        lI_new = compute_lI(
-            wi, xi, b, Lhat, Uhat, Itest.astype(np.int32), np.array(list(Icomp_test))
-        )
+        lI_new = compute_lI(wi, xi, b, Lhat, Uhat, Itest.astype(np.int32), np.array(list(Icomp_test)))
         # log.info(lI_new)
         if lI_new < 0:
             Iint = I.astype(np.int32)
@@ -75,9 +72,7 @@ def compute_v(wi, xi, b, Lhat, Uhat):
             # log.info(f'lI before and after: {lI}, {lI_new}')
             # print(f'h={h}')
             # print(f'lI before and after: {lI}, {lI_new}')
-            rhs = np.sum(np.multiply(wi[Iint], xi[Iint])) + lI / (Uhat[int(h)] - Lhat[int(h)]) * (
-                xi[int(h)] - Lhat[int(h)]
-            )
+            rhs = np.sum(np.multiply(wi[Iint], xi[Iint])) + lI / (Uhat[int(h)] - Lhat[int(h)]) * (xi[int(h)] - Lhat[int(h)])
             return Iint, rhs, lI, int(h)
 
         I = Itest

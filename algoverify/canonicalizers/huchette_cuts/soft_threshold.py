@@ -35,9 +35,7 @@ def compute_v_pos(wi, xi, lambd, Lhat, Uhat):
         return (xi[j] - Lhat[j]) / (Uhat[j] - Lhat[j])
 
     keys = np.array([key_func(j) for j in filtered_idx])
-    sorted_idx = np.argsort(
-        keys
-    )  # this is nondecreasing, should be the corrct one according to paper
+    sorted_idx = np.argsort(keys)  # this is nondecreasing, should be the corrct one according to paper
     # sorted_idx = np.argsort(keys)[::-1]
     filtered_idx = filtered_idx[sorted_idx]
 
@@ -53,14 +51,10 @@ def compute_v_pos(wi, xi, lambd, Lhat, Uhat):
         Icomp_test = copy.copy(Icomp)
         Icomp_test.remove(int(h))
 
-        lI_new = compute_lI(
-            wi, xi, lambd, Lhat, Uhat, Itest.astype(np.int32), np.array(list(Icomp_test))
-        )
+        lI_new = compute_lI(wi, xi, lambd, Lhat, Uhat, Itest.astype(np.int32), np.array(list(Icomp_test)))
         if lI_new < 0:
             Iint = I.astype(np.int32)
-            rhs = np.sum(np.multiply(wi[Iint], xi[Iint])) + lI / (Uhat[int(h)] - Lhat[int(h)]) * (
-                xi[int(h)] - Lhat[int(h)]
-            )
+            rhs = np.sum(np.multiply(wi[Iint], xi[Iint])) + lI / (Uhat[int(h)] - Lhat[int(h)]) * (xi[int(h)] - Lhat[int(h)])
             return Iint, rhs, lI, int(h)
 
         I = Itest
@@ -90,14 +84,12 @@ def st_create_new_pos_constr(w, a, y, lambd, Iint, lI, h, Lhat, Uhat):
     for idx in Iint:
         new_constr += a[idx] * (y[idx] - Lhat[idx])
     # new_constr += (lI - lambd) / (Uhat[h] - Lhat[h]) * (y[h] - Lhat[h])
-    # this lI func already factors in lambd so we dont subtract it again from the top
+     # this lI func already factors in lambd so we dont subtract it again from the top
     new_constr += lI / (Uhat[h] - Lhat[h]) * (y[h] - Lhat[h])
 
     return w <= new_constr
 
-
 # below are the negative side constraints
-
 
 def st_add_neg_conv_cuts(wi, ai, y, lambd, y_l, y_u):
     L_hat = np.zeros(y_l.shape)
@@ -120,7 +112,6 @@ def st_add_neg_conv_cuts(wi, ai, y, lambd, y_l, y_u):
         return Iint, uI, h, L_hat, U_hat
     else:
         return None, None, None, None, None
-
 
 def compute_v_neg(wi, xi, lambd, Lhat, Uhat):
     idx = np.arange(wi.shape[0])
@@ -147,14 +138,10 @@ def compute_v_neg(wi, xi, lambd, Lhat, Uhat):
         Icomp_test = copy.copy(Icomp)
         Icomp_test.remove(int(h))
 
-        uI_new = compute_uI(
-            wi, xi, lambd, Lhat, Uhat, Itest.astype(np.int32), np.array(list(Icomp_test))
-        )
+        uI_new = compute_uI(wi, xi, lambd, Lhat, Uhat, Itest.astype(np.int32), np.array(list(Icomp_test)))
         if uI_new > 0:
             Iint = I.astype(np.int32)
-            rhs = np.sum(np.multiply(wi[Iint], xi[Iint])) + uI / (Lhat[int(h)] - Uhat[int(h)]) * (
-                xi[int(h)] - Uhat[int(h)]
-            )
+            rhs = np.sum(np.multiply(wi[Iint], xi[Iint])) + uI / (Lhat[int(h)] - Uhat[int(h)]) * (xi[int(h)] - Uhat[int(h)])
             return Iint, rhs, uI, int(h)
 
         I = Itest
