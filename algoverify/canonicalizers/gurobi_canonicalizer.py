@@ -29,27 +29,26 @@ class GurobiCanonicalizer(Canonicalizer):
         self.step_constr_map = {}
         self.obj_constraints = []
 
-    def add_param_var(self, param, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[param] = self.model.addMVar(param.ndim, lb=lb, ub=ub)
+    def _add_term(self, term, lb=-np.inf, ub=np.inf):
+        self.vector_var_map[term] = self.model.addMVar(term.ndim, lb=lb, ub=ub)
         self.model.update()
+
+    def add_param_var(self, param, lb=-np.inf, ub=np.inf):
+        self._add_term(param, lb, ub)
+
+    def add_initial_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
+        self._add_term(iterate, lb, ub)
+
+    def add_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
+        self._add_term(iterate, lb, ub)
 
     def add_param_stack_var(self, param_stack_var, param_list):
         """
         param_stack_var is the VP param object and param_list is the list of previous params to stack
         """
-        prev_var_stack = []
-        for p in param_list:
-            prev_var_stack.append(self.vector_var_map[p])
-        self.vector_var_map[param_stack_var] = gp.hstack(prev_var_stack)
-        self.model.update()
-
-    def add_initial_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[iterate] = self.model.addMVar(iterate.ndim, lb=lb, ub=ub)
-        self.model.update()
-
-    def add_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[iterate] = self.model.addMVar(iterate.ndim, lb=lb, ub=ub)
-        self.model.update()
+        self.vector_var_map[param_stack_var] = gp.hstack(
+            [self.vector_var_map[param] for param in param_list]
+        )
 
     def add_equality_constraint(self, lhs_expr, rhs_expr):
         lhs_gp_expr = self.lin_expr_to_gp_expr(lhs_expr)
