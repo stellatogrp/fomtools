@@ -51,39 +51,29 @@ class GurobiCanonicalizer(Canonicalizer):
         )
 
     def add_equality_constraint(self, lhs_expr, rhs_expr):
-        lhs_gp_expr = self.lin_expr_to_gp_expr(lhs_expr)
-        rhs_gp_expr = self.lin_expr_to_gp_expr(rhs_expr)
-
-        # out_constraints = []
-        # out_constraints.append(self.model.addConstr(lhs_gp_expr == rhs_gp_expr))
-
-        self.model.addConstr(lhs_gp_expr == rhs_gp_expr)
+        self.model.addConstr(
+            self.lin_expr_to_gp_expr(lhs_expr) == self.lin_expr_to_gp_expr(lhs_expr)
+        )
         self.model.update()
 
     def update_vector_bounds(self, iterate, lb, ub):
         gp_var = self.vector_var_map[iterate]
 
-        old_lb = gp_var.lb
-        gp_var.lb = np.maximum(old_lb, lb)
+        gp_var.lb = np.maximum(gp_var.lb, lb)
+        gp_var.ub = np.minimum(gp_var.ub, ub)
 
-        old_ub = gp_var.ub
-        gp_var.ub = np.minimum(old_ub, ub)
+    def leaf_expr_to_gp_var(self, expression):
+        if expression.is_leaf:
+            return self.vector_var_map[next(iter(expression.decomposition_dict))]
 
-    def leaf_expr_to_gp_var(self, leaf):
-        assert leaf.is_leaf
+        raise TypeError(
+            "Invalid input: expression must be a leaf. Received a composite one instead."
+        )
 
-        key = next(iter(leaf.decomposition_dict))
-        return self.vector_var_map[key]
-
-    def lin_expr_to_gp_expr(self, linearexpression):
-        gp_expr = None
-        for key, value in linearexpression.decomposition_dict.items():
-            gp_var = self.vector_var_map[key]
-
-            if gp_expr is None:
-                gp_expr = value @ gp_var
-            else:
-                gp_expr += value @ gp_var
+    def lin_expr_to_gp_expr(self, expression):
+        gp_expr = np.zeros(expression.ndim)
+        for k, v in expression.decomposition_dict.items():
+            gp_expr += v @ self.vector_var_map[k]
 
         return gp_expr
 
