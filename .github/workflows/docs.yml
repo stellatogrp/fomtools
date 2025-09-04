@@ -36,8 +36,8 @@ jobs:
       - name: Stage wheel into docs/static
         run: | 
           mkdir -p docs/static 
-          cp dist/*-py3-none-any.whl docs/static/yourpkg-latest-py3-none-any.whl
-      
+          cp dist/*-py3-none-any.whl docs/static
+
       - name: Verify staging
         run: ls -l docs/static
 
