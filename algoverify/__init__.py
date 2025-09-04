@@ -3,4 +3,4 @@ from algoverify.linearexpression import *
 from algoverify.linexprstack import *
 from algoverify.vector import *
 from algoverify.verifier import *
-from algoverify.steps import *
+from algoverify.steps.step import *
