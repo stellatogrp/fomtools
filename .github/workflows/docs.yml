@@ -24,6 +24,14 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Build wheels for package
+        run: python -m build
+
+      - name: Stage wheel into docs/static
+        run: | 
+          mkdir -p docs/static 
+          cp dist/*-py3-none-any.whl docs/static/yourpkg-latest-py3-none-any.whl
+
       - name: Install Package with docs extra
         run: pip install .[docs]
 
