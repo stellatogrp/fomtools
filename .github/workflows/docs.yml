@@ -37,6 +37,9 @@ jobs:
         run: |
           mkdir -p docs/static
           cp dist/*-py3-none-any.whl docs/static/yourpkg-latest-py3-none-any.whl
+      
+      - name: Verify staging
+        run: ls -l docs/static
 
       - name: Install Package with docs extra
         run: pip install .[docs]
