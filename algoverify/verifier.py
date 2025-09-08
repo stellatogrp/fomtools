@@ -150,7 +150,8 @@ class Verifier(object):
         if self.obbt:
             # obbt_lb, obbt_ub = self.canonicalizer.obbt(rhs_expr)
             obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
-            rhs_lb, rhs_ub = np.minimum(obbt_lb, rhs_lb), np.minimum(obbt_ub, rhs_ub)
+            rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
+            rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
 
             relu_obbt_lb = relu(obbt_lb, proj_ranges=proj_ranges)
             relu_obbt_ub = relu(obbt_ub, proj_ranges=proj_ranges)
@@ -195,7 +196,8 @@ class Verifier(object):
         if self.obbt:
             # obbt_lb, obbt_ub = self.canonicalizer.obbt(rhs_expr)
             obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
-            rhs_lb, rhs_ub = np.minimum(obbt_lb, rhs_lb), np.maximum(obbt_ub, rhs_ub)
+            rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
+            rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
 
             sl_obbt_lb = saturated_linear(obbt_lb, l, u)
             sl_obbt_ub = saturated_linear(obbt_ub, l, u)
@@ -250,7 +252,8 @@ class Verifier(object):
 
         if self.obbt:
             obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
-            rhs_lb, rhs_ub = np.minimum(obbt_lb, rhs_lb), np.maximum(obbt_ub, rhs_ub)
+            rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
+            rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
 
             sl_obbt_lb = saturated_linear(obbt_lb, l_lb, u_ub)
             sl_obbt_ub = saturated_linear(obbt_ub, l_lb, u_ub)
@@ -298,7 +301,8 @@ class Verifier(object):
         if self.obbt:
             # obbt_lb, obbt_ub = self.canonicalizer.obbt(rhs_expr)
             obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
-            rhs_lb, rhs_ub = np.minimum(obbt_lb, rhs_lb), np.maximum(rhs_ub, obbt_ub)
+            rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
+            rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
 
             st_obbt_lb = soft_threshold(obbt_lb, lambd)
             st_obbt_ub = soft_threshold(obbt_ub, lambd)
