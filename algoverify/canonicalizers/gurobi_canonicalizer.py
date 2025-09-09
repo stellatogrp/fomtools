@@ -112,7 +112,7 @@ class GurobiCanonicalizer(Canonicalizer):
         self.step_constr_map[step] = [self.model.addConstr(constr) for constr in constraints]
         self.model.update()
 
-    def add_saturated_linear_constraints(self, step, out_lb, out_ub):
+    def add_saturated_linear_constraints(self, step):
         assert step.lhs in self.vector_var_map
 
         gp_lhs = self.lin_expr_to_gp_expr(step.lhs)

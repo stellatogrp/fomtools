@@ -223,7 +223,7 @@ class Verifier(object):
         self.upper_bounds[out_iterate] = out_ub
 
         self.canonicalizer.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
-        self.canonicalizer.add_saturated_linear_constraints(step, out_lb, out_ub)
+        self.canonicalizer.add_saturated_linear_constraints(step)
 
         if self.obbt:
             self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
