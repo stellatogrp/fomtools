@@ -101,15 +101,13 @@ class GurobiCanonicalizer(Canonicalizer):
                 if not step.relax_binary_vars:
                     new_vars[i] = self.model.addVar(vtype=gp.GRB.BINARY)
                     step.idx_with_binary_vars.add(i)
+                    constraints.append(gp_lhs[i] <= step.ub[i] * new_vars[i])
 
                 constraints.append(
                     gp_lhs[i] <= step.ub[i] / (step.ub[i] - step.lb[i]) * (gp_rhs[i] - step.lb[i])
                 )
                 constraints.append(gp_lhs[i] >= gp_rhs[i])
                 constraints.append(gp_lhs[i] <= gp_rhs[i] - step.lb[i] * (1 - new_vars[i]))
-
-                if not step.relax_binary_vars:
-                    constraints.append(gp_lhs[i] <= step.ub[i] * new_vars[i])
 
         self.step_constr_map[step] = [self.model.addConstr(constr) for constr in constraints]
         self.model.update()
