@@ -565,15 +565,10 @@ class GurobiCanonicalizer(Canonicalizer):
         return w, A, y, l, u, w_var, y_var
 
     def extract_sol(self, iterate):
+        func = self.model_to_opt.getVarByName
         out = 0
-        for key, value in iterate.decomposition_dict.items():
-            gp_var = self.vector_var_map[key]
-            gp_var_val = np.zeros(gp_var.shape)
-
-            for i in range(gp_var.shape[0]):
-                gp_var_val[i] = self.model_to_opt.getVarByName(gp_var[i].VarName.item()).X
-
-            out += value @ gp_var_val
+        for k, v in iterate.decomposition_dict.items():
+            out += v @ [func(var.VarName.item()).X for var in self.vector_var_map[k]]
 
         return out
 
