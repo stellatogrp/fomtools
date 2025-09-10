@@ -103,11 +103,14 @@ class GurobiCanonicalizer(Canonicalizer):
                     step.idx_with_binary_vars.add(i)
                     constraints.append(gp_lhs[i] <= step.ub[i] * new_vars[i])
 
-                constraints.extend([
-                    gp_lhs[i] <= step.ub[i] / (step.ub[i] - step.lb[i]) * (gp_rhs[i] - step.lb[i]),
-                    gp_lhs[i] >= gp_rhs[i],
-                    gp_lhs[i] <= gp_rhs[i] - step.lb[i] * (1 - new_vars[i])
-                ])
+                constraints.extend(
+                    [
+                        gp_lhs[i]
+                        <= step.ub[i] / (step.ub[i] - step.lb[i]) * (gp_rhs[i] - step.lb[i]),
+                        gp_lhs[i] >= gp_rhs[i],
+                        gp_lhs[i] <= gp_rhs[i] - step.lb[i] * (1 - new_vars[i]),
+                    ]
+                )
 
         self.step_constr_map[step] = [self.model.addConstr(constr) for constr in constraints]
         self.model.update()
@@ -578,10 +581,9 @@ class GurobiCanonicalizer(Canonicalizer):
         return new_model.getVarByName(var.VarName)
 
     def extract_vec_var_by_name(self, var, new_model):
-        out = []
-        for i in range(var.shape[0]):
-            out.append(new_model.getVarByName(var[i].item().VarName))
-        return gp.MVar.fromlist(out)
+        return gp.MVar.fromlist(
+            [new_model.getVarByName(var[i].item().VarName) for i in range(var.shape[0])]
+        )
 
     def get_solve_data(self):
         model = self.model_to_opt
