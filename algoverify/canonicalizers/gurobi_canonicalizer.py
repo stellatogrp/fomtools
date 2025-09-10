@@ -462,25 +462,18 @@ class GurobiCanonicalizer(Canonicalizer):
         self.model_to_opt.update()
 
     def relu_huchette_cuts(self, relaxed_model, step, lower_bounds, upper_bounds, **kwargs):
-        n = step.lhs.get_output_dim()
-        # huchette cuts for w = relu(a^T y)
-
         w, A, y, l, u, w_var, y_var = self.extract_vecs_for_huchette_cuts(
             relaxed_model, step, lower_bounds, upper_bounds
         )
 
-        for i in range(n):
-            if i in step.nonproj_indices:
-                continue
-            if i not in step.idx_with_binary_vars:
-                continue
-            Iint, lI, h, Lhat, Uhat = relu_add_conv_cuts(w[i], A[i, :], y, l, u)
-            if Iint is not None:
-                # print(Iint, lI, h)
-                new_constr = relu_create_new_constr(
-                    w_var[i], A[i, :], y_var, Iint, lI, h, Lhat, Uhat
-                )
-                self.model_to_opt.addConstr(new_constr)
+        for i in range(step.lhs.get_output_dim()):
+            if i in step.proj_indices and i in step.idx_with_binary_vars:
+                Iint, lI, h, Lhat, Uhat = relu_add_conv_cuts(w[i], A[i, :], y, l, u)
+                if Iint is not None:
+                    new_constr = relu_create_new_constr(
+                        w_var[i], A[i, :], y_var, Iint, lI, h, Lhat, Uhat
+                    )
+                    self.model_to_opt.addConstr(new_constr)
 
     def soft_threshold_huchette_cuts(self, relaxed_model, step, lower_bounds, upper_bounds):
         w, A, y, l, u, w_var, y_var = self.extract_vecs_for_huchette_cuts(
