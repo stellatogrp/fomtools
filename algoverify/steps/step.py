@@ -1,25 +1,38 @@
+from dataclasses import dataclass
+
 import numpy as np
 
+from algoverify.linearexpression import LinearExpression
 
-class Step(object):
 
-    def __init__(self, lhs_expr, rhs_expr, relax_binary_vars=False):
-        self.lhs_expr = lhs_expr
-        self.rhs_expr = rhs_expr
-        self.rhs_lb = None
-        self.rhs_ub = None
-        self.relax_binary_vars = relax_binary_vars
+@dataclass(frozen=True)
+class Step:
+    """
+    A base class for thresholding and activation steps. This class
+    defines a common interface for step-like operators that transform
+    inputs element wise.
 
-    def update_rhs_lb(self, new_rhs_lb):
-        if self.rhs_lb is None:
-            self.rhs_lb = new_rhs_lb
-        else:
-            old_rhs_lb = self.rhs_lb
-            self.rhs_lb = np.maximum(old_rhs_lb, new_rhs_lb)
+    Attributes
+    ----------
+    lhs: LinearExpression
+        Left-hand side linear expression in the operator definition.
+    rhs: LinearExpression
+        Right-hand side linear expression in the operator definition.
+    lb: float
+        Lower bound associated with the transformed values.
+    ub: float
+        Lower bound associated with the transformed values.
+    relax_binary_vars: bool
+        If true, binary decision variables associated with the operator
+        are relaxed to take continuous values.
+    """
 
-    def update_rhs_ub(self, new_rhs_ub):
-        if self.rhs_ub is None:
-            self.rhs_ub = new_rhs_ub
-        else:
-            old_rhs_ub = self.rhs_ub
-            self.rhs_ub = np.minimum(old_rhs_ub, new_rhs_ub)
+    lhs: LinearExpression
+    rhs: LinearExpression
+    lb: float = -np.inf
+    ub: float = np.inf
+    relax_binary_vars: bool = False
+
+    # TODO: figure out a better way to hash these objects
+    def __hash__(self):
+        return hash((self.rhs, self.lhs))

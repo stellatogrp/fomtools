@@ -113,14 +113,14 @@ class GurobiOBBTHandler(object):
         return lb_out, ub_out
 
     def add_relu_constraints(self, step, lhs_lb, lhs_ub):
-        lhs = step.lhs_expr
-        rhs = step.rhs_expr
+        lhs = step.lhs
+        rhs = step.rhs
         assert lhs in self.vector_var_map
 
         lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
         rhs_gp_expr = self.lin_expr_to_gp_expr(rhs)
-        rhs_lb = step.rhs_lb
-        rhs_ub = step.rhs_ub
+        rhs_lb = step.lb
+        rhs_ub = step.ub
         # n = lhs.get_output_dim()
 
         out_constraints = []
@@ -147,17 +147,16 @@ class GurobiOBBTHandler(object):
         self.step_constr_map[step] = out_constraints
         self.model.update()
 
-
     def add_saturated_linear_constraints(self, step, lhs_lb, lhs_ub):
-        lhs = step.lhs_expr
-        rhs = step.rhs_expr
+        lhs = step.lhs
+        rhs = step.rhs
         assert lhs in self.vector_var_map
         l, u = step.l, step.u
 
         lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
         rhs_gp_expr = self.lin_expr_to_gp_expr(rhs)
-        rhs_lb = step.rhs_lb
-        rhs_ub = step.rhs_ub
+        rhs_lb = step.lb
+        rhs_ub = step.ub
         n = lhs.get_output_dim()
 
         out_constraints = []
@@ -194,17 +193,16 @@ class GurobiOBBTHandler(object):
         self.step_constr_map[step] = out_constraints
         self.model.update()
 
-
     def add_saturated_linear_param_constraints(self, step, out_lb, out_ub, l_lb, l_ub, u_lb, u_ub):
-        lhs = step.lhs_expr
-        rhs = step.rhs_expr
+        lhs = step.lhs
+        rhs = step.rhs
         assert lhs in self.vector_var_map
         l, u = step.l, step.u
 
         lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
         rhs_gp_expr = self.lin_expr_to_gp_expr(rhs)
-        rhs_lb = step.rhs_lb
-        rhs_ub = step.rhs_ub
+        rhs_lb = step.lb
+        rhs_ub = step.ub
         n = lhs.get_output_dim()
 
         out_constraints = []
@@ -241,17 +239,16 @@ class GurobiOBBTHandler(object):
         self.step_constr_map[step] = out_constraints
         self.model.update()
 
-
     def add_soft_threshold_constraints(self, step, lhs_lb, lhs_ub):
-        lhs = step.lhs_expr
-        rhs = step.rhs_expr
+        lhs = step.lhs
+        rhs = step.rhs
         assert lhs in self.vector_var_map
         lambd = step.lambd
 
         lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
         rhs_gp_expr = self.lin_expr_to_gp_expr(rhs)
-        rhs_lb = step.rhs_lb
-        rhs_ub = step.rhs_ub
+        rhs_lb = step.lb
+        rhs_ub = step.ub
         n = lhs.get_output_dim()
 
         out_constraints = []

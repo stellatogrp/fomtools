@@ -1,27 +1,55 @@
+from dataclasses import dataclass, field
+
 from algoverify.steps.step import Step
 
 
-class ReluStep(Step):
+@dataclass(frozen=True, kw_only=True)
+class Relu(Step):
+    r"""
+    Rectified Linear Unit (ReLU) step operator, defined as:
 
-    def __init__(self, lhs_expr, rhs_expr, proj_ranges=None, relax_binary_vars=False):
-        # self.lhs_expr = lhs_expr
-        # self.rhs_expr = rhs_expr
-        # self.rhs_lb = None
-        # self.rhs_ub = None
-        super().__init__(lhs_expr, rhs_expr, relax_binary_vars=relax_binary_vars)
-        self.proj_ranges = proj_ranges
-        self._process_proj_ranges()
-        self.idx_with_binary_vars = set([])
+    $$
+        (\phi(v,x))_i = \mathbf{ReLU}(a^T y) = \max\{a^T y, 0\}.
+    $$
 
-    def _process_proj_ranges(self):
-        nonproj_indices = set(list(range(0, self.rhs_expr.get_output_dim())))
-        proj_indices = set([])
+    It sets all the negative values to zero while keeping the positive ones unchanged.
 
-        for curr_range in self.proj_ranges:
-            curr_range_set = set(list(range(curr_range[0], curr_range[1])))
+    Attributes
+    ----------
+    lhs: LinearExpression
+        Left-hand side linear expression in the operator definition.
+    rhs: LinearExpression
+        Right-hand side linear expression in the operator definition.
+    lb: float
+        Lower bound associated with the transformed values.
+    ub: float
+        Lower bound associated with the transformed values.
+    relax_binary_vars: bool
+        If true, binary decision variables associated with the operator
+        are relaxed to take continuous values.
+    proj_ranges: list
+        List of index intervals that specify which parts of the output should be
+        projected in the ReLU step
+    idx_with_binary_vars: set[int]
+        Indices corresponding to binary decision variables.
+    proj_indices: set[int]
+        Indices of output coordinates subjected to ReLU projection.
+    nonproj_indices: set[int]
+        Set of output indices not subjected to ReLU.
+    """
 
-            nonproj_indices -= curr_range_set
-            proj_indices = proj_indices.union(curr_range_set)
+    proj_ranges: list
+    idx_with_binary_vars: set[int] = field(default_factory=set)
 
-        self.nonproj_indices = nonproj_indices
-        self.proj_indices = proj_indices
+    def __hash__(self):
+        return hash((self.rhs, self.lhs))
+
+    @property
+    def proj_indices(self):
+        """Returns indices of output coordinates that are subjected to ReLU projections."""
+        return {i for (min, max) in self.proj_ranges for i in range(min, max)}
+
+    @property
+    def nonproj_indices(self):
+        """Returns indices of output coordinates that bypass the ReLU projections."""
+        return {i for i in range(self.rhs.get_output_dim()) if i not in self.proj_indices}

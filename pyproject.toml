@@ -31,6 +31,12 @@ dev = [
        "networkx",
 ]
 
+docs = [
+       "mkdocs",
+       "mkdocstrings-python",
+       "mkdocs-material"
+]
+
 [tool.setuptools_scm]
 
 [tool.ruff]
