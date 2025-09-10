@@ -457,9 +457,7 @@ class GurobiCanonicalizer(Canonicalizer):
             if isinstance(step, Relu):
                 self.relu_huchette_cuts(relaxed_model, step, lower_bounds, upper_bounds, **kwargs)
             elif isinstance(step, SoftThreshold):
-                self.soft_threshold_huchette_cuts(
-                    relaxed_model, step, lower_bounds, upper_bounds, **kwargs
-                )
+                self.soft_threshold_huchette_cuts(relaxed_model, step, lower_bounds, upper_bounds)
 
         self.model_to_opt.update()
 
@@ -484,51 +482,33 @@ class GurobiCanonicalizer(Canonicalizer):
                 )
                 self.model_to_opt.addConstr(new_constr)
 
-    def soft_threshold_huchette_cuts(
-        self, relaxed_model, step, lower_bounds, upper_bounds, **kwargs
-    ):
-        # huchette cuts for w = soft_thresh(a^T y, step.lambd)
-
+    def soft_threshold_huchette_cuts(self, relaxed_model, step, lower_bounds, upper_bounds):
         w, A, y, l, u, w_var, y_var = self.extract_vecs_for_huchette_cuts(
             relaxed_model, step, lower_bounds, upper_bounds
         )
 
         for i in range(step.lhs.ndim):
-            if i in step.idx_with_right_binary_vars and i not in step.idx_with_left_binary_vars:
-                Iint, lI, h, Lhat, Uhat = st_add_pos_conv_cuts(w[i], A[i, :], y, step.lambd, l, u)
-                if Iint is not None:
-                    new_constr = st_create_new_pos_constr(
-                        w_var[i], A[i, :], y_var, step.lambd, Iint, lI, h, Lhat, Uhat
-                    )
-                    self.model_to_opt.addConstr(new_constr)
+            constr = None
+            Iint, lI, h, p_Lhat, p_Uhat = st_add_pos_conv_cuts(w[i], A[i, :], y, step.lambd, l, u)
+            Iint, uI, h, l_Lhat, l_Uhat = st_add_neg_conv_cuts(w[i], A[i, :], y, step.lambd, l, u)
 
-            if i in step.idx_with_left_binary_vars and i not in step.idx_with_right_binary_vars:
-                Iint, uI, h, Lhat, Uhat = st_add_neg_conv_cuts(w[i], A[i, :], y, step.lambd, l, u)
-                if Iint is not None:
-                    new_constr = st_create_new_neg_constr(
-                        w_var[i], A[i, :], y_var, step.lambd, Iint, uI, h, Lhat, Uhat
+            if Iint is not None:
+                if i in step.idx_with_right_binary_vars and (
+                    i not in step.idx_with_left_binary_vars or w[i] > 0
+                ):
+                    constr = st_create_new_pos_constr(
+                        w_var[i], A[i, :], y_var, Iint, lI, h, p_Lhat, p_Uhat
                     )
-                    self.model_to_opt.addConstr(new_constr)
 
-            if i in step.idx_with_right_binary_vars and i in step.idx_with_left_binary_vars:
-                if w[i] > 0:
-                    Iint, lI, h, Lhat, Uhat = st_add_pos_conv_cuts(
-                        w[i], A[i, :], y, step.lambd, l, u
+                if i in step.idx_with_left_binary_vars and (
+                    i not in step.idx_with_right_binary_vars or w[i] < 0
+                ):
+                    constr = st_create_new_neg_constr(
+                        w_var[i], A[i, :], y_var, Iint, uI, h, l_Lhat, l_Uhat
                     )
-                    if Iint is not None:
-                        new_constr = st_create_new_pos_constr(
-                            w_var[i], A[i, :], y_var, step.lambd, Iint, lI, h, Lhat, Uhat
-                        )
-                        self.model_to_opt.addConstr(new_constr)
-                if w[i] < 0:
-                    Iint, uI, h, Lhat, Uhat = st_add_neg_conv_cuts(
-                        w[i], A[i, :], y, step.lambd, l, u
-                    )
-                    if Iint is not None:
-                        new_constr = st_create_new_neg_constr(
-                            w_var[i], A[i, :], y_var, step.lambd, Iint, uI, h, Lhat, Uhat
-                        )
-                        self.model_to_opt.addConstr(new_constr)
+
+                if constr is not None:
+                    self.model_to_opt.addConstr(constr)
 
     def extract_vecs_for_huchette_cuts(
         self, relaxed_model, step, lower_bounds, upper_bounds, **kwargs

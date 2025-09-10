@@ -79,11 +79,10 @@ def compute_lI(w, x, lambd, Lhat, Uhat, I, Icomp):
     return np.sum(np.multiply(w_I, Lhat_I)) + np.sum(np.multiply(w_Icomp, Uhat_I)) - lambd
 
 
-def st_create_new_pos_constr(w, a, y, lambd, Iint, lI, h, Lhat, Uhat):
+def st_create_new_pos_constr(w, a, y, Iint, lI, h, Lhat, Uhat):
     new_constr = 0
     for idx in Iint:
         new_constr += a[idx] * (y[idx] - Lhat[idx])
-    # new_constr += (lI - lambd) / (Uhat[h] - Lhat[h]) * (y[h] - Lhat[h])
      # this lI func already factors in lambd so we dont subtract it again from the top
     new_constr += lI / (Uhat[h] - Lhat[h]) * (y[h] - Lhat[h])
 
@@ -166,21 +165,10 @@ def compute_uI(w, x, lambd, Lhat, Uhat, I, Icomp):
     return np.sum(np.multiply(w_I, Uhat_I)) + np.sum(np.multiply(w_Icomp, Lhat_I)) + lambd
 
 
-def st_create_new_neg_constr(w, a, y, lambd, Iint, uI, h, Lhat, Uhat):
+def st_create_new_neg_constr(w, a, y, Iint, uI, h, Lhat, Uhat):
     new_constr = 0
 
-    # for idx in Iint:
-    #     new_constr += a[idx] * (y[idx] - Uhat[idx])
-    # print(uI)
-    # print(-lambd)
-    # print(Iint)
-    # print(h)
-    # new_constr += (uI) / (Lhat[h] - Uhat[h]) * (y[h] - Uhat[h])
-    # return w >= new_constr
-
     for idx in Iint:
-        # new_constr += a[idx] * (Uhat[idx] - y[idx])
         new_constr += a[idx] * (y[idx] - Uhat[idx])
-    # new_constr += (uI + lambd) / (Uhat[h] - Lhat[h]) * (Uhat[h] - y[h])
     new_constr += uI / (Uhat[h] - Lhat[h]) * (Uhat[h] - y[h])
     return w >= new_constr
