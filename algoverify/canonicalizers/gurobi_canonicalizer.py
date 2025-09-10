@@ -369,11 +369,6 @@ class GurobiCanonicalizer(Canonicalizer):
             self.model.addConstr(target_gp_expr <= bound_ub)
         self.model.update()
 
-    def equality_constraint(self, lhs_expr, rhs_expr):
-        self.model.addConstr(
-            self.lin_expr_to_gp_expr(lhs_expr) == self.lin_expr_to_gp_expr(rhs_expr)
-        )
-        self.model.update()
 
     def set_zero_objective(self):
         # this function is mostly just for debugging the constraints
@@ -387,6 +382,7 @@ class GurobiCanonicalizer(Canonicalizer):
             self.model_to_opt.dispose()
         self.model_to_opt = self.model.copy()
 
+        constraints = []
         M = np.maximum(np.max(np.abs(np.hstack(ub_list))), np.max(np.abs(np.hstack(lb_list))))
         q = self.model_to_opt.addVar(ub=M)
 
@@ -399,31 +395,34 @@ class GurobiCanonicalizer(Canonicalizer):
             up = self.model_to_opt.addMVar(n, ub=np.abs(ub))
             un = self.model_to_opt.addMVar(n, ub=np.abs(lb))
 
-            self.model_to_opt.addConstr(up - un == rhs_gp_expr)
+            constraints.append(up - un == rhs_gp_expr)
 
             for i in range(n):
                 if lb[i] >= 0:
-                    self.model_to_opt.addConstr(un[i] == 0)
+                    constraints.append(un[i] == 0)
                 elif ub[i] < 0:
-                    self.model_to_opt.addConstr(up[i] == 0)
+                    constraints.append(up[i] == 0)
                 else:
                     vobji = self.model_to_opt.addMVar(1, vtype=gp.GRB.BINARY)
-                    self.model_to_opt.addConstr(up[i] <= np.abs(ub[i]) * vobji)
-                    self.model_to_opt.addConstr(un[i] <= np.abs(lb[i]) * (1 - vobji))
+                    constraints.extend([up[i] <= np.abs(ub[i]) * vobji,
+                                        un[i] <= np.abs(lb[i]) * (1 - vobji)])
 
             gamma = self.model_to_opt.addMVar(n, vtype=gp.GRB.BINARY)
             for i in range(n):
-                self.model_to_opt.addConstr(q >= up[i] + un[i])
-                self.model_to_opt.addConstr(q <= up[i] + un[i] + M * (1 - gamma[i]))
+                constraints.extend([q >= up[i] + un[i],
+                                    q <= up[i] + un[i] + M * (1 - gamma[i])])
+
+
 
             all_gammas.append(gamma)
-
         # need 1 gamma across all vectors in the list
         gamma_constr = 0
         for gamma in all_gammas:
             gamma_constr += gp.quicksum(gamma)
-        self.model_to_opt.addConstr(gamma_constr == 1)
+        constraints.append(gamma_constr == 1)
 
+        for constr in constraints:               
+            self.model_to_opt.addConstr(constr)                                                          
         self.model_to_opt.setObjective(q, gp.GRB.MAXIMIZE)
         self.model_to_opt.update()
 
@@ -437,7 +436,6 @@ class GurobiCanonicalizer(Canonicalizer):
                 rel_model = self.model_to_opt.relax()
                 rel_model.optimize()
                 self.rel_LP_sol = rel_model.objVal
-                # print('relaxed LP sol:', self.rel_LP_sol)
             else:
                 self.rel_LP_sol = None
         else:
@@ -446,12 +444,8 @@ class GurobiCanonicalizer(Canonicalizer):
         return self.model_to_opt.objVal
 
     def add_huchette_cuts(self, steps, lower_bounds, upper_bounds, **kwargs):
-        print("adding huchette cuts")
-        # print(kwargs)
-        # print(steps)
         relaxed_model = self.model_to_opt.relax()
         relaxed_model.optimize()
-        print("relaxed model obj:", relaxed_model.objVal)
 
         for step in steps:
             if isinstance(step, Relu):

@@ -393,9 +393,7 @@ class Verifier(object):
         self.canonicalizer.set_infinity_norm_objective(expr_list, lb_list, ub_list)
 
     def solve(self, **kwargs):
-        # print(self.steps)
-        res = self.canonicalizer.solve_model(self.steps, self.lower_bounds, self.upper_bounds, **kwargs)
-        return res
+        return self.canonicalizer.solve_model(self.steps, self.lower_bounds, self.upper_bounds, **kwargs)
 
     def extract_solver_data(self):
         return self.canonicalizer.get_solve_data()
