@@ -468,7 +468,7 @@ class GurobiCanonicalizer(Canonicalizer):
         # huchette cuts for w = relu(a^T y)
 
         w, A, y, l, u, w_var, y_var = self.extract_vecs_for_huchette_cuts(
-            relaxed_model, step, lower_bounds, upper_bounds, **kwargs
+            relaxed_model, step, lower_bounds, upper_bounds
         )
 
         for i in range(n):
@@ -490,7 +490,7 @@ class GurobiCanonicalizer(Canonicalizer):
         # huchette cuts for w = soft_thresh(a^T y, step.lambd)
 
         w, A, y, l, u, w_var, y_var = self.extract_vecs_for_huchette_cuts(
-            relaxed_model, step, lower_bounds, upper_bounds, **kwargs
+            relaxed_model, step, lower_bounds, upper_bounds
         )
 
         for i in range(step.lhs.ndim):
@@ -533,42 +533,37 @@ class GurobiCanonicalizer(Canonicalizer):
     def extract_vecs_for_huchette_cuts(
         self, relaxed_model, step, lower_bounds, upper_bounds, **kwargs
     ):
-        # n = step.lhs_expr.get_output_dim()
-        # huchette cuts for w = relu(a^T y)
-
-        w_var = self.leaf_expr_to_gp_var(step.lhs)
-        w_var = self.extract_vec_var_by_name(w_var, relaxed_model)
-        w = w_var.X
-
-        rhs = step.rhs
-
         A = []
         y_var = []
         l = []
         u = []
-        for key, val in rhs.decomposition_dict.items():
-            # print(key, val)
-            if spa.issparse(val):
-                A.append(val.todense())
+        for k, v in step.rhs.decomposition_dict.items():
+            if spa.issparse(v):
+                A.append(v.todense())
             else:
-                A.append(val)
-            yi = self.leaf_expr_to_gp_var(key)
-            y_var.append(self.extract_vec_var_by_name(yi, relaxed_model))
-            l.append(lower_bounds[key])
-            u.append(upper_bounds[key])
-        A = np.asarray(np.hstack(A))
-        y_var = gp.hstack(y_var)
-        y = gp.hstack(y_var).X
-        l = np.hstack(l)
-        u = np.hstack(u)
+                A.append(v)
+            y_var.append(self.extract_vec_var_by_name(self.leaf_expr_to_gp_var(k), relaxed_model))
+            l.append(lower_bounds[k])
+            u.append(upper_bounds[k])
+        w_var = self.extract_vec_var_by_name(self.leaf_expr_to_gp_var(step.lhs), relaxed_model)
 
-        return w, A, y, l, u, w_var, y_var
+        return (
+            w_var.X,
+            np.asarray(np.hstack(A)),
+            gp.hstack(y_var).X,
+            np.hstack(l),
+            np.hstack(u),
+            w_var,
+            gp.hstack(y_var),
+        )
 
     def extract_sol(self, iterate):
-        func = self.model_to_opt.getVarByName
         out = 0
         for k, v in iterate.decomposition_dict.items():
-            out += v @ [func(var.VarName.item()).X for var in self.vector_var_map[k]]
+            out += v @ [
+                self.model_to_opt.getVarByName(var.VarName.item()).X
+                for var in self.vector_var_map[k]
+            ]
 
         return out
 
