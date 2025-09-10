@@ -115,141 +115,91 @@ class GurobiCanonicalizer(Canonicalizer):
     def add_saturated_linear_constraints(self, step):
         assert step.lhs in self.vector_var_map
 
-        gp_lhs = self.lin_expr_to_gp_expr(step.lhs)
-        gp_rhs = self.lin_expr_to_gp_expr(step.rhs)
+        lhs = self.lin_expr_to_gp_expr(step.lhs)
+        rhs = self.lin_expr_to_gp_expr(step.rhs)
         n = step.lhs.get_output_dim()
 
         constraints = []
-        new_w1 = {}
-        new_w2 = {}
 
         for i in range(n):
             if step.lb[i] >= step.u[i]:
-                constraints.append(gp_lhs[i] == step.u[i])
+                constraints.append(lhs[i] == step.u[i])
             elif step.ub[i] <= step.l[i]:
-                constraints.append(gp_lhs[i] == step.l[i])
+                constraints.append(lhs[i] == step.l[i])
             elif step.lb[i] >= step.l[i] and step.ub[i] <= step.u[i]:
-                constraints.append(gp_lhs[i] == gp_rhs[i])
+                constraints.append(lhs[i] == rhs[i])
             else:
+                if not step.relax_binary_vars:
+                    w1 = self.model.addVar(vtype=gp.GRB.BINARY)
+                    w2 = self.model.addVar(vtype=gp.GRB.BINARY)
+                    if step.lb[i] < step.l[i]:
+                        constraints.extend(
+                            [
+                                lhs[i] <= rhs[i] + (step.ub[i] - step.lb[i]) * w2,
+                                rhs[i] >= step.l[i] + (step.lb[i] - step.l[i]) * w2,
+                                rhs[i] <= step.l[i] + (step.ub[i] - step.l[i]) * (1 - w2),
+                            ]
+                        )
+                        if step.ub[i] > step.u[i]:
+                            constraints.extend(
+                                [
+                                    lhs[i] >= step.u[i] - (step.u[i] - step.l[i]) * (1 - w1),
+                                    lhs[i] <= step.l[i] + (step.u[i] - step.l[i]) * (1 - w2),
+                                    lhs[i] <= rhs[i] + (step.ub[i] - step.lb[i]) * w2,
+                                    w1 + w2 <= 1,
+                                ]
+                            )
+                        elif step.ub[i] > step.u[i]:
+                            constraints.extend(
+                                [
+                                    lhs[i] <= step.l[i] + (step.ub[i] - step.l[i]) * (1 - w2),
+                                    rhs[i] >= step.l[i] + (step.lb[i] - step.l[i]) * w2,
+                                ]
+                            )
+
+                    if step.ub[i] > step.u[i]:
+                        constraints.extend(
+                            [
+                                lhs[i] >= rhs[i] - (step.ub[i] - step.lb[i]) * w1,
+                                rhs[i] >= step.u[i] + (step.lb[i] - step.u[i]) * (1 - w1),
+                                rhs[i] <= step.u[i] + (step.ub[i] - step.u[i]) * w1,
+                            ]
+                        )
+
+                        if step.lb[i] > step.l[i]:
+                            constraints.append(
+                                lhs[i] >= step.u[i] - (step.u[i] - step.lb[i]) * (1 - w1)
+                            )
+
                 if step.lb[i] < step.l[i] and step.ub[i] > step.u[i]:
-                    if not step.relax_binary_vars:
-                        new_w1[i] = self.model.addVar(vtype=gp.GRB.BINARY)
-                        new_w2[i] = self.model.addVar(vtype=gp.GRB.BINARY)
-
                     # following two are redundant due to preprocessing bounds on the left hand side iterate
-                    # constraints.append(self.model.addConstr(lhs_gp_expr[i] <= u[i]))
-                    # constraints.append(self.model.addConstr(lhs_gp_expr[i] >= l[i]))
+                    expr = (step.u[i] - step.l[i]) / (step.u[i] - step.lb[i]) * (
+                        rhs[i] - step.u[i]
+                    ) + step.u[i]
 
-                    constraints.append(
-                        gp_lhs[i]
-                        <= (step.u[i] - step.l[i])
-                        / (step.u[i] - step.lb[i])
-                        * (gp_rhs[i] - step.u[i])
-                        + step.u[i]
-                    )
-                    constraints.append(
-                        gp_lhs[i]
-                        >= (step.u[i] - step.l[i])
-                        / (step.ub[i] - step.l[i])
-                        * (gp_rhs[i] - step.l[i])
-                        + step.l[i]
-                    )
+                    constraints.extend([lhs[i] <= expr, lhs[i] >= expr])
 
-                    if not step.relax_binary_vars:
-                        constraints.append(
-                            gp_lhs[i] >= step.u[i] - (step.u[i] - step.l[i]) * (1 - new_w1[i])
-                        )
-                        constraints.append(
-                            gp_lhs[i] <= step.l[i] + (step.u[i] - step.l[i]) * (1 - new_w2[i])
-                        )
-
-                        constraints.append(
-                            gp_lhs[i] >= gp_rhs[i] - (step.ub[i] - step.lb[i]) * new_w1[i]
-                        )
-                        constraints.append(
-                            gp_lhs[i] <= gp_rhs[i] + (step.ub[i] - step.lb[i]) * new_w2[i]
-                        )
-
-                        constraints.append(
-                            gp_rhs[i] >= step.u[i] + (step.lb[i] - step.u[i]) * (1 - new_w1[i])
-                        )
-                        constraints.append(
-                            gp_rhs[i] <= step.u[i] + (step.ub[i] - step.u[i]) * new_w1[i]
-                        )
-
-                        constraints.append(
-                            gp_rhs[i] >= step.l[i] + (step.lb[i] - step.l[i]) * new_w2[i]
-                        )
-                        constraints.append(
-                            gp_rhs[i] <= step.l[i] + (step.ub[i] - step.l[i]) * (1 - new_w2[i])
-                        )
-
-                        constraints.append(new_w1[i] + new_w2[i] <= 1)
                 elif step.lb[i] < step.l[i] and step.ub[i] < step.u[i]:
-                    # if step.relax_binary_vars:
-                    #     new_w2[i] = self.model.addVar(lb=0., ub=1.)
-                    # else:
-                    if not step.relax_binary_vars:
-                        new_w2[i] = self.model.addVar(vtype=gp.GRB.BINARY)
-                    # constraints.append(self.model.addConstr(lhs_gp_expr[i] >= l[i]))
-                    constraints.append(gp_lhs[i] >= gp_rhs[i])
-
-                    # constraints.append(self.model.addConstr(lhs_gp_expr[i] <= (u[i] - l[i]) / (u[i] - rhs_lb[i]) * (rhs_gp_expr[i] - u[i]) + u[i]))
-                    constraints.append(
-                        gp_lhs[i]
-                        <= (step.ub[i] - step.l[i])
-                        / (step.ub[i] - step.lb[i])
-                        * (gp_rhs[i] - step.ub[i])
-                        + step.ub[i]
+                    constraints.extend(
+                        [
+                            lhs[i] >= rhs[i],
+                            lhs[i]
+                            <= ((step.ub[i] - step.l[i]) / (step.ub[i] - step.lb[i]))
+                            * (rhs[i] - step.ub[i])
+                            + step.ub[i],
+                        ]
                     )
-
-                    if not step.relax_binary_vars:
-                        # constraints.append(self.model.addConstr(lhs_gp_expr[i] <= l[i] + (u[i] - l[i]) * (1 - new_w2[i])))
-                        constraints.append(
-                            gp_lhs[i] <= step.l[i] + (step.ub[i] - step.l[i]) * (1 - new_w2[i])
-                        )
-
-                        constraints.append(
-                            gp_lhs[i] <= gp_rhs[i] + (step.ub[i] - step.lb[i]) * new_w2[i]
-                        )
-
-                        constraints.append(
-                            gp_rhs[i] >= step.l[i] + (step.lb[i] - step.l[i]) * new_w2[i]
-                        )
-                        constraints.append(
-                            gp_rhs[i] <= step.l[i] + (step.ub[i] - step.l[i]) * (1 - new_w2[i])
-                        )
 
                 elif step.lb[i] > step.l[i] and step.ub[i] > step.u[i]:
-                    # if step.relax_binary_vars:
-                    #     new_w1[i] = self.model.addVar(lb=0., ub=1.)
-                    # else:
-                    if not step.relax_binary_vars:
-                        new_w1[i] = self.model.addVar(vtype=gp.GRB.BINARY)
-
-                    constraints.append(gp_lhs[i] <= gp_rhs[i])
-                    constraints.append(
-                        gp_lhs[i]
-                        >= (step.u[i] - step.lb[i])
-                        / (step.ub[i] - step.lb[i])
-                        * (gp_rhs[i] - step.lb[i])
-                        + step.lb[i]
+                    constraints.extend(
+                        [
+                            lhs[i] <= rhs[i],
+                            lhs[i]
+                            >= ((step.u[i] - step.lb[i]) / (step.ub[i] - step.lb[i]))
+                            * (rhs[i] - step.lb[i])
+                            + step.lb[i],
+                        ]
                     )
-
-                    if not step.relax_binary_vars:
-                        constraints.append(
-                            gp_lhs[i] >= step.u[i] - (step.u[i] - step.lb[i]) * (1 - new_w1[i])
-                        )
-                        constraints.append(
-                            gp_lhs[i] >= gp_rhs[i] - (step.ub[i] - step.lb[i]) * new_w1[i]
-                        )
-
-                        constraints.append(
-                            gp_rhs[i] >= step.u[i] + (step.lb[i] - step.u[i]) * (1 - new_w1[i])
-                        )
-                        constraints.append(
-                            gp_rhs[i] <= step.u[i] + (step.ub[i] - step.u[i]) * new_w1[i]
-                        )
 
                 else:
                     raise RuntimeError("Unreachable code")
@@ -287,20 +237,6 @@ class GurobiCanonicalizer(Canonicalizer):
                         new_w2[i] = self.model.addVar(vtype=gp.GRB.BINARY)
                         step.idx_with_right_binary_vars.add(i)
                         step.idx_with_left_binary_vars.add(i)
-
-                    constraints.append(gp_lhs[i] >= gp_rhs[i] - step.lambd)
-                    constraints.append(gp_lhs[i] <= gp_rhs[i] + step.lambd)
-
-                    constraints.append(
-                        gp_lhs[i]
-                        <= lhs_ub[i] / (step.ub[i] + step.lambd) * (gp_rhs[i] + step.lambd)
-                    )
-                    constraints.append(
-                        gp_lhs[i]
-                        >= lhs_lb[i] / (step.lb[i] - step.lambd) * (gp_rhs[i] - step.lambd)
-                    )
-
-                    if not step.relax_binary_vars:
                         # Upper right part: w1 = 1, y >= lambda_t
                         constraints.append(
                             gp_rhs[i] >= step.lambd + (step.lb[i] - step.lambd) * (1 - new_w1[i])
@@ -330,19 +266,24 @@ class GurobiCanonicalizer(Canonicalizer):
 
                         constraints.append(new_w1[i] + new_w2[i] <= 1)
 
+                    constraints.append(gp_lhs[i] >= gp_rhs[i] - step.lambd)
+                    constraints.append(gp_lhs[i] <= gp_rhs[i] + step.lambd)
+
+                    constraints.append(
+                        gp_lhs[i]
+                        <= lhs_ub[i] / (step.ub[i] + step.lambd) * (gp_rhs[i] + step.lambd)
+                    )
+                    constraints.append(
+                        gp_lhs[i]
+                        >= lhs_lb[i] / (step.lb[i] - step.lambd) * (gp_rhs[i] - step.lambd)
+                    )
+
+                    # if not step.relax_binary_vars:
+
                 elif -step.lambd <= step.lb[i] <= step.lambd and step.ub[i] > step.lambd:
                     if not step.relax_binary_vars:
                         new_w1[i] = self.model.addVar(vtype=gp.GRB.BINARY)
                         step.idx_with_right_binary_vars.add(i)
-
-                    constraints.append(gp_lhs[i] >= 0)
-                    constraints.append(
-                        gp_lhs[i]
-                        <= lhs_ub[i] / (step.ub[i] - step.lb[i]) * (gp_rhs[i] - step.lb[i])
-                    )
-                    constraints.append(gp_lhs[i] >= gp_rhs[i] - step.lambd)
-
-                    if not step.relax_binary_vars:
                         constraints.append(
                             gp_rhs[i] >= step.lambd + (step.lb[i] - step.lambd) * (1 - new_w1[i])
                         )
@@ -355,19 +296,17 @@ class GurobiCanonicalizer(Canonicalizer):
                         )
                         constraints.append(gp_lhs[i] <= lhs_ub[i] * new_w1[i])
 
+                    constraints.append(gp_lhs[i] >= 0)
+                    constraints.append(
+                        gp_lhs[i]
+                        <= lhs_ub[i] / (step.ub[i] - step.lb[i]) * (gp_rhs[i] - step.lb[i])
+                    )
+                    constraints.append(gp_lhs[i] >= gp_rhs[i] - step.lambd)
+
                 elif -step.lambd <= step.ub[i] <= step.lambd and step.lb[i] <= -step.lambd:
                     if not step.relax_binary_vars:
                         new_w2[i] = self.model.addVar(vtype=gp.GRB.BINARY)
                         step.idx_with_left_binary_vars.add(i)
-
-                    constraints.append(gp_lhs[i] <= 0)
-                    constraints.append(
-                        gp_lhs[i]
-                        >= lhs_lb[i] / (step.lb[i] - step.ub[i]) * (gp_rhs[i] - step.ub[i])
-                    )
-                    constraints.append(gp_lhs[i] <= gp_rhs[i] + step.lambd)
-
-                    if not step.relax_binary_vars:
                         constraints.append(
                             gp_rhs[i] <= -step.lambd + (step.ub[i] + step.lambd) * (1 - new_w2[i])
                         )
@@ -380,6 +319,13 @@ class GurobiCanonicalizer(Canonicalizer):
                             >= gp_rhs[i] + step.lambd + (-2 * step.lambd) * (1 - new_w2[i])
                         )
                         constraints.append(gp_lhs[i] >= lhs_lb[i] * new_w2[i])
+
+                    constraints.append(gp_lhs[i] <= 0)
+                    constraints.append(
+                        gp_lhs[i]
+                        >= lhs_lb[i] / (step.lb[i] - step.ub[i]) * (gp_rhs[i] - step.ub[i])
+                    )
+                    constraints.append(gp_lhs[i] <= gp_rhs[i] + step.lambd)
 
                 else:
                     raise RuntimeError("Unreachable code")
