@@ -80,8 +80,8 @@ class GurobiCanonicalizer(Canonicalizer):
     def add_relu_constraints(self, step):
         assert step.lhs in self.vector_var_map
 
-        gp_lhs = self.lin_expr_to_gp_expr(step.lhs)
-        gp_rhs = self.lin_expr_to_gp_expr(step.rhs)
+        lhs = self.lin_expr_to_gp_expr(step.lhs)
+        rhs = self.lin_expr_to_gp_expr(step.rhs)
 
         constraints = []
         new_vars = {}
@@ -90,25 +90,24 @@ class GurobiCanonicalizer(Canonicalizer):
         # make sure to enforce equality constraints between lhs and rhs for other indices
 
         for i in step.nonproj_indices:
-            constraints.append(gp_lhs[i] == gp_rhs[i])
+            constraints.append(lhs[i] == rhs[i])
 
         for i in step.proj_indices:
             if step.ub[i] <= 0:
-                constraints.append(gp_lhs[i] == 0)
+                constraints.append(lhs[i] == 0)
             elif step.lb[i] > 0:
-                constraints.append(gp_lhs[i] == gp_rhs[i])
+                constraints.append(lhs[i] == rhs[i])
             else:
                 if not step.relax_binary_vars:
                     new_vars[i] = self.model.addVar(vtype=gp.GRB.BINARY)
                     step.idx_with_binary_vars.add(i)
-                    constraints.append(gp_lhs[i] <= step.ub[i] * new_vars[i])
+                    constraints.append(lhs[i] <= step.ub[i] * new_vars[i])
 
                 constraints.extend(
                     [
-                        gp_lhs[i]
-                        <= step.ub[i] / (step.ub[i] - step.lb[i]) * (gp_rhs[i] - step.lb[i]),
-                        gp_lhs[i] >= gp_rhs[i],
-                        gp_lhs[i] <= gp_rhs[i] - step.lb[i] * (1 - new_vars[i]),
+                        lhs[i] <= step.ub[i] / (step.ub[i] - step.lb[i]) * (rhs[i] - step.lb[i]),
+                        lhs[i] >= rhs[i],
+                        lhs[i] <= rhs[i] - step.lb[i] * (1 - new_vars[i]),
                     ]
                 )
 
@@ -286,7 +285,7 @@ class GurobiCanonicalizer(Canonicalizer):
                         ]
                     )
 
-                elif -step.lambd <= step.lb[i] <= step.lambd and step.ub[i] > step.lambd:
+                elif -step.lambd <= step.lb[i] <= step.lambd < step.ub[i]:
                     constraints.extend(
                         [
                             lhs[i] >= 0,
@@ -295,7 +294,7 @@ class GurobiCanonicalizer(Canonicalizer):
                         ]
                     )
 
-                elif -step.lambd <= step.ub[i] <= step.lambd and step.lb[i] <= -step.lambd:
+                elif step.lambd >= step.ub[i] >= -step.lambd >= step.lb[i]:
                     constraints.extend(
                         [
                             lhs[i] <= 0,
@@ -369,7 +368,6 @@ class GurobiCanonicalizer(Canonicalizer):
             self.model.addConstr(target_gp_expr <= bound_ub)
         self.model.update()
 
-
     def set_zero_objective(self):
         # this function is mostly just for debugging the constraints
         self.model_to_opt = self.model.copy()
@@ -404,15 +402,13 @@ class GurobiCanonicalizer(Canonicalizer):
                     constraints.append(up[i] == 0)
                 else:
                     vobji = self.model_to_opt.addMVar(1, vtype=gp.GRB.BINARY)
-                    constraints.extend([up[i] <= np.abs(ub[i]) * vobji,
-                                        un[i] <= np.abs(lb[i]) * (1 - vobji)])
+                    constraints.extend(
+                        [up[i] <= np.abs(ub[i]) * vobji, un[i] <= np.abs(lb[i]) * (1 - vobji)]
+                    )
 
             gamma = self.model_to_opt.addMVar(n, vtype=gp.GRB.BINARY)
             for i in range(n):
-                constraints.extend([q >= up[i] + un[i],
-                                    q <= up[i] + un[i] + M * (1 - gamma[i])])
-
-
+                constraints.extend([q >= up[i] + un[i], q <= up[i] + un[i] + M * (1 - gamma[i])])
 
             all_gammas.append(gamma)
         # need 1 gamma across all vectors in the list
@@ -421,8 +417,8 @@ class GurobiCanonicalizer(Canonicalizer):
             gamma_constr += gp.quicksum(gamma)
         constraints.append(gamma_constr == 1)
 
-        for constr in constraints:               
-            self.model_to_opt.addConstr(constr)                                                          
+        for constr in constraints:
+            self.model_to_opt.addConstr(constr)
         self.model_to_opt.setObjective(q, gp.GRB.MAXIMIZE)
         self.model_to_opt.update()
 
