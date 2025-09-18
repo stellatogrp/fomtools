@@ -37,21 +37,23 @@ class LinearExpression:
     """
 
     counter = 0
-    list_of_leaf_LinExprs = list()  # TODO: figure out if we need these
-    __array_priority__ = (
-        1000  # this is necessary else numpy will not even look at the @ operator due to precedence
-    )
+    # this is necessary else numpy will not even look at the @ operator due to precedence
+    __array_priority__ = 1000
 
-    def __init__(self, decomposition_dict: dict):
+    def __init__(self, decomposition_dict: dict, const: np.ndarray = None):
         """
         Initialize a `LinearExpression` object with decomposition dictionary.
 
         Parameters
         ----------
-        decomposition_dict : dict or None, optional
+        decomposition_dict : dict
             A mapping from each leaf `LinearExpression` to its coefficient matrix (an nxn sparse
-            matrix). If `decomposition_dict` is None, this object is treated as a leaf and its
-            decomposition is set to :: {self: I_n} :: where `I_n` is the nxn identity matrix.
+            matrix).
+
+        const : ndarray or None, optional
+            A one-dimensional array or None (default). If `const` is None, the `const` attribute
+            of this object will be set to a `numpy.ndarray` of length `ndim` filled with zeros.
+
 
         Raises
         ------
@@ -66,8 +68,17 @@ class LinearExpression:
                 f"""All coefficient matrices must have the same number of rows;
                     found row counts {len(shapes)}"""
             )
-
         self.ndim = shapes.pop() if len(shapes) == 1 else 0
+        if const is not None:
+            if const.ndim != 1:
+                raise ValueError("Matrix for a constant must be 1-dimensional.")
+            if const.shape[0] != self.ndim:
+                raise ValueError(
+                    "Matrix for a constant must have same number of rows as decomposition dict."
+                )
+
+        self.const = np.zeros(self.ndim) if const is None else const
+        self.const = const
         self.decomposition_dict = decomposition_dict
         self.counter = None
         self.is_leaf = False
@@ -96,8 +107,8 @@ class LinearExpression:
         obj.is_leaf = True
         obj.ndim = ndim
         obj.counter = cls.counter
+        obj.const = np.zeros(ndim)
         cls.counter += 1
-        cls.list_of_leaf_LinExprs.append(obj)
         return obj
 
     def __str__(self):
