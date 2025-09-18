@@ -45,15 +45,12 @@ class LinearExpression:
     # TODO: ndim and decomposition_dict seem to be mutually exclusive
     #  (If decomposition dict is provided, we can programmatically figure out ndim. )
 
-    def __init__(self, ndim: int, decomposition_dict: dict = None):
+    def __init__(self, decomposition_dict: dict):
         """
-        Initialize a `LinearExpression` object.
+        Initialize a `LinearExpression` object with decomposition dictionary.
 
         Parameters
         ----------
-        ndim : int
-            The dimension of underlying space, i.e., the size of each coefficient matrix.
-
         decomposition_dict : dict or None, optional
             A mapping from each leaf `LinearExpression` to its coefficient matrix (an nxn sparse
             matrix). If `decomposition_dict` is None, this object is treated as a leaf and its
@@ -66,27 +63,45 @@ class LinearExpression:
             of rows.
 
         """
-        self.ndim = ndim
+        shapes = {mat.shape[0] for mat in decomposition_dict.values()}
+        if len(shapes) > 1:
+            raise ValueError(
+                f"""All coefficient matrices must have the same number of rows;
+                    found row counts {len(shapes)}"""
+            )
 
-        if decomposition_dict is None:
-            self.decomposition_dict = {self: spa.eye(ndim)}
-            self.counter = LinearExpression.counter
-            LinearExpression.counter += 1
-            LinearExpression.list_of_leaf_LinExprs.append(self)
+        self.ndim = shapes.pop() if len(shapes) == 1 else 0
+        self.decomposition_dict = decomposition_dict
+        self.counter = None
+        self.is_leaf = False
 
-            assert self.decomposition_dict[self].shape[1] == ndim
-            self.is_leaf = True
-        else:
-            shapes = {mat.shape[0] for mat in decomposition_dict.values()}
-            if len(shapes) > 1:
-                raise ValueError(
-                    f"""All coefficient matrices must have the same number of rows;
-                        found row counts {shapes}"""
-                )
+    @classmethod
+    def from_int(cls, ndim: int) -> "LinearExpression":
+        """
+        Initialize a `LinearExpression` object with an integer `ndim`. Internally, this
+        creates a decomposition dictionary that maps the `LinearExpression` object with a sparse
+        identity matrix of shape `(ndim, ndim)`.
 
-            self.decomposition_dict = decomposition_dict
-            self.counter = None
-            self.is_leaf = False
+        Parameters
+        ----------
+        ndim : int
+            The dimension of underlying space, i.e., the size of each coefficient matrix.
+
+        Returns
+        -------
+        LinearExpression
+            A new `LinearExpression` instance whose decomposition contains a single
+            entry: the instance itself as a key, and a SciPy sparse identity matrix of
+            shape `(ndim, ndim)` as the value.
+        """
+        obj = cls.__new__(cls)  # uninitialized instance
+        obj.decomposition_dict = {obj: spa.eye(ndim)}
+        obj.is_leaf = True
+        obj.ndim = ndim
+        obj.counter = cls.counter
+        cls.counter += 1
+        cls.list_of_leaf_LinExprs.append(obj)
+        return obj
 
     def __str__(self):
         return f"Var{self.counter}"
@@ -121,7 +136,7 @@ class LinearExpression:
 
         merged_decomposition_dict = merge_dict(self.decomposition_dict, other.decomposition_dict)
 
-        return LinearExpression(self.ndim, decomposition_dict=prune_dict(merged_decomposition_dict))
+        return LinearExpression(decomposition_dict=prune_dict(merged_decomposition_dict))
 
     def __mul__(self, scalar: Union[float, int]) -> "LinearExpression":
         """
@@ -146,7 +161,6 @@ class LinearExpression:
         """
         try:
             return LinearExpression(
-                ndim=self.ndim,
                 decomposition_dict={
                     k: v * float(scalar) for k, v in self.decomposition_dict.items()
                 },
@@ -291,7 +305,6 @@ class LinearExpression:
 
         try:
             return LinearExpression(
-                matrix.shape[0],
                 decomposition_dict={k: matrix @ v for k, v in self.decomposition_dict.items()},
             )
         except TypeError:
