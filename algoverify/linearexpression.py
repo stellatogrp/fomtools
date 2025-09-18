@@ -42,9 +42,6 @@ class LinearExpression:
         1000  # this is necessary else numpy will not even look at the @ operator due to precedence
     )
 
-    # TODO: ndim and decomposition_dict seem to be mutually exclusive
-    #  (If decomposition dict is provided, we can programmatically figure out ndim. )
-
     def __init__(self, decomposition_dict: dict):
         """
         Initialize a `LinearExpression` object with decomposition dictionary.
