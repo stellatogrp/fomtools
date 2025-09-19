@@ -74,7 +74,7 @@ class LinearExpression:
         if const is not None:
             if const.ndim != 1:
                 raise ValueError("Matrix for a constant must be 1-dimensional.")
-            if self.ndim > 0 and const.shape[0] != self.ndim:
+            if 0 < self.ndim != const.shape[0]:
                 raise ValueError(
                     "Matrix for a constant must have same number of rows as decomposition dict."
                 )
