@@ -1,7 +1,6 @@
 from algoverify.dict_utils import merge_dict, prune_dict
 from algoverify.linearexpression import LinearExpression
 from algoverify.linexprstack import LinExprStack
-from algoverify.vector import Vector
 from algoverify.verifier import (
     Verifier,
     as_array,

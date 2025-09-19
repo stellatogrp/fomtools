@@ -4,8 +4,8 @@ import numpy as np
 
 from algoverify.canonicalizers.gurobi_canonicalizer import GurobiCanonicalizer
 from algoverify.canonicalizers.obbt_handlers import GurobiOBBTHandler
-from algoverify.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 from algoverify.linearexpression import LinearExpression
+from algoverify.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 log = logging.getLogger(__name__)
 
