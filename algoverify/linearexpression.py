@@ -62,20 +62,25 @@ class LinearExpression:
             of rows.
 
         """
+
         shapes = {mat.shape[0] for mat in decomposition_dict.values()}
         if len(shapes) > 1:
             raise ValueError(
                 f"""All coefficient matrices must have the same number of rows;
                     found row counts {len(shapes)}"""
             )
+
         self.ndim = shapes.pop() if len(shapes) == 1 else 0
         if const is not None:
             if const.ndim != 1:
                 raise ValueError("Matrix for a constant must be 1-dimensional.")
-            if const.shape[0] != self.ndim:
+            if self.ndim > 0 and const.shape[0] != self.ndim:
                 raise ValueError(
                     "Matrix for a constant must have same number of rows as decomposition dict."
                 )
+            # in case the only remaining term in an expression is a constant 
+            elif self.ndim == 0:
+                self.ndim = const.shape[0]
 
         self.const = np.zeros(self.ndim) if const is None else const
         self.const = const
@@ -143,8 +148,7 @@ class LinearExpression:
                              {self.ndim} != {other.ndim} """)
 
         merged_decomposition_dict = merge_dict(self.decomposition_dict, other.decomposition_dict)
-
-        return LinearExpression(decomposition_dict=prune_dict(merged_decomposition_dict))
+        return LinearExpression(decomposition_dict=prune_dict(merged_decomposition_dict), const=self.const + other.const)
 
     def __mul__(self, scalar: Union[float, int]) -> "LinearExpression":
         """
@@ -172,6 +176,7 @@ class LinearExpression:
                 decomposition_dict={
                     k: v * float(scalar) for k, v in self.decomposition_dict.items()
                 },
+                const=self.const * float(scalar)
             )
         except ValueError:
             raise TypeError(
@@ -314,6 +319,7 @@ class LinearExpression:
         try:
             return LinearExpression(
                 decomposition_dict={k: matrix @ v for k, v in self.decomposition_dict.items()},
+                const= np.asarray(matrix @ self.const).ravel()
             )
         except TypeError:
             raise TypeError(
