@@ -1,4 +1,4 @@
-from typing import Union, Self
+from typing import Self, Union
 
 import numpy as np
 import scipy.sparse as spa
@@ -148,6 +148,10 @@ class LinearExpression:
             if len(other) == self.ndim:
                 return LinearExpression(
                     decomposition_dict=self.decomposition_dict, const=self.const + other
+                )
+            else:
+                raise ValueError(
+                    f"Cannot add constant of mismatched dimensions. Expected dimension: {self.ndim}, got {len(other)}"
                 )
         except TypeError:
             try:
