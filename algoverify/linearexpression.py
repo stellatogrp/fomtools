@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, Self
 
 import numpy as np
 import scipy.sparse as spa
@@ -78,7 +78,7 @@ class LinearExpression:
                 raise ValueError(
                     "Matrix for a constant must have same number of rows as decomposition dict."
                 )
-            # in case the only remaining term in an expression is a constant 
+            # in case the only remaining term in an expression is a constant
             elif self.ndim == 0:
                 self.ndim = const.shape[0]
 
@@ -89,7 +89,7 @@ class LinearExpression:
         self.is_leaf = False
 
     @classmethod
-    def from_int(cls, ndim: int) -> "LinearExpression":
+    def from_int(cls, ndim: int) -> Self:
         """
         Initialize a `LinearExpression` object with an integer `ndim`. Internally, this
         creates a decomposition dictionary that maps the `LinearExpression` object with a sparse
@@ -122,13 +122,13 @@ class LinearExpression:
     def __repr__(self):
         return f"<LinearExpression {'Leaf' if self.is_leaf else ''}, dim={self.ndim}>"
 
-    def __add__(self, other: "LinearExpression") -> "LinearExpression":
+    def __add__(self, other: Union[Self, np.array, list]) -> Self:
         """
         Add two `LinearExpression` objects, ensuring they have the same dimension.
 
         Parameters
         ----------
-        other : LinearExpression
+        other : LinearExpression, np.array, list
             The expression to add to this one.
 
         Returns
@@ -143,14 +143,29 @@ class LinearExpression:
         ValueError
             If the `LinearExpression` objects to be added together does not have the same dimension.
         """
-        if self.ndim != other.ndim:
-            raise ValueError(f"""Cannot add LinearExpression objects with mismatched dimensions:
-                             {self.ndim} != {other.ndim} """)
+        try:
+            # Check to see if other is of type list or a numpy array
+            if len(other) == self.ndim:
+                return LinearExpression(
+                    decomposition_dict=self.decomposition_dict, const=self.const + other
+                )
+        except TypeError:
+            try:
+                # Check to see if other is of type LinearExpression
+                if self.ndim == other.ndim:
+                    merged_decomposition_dict = merge_dict(
+                        self.decomposition_dict, other.decomposition_dict
+                    )
+                    return LinearExpression(
+                        decomposition_dict=prune_dict(merged_decomposition_dict),
+                        const=self.const + other.const,
+                    )
+            except AttributeError:
+                raise ValueError(
+                    f"Can only add LinearExpression objects to a LinearExpression object, numpy arrays, and list, got type {type(other)}."
+                )
 
-        merged_decomposition_dict = merge_dict(self.decomposition_dict, other.decomposition_dict)
-        return LinearExpression(decomposition_dict=prune_dict(merged_decomposition_dict), const=self.const + other.const)
-
-    def __mul__(self, scalar: Union[float, int]) -> "LinearExpression":
+    def __mul__(self, scalar: Union[float, int]) -> Self:
         """
         Multiply this `LinearExpression` object by a scalar.
 
@@ -176,7 +191,7 @@ class LinearExpression:
                 decomposition_dict={
                     k: v * float(scalar) for k, v in self.decomposition_dict.items()
                 },
-                const=self.const * float(scalar)
+                const=self.const * float(scalar),
             )
         except ValueError:
             raise TypeError(
@@ -184,7 +199,7 @@ class LinearExpression:
                  a matrix, use the @ symbol with the matrix on the left."""
             )
 
-    def __rmul__(self, scalar: Union[float, int]) -> "LinearExpression":
+    def __rmul__(self, scalar: Union[float, int]) -> Self:
         """
         Reflected multiplication to support scalar * expression.
 
@@ -210,7 +225,7 @@ class LinearExpression:
         """
         return self * scalar
 
-    def __truediv__(self, scalar: Union[float, int]) -> "LinearExpression":
+    def __truediv__(self, scalar: Union[float, int]) -> Self:
         """
         Divide this LinearExpression by a scalar factor.
 
@@ -241,7 +256,7 @@ class LinearExpression:
 
         return self * (1 / scalar)
 
-    def __neg__(self) -> "LinearExpression":
+    def __neg__(self) -> Self:
         """
         Compute the negation of this LinearExpression.
 
@@ -255,7 +270,7 @@ class LinearExpression:
         """
         return self * -1
 
-    def __sub__(self, other: "LinearExpression") -> "LinearExpression":
+    def __sub__(self, other: Self) -> Self:
         """
         Subtract one LinearExpression from another.
 
@@ -283,7 +298,7 @@ class LinearExpression:
         # TODO
         raise NotImplementedError("np matrix or sp matrix should be on the left of the @")
 
-    def __rmatmul__(self, matrix: Union[np.ndarray, spa.spmatrix]) -> "LinearExpression":
+    def __rmatmul__(self, matrix: Union[np.ndarray, spa.spmatrix]) -> Self:
         """
         Multiply this `LinearExpression` object by another matrix.
 
@@ -319,7 +334,7 @@ class LinearExpression:
         try:
             return LinearExpression(
                 decomposition_dict={k: matrix @ v for k, v in self.decomposition_dict.items()},
-                const= np.asarray(matrix @ self.const).ravel()
+                const=np.asarray(matrix @ self.const).ravel(),
             )
         except TypeError:
             raise TypeError(
