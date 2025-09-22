@@ -80,3 +80,50 @@ def test_composite_LinearExpressions():
     assert spa.linalg.norm(test_expr.decomposition_dict[x] - spa.eye(n)) <= 1e-10
     assert np.linalg.norm(test_expr.decomposition_dict[y] - t * A.T) <= 1e-10
     assert spa.linalg.norm(test_expr.decomposition_dict[c_param] + t * spa.eye(n)) <= 1e-10
+
+
+def test_LinearExpression_const():
+    np.random.seed(0)
+    m = 15
+    n = 10
+    x = LinearExpression.from_int(n)
+
+    y = x + np.ones(n)
+    assert np.allclose(y.const, np.full(n, 1.0))
+
+    x1 = LinearExpression.from_int(m) + np.ones(m)
+    x2 = LinearExpression.from_int(m) + np.ones(m)
+
+    y1 = x1 + x2
+    assert np.allclose(y1.const, np.full(m, 2.0))
+
+    y2 = x1 * 2
+    assert np.allclose(y2.const, np.full(m, 2.0))
+
+    y3 = -x1
+    assert np.allclose(y3.const, np.full(m, -1.0))
+
+    A = np.random.normal(size=(m, m))
+    y4 = A @ x1
+    assert np.allclose(
+        y4.const,
+        np.array(
+            [
+                10.305124759797446,
+                2.980568658097792,
+                -3.5177123686392218,
+                -5.167943315980211,
+                -4.653576369372361,
+                0.6419465154339059,
+                4.453573614583073,
+                10.871428039550418,
+                1.0422981175013304,
+                1.8518359099179722,
+                -0.9835712059772468,
+                -1.0339206780812593,
+                -7.531465321271639,
+                4.512467241345987,
+                -0.05284513124944179,
+            ]
+        ),
+    )
