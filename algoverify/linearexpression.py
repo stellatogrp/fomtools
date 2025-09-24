@@ -58,9 +58,15 @@ class LinearExpression:
         Raises
         ------
         ValueError
-            If all the coefficient matrices in the decomposition dict doesn't have the same number
+            If all the coefficient matrices in the `decomposition_dict` doesn't have the same number
             of rows.
 
+        ValueError
+            If `const` is not one-dimensional.
+
+        ValueError
+            If the number of rows in `const` does not equal the number of rows in coefficient
+            matrices in the `decomposition_dict`.
         """
 
         shapes = {mat.shape[0] for mat in decomposition_dict.values()}
@@ -129,7 +135,7 @@ class LinearExpression:
         Parameters
         ----------
         other : LinearExpression, np.array, list
-            The expression to add to this one.
+            The expression or a vector to add to this one.
 
         Returns
         -------
@@ -141,7 +147,12 @@ class LinearExpression:
         Raises:
         ------
         ValueError
-            If the `LinearExpression` objects to be added together does not have the same dimension.
+            If the objects (`LinearExpression` or a vector) to be added together does not have
+            the same dimension.
+
+        ValueError
+            If the object to be added is not of one of the following types: `LinearExpression`,
+            `np.ndarray`, or `list`.
         """
         try:
             # Check to see if other is of type list or a numpy array
@@ -168,6 +179,39 @@ class LinearExpression:
                 raise ValueError(
                     f"Can only add LinearExpression objects to a LinearExpression object, numpy arrays, and list, got type {type(other)}."
                 )
+
+    def __radd__(self, other: Union[Self, np.array, list]) -> Self:
+        """
+        Reflected addition to support other + expression.
+
+        This method is invoked when a `LinearExpression` object appears on
+        the right-hand side of a `+` operation (e.g. `np.array([1,2,3]) + expr`).
+        It delegates to `__add__`, so that both `np.array([1,2,3]) + expr` and
+        `expr + np.array([1,2,3])` behave identically.
+
+        Parameters
+        ----------
+        other : LinearExpression, np.array, list
+            The expression or a vector to add to this one.
+
+        Returns
+        -------
+        LinearExpression
+            A new `LinearExpression` object whose decomposition maps each leaf in the union of both
+            expressiom to the sum of its coefficient matrices, treating any leaf missing from one
+            operand as having a zero coefficient matrix.
+
+        Raises:
+        ------
+        ValueError
+            If the objects (`LinearExpression` or a vector) to be added together does not have
+            the same dimension.
+
+        ValueError
+            If the object to be added is not of one of the following types: `LinearExpression`,
+            `np.ndarray`, or `list`.
+        """
+        return self + other
 
     def __mul__(self, scalar: Union[float, int]) -> Self:
         """
@@ -280,8 +324,8 @@ class LinearExpression:
 
         Parameters
         ----------
-        other : LinearExpression
-            The expression to subtract from this one.
+        other : LinearExpression, np.array, list
+            The expression or a vector xto subtract from this one.
 
         Returns
         -------
@@ -294,6 +338,43 @@ class LinearExpression:
         ------
         ValueError
             If the two `LinearExpression` instances have mismatched dimensions.
+
+        ValueError
+            If the object to be subtracted is not of one of the following types: `LinearExpression`,
+            `np.ndarray`, or `list`.
+
+        """
+        return self + (-other)
+
+    def __rsub__(self, other: Self) -> Self:
+        """
+        Reflected subtraction to support other - expression.
+
+        This method is invoked when a `LinearExpression` object appears on
+        the right-hand side of a `-` operation (e.g. `np.array([1,2,3]) - expr`).
+        It delegates to `__sub__`, so that both `np.array([1,2,3]) - expr` and
+        `expr - np.array([1,2,3])` behave identically.
+
+        Parameters
+        ----------
+        other : LinearExpression, np.array, list
+            The expression or a vector that this one is to be subtracted from.
+
+        Returns
+        -------
+        LinearExpression
+            A new `LinearExpression` object whose decomposition maps each leaf in the union of
+            both expression to the difference of its coefficient matrices, treating any leaf
+            missing from one operand as having a zero coefficient matrix.
+
+        Raises
+        ------
+        ValueError
+            If the two `LinearExpression` instances have mismatched dimensions.
+
+        ValueError
+            If the object to be subtracted is not of one of the following types: `LinearExpression`,
+            `np.ndarray`, or `list`.
 
         """
         return self + (-other)
