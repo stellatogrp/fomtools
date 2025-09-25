@@ -48,7 +48,6 @@ class Affine(Step):
         Return a `LinearExpression` formed by applying $A^{-1}$ (with $A=$ `self.lhs_mat`) to each
         RHS component $b_k$—i.e., solving $A x_k = b_k$ for all $k$."""
         return LinearExpression(
-            self.lhs.get_output_dim(),
             decomposition_dict={
                 k: np.squeeze(np.asarray(np.linalg.solve(self.lhs_mat, v.todense())))
                 for k, v in self.rhs.decomposition_dict.items()
