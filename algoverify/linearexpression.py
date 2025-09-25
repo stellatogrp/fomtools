@@ -4,7 +4,7 @@ import numpy as np
 import scipy.sparse as spa
 
 from algoverify.dict_utils import merge_dict, prune_dict
-
+from algoverify.constraint import EqualityConstraint, LessThanOrEqualityConstraint
 
 class LinearExpression:
     """
@@ -91,7 +91,9 @@ class LinearExpression:
         self.const = np.zeros(self.ndim) if const is None else const
         self.const = const
         self.decomposition_dict = decomposition_dict
-        self.counter = None
+        # TODO: Use a number rather than a None
+        self.counter = LinearExpression.counter
+        LinearExpression.counter += 1
         self.is_leaf = False
 
     @classmethod
@@ -114,8 +116,8 @@ class LinearExpression:
             shape `(ndim, ndim)` as the value.
         """
         obj = cls.__new__(cls)  # uninitialized instance
-        obj.decomposition_dict = {obj: spa.eye(ndim)}
         obj.is_leaf = True
+        obj.decomposition_dict = {obj: spa.eye(ndim)}
         obj.ndim = ndim
         obj.counter = cls.counter
         obj.const = np.zeros(ndim)
@@ -127,6 +129,14 @@ class LinearExpression:
 
     def __repr__(self):
         return f"<LinearExpression {'Leaf' if self.is_leaf else ''}, dim={self.ndim}>"
+
+    def __hash__(self):
+        """
+        The class variable `counter` is used to assign each `LinearExpression` a unique,
+        monotonically increasing ID at construction. This ID can serve as an
+        identity-based hash.
+        """
+        return hash(str(self))
 
     def __add__(self, other: Union[Self, np.array, list]) -> Self:
         """
@@ -176,7 +186,7 @@ class LinearExpression:
                         const=self.const + other.const,
                     )
             except AttributeError:
-                raise ValueError(
+                raise TypeError(
                     f"Can only add LinearExpression objects to a LinearExpression object, numpy arrays, and list, got type {type(other)}."
                 )
 
@@ -438,3 +448,100 @@ class LinearExpression:
     def eval(self):
         # TODO
         raise NotImplementedError("LinExpr.eval() needs to be implemented.")
+
+    def __le__(self, rhs: Union[Self, np.ndarray, list]) -> LessThanOrEqualityConstraint:
+        """
+        Build a less-than-or-equality (`<=`) constraint between this expression and
+        another `LinearExpression` object or numpy vector.`
+
+        Parameters
+        ----------
+        rhs: LinearExpression, np.array, list
+            The right-hand side of the inequalit. Scalars are broadcast to the shape of
+            `self`. Arrays or expressions must be of same shape with `self`.
+
+        Returns
+        -------
+        LessThanOrEqualityConstraint
+            A constraint object representing `self <= rhs`.
+
+        Raises
+        ------
+        TypeError
+            If `rhs` is not a LinearExpression object, NumPy array or a list.
+
+        ValueError
+            If the shapes of `self` and `rhs` are not compatible (i.e., not equal and
+            not broadcastable).
+
+        Notes
+        -----
+        This method does not evaluate the inequality; it only builds a constraint
+        for the solver.
+        """
+        return LessThanOrEqualityConstraint(self, rhs)
+
+    def __eq__(self, rhs: Union[Self, np.ndarray, list]) -> EqualityConstraint:
+        """
+       Build a equality (`==`) constraint between this expression and
+       another `LinearExpression` object or numpy vector.`
+
+       Parameters
+       ----------
+       rhs: LinearExpression, np.array, list
+           The right-hand side of the inequalit. Scalars are broadcast to the shape of
+           `self`. Arrays or expressions must be of same shape with `self`.
+
+       Returns
+       -------
+       EqualityConstraint
+           A constraint object representing `self == rhs`.
+
+       Raises
+       ------
+       TypeError
+           If `rhs` is not a LinearExpression object, NumPy array or a list.
+
+       ValueError
+           If the shapes of `self` and `rhs` are not compatible (i.e., not equal and
+           not broadcastable).
+
+       Notes
+       -----
+       This method does not evaluate the equality; it only builds a constraint
+       for the solver.
+       """
+        return EqualityConstraint(self, rhs)
+
+    def __ge__(self, rhs: Union[Self, np.ndarray, list]) -> LessThanOrEqualityConstraint:
+        """
+       Build a greater-than-or-equality (`>=`) constraint between this expression and
+       another `LinearExpression` object or numpy vector.`
+
+       Parameters
+       ----------
+       rhs: LinearExpression, np.array, list
+           The right-hand side of the inequality. Scalars are broadcast to the shape of
+           `self`. Arrays or expressions must be of same shape with `self`.
+
+       Returns
+       -------
+       LessThanOrEqualityConstraint
+           A constraint object representing `self >= rhs`.
+
+       Raises
+       ------
+       TypeError
+           If `rhs` is not a LinearExpression object, NumPy array or a list.
+
+       ValueError
+           If the shapes of `self` and `rhs` are not compatible (i.e., not equal and
+           not broadcastable).
+
+       Notes
+       -----
+       This method does not evaluate the inequality; it only builds a constraint
+       for the solver.
+       """
+        return LessThanOrEqualityConstraint(-self, -rhs)
+
