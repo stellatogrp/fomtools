@@ -3,8 +3,8 @@ from typing import Self, Union
 import numpy as np
 import scipy.sparse as spa
 
-from algoverify.dict_utils import merge_dict, prune_dict
 from algoverify.constraint import EqualityConstraint, InqualityConstraint
+from algoverify.dict_utils import merge_dict, prune_dict
 
 class LinearExpression:
     """

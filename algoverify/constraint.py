@@ -1,6 +1,6 @@
+from typing import TYPE_CHECKING, Union
+
 import numpy as np
-from typing import Union
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from algoverify.linearexpression import LinearExpression
@@ -70,12 +70,12 @@ class Constraint:
                 if len(rhs) == lhs.ndim:
                     rhs = np.array(rhs)
                 else:
-                    raise ValueError(f"Cannot have a constraint of mismatched dimensions. ")
+                    raise ValueError("Cannot have a constraint of mismatched dimensions. ")
             except TypeError:
                 try:
                     # Check to see if other is of type LinearExpression
                     if lhs.ndim != rhs.ndim:
-                        raise ValueError(f"Cannot have a constraint of mismatched dimensions. ")
+                        raise ValueError("Cannot have a constraint of mismatched dimensions. ")
                 except AttributeError:
                     raise TypeError(
                         f"""Can only create a constraint of a LinearExpression object,"
