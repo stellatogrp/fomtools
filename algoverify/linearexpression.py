@@ -138,13 +138,13 @@ class LinearExpression:
         """
         return hash(str(self))
 
-    def __add__(self, other: Union[Self, np.array, list]) -> Self:
+    def __add__(self, other: Union[Self, np.array, list, int, float]) -> Self:
         """
         Add two `LinearExpression` objects, ensuring they have the same dimension.
 
         Parameters
         ----------
-        other : LinearExpression, np.array, list
+        other : LinearExpression, np.array, list, int, float
             The expression or a vector to add to this one.
 
         Returns
@@ -162,28 +162,38 @@ class LinearExpression:
 
         ValueError
             If the object to be added is not of one of the following types: `LinearExpression`,
-            `np.ndarray`, or `list`.
+            `np.ndarray`,  `float`, `int`, or `list`.
         """
         try:
-            # Check to see if other is of type list or a numpy array
-            if len(other) == self.ndim:
-                return LinearExpression(
-                    decomposition_dict=self.decomposition_dict, const=self.const + other
-                )
-            else:
-                raise ValueError(
-                    f"Cannot add constant of mismatched dimensions. Expected dimension: {self.ndim}, got {len(other)}"
-                )
+            return LinearExpression(
+                decomposition_dict=self.decomposition_dict,
+                const=self.const + np.full(self.ndim, float(other)),
+            )
         except TypeError:
             try:
-                # Check to see if other is of type LinearExpression
-                if self.ndim == other.ndim:
-                    merged_decomposition_dict = merge_dict(
-                        self.decomposition_dict, other.decomposition_dict
-                    )
+                # Check to see if other is of type list or a numpy array
+                if len(other) == self.ndim:
                     return LinearExpression(
-                        decomposition_dict=prune_dict(merged_decomposition_dict),
-                        const=self.const + other.const,
+                        decomposition_dict=self.decomposition_dict, const=self.const + other
+                    )
+                else:
+                    raise ValueError(
+                        f"Cannot add constant of mismatched dimensions. Expected dimension: {self.ndim}, got {len(other)}"
+                    )
+            except TypeError:
+                try:
+                    # Check to see if other is of type LinearExpression
+                    if self.ndim == other.ndim:
+                        merged_decomposition_dict = merge_dict(
+                            self.decomposition_dict, other.decomposition_dict
+                        )
+                        return LinearExpression(
+                            decomposition_dict=prune_dict(merged_decomposition_dict),
+                            const=self.const + other.const,
+                        )
+                except AttributeError:
+                    raise ValueError(
+                        f"Can only add LinearExpression objects to a LinearExpression object, numpy arrays, list, float, or an int got type {type(other)}."
                     )
             except AttributeError:
                 raise TypeError(
