@@ -123,7 +123,7 @@ class EqualityConstraint(Constraint):
 
     def __init__(self, lhs, rhs):
         """
-        Initize an instance of `LessThanOrEqualityConstraint` class.
+        Initize an instance of `InqualityConstraint` class.
 
         Parameters
         ----------
@@ -139,7 +139,7 @@ class EqualityConstraint(Constraint):
         super().__init__(lhs, rhs, operator)
 
 
-class LessThanOrEqualityConstraint(Constraint):
+class InqualityConstraint(Constraint):
     r"""
     An non-strict inequality relation between two expressions (or an expression and a vector),
     of the form.
@@ -168,7 +168,7 @@ class LessThanOrEqualityConstraint(Constraint):
 
     def __init__(self, lhs, rhs):
         """
-        Initize an instance of `LessThanOrEqualityConstraint` class.
+        Initize an instance of `InqualityConstraint` class.
 
         Parameters
         ----------
