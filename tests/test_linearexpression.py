@@ -88,7 +88,7 @@ def test_LinearExpression_const():
     n = 10
     x = LinearExpression.from_int(n)
 
-    y = x + np.ones(n)
+    y = x + 1
     assert np.allclose(y.const, np.full(n, 1.0))
 
     x1 = LinearExpression.from_int(m) + np.ones(m)
@@ -149,7 +149,9 @@ def test_LinearExpression_constr():
     assert np.allclose(constr_2.lhs.const, np.full(n, -1.0))
     assert np.allclose(constr_3.lhs.const, np.full(n, 3.0))
     # ensure greater than is handled accurately
-    assert np.allclose([i.data for i in constr_3.lhs.decomposition_dict.values()][0], np.array([np.full(n, -1)]))
+    assert np.allclose(
+        [i.data for i in constr_3.lhs.decomposition_dict.values()][0], np.array([np.full(n, -1)])
+    )
 
     y1 = LinearExpression.from_int(m) + np.ones(m)
     y2 = LinearExpression.from_int(m) + np.full(m, 4)

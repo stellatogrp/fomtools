@@ -6,6 +6,7 @@ import scipy.sparse as spa
 from algoverify.dict_utils import merge_dict, prune_dict
 from algoverify.constraint import EqualityConstraint, LessThanOrEqualityConstraint
 
+
 class LinearExpression:
     """
     A linear combination of function values, inner products (between points and/ or gradients)
@@ -138,13 +139,13 @@ class LinearExpression:
         """
         return hash(str(self))
 
-    def __add__(self, other: Union[Self, np.array, list]) -> Self:
+    def __add__(self, other: Union[Self, np.array, list, int, float]) -> Self:
         """
         Add two `LinearExpression` objects, ensuring they have the same dimension.
 
         Parameters
         ----------
-        other : LinearExpression, np.array, list
+        other : LinearExpression, np.array, list, int, float
             The expression or a vector to add to this one.
 
         Returns
@@ -162,33 +163,39 @@ class LinearExpression:
 
         ValueError
             If the object to be added is not of one of the following types: `LinearExpression`,
-            `np.ndarray`, or `list`.
+            `np.ndarray`,  `float`, `int`, or `list`.
         """
         try:
-            # Check to see if other is of type list or a numpy array
-            if len(other) == self.ndim:
-                return LinearExpression(
-                    decomposition_dict=self.decomposition_dict, const=self.const + other
-                )
-            else:
-                raise ValueError(
-                    f"Cannot add constant of mismatched dimensions. Expected dimension: {self.ndim}, got {len(other)}"
-                )
+            return LinearExpression(
+                decomposition_dict=self.decomposition_dict,
+                const=self.const + np.full(self.ndim, float(other)),
+            )
         except TypeError:
             try:
-                # Check to see if other is of type LinearExpression
-                if self.ndim == other.ndim:
-                    merged_decomposition_dict = merge_dict(
-                        self.decomposition_dict, other.decomposition_dict
-                    )
+                # Check to see if other is of type list or a numpy array
+                if len(other) == self.ndim:
                     return LinearExpression(
-                        decomposition_dict=prune_dict(merged_decomposition_dict),
-                        const=self.const + other.const,
+                        decomposition_dict=self.decomposition_dict, const=self.const + other
                     )
-            except AttributeError:
-                raise TypeError(
-                    f"Can only add LinearExpression objects to a LinearExpression object, numpy arrays, and list, got type {type(other)}."
-                )
+                else:
+                    raise ValueError(
+                        f"Cannot add constant of mismatched dimensions. Expected dimension: {self.ndim}, got {len(other)}"
+                    )
+            except TypeError:
+                try:
+                    # Check to see if other is of type LinearExpression
+                    if self.ndim == other.ndim:
+                        merged_decomposition_dict = merge_dict(
+                            self.decomposition_dict, other.decomposition_dict
+                        )
+                        return LinearExpression(
+                            decomposition_dict=prune_dict(merged_decomposition_dict),
+                            const=self.const + other.const,
+                        )
+                except AttributeError:
+                    raise ValueError(
+                        f"Can only add LinearExpression objects to a LinearExpression object, numpy arrays, list, float, or an int got type {type(other)}."
+                    )
 
     def __radd__(self, other: Union[Self, np.array, list]) -> Self:
         """
@@ -483,65 +490,64 @@ class LinearExpression:
 
     def __eq__(self, rhs: Union[Self, np.ndarray, list]) -> EqualityConstraint:
         """
-       Build a equality (`==`) constraint between this expression and
-       another `LinearExpression` object or numpy vector.`
+        Build a equality (`==`) constraint between this expression and
+        another `LinearExpression` object or numpy vector.`
 
-       Parameters
-       ----------
-       rhs: LinearExpression, np.array, list
-           The right-hand side of the inequalit. Scalars are broadcast to the shape of
-           `self`. Arrays or expressions must be of same shape with `self`.
+        Parameters
+        ----------
+        rhs: LinearExpression, np.array, list
+            The right-hand side of the inequalit. Scalars are broadcast to the shape of
+            `self`. Arrays or expressions must be of same shape with `self`.
 
-       Returns
-       -------
-       EqualityConstraint
-           A constraint object representing `self == rhs`.
+        Returns
+        -------
+        EqualityConstraint
+            A constraint object representing `self == rhs`.
 
-       Raises
-       ------
-       TypeError
-           If `rhs` is not a LinearExpression object, NumPy array or a list.
+        Raises
+        ------
+        TypeError
+            If `rhs` is not a LinearExpression object, NumPy array or a list.
 
-       ValueError
-           If the shapes of `self` and `rhs` are not compatible (i.e., not equal and
-           not broadcastable).
+        ValueError
+            If the shapes of `self` and `rhs` are not compatible (i.e., not equal and
+            not broadcastable).
 
-       Notes
-       -----
-       This method does not evaluate the equality; it only builds a constraint
-       for the solver.
-       """
+        Notes
+        -----
+        This method does not evaluate the equality; it only builds a constraint
+        for the solver.
+        """
         return EqualityConstraint(self, rhs)
 
     def __ge__(self, rhs: Union[Self, np.ndarray, list]) -> LessThanOrEqualityConstraint:
         """
-       Build a greater-than-or-equality (`>=`) constraint between this expression and
-       another `LinearExpression` object or numpy vector.`
+        Build a greater-than-or-equality (`>=`) constraint between this expression and
+        another `LinearExpression` object or numpy vector.`
 
-       Parameters
-       ----------
-       rhs: LinearExpression, np.array, list
-           The right-hand side of the inequality. Scalars are broadcast to the shape of
-           `self`. Arrays or expressions must be of same shape with `self`.
+        Parameters
+        ----------
+        rhs: LinearExpression, np.array, list
+            The right-hand side of the inequality. Scalars are broadcast to the shape of
+            `self`. Arrays or expressions must be of same shape with `self`.
 
-       Returns
-       -------
-       LessThanOrEqualityConstraint
-           A constraint object representing `self >= rhs`.
+        Returns
+        -------
+        LessThanOrEqualityConstraint
+            A constraint object representing `self >= rhs`.
 
-       Raises
-       ------
-       TypeError
-           If `rhs` is not a LinearExpression object, NumPy array or a list.
+        Raises
+        ------
+        TypeError
+            If `rhs` is not a LinearExpression object, NumPy array or a list.
 
-       ValueError
-           If the shapes of `self` and `rhs` are not compatible (i.e., not equal and
-           not broadcastable).
+        ValueError
+            If the shapes of `self` and `rhs` are not compatible (i.e., not equal and
+            not broadcastable).
 
-       Notes
-       -----
-       This method does not evaluate the inequality; it only builds a constraint
-       for the solver.
-       """
+        Notes
+        -----
+        This method does not evaluate the inequality; it only builds a constraint
+        for the solver.
+        """
         return LessThanOrEqualityConstraint(-self, -rhs)
-
