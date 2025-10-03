@@ -1,10 +1,7 @@
-import os
-import sys
+
 import cvxpy as cp
 import numpy as np
 
-# Ensure package root is on path when running this file directly
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from algoverify.verifier import Verifier
 
 
