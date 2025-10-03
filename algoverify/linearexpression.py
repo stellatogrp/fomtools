@@ -3,7 +3,7 @@ from typing import Self, Union
 import numpy as np
 import scipy.sparse as spa
 
-from algoverify.constraint import EqualityConstraint, InqualityConstraint
+from algoverify.constraint import EqualityConstraint, InequalityConstraint
 from algoverify.dict_utils import merge_dict, prune_dict
 
 class LinearExpression:
@@ -459,7 +459,7 @@ class LinearExpression:
         # TODO
         raise NotImplementedError("LinExpr.eval() needs to be implemented.")
 
-    def __le__(self, rhs: Union[Self, np.ndarray, list]) -> InqualityConstraint:
+    def __le__(self, rhs: Union[Self, np.ndarray, list]) -> InequalityConstraint:
         """
         Build a less-than-or-equality (`<=`) constraint between this expression and
         another `LinearExpression` object or numpy vector.`
@@ -472,7 +472,7 @@ class LinearExpression:
 
         Returns
         -------
-        InqualityConstraint
+        InequalityConstraint
             A constraint object representing `self <= rhs`.
 
         Raises
@@ -489,7 +489,7 @@ class LinearExpression:
         This method does not evaluate the inequality; it only builds a constraint
         for the solver.
         """
-        return InqualityConstraint(self, rhs)
+        return InequalityConstraint(self, rhs)
 
     def __eq__(self, rhs: Union[Self, np.ndarray, list]) -> EqualityConstraint:
         """
@@ -523,7 +523,7 @@ class LinearExpression:
        """
         return EqualityConstraint(self, rhs)
 
-    def __ge__(self, rhs: Union[Self, np.ndarray, list]) -> InqualityConstraint:
+    def __ge__(self, rhs: Union[Self, np.ndarray, list]) -> InequalityConstraint:
         """
        Build a greater-than-or-equality (`>=`) constraint between this expression and
        another `LinearExpression` object or numpy vector.`
@@ -536,7 +536,7 @@ class LinearExpression:
 
         Returns
         -------
-        InqualityConstraint
+        InequalityConstraint
             A constraint object representing `self >= rhs`.
 
        Raises
@@ -553,4 +553,4 @@ class LinearExpression:
         This method does not evaluate the inequality; it only builds a constraint
         for the solver.
         """
-        return InqualityConstraint(-self, -rhs)
+        return InequalityConstraint(-self, -rhs)
