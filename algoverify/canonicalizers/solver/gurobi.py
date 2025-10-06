@@ -4,7 +4,7 @@ import gurobipy as gp
 import numpy as np
 import scipy.sparse as spa
 
-from algoverify.canonicalizers.solver.canonicalizer import Canonicalizer
+from algoverify.canonicalizers.solver.solver import Solver
 from algoverify.canonicalizers.huchette_cuts.relu import relu_add_conv_cuts, relu_create_new_constr
 from algoverify.canonicalizers.huchette_cuts.soft_threshold import (
     st_add_neg_conv_cuts,
@@ -17,7 +17,7 @@ from algoverify.steps import Relu, SoftThreshold
 log = logging.getLogger(__name__)
 
 
-class GurobiCanonicalizer(Canonicalizer):
+class GurobiCanonicalizer(Solver):
     def __init__(self, solver_params={}):
         self.vector_var_map = {}
         self.model = gp.Model()

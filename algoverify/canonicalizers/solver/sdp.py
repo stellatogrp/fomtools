@@ -1,9 +1,9 @@
 import numpy as np
 
-from algoverify.canonicalizers.solver.canonicalizer import Canonicalizer
+from algoverify.canonicalizers.solver.solver import Solver
 
 
-class SDPCanonicalizer(Canonicalizer):
+class SDPCanonicalizer(Solver):
 
     def __init__(self, solver_params={}):
         super().__init__(solver_params=solver_params)
