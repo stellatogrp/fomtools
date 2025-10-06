@@ -1,6 +1,6 @@
 import numpy as np
 
-from algoverify.canonicalizers.canonicalizer import Canonicalizer
+from algoverify.canonicalizers.solver.canonicalizer import Canonicalizer
 
 
 class SDPCanonicalizer(Canonicalizer):
