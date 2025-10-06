@@ -88,7 +88,7 @@ def test_LinearExpression_const():
     n = 10
     x = LinearExpression.from_int(n)
 
-    y = x + np.ones(n)
+    y = x + 1
     assert np.allclose(y.const, np.full(n, 1.0))
 
     x1 = LinearExpression.from_int(m) + np.ones(m)
