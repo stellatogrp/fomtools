@@ -3,7 +3,7 @@ import numpy as np
 from algoverify.canonicalizers.solver.solver import Solver
 
 
-class SDPCanonicalizer(Solver):
+class SDPSolver(Solver):
 
     def __init__(self, solver_params={}):
         super().__init__(solver_params=solver_params)

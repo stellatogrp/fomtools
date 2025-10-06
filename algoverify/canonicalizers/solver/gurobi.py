@@ -17,7 +17,7 @@ from algoverify.steps import Relu, SoftThreshold
 log = logging.getLogger(__name__)
 
 
-class GurobiCanonicalizer(Solver):
+class GurobiSolver(Solver):
     def __init__(self, solver_params={}):
         self.vector_var_map = {}
         self.model = gp.Model()

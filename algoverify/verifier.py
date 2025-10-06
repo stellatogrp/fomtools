@@ -2,7 +2,7 @@ import logging
 
 import numpy as np
 
-from algoverify.canonicalizers.solver.gurobi import GurobiCanonicalizer
+from algoverify.canonicalizers.solver.gurobi import GurobiSolver
 from algoverify.canonicalizers.obbt_handlers import GurobiOBBTHandler
 from algoverify.linearexpression import LinearExpression
 from algoverify.steps import Affine, Relu, SaturatedLinear, SoftThreshold
@@ -31,7 +31,7 @@ class Verifier(object):
         self.constraint_sets = []
 
         if solver == "gurobi":
-            self.canonicalizer = GurobiCanonicalizer(solver_params=solver_params)
+            self.canonicalizer = GurobiSolver(solver_params=solver_params)
 
         if obbt_handler == "gurobi":
             self.obbt_handler = GurobiOBBTHandler()
