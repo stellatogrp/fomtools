@@ -223,7 +223,7 @@ class Verifier(object):
         self.upper_bounds[out_iterate] = out_ub
 
         self.canonicalizer.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
-        self.canonicalizer.add_saturated_linear_constraints(step, out_lb, out_ub)
+        self.canonicalizer.add_saturated_linear_constraints(step)
 
         if self.obbt:
             self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
@@ -282,9 +282,7 @@ class Verifier(object):
         self.upper_bounds[out_iterate] = out_ub
 
         self.canonicalizer.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
-        self.canonicalizer.add_saturated_linear_param_constraints(
-            step, out_lb, out_ub, l_lb, l_ub, u_lb, u_ub
-        )
+        self.canonicalizer.add_saturated_linear_param_constraints(step)
 
         if self.obbt:
             self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
@@ -403,11 +401,7 @@ class Verifier(object):
         self.canonicalizer.set_infinity_norm_objective(expr_list, lb_list, ub_list)
 
     def solve(self, **kwargs):
-        # print(self.steps)
-        res = self.canonicalizer.solve_model(
-            self.steps, self.lower_bounds, self.upper_bounds, **kwargs
-        )
-        return res
+        return self.canonicalizer.solve_model(self.steps, self.lower_bounds, self.upper_bounds, **kwargs)
 
     def extract_solver_data(self):
         return self.canonicalizer.get_solve_data()
