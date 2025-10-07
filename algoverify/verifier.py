@@ -58,7 +58,8 @@ class Verifier(object):
         ubs = []
 
         for p in param_list:
-            assert p in self.params
+            # TODO: the following line uses '==' operator which we just overloaded
+            # assert p in self.params
             dim += p.ndim
             lbs.append(self.lower_bounds[p])
             ubs.append(self.upper_bounds[p])

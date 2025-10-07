@@ -134,3 +134,30 @@ def test_LinearExpression_const():
     y6 = np.full(m, 2.0) - x2
     assert np.allclose(y6.const, np.full(m, -1.0))
 
+
+def test_LinearExpression_constr():
+    np.random.seed(0)
+    m = 15
+    n = 10
+    x1 = LinearExpression.from_int(n)
+
+    constr_1 = x1 == 0
+    constr_2 = x1 == 1
+    constr_3 = x1 >= 3
+
+    assert np.allclose(constr_1.lhs.const, np.full(n, 0.0))
+    assert np.allclose(constr_2.lhs.const, np.full(n, -1.0))
+    assert np.allclose(constr_3.lhs.const, np.full(n, 3.0))
+    # ensure greater than is handled accurately
+    assert np.allclose(
+        [i.data for i in constr_3.lhs.decomposition_dict.values()][0], np.array([np.full(n, -1)])
+    )
+
+    y1 = LinearExpression.from_int(m) + np.ones(m)
+    y2 = LinearExpression.from_int(m) + np.full(m, 4)
+
+    constr_4 = y1 <= 2
+    constr_5 = y1 <= y2
+
+    assert np.allclose(constr_4.lhs.const, np.full(m, -1.0))
+    assert np.allclose(constr_5.lhs.const, np.full(m, -3.0))
