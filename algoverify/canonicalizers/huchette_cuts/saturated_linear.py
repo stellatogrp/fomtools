@@ -2,7 +2,6 @@ import copy
 
 import numpy as np
 
-
 def st_add_pos_conv_cuts(wi, ai, y, lambd, y_l, y_u):
     L_hat = np.zeros(y_l.shape)
     U_hat = np.zeros(y_u.shape)

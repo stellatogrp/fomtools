@@ -12,7 +12,9 @@ from algoverify.canonicalizers.huchette_cuts.soft_threshold import (
     st_create_new_neg_constr,
     st_create_new_pos_constr,
 )
-from algoverify.steps import Relu, SoftThreshold
+from algoverify.steps.relu import ReluStep
+from algoverify.steps.soft_threshold import SoftThresholdStep
+from algoverify.steps.saturated_linear import SaturatedLinearStep
 
 log = logging.getLogger(__name__)
 
@@ -671,10 +673,10 @@ class GurobiCanonicalizer(Canonicalizer):
         for step in steps:
             if isinstance(step, Relu):
                 self.relu_huchette_cuts(relaxed_model, step, lower_bounds, upper_bounds, **kwargs)
-            elif isinstance(step, SoftThreshold):
-                self.soft_threshold_huchette_cuts(
-                    relaxed_model, step, lower_bounds, upper_bounds, **kwargs
-                )
+            elif isinstance(step, SoftThresholdStep):
+                self.soft_threshold_huchette_cuts(relaxed_model, step, lower_bounds, upper_bounds, **kwargs)
+            elif isinstance(step, SaturatedLinearStep):
+                self.saturated_linear_huchette_cuts(relaxed_model, step, lower_bounds, upper_bounds, **kwargs)
 
         self.model_to_opt.update()
 
