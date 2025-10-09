@@ -497,9 +497,6 @@ class GurobiSolver(Solver):
 
         return out
 
-    def extract_var_by_name(self, var, new_model):
-        return new_model.getVarByName(var.VarName)
-
     def extract_vec_var_by_name(self, var, new_model):
         return gp.MVar.fromlist(
             [new_model.getVarByName(var[i].item().VarName) for i in range(var.shape[0])]
