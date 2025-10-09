@@ -25,7 +25,6 @@ class GurobiSolver(Solver):
         for key, val in solver_params.items():
             self.model.setParam(key, val)
 
-        self.model_to_opt = None
         self.step_constr_map = {}
         self.obj_constraints = []
 
@@ -41,6 +40,7 @@ class GurobiSolver(Solver):
 
     def add_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
         self._add_term(iterate, lb, ub)
+
 
     def add_param_stack_var(self, param_stack_var, param_list):
         """
@@ -88,8 +88,9 @@ class GurobiSolver(Solver):
     def get_binary_var(self):
         return self.model.addVar(vtype=gp.GRB.BINARY)
 
-    # def get_var(self, n, ub):
-    #     return self.model
+    def add_matrix_var(self, n, ub):
+        return self.model.addMVar(n, ub)
+
 
     def add_relu_constraints(self, step):
         assert step.lhs in self.vector_var_map
@@ -343,19 +344,15 @@ class GurobiSolver(Solver):
 
     def set_zero_objective(self):
         # this function is mostly just for debugging the constraints
-        self.model_to_opt = self.model.copy()
-        self.model_to_opt.setObjective(0)
-        self.model_to_opt.update()
+        self.model.setObjective(0)
+        self.model.update()
 
     def set_infinity_norm_objective(self, expr_list, lb_list, ub_list):
         self.model.update()
-        if self.model_to_opt is not None:
-            self.model_to_opt.dispose()
-        self.model_to_opt = self.model.copy()
 
         constraints = []
         M = np.maximum(np.max(np.abs(np.hstack(ub_list))), np.max(np.abs(np.hstack(lb_list))))
-        q = self.model_to_opt.addVar(ub=M)
+        q = self.model.addVar(ub=M)
 
         all_gammas = []
 
@@ -363,8 +360,8 @@ class GurobiSolver(Solver):
             n = expr.get_output_dim()
             rhs_gp_expr = self.expression_to_solver(expr)
 
-            up = self.model_to_opt.addMVar(n, ub=np.abs(ub))
-            un = self.model_to_opt.addMVar(n, ub=np.abs(lb))
+            up = self.model.addMVar(n, ub=np.abs(ub))
+            un = self.model.addMVar(n, ub=np.abs(lb))
 
             constraints.append(up - un == rhs_gp_expr)
 
@@ -374,12 +371,12 @@ class GurobiSolver(Solver):
                 elif ub[i] < 0:
                     constraints.append(up[i] == 0)
                 else:
-                    vobji = self.model_to_opt.addMVar(1, vtype=gp.GRB.BINARY)
+                    vobji = self.model.addMVar(1, vtype=gp.GRB.BINARY)
                     constraints.extend(
                         [up[i] <= np.abs(ub[i]) * vobji, un[i] <= np.abs(lb[i]) * (1 - vobji)]
                     )
 
-            gamma = self.model_to_opt.addMVar(n, vtype=gp.GRB.BINARY)
+            gamma = self.model.addMVar(n, vtype=gp.GRB.BINARY)
             for i in range(n):
                 constraints.extend([q >= up[i] + un[i], q <= up[i] + un[i] + M * (1 - gamma[i])])
 
@@ -391,9 +388,9 @@ class GurobiSolver(Solver):
         constraints.append(gamma_constr == 1)
 
         for constr in constraints:
-            self.model_to_opt.addConstr(constr)
-        self.model_to_opt.setObjective(q, gp.GRB.MAXIMIZE)
-        self.model_to_opt.update()
+            self.model.addConstr(constr)
+        self.model.setObjective(q, gp.GRB.MAXIMIZE)
+        self.model.update()
 
     def solve_model(self, steps, lower_bounds, upper_bounds, **kwargs):
         if "huchette_cuts" in kwargs:
@@ -402,18 +399,18 @@ class GurobiSolver(Solver):
 
         if "include_rel_LP_sol" in kwargs:
             if kwargs["include_rel_LP_sol"]:
-                rel_model = self.model_to_opt.relax()
+                rel_model = self.model.relax()
                 rel_model.optimize()
                 self.rel_LP_sol = rel_model.objVal
             else:
                 self.rel_LP_sol = None
         else:
             self.rel_LP_sol = None
-        self.model_to_opt.optimize()
-        return self.model_to_opt.objVal
+        self.model.optimize()
+        return self.model.objVal
 
     def add_huchette_cuts(self, steps, lower_bounds, upper_bounds, **kwargs):
-        relaxed_model = self.model_to_opt.relax()
+        relaxed_model = self.model.relax()
         relaxed_model.optimize()
 
         for step in steps:
@@ -422,7 +419,7 @@ class GurobiSolver(Solver):
             elif isinstance(step, SoftThreshold):
                 self.soft_threshold_huchette_cuts(relaxed_model, step, lower_bounds, upper_bounds)
 
-        self.model_to_opt.update()
+        self.model.update()
 
     def relu_huchette_cuts(self, relaxed_model, step, lower_bounds, upper_bounds, **kwargs):
         w, A, y, l, u, w_var, y_var = self.extract_vecs_for_huchette_cuts(
@@ -436,7 +433,7 @@ class GurobiSolver(Solver):
                     new_constr = relu_create_new_constr(
                         w_var[i], A[i, :], y_var, Iint, lI, h, Lhat, Uhat
                     )
-                    self.model_to_opt.addConstr(new_constr)
+                    self.model.addConstr(new_constr)
 
     def soft_threshold_huchette_cuts(self, relaxed_model, step, lower_bounds, upper_bounds):
         w, A, y, l, u, w_var, y_var = self.extract_vecs_for_huchette_cuts(
@@ -464,7 +461,7 @@ class GurobiSolver(Solver):
                     )
 
                 if constr is not None:
-                    self.model_to_opt.addConstr(constr)
+                    self.model.addConstr(constr)
 
     def extract_vecs_for_huchette_cuts(
         self, relaxed_model, step, lower_bounds, upper_bounds, **kwargs
@@ -497,7 +494,7 @@ class GurobiSolver(Solver):
         out = 0
         for k, v in iterate.decomposition_dict.items():
             out += v @ [
-                self.model_to_opt.getVarByName(var.VarName.item()).X
+                self.model.getVarByName(var.VarName.item()).X
                 for var in self.vector_var_map[k]
             ]
 
@@ -509,12 +506,11 @@ class GurobiSolver(Solver):
         )
 
     def get_solve_data(self):
-        model = self.model_to_opt
         return {
-            "objVal": model.objVal,
-            "objBound": model.objBound,
-            "MIPGap": model.MIPGap,
-            "Runtime": model.Runtime,
+            "objVal": self.model.objVal,
+            "objBound": self.model.objBound,
+            "MIPGap": self.model.MIPGap,
+            "Runtime": self.model.Runtime,
             "rel_LP_sol": self.rel_LP_sol,
-            "numBinVars": model.NumBinVars,
+            "numBinVars": self.model.NumBinVars,
         }
