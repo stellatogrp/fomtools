@@ -311,41 +311,6 @@ class GurobiSolver(Solver):
         self.constraints_to_solver(step, constraints)
 
 
-    def obbt(self, linexpr):
-        # create/solve the obbt problem for all elements in linexpr
-        self.model.update()
-
-        lb_out = np.zeros(linexpr.ndim)
-        ub_out = np.zeros(linexpr.ndim)
-
-        for sense in [gp.GRB.MINIMIZE, gp.GRB.MAXIMIZE]:
-            for i in range(linexpr.ndim):
-                self.model.setObjective(self.expr_to_solver(linexpr)[i], sense)
-                self.model.update()
-
-                obbt_model = self.model.relax()
-                obbt_model.Params.OutputFlag = 0
-                obbt_model.update()
-                obbt_model.optimize()
-
-                if obbt_model.status != gp.GRB.OPTIMAL:
-                    log.info(f"bound tighting failed, GRB model status: {obbt_model.status}")
-                    log.info(f"i = {i}, sense={sense}")
-                    exit(0)
-                    return None
-
-                if sense == gp.GRB.MAXIMIZE:
-                    ub_out[i] = obbt_model.objVal
-                else:
-                    lb_out[i] = obbt_model.objVal
-
-        # reset objective
-        self.model.setObjective(0)
-
-        assert np.all(lb_out <= ub_out)
-
-        return lb_out, ub_out
-
     def add_theory_cut(self, C, target_expr, bound_lb, bound_ub):
         if C == np.inf:
             return
