@@ -29,7 +29,7 @@ class GurobiSolver(Solver):
         self.obj_constraints = []
 
     def _add_term(self, term, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[term] = self.add_matrix_var(term.ndim, lb=lb, ub=ub)
+        self.vector_var_map[term] = self.get_matrix_var(term.ndim, lb=lb, ub=ub)
         self.model.update()
 
     def add_param_var(self, param, lb=-np.inf, ub=np.inf):
@@ -85,11 +85,30 @@ class GurobiSolver(Solver):
         self.model.addConstr(constraint)
         self.model.update()
 
-    def get_binary_var(self):
-        return self.model.addVar(vtype=gp.GRB.BINARY)
+    def get_var(self, vtype='continuous'):
+        match vtype:
+            case 'continuous':
+                vtype=gp.GRB.CONTINUOUS
+            case 'binary':
+                vtype=gp.GRB.BINARY
+            case _:
+                raise TypeError(f'Variable type must be either continuous or binary, got {vtype}')
 
-    def add_matrix_var(self, n, lb=-np.inf, ub=np.inf):
-        return self.model.addMVar(n, lb=lb, ub=ub)
+        return self.model.addVar(vtype=vtype)
+
+
+
+    def get_matrix_var(self, n, lb=-np.inf, ub=np.inf, vtype ='continuous'):
+        match vtype:
+            case 'continuous':
+                vtype=gp.GRB.CONTINUOUS
+            case 'binary':
+                vtype=gp.GRB.BINARY
+            case _:
+                raise TypeError(f'Variable type must be either continuous or binary, got {vtype}')
+
+        return self.model.addMVar(n, lb=lb, ub=ub, vtype=vtype)
+
 
 
     def add_relu_constraints(self, step):
@@ -113,7 +132,7 @@ class GurobiSolver(Solver):
                     constraints.append(_lhs == _rhs)
                 elif step.ub[i] > 0 or step.lb[i] <= 0:
                     if not step.relax_binary_vars:
-                        new_vars[i] = self.get_binary_var()
+                        new_vars[i] = self.get_var(vtype='binary')
                         step.idx_with_binary_vars.add(i)
                         constraints.append(_lhs <= step.ub[i] * new_vars[i])
 
@@ -145,8 +164,8 @@ class GurobiSolver(Solver):
                 constraints.append(lhs[i] == rhs[i])
             else:
                 if not step.relax_binary_vars:
-                    w1 = self.get_binary_var()
-                    w2 = self.get_binary_var()
+                    w1 = self.get_var(vtype='binary')
+                    w2 = self.get_var(vtype='binary')
                     if step.lb[i] < step.l[i]:
                         constraints.extend(
                             [
@@ -244,8 +263,8 @@ class GurobiSolver(Solver):
                 constraints.append(lhs[i] == 0.0)
             else:
                 if not step.relax_binary_vars:
-                    new_w1[i] = self.get_binary_var()
-                    new_w2[i] = self.get_binary_var()
+                    new_w1[i] = self.get_var(vtype='binary')
+                    new_w2[i] = self.get_var(vtype='binary')
                     step.idx_with_right_binary_vars.add(i)
 
                     if step.ub[i] > step.lambd:
@@ -360,8 +379,8 @@ class GurobiSolver(Solver):
             n = expr.get_output_dim()
             rhs_gp_expr = self.expression_to_solver(expr)
 
-            up = self.add_matrix_var(n, ub=np.abs(ub))
-            un = self.add_matrix_var(n, ub=np.abs(lb))
+            up = self.get_matrix_var(n, ub=np.abs(ub))
+            un = self.get_matrix_var(n, ub=np.abs(lb))
 
             constraints.append(up - un == rhs_gp_expr)
 
@@ -371,12 +390,12 @@ class GurobiSolver(Solver):
                 elif ub[i] < 0:
                     constraints.append(up[i] == 0)
                 else:
-                    vobji = self.model.addMVar(1, vtype=gp.GRB.BINARY)
+                    vobji = self.get_matrix_var(1, vtype='binary')
                     constraints.extend(
                         [up[i] <= np.abs(ub[i]) * vobji, un[i] <= np.abs(lb[i]) * (1 - vobji)]
                     )
 
-            gamma = self.model.addMVar(n, vtype=gp.GRB.BINARY)
+            gamma = self.get_matrix_var(n, vtype='binary')
             for i in range(n):
                 constraints.extend([q >= up[i] + un[i], q <= up[i] + un[i] + M * (1 - gamma[i])])
 
