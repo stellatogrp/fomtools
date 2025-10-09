@@ -29,7 +29,7 @@ class GurobiSolver(Solver):
         self.obj_constraints = []
 
     def _add_term(self, term, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[term] = self.model.addMVar(term.ndim, lb=lb, ub=ub)
+        self.vector_var_map[term] = self.add_matrix_var(term.ndim, lb=lb, ub=ub)
         self.model.update()
 
     def add_param_var(self, param, lb=-np.inf, ub=np.inf):
@@ -88,8 +88,8 @@ class GurobiSolver(Solver):
     def get_binary_var(self):
         return self.model.addVar(vtype=gp.GRB.BINARY)
 
-    def add_matrix_var(self, n, ub):
-        return self.model.addMVar(n, ub)
+    def add_matrix_var(self, n, lb=-np.inf, ub=np.inf):
+        return self.model.addMVar(n, lb=lb, ub=ub)
 
 
     def add_relu_constraints(self, step):
@@ -360,8 +360,8 @@ class GurobiSolver(Solver):
             n = expr.get_output_dim()
             rhs_gp_expr = self.expression_to_solver(expr)
 
-            up = self.model.addMVar(n, ub=np.abs(ub))
-            un = self.model.addMVar(n, ub=np.abs(lb))
+            up = self.add_matrix_var(n, ub=np.abs(ub))
+            un = self.add_matrix_var(n, ub=np.abs(lb))
 
             constraints.append(up - un == rhs_gp_expr)
 
