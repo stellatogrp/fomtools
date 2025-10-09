@@ -52,7 +52,7 @@ class GurobiSolver(Solver):
 
     def add_equality_constraint(self, lhs_expr, rhs_expr):
         self.model.addConstr(
-            self.lin_expr_to_gp_expr(lhs_expr) == self.lin_expr_to_gp_expr(lhs_expr)
+            self.expr_to_solver(lhs_expr) == self.expr_to_solver(lhs_expr)
         )
         self.model.update()
 
@@ -70,55 +70,60 @@ class GurobiSolver(Solver):
             "Invalid input: expression must be a leaf. Received a composite one instead."
         )
 
-    def lin_expr_to_gp_expr(self, expression):
+    def expr_to_solver(self, expression):
         gp_expr = np.zeros(expression.ndim)
         for k, v in expression.decomposition_dict.items():
             gp_expr += v @ self.vector_var_map[k]
 
         return gp_expr
 
+    def constraints_to_solver(self, step, constraints):
+        self.step_constr_map[step] = [self.model.addConstr(constr) for constr in constraints]
+        self.model.update()
+
+    def get_binary_var(self):
+        return self.model.addVar(vtype=gp.GRB.BINARY)
+
     def add_relu_constraints(self, step):
         assert step.lhs in self.vector_var_map
 
-        lhs = self.lin_expr_to_gp_expr(step.lhs)
-        rhs = self.lin_expr_to_gp_expr(step.rhs)
+        lhs = self.expr_to_solver(step.lhs)
+        rhs = self.expr_to_solver(step.rhs)
 
         constraints = []
         new_vars = {}
 
         # after ranges are added, remove the range(n) and add the constraints when needed
         # make sure to enforce equality constraints between lhs and rhs for other indices
+        for i, (_lhs, _rhs) in enumerate(zip(lhs, rhs)):
+            if i in step.nonproj_indices:
+                constraints.append(_lhs == _rhs)
+            if i in step.proj_indices:
+                if step.ub[i] <= 0:
+                    constraints.append(_lhs == 0)
+                elif step.lb[i] > 0:
+                    constraints.append(_lhs == _rhs)
+                elif step.ub[i] > 0 or step.lb[i] <= 0:
+                    if not step.relax_binary_vars:
+                        new_vars[i] = self.get_binary_var()
+                        step.idx_with_binary_vars.add(i)
+                        constraints.append(_lhs <= step.ub[i] * new_vars[i])
 
-        for i in step.nonproj_indices:
-            constraints.append(lhs[i] == rhs[i])
+                    constraints.extend(
+                        [
+                            _lhs <= step.ub[i] / (step.ub[i] - step.lb[i]) * (_rhs - step.lb[i]),
+                            _lhs >= _rhs,
+                            _lhs <= _rhs - step.lb[i] * (1 - new_vars[i]),
+                        ]
+                    )
 
-        for i in step.proj_indices:
-            if step.ub[i] <= 0:
-                constraints.append(lhs[i] == 0)
-            elif step.lb[i] > 0:
-                constraints.append(lhs[i] == rhs[i])
-            else:
-                if not step.relax_binary_vars:
-                    new_vars[i] = self.model.addVar(vtype=gp.GRB.BINARY)
-                    step.idx_with_binary_vars.add(i)
-                    constraints.append(lhs[i] <= step.ub[i] * new_vars[i])
-
-                constraints.extend(
-                    [
-                        lhs[i] <= step.ub[i] / (step.ub[i] - step.lb[i]) * (rhs[i] - step.lb[i]),
-                        lhs[i] >= rhs[i],
-                        lhs[i] <= rhs[i] - step.lb[i] * (1 - new_vars[i]),
-                    ]
-                )
-
-        self.step_constr_map[step] = [self.model.addConstr(constr) for constr in constraints]
-        self.model.update()
+        self.constraints_to_solver(step, constraints)
 
     def add_saturated_linear_constraints(self, step):
         assert step.lhs in self.vector_var_map
 
-        lhs = self.lin_expr_to_gp_expr(step.lhs)
-        rhs = self.lin_expr_to_gp_expr(step.rhs)
+        lhs = self.expr_to_solver(step.lhs)
+        rhs = self.expr_to_solver(step.rhs)
         n = step.lhs.get_output_dim()
 
         constraints = []
@@ -132,8 +137,8 @@ class GurobiSolver(Solver):
                 constraints.append(lhs[i] == rhs[i])
             else:
                 if not step.relax_binary_vars:
-                    w1 = self.model.addVar(vtype=gp.GRB.BINARY)
-                    w2 = self.model.addVar(vtype=gp.GRB.BINARY)
+                    w1 = self.get_binary_var()
+                    w2 = self.get_binary_var()
                     if step.lb[i] < step.l[i]:
                         constraints.extend(
                             [
@@ -206,21 +211,18 @@ class GurobiSolver(Solver):
                 else:
                     raise RuntimeError("Unreachable code")
 
-        self.step_constr_map[step] = [self.model.addConstr(constr) for constr in constraints]
-        self.model.update()
+        self.constraints_to_solver(step, constraints)
 
     def add_saturated_linear_param_constraints(self, step):
         assert step.lhs in self.vector_var_map
-
-        self.step_constr_map[step] = []
-        self.model.update()
+        self.constraints_to_solver(step, [])
         return None
 
     def add_soft_threshold_constraints(self, step, lhs_lb, lhs_ub):
         assert step.lhs in self.vector_var_map
 
-        lhs = self.lin_expr_to_gp_expr(step.lhs)
-        rhs = self.lin_expr_to_gp_expr(step.rhs)
+        lhs = self.expr_to_solver(step.lhs)
+        rhs = self.expr_to_solver(step.rhs)
 
         constraints = []
         new_w1 = {}
@@ -234,8 +236,8 @@ class GurobiSolver(Solver):
                 constraints.append(lhs[i] == 0.0)
             else:
                 if not step.relax_binary_vars:
-                    new_w1[i] = self.model.addVar(vtype=gp.GRB.BINARY)
-                    new_w2[i] = self.model.addVar(vtype=gp.GRB.BINARY)
+                    new_w1[i] = self.get_binary_var()
+                    new_w2[i] = self.get_binary_var()
                     step.idx_with_right_binary_vars.add(i)
 
                     if step.ub[i] > step.lambd:
@@ -306,8 +308,8 @@ class GurobiSolver(Solver):
                 else:
                     raise RuntimeError("Unreachable code")
 
-        self.step_constr_map[step] = [self.model.addConstr(constr) for constr in constraints]
-        self.model.update()
+        self.constraints_to_solver(step, constraints)
+
 
     def obbt(self, linexpr):
         # create/solve the obbt problem for all elements in linexpr
@@ -318,7 +320,7 @@ class GurobiSolver(Solver):
 
         for sense in [gp.GRB.MINIMIZE, gp.GRB.MAXIMIZE]:
             for i in range(linexpr.ndim):
-                self.model.setObjective(self.lin_expr_to_gp_expr(linexpr)[i], sense)
+                self.model.setObjective(self.expr_to_solver(linexpr)[i], sense)
                 self.model.update()
 
                 obbt_model = self.model.relax()
@@ -347,7 +349,7 @@ class GurobiSolver(Solver):
     def add_theory_cut(self, C, target_expr, bound_lb, bound_ub):
         if C == np.inf:
             return
-        target_gp_expr = self.lin_expr_to_gp_expr(target_expr)
+        target_gp_expr = self.expr_to_solver(target_expr)
         if target_expr.is_leaf:
             # directly update the lb/ub parameters if possible
             target_gp_expr.lb = bound_lb - C
@@ -358,7 +360,7 @@ class GurobiSolver(Solver):
         self.model.update()
 
     def post_process(self, target_expr, bound_lb, bound_ub):
-        target_gp_expr = self.lin_expr_to_gp_expr(target_expr)
+        target_gp_expr = self.expr_to_solver(target_expr)
         if target_expr.is_leaf:
             # directly update the lb/ub parameters if possible
             target_gp_expr.lb = bound_lb
@@ -388,7 +390,7 @@ class GurobiSolver(Solver):
 
         for expr, lb, ub in zip(expr_list, lb_list, ub_list):
             n = expr.get_output_dim()
-            rhs_gp_expr = self.lin_expr_to_gp_expr(expr)
+            rhs_gp_expr = self.expr_to_solver(expr)
 
             up = self.model_to_opt.addMVar(n, ub=np.abs(ub))
             un = self.model_to_opt.addMVar(n, ub=np.abs(lb))
