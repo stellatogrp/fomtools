@@ -52,7 +52,7 @@ class GurobiSolver(Solver):
 
     def add_equality_constraint(self, lhs_expr, rhs_expr):
         self.model.addConstr(
-            self.expr_to_solver(lhs_expr) == self.expr_to_solver(lhs_expr)
+            self.expression_to_solver(lhs_expr) == self.expression_to_solver(lhs_expr)
         )
         self.model.update()
 
@@ -70,7 +70,7 @@ class GurobiSolver(Solver):
             "Invalid input: expression must be a leaf. Received a composite one instead."
         )
 
-    def expr_to_solver(self, expression):
+    def expression_to_solver(self, expression):
         gp_expr = np.zeros(expression.ndim)
         for k, v in expression.decomposition_dict.items():
             gp_expr += v @ self.vector_var_map[k]
@@ -81,14 +81,21 @@ class GurobiSolver(Solver):
         self.step_constr_map[step] = [self.model.addConstr(constr) for constr in constraints]
         self.model.update()
 
+    def add_constr(self, constraint):
+        self.model.addConstr(constraint)
+        self.model.update()
+
     def get_binary_var(self):
         return self.model.addVar(vtype=gp.GRB.BINARY)
+
+    # def get_var(self, n, ub):
+    #     return self.model
 
     def add_relu_constraints(self, step):
         assert step.lhs in self.vector_var_map
 
-        lhs = self.expr_to_solver(step.lhs)
-        rhs = self.expr_to_solver(step.rhs)
+        lhs = self.expression_to_solver(step.lhs)
+        rhs = self.expression_to_solver(step.rhs)
 
         constraints = []
         new_vars = {}
@@ -122,8 +129,8 @@ class GurobiSolver(Solver):
     def add_saturated_linear_constraints(self, step):
         assert step.lhs in self.vector_var_map
 
-        lhs = self.expr_to_solver(step.lhs)
-        rhs = self.expr_to_solver(step.rhs)
+        lhs = self.expression_to_solver(step.lhs)
+        rhs = self.expression_to_solver(step.rhs)
         n = step.lhs.get_output_dim()
 
         constraints = []
@@ -221,8 +228,8 @@ class GurobiSolver(Solver):
     def add_soft_threshold_constraints(self, step, lhs_lb, lhs_ub):
         assert step.lhs in self.vector_var_map
 
-        lhs = self.expr_to_solver(step.lhs)
-        rhs = self.expr_to_solver(step.rhs)
+        lhs = self.expression_to_solver(step.lhs)
+        rhs = self.expression_to_solver(step.rhs)
 
         constraints = []
         new_w1 = {}
@@ -314,26 +321,25 @@ class GurobiSolver(Solver):
     def add_theory_cut(self, C, target_expr, bound_lb, bound_ub):
         if C == np.inf:
             return
-        target_gp_expr = self.expr_to_solver(target_expr)
+        target_gp_expr = self.expression_to_solver(target_expr)
         if target_expr.is_leaf:
             # directly update the lb/ub parameters if possible
             target_gp_expr.lb = bound_lb - C
             target_gp_expr.ub = bound_ub + C
         else:
-            self.model.addConstr(target_gp_expr >= bound_lb - C)
-            self.model.addConstr(target_gp_expr <= bound_ub + C)
-        self.model.update()
+            self.add_constr(target_gp_expr >= bound_lb - C)
+            self.add_constr(target_gp_expr <= bound_ub + C)
 
     def post_process(self, target_expr, bound_lb, bound_ub):
-        target_gp_expr = self.expr_to_solver(target_expr)
+        target_gp_expr = self.expression_to_solver(target_expr)
         if target_expr.is_leaf:
             # directly update the lb/ub parameters if possible
             target_gp_expr.lb = bound_lb
             target_gp_expr.ub = bound_ub
         else:
-            self.model.addConstr(target_gp_expr >= bound_lb)
-            self.model.addConstr(target_gp_expr <= bound_ub)
-        self.model.update()
+            self.add_constr(target_gp_expr >= bound_lb)
+            self.add_constr(target_gp_expr <= bound_ub)
+
 
     def set_zero_objective(self):
         # this function is mostly just for debugging the constraints
@@ -355,7 +361,7 @@ class GurobiSolver(Solver):
 
         for expr, lb, ub in zip(expr_list, lb_list, ub_list):
             n = expr.get_output_dim()
-            rhs_gp_expr = self.expr_to_solver(expr)
+            rhs_gp_expr = self.expression_to_solver(expr)
 
             up = self.model_to_opt.addMVar(n, ub=np.abs(ub))
             un = self.model_to_opt.addMVar(n, ub=np.abs(lb))
