@@ -1,6 +1,6 @@
 import numpy as np
 
-from algoverify.canonicalizers.solver.solver import Solver
+from algoverify.solver.solver import Solver
 
 
 class SDPSolver(Solver):
