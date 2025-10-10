@@ -4,7 +4,6 @@ from algoverify.solver.solver import Solver
 
 
 class SDPSolver(Solver):
-
     def __init__(self, solver_params={}):
         super().__init__(solver_params=solver_params)
 
