@@ -2,7 +2,7 @@ import logging
 
 import gurobipy as gp
 import numpy as np
-from algoverify.solver.solver import Solver
+from algoverify.solvers.solver import Solver
 
 log = logging.getLogger(__name__)
 

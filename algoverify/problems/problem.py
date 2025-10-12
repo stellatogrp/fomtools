@@ -1,7 +1,7 @@
 import numpy as np
 
-from algoverify.solver import gurobi
-from algoverify.solver.solver import Solver
+from algoverify.solvers import gurobi
+from algoverify.solvers.solver import Solver
 
 
 class Problem(object):

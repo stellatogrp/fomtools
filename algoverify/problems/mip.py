@@ -1,5 +1,4 @@
-from algoverify.canonicalizers.problem import Problem
-from algoverify.solver import gurobi
+from algoverify.problems.problem import Problem
 
 import gurobipy as gp
 import numpy as np

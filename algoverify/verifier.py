@@ -2,7 +2,7 @@ import logging
 
 import numpy as np
 
-from algoverify.canonicalizers.mip import MIP
+from algoverify.problems.mip import MIP
 from algoverify.canonicalizers.obbt_handlers import GurobiOBBTHandler
 from algoverify.linearexpression import LinearExpression
 from algoverify.steps import Affine, Relu, SaturatedLinear, SoftThreshold
