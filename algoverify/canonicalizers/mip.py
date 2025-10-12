@@ -16,14 +16,11 @@ from algoverify.steps import Relu, SoftThreshold
 
 
 class MIP(Problem):
-    def __init__(self, solver_params=None, solver=gurobi.GurobiSolver()):
+    def __init__(self, solver_params=None, solver="gurobi"):
         super(MIP, self).__init__(solver_params, solver)
 
-    def add_param_var(self, iterate, lb=-np.inf, ub=np.inf):
-        self.solver.add_initial_iterate_var(iterate=iterate, lb=lb, ub=ub)
-
-    def add_iterate(self, iterate, lb=-np.inf, ub=np.inf):
-        self.solver.add_initial_iterate_var(iterate=iterate, lb=lb, ub=ub)
+    def add_var(self, iterate, lb=-np.inf, ub=np.inf):
+        self.solver.add_var(var=iterate, lb=lb, ub=ub)
 
     def add_param_stack_var(self, param_stack_var, param_list):
         self.solver.add_param_stack_var(param_stack_var, param_list)
@@ -128,7 +125,7 @@ class MIP(Problem):
                             )
 
                 if step.lb[i] < step.l[i] and step.ub[i] > step.u[i]:
-                    # following two are redundant due to preprocessing bounds on the left hand side iterate
+                    # following two are redundant due to preprocessing bounds on the left hand side var
                     expr = (step.u[i] - step.l[i]) / (step.u[i] - step.lb[i]) * (
                         rhs[i] - step.u[i]
                     ) + step.u[i]
@@ -415,13 +412,13 @@ class MIP(Problem):
                 A.append(v)
             y_var.append(
                 self.solver.extract_vec_var_by_name(
-                    self.solver.leaf_expr_to_gp_var(k), relaxed_model
+                    self.solver.leaf_expr_to_solver(k), relaxed_model
                 )
             )
             l.append(lower_bounds[k])
             u.append(upper_bounds[k])
         w_var = self.solver.extract_vec_var_by_name(
-            self.solver.leaf_expr_to_gp_var(step.lhs), relaxed_model
+            self.solver.leaf_expr_to_solver(step.lhs), relaxed_model
         )
 
         return (

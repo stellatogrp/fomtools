@@ -16,36 +16,47 @@ class GurobiSolver(Solver):
             self.model.setParam(key, val)
 
         self.step_constr_map = {}
-        self.obj_constraints = []
 
-    def _add_term(self, term, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[term] = self.get_matrix_var(term.ndim, lb=lb, ub=ub)
+    def _get_vtype(self, vtype):
+        """
+
+        Parameters
+        ----------
+        vtype
+
+        Returns
+        -------
+
+        """
+        match vtype:
+            case "continuous":
+                return gp.GRB.CONTINUOUS
+            case "integer":
+                return gp.GRB.INTEGER
+            case "binary":
+                return gp.GRB.BINARY
+            case _:
+                raise TypeError(f"Variable type must be either continuous or binary, got {vtype}")
+
+    def get_var(self, lb=-np.inf, ub=np.inf, vtype="continuous"):
+        return self.model.addVar(lb=lb, ub=ub, vtype=self._get_vtype(vtype))
+
+    def get_matrix_var(self, n, lb=-np.inf, ub=np.inf, vtype="continuous"):
+        return self.model.addMVar(n, lb=lb, ub=ub, vtype=self._get_vtype(vtype))
+
+    def update_model(self):
+        self.model.update()
+
+    def add_var(self, var, lb=-np.inf, ub=np.inf):
+        self.vector_var_map[var] = self.get_matrix_var(var.ndim, lb=lb, ub=ub)
         self.update_model()
 
-    def add_param_var(self, param, lb=-np.inf, ub=np.inf):
-        self._add_term(param, lb, ub)
-
-    def add_initial_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
-        self._add_term(iterate, lb, ub)
-
-    def add_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
-        self._add_term(iterate, lb, ub)
-
     def add_param_stack_var(self, param_stack_var, param_list):
-        """
-        param_stack_var is the VP param object and param_list is the list of previous params to stack
-        """
         self.vector_var_map[param_stack_var] = gp.hstack(
             [self.vector_var_map[param] for param in param_list]
         )
 
-    def update_vector_bounds(self, iterate, lb, ub):
-        gp_var = self.vector_var_map[iterate]
-
-        gp_var.lb = np.maximum(gp_var.lb, lb)
-        gp_var.ub = np.minimum(gp_var.ub, ub)
-
-    def leaf_expr_to_gp_var(self, expression):
+    def leaf_expr_to_solver(self, expression):
         if expression.is_leaf:
             return self.vector_var_map[next(iter(expression.decomposition_dict))]
 
@@ -67,28 +78,6 @@ class GurobiSolver(Solver):
         self.model.addConstr(constraint)
         self.update_model()
 
-    def get_var(self, lb=-np.inf, ub=np.inf, vtype="continuous"):
-        match vtype:
-            case "continuous":
-                vtype = gp.GRB.CONTINUOUS
-            case "binary":
-                vtype = gp.GRB.BINARY
-            case _:
-                raise TypeError(f"Variable type must be either continuous or binary, got {vtype}")
-
-        return self.model.addVar(lb=lb, ub=ub, vtype=vtype)
-
-    def get_matrix_var(self, n, lb=-np.inf, ub=np.inf, vtype="continuous"):
-        match vtype:
-            case "continuous":
-                vtype = gp.GRB.CONTINUOUS
-            case "binary":
-                vtype = gp.GRB.BINARY
-            case _:
-                raise TypeError(f"Variable type must be either continuous or binary, got {vtype}")
-
-        return self.model.addMVar(n, lb=lb, ub=ub, vtype=vtype)
-
     def set_objective(self, expression, type=None):
         match type:
             case "minimize":
@@ -105,9 +94,6 @@ class GurobiSolver(Solver):
 
     def optimize(self):
         self.model.optimize()
-
-    def update_model(self):
-        self.model.update()
 
     def get_solution_value(self, var_name):
         return self.model.getVarByName(var_name.VarName.item()).X
