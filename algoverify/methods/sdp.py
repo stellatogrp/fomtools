@@ -1,9 +1,9 @@
 import numpy as np
 
-from algoverify.problems.problem import Problem
+from algoverify.methods.method import Method
 
 
-class SDP(Problem):
+class SDP(Method):
     def __init__(self, solver_params=None, solver="gurobi"):
         super(SDP, self).__init__(solver_params, solver)
 

@@ -4,7 +4,7 @@ from algoverify.solvers import gurobi
 from algoverify.solvers.solver import Solver
 
 
-class Problem(object):
+class Method():
     def __init__(self, solver_params=None, solver="gurobi"):
         self.solver_params = solver_params
         self.solver = self._get_solver(solver)

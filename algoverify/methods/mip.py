@@ -1,4 +1,4 @@
-from algoverify.problems.problem import Problem
+from algoverify.methods.method import Method
 
 import gurobipy as gp
 import numpy as np
@@ -14,7 +14,7 @@ from algoverify.canonicalizers.huchette_cuts.soft_threshold import (
 from algoverify.steps import Relu, SoftThreshold
 
 
-class MIP(Problem):
+class MIP(Method):
     def __init__(self, solver_params=None, solver="gurobi"):
         super(MIP, self).__init__(solver_params, solver)
 
