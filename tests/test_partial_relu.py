@@ -43,7 +43,7 @@ def test_partial_nnqp():
     q_offset = 1
     q_param = VP.add_param(n, lb=q-q_offset, ub=q+q_offset)
 
-    z0 = VP.add_initial_iterate(n, lb=-1, ub=-1)
+    z0 = VP.initial_iterate(n, lb=-1, ub=-1)
     K = 10
     z = [None for _ in range(K+1)]
     z[0] = z0

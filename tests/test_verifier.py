@@ -65,8 +65,8 @@ def test_verifier():
 
     # VP.add_constraint(ones @ c_param == 1)
 
-    x0 = VP.add_initial_iterate(n, lb=1, ub=1)
-    y0 = VP.add_initial_iterate(m, lb=1, ub=1)
+    x0 = VP.initial_iterate(n, lb=1, ub=1)
+    y0 = VP.initial_iterate(m, lb=1, ub=1)
 
     K = 10
 

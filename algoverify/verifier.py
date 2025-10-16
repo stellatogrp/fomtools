@@ -21,6 +21,7 @@ class Verifier(object):
     ):
         self.theory_func = theory_func
         self.iterates = []
+        self.params = []
         self.steps = []
 
         self.method = self._get_method(method, solver_params, solver)
@@ -99,59 +100,144 @@ class Verifier(object):
             case _:
                 raise ValueError(f"Method must be 'gurobi' or 'grb', got {handler}")
 
+    def _add_var(
+        self, ndim: int, lb: list[float] = -np.inf, ub: list[float] = np.inf, param_list: list[LinearExpression] = None
+    ) -> LinearExpression:
+        """
+        Create and register a :class:`LinearExpression` variable with the Problem
+        instance and its underlying method instance.
 
-    def add_param(self, n, lb=-np.inf, ub=np.inf):
+        Parameters
+        ----------
+        ndim : int
+            Number of dimensions of the variable to create. Defines the size
+            of each coefficient matrix in the associated :class:`LinearExpression`.
+
+        lb: list[float]
+            Lower bound of the variable.
+
+        ub: list[float]
+            Upper bound of the variable.
+
+        param_list: list[LinearExpression] or None, optional
+            List of :class:`LinearExpression` parameters.
+
+        Returns
+        -------
+        LinearExpression
+            A new :class:`LinearExpression` of dimenstion `ndim`.
+
+        Raises
+        ------
+        ValueError
+            If the lower bound is greater than the upper bound.
+        """
         if not np.all(lb <= ub):
             raise ValueError("Lower bound must be less than or equal to upper bound.")
 
-        param = LinearExpression.from_int(n)
-        self.bounds[param] = (as_array(lb, n), as_array(ub, n))
-        self.method.add_var(param, lb=lb, ub=ub)
+        var = LinearExpression.from_int(ndim)
+        self.bounds[var] = (as_array(lb, ndim), as_array(ub, ndim))
 
-        if self.obbt_handler is not None:
-            self.obbt_handler.add_param_var(param, lb=lb, ub=ub)
+        if param_list is None:
+            self.method.add_var(var, lb=lb, ub=ub)
+            if self.obbt_handler is not None:
+                self.obbt_handler.add_initial_iterate_var(var, lb=lb, ub=ub)
+        else:
+            self.method.add_param_stack_var(var, param_list)
+            if self.obbt_handler is not None:
+                self.obbt_handler.add_param_stack_var(var, param_list)
 
+        return var
+
+    def initial_iterate(
+        self, ndim: int, lb: float = -np.inf, ub: float = np.inf
+    ) -> LinearExpression:
+        """
+        Create and add the initial iterate to the Problem instance. This
+        method creates a new :class:`LinearExpression` of dimension `ndim`
+        and registers it with the underlying method instance.
+
+        Parameters
+        ----------
+        ndim : int
+            Number of dimensions of the iterate to create. Defines the size
+            of each coefficient matrix in the associated :class:`LinearExpression`.
+
+        lb : float
+            Lower bound of the initial iterate variable.
+
+        ub : float
+            Upper bound of the initial iterate variable.
+
+        Returns
+        -------
+        LinearExpression
+            A new :class:`LinearExpression` of dimension `ndim`.
+
+        Raises
+        ------
+        ValueError
+            If the lower bound is greater than the upper bound.
+        """
+        self.iterates.append(iterate := self._add_var(ndim, lb, ub))
+        return iterate
+
+    def add_param(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
+        """
+        Create and add a parameter to the Problem instance. This method
+        constructs a new :class:`LinearExpression` of dimension `ndim`
+        and attaches it to the underlying method instance as a problem
+        parameter.
+
+        Parameters
+        ----------
+        ndim: int
+            Number of dimensions of the parameter to create. Defines the size
+            of each coefficient matrix in the associated :class:`LinearExpression`.
+
+        lb: float
+            Lower bound of the parameter.
+
+        ub: float
+            Upper bound of the parameter.
+
+        Returns
+        -------
+        LinearExpression
+            A new :class:`LinearExpression` of dimension `ndim`.
+
+        Raises
+        ------
+        ValueError
+            If the lower bound is greater than the upper bound.
+        """
+        self.params.append(param := self._add_var(ndim, lb, ub))
         return param
 
     def add_param_stack(self, param_list):
+        """
+        Add a stack of parameters to the Problem instance.
+
+        Parameters
+        ----------
+        param_list: list[LinearExpression]
+            List of :class:`LinearExpression` parameters.
+
+        Returns
+        -------
+
+        """
         dim = 0
-        lbs = []
-        ubs = []
+        bounds = [[], []]
 
         for p in param_list:
-            # TODO: the following line uses '==' operator which we just overloaded
             dim += p.ndim
-            lbs.append(self.bounds[p][0])
-            ubs.append(self.bounds[p][1])
+            tuple(map(list.extend, bounds, self.bounds[p]))
 
-        lb = np.hstack(lbs)
-        ub = np.hstack(ubs)
-
-        param_stack_var = LinearExpression.from_int(dim)
-        self.bounds[param_stack_var] = (lb, ub)
-
-        self.method.add_param_stack_var(param_stack_var, param_list)
-
-        if self.obbt_handler is not None:
-            self.obbt_handler.add_param_stack_var(param_stack_var, param_list)
-
-        return param_stack_var
-
-    def add_initial_iterate(self, n, lb=-np.inf, ub=np.inf):
-        assert np.all(lb <= ub)
-        iterate = LinearExpression.from_int(n)
-        self.iterates.append(iterate)
-        self.bounds[iterate] = (as_array(lb, n), as_array(ub, n))
-        self.method.add_var(iterate, lb=lb, ub=ub)
-
-        if self.obbt_handler is not None:
-            self.obbt_handler.add_initial_iterate_var(iterate, lb=lb, ub=ub)
-
-        return iterate
+        self.params.append(param := self._add_var(dim, lb=bounds[0], ub=bounds[1]))
+        return param
 
 
-    def add_step(self, step):
-        self.steps.append(step)
 
     def implicit_linear_step(self, lhs_mat, rhs_expr, lhs_mat_factorization=None):
         # need to think about best way to bound prop here/set up the api
@@ -164,7 +250,7 @@ class Verifier(object):
             - Do the OBBT (if self.num_obbt >= 0`)
             - Return the out var Vector object
         """
-        iterate = LinearExpression.from_int(lhs_mat.shape[0])
+        iterate = LinearExpression.from_int(lhs_mat.ndim)
         self.iterates.append(iterate)
 
         step = Affine(
@@ -187,13 +273,12 @@ class Verifier(object):
             self.obbt_handler.add_iterate_var(iterate, lb=iterate_lb, ub=iterate_ub)
             self.obbt_handler.add_equality_constraint(lhs_mat @ iterate, rhs_expr)
 
-        self.add_step(step)
+        self.steps.append(step)
 
         return iterate
 
     def relu_step(self, rhs_expr, proj_ranges=None, relax_binary_vars=False):
-
-        def _indices_from_ranges(ranges: tuple[int, int] | list[tuple[int, int]]):
+        def _get_ranges(ranges: tuple[int, int] | list[tuple[int, int]]):
             """
             Return the set of integers covered by one or more of half-open intervals.
 
@@ -210,10 +295,10 @@ class Verifier(object):
 
             Examples
             --------
-            >>> _indices_from_ranges(((1, 2), (5, 9)))
+            >>> _get_ranges(((1, 2), (5, 9)))
             {1, 2, 5, 6, 7, 8}
 
-            >>> _indices_from_ranges((4, 7))
+            >>> _get_ranges((4, 7))
             {4, 5, 6}
             """
             try:
@@ -222,7 +307,7 @@ class Verifier(object):
             except AttributeError:
                 return set(range(ranges[0], ranges[1]))
 
-        proj_indices = _indices_from_ranges(proj_ranges) if proj_ranges else set(range(0, rhs_expr.ndim))
+        proj_indices = _get_ranges(proj_ranges) if proj_ranges else set(range(0, rhs_expr.ndim))
 
         out_iterate = LinearExpression.from_int(rhs_expr.ndim)
 
@@ -264,7 +349,7 @@ class Verifier(object):
             self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
             self.obbt_handler.add_relu_constraints(step, out_lb, out_ub)
 
-        self.add_step(step)
+        self.steps.append(step)
 
         return out_iterate
 
@@ -310,7 +395,7 @@ class Verifier(object):
             self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
             self.obbt_handler.add_saturated_linear_constraints(step, out_lb, out_ub)
 
-        self.add_step(step)
+        self.steps.append(step)
 
         return out_iterate
 
@@ -367,7 +452,7 @@ class Verifier(object):
                 step, out_lb, out_ub, l_lb, l_ub, u_lb, u_ub
             )
 
-        self.add_step(step)
+        self.steps.append(step)
 
         return out_iterate
 
@@ -414,7 +499,7 @@ class Verifier(object):
             self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
             self.obbt_handler.add_soft_threshold_constraints(step, out_lb, out_ub)
 
-        self.add_step(step)
+        self.steps.append(step)
 
         return out_iterate
 
@@ -423,12 +508,8 @@ class Verifier(object):
         C = self.theory_func(k)
         lb, ub = self.linear_bound_propagation(bound_expr)
         if target_expr.is_leaf:
-            _lb, lb_improv_frac = update_lb(
-                self.bounds[target_expr][0], lb - C
-            )
-            _ub, ub_improv_frac = update_ub(
-                self.bounds[target_expr][1], lb + C
-            )
+            _lb, lb_improv_frac = update_lb(self.bounds[target_expr][0], lb - C)
+            _ub, ub_improv_frac = update_ub(self.bounds[target_expr][1], lb + C)
             self.bounds[target_expr] = (_lb, _ub)
 
             improv_frac = (lb_improv_frac + ub_improv_frac) / 2.0
@@ -438,7 +519,9 @@ class Verifier(object):
         if return_improv_frac:
             return improv_frac
 
-    def linear_bound_propagation(self, expression: LinearExpression) -> tuple[np.ndarray, np.ndarray]:
+    def linear_bound_propagation(
+        self, expression: LinearExpression
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Compute the elementwise lower and upper bounds of a linear expression
         given the bound constraints of its coefficient matrices.
@@ -459,7 +542,10 @@ class Verifier(object):
         ValueError
             If any computed lower bound exceeds its corresponding upper bound.
         """
-        def _interval_bound_propagation(a: np.matrix, lb: np.ndarray, ub: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+
+        def _interval_bound_propagation(
+            a: np.matrix, lb: np.ndarray, ub: np.ndarray
+        ) -> tuple[np.ndarray, np.ndarray]:
             """
             Bounds the linear image y = A @ x for any x with lb ≤ x ≤ ub.
 
@@ -475,7 +561,9 @@ class Verifier(object):
                    jelovi´c, T. Mann, and P. Kohli. "On the effectiveness of interval bound propa-
                    gation for training verifiably robust models. arXiv:1810.12715, 2018."
             """
-            return (a @ (ub + lb) - np.abs(a) @ (ub - lb)) / 2, (a @ (ub + lb) + np.abs(a) @ (ub - lb)) / 2
+            return (a @ (ub + lb) - np.abs(a) @ (ub - lb)) / 2, (
+                a @ (ub + lb) + np.abs(a) @ (ub - lb)
+            ) / 2
 
         out_lb, out_ub = np.zeros(expression.ndim), np.zeros(expression.ndim)
         for k, v in expression.decomposition_dict.items():
@@ -506,13 +594,10 @@ class Verifier(object):
         self.method.set_infinity_norm_objective(expr_list, lb_list, ub_list)
 
     def solve(self, **kwargs):
-        return self.method.solve_model(
-            self.steps, self.bounds, **kwargs
-        )
+        return self.method.solve_model(self.steps, self.bounds, **kwargs)
 
     def extract_sol(self, iterate):
         return self.method.extract_sol(iterate)
-
 
     def post_process(
         self, var_to_bound, var_for_init_bounds, residual_values, return_improv_frac=True
