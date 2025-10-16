@@ -1,11 +1,8 @@
-from algoverify import LinearExpression
-from algoverify.constraint import Constraint
-from algoverify.methods.method import Method
-
 import gurobipy as gp
 import numpy as np
 import scipy.sparse as spa
 
+from algoverify import LinearExpression
 from algoverify.canonicalizers.huchette_cuts.relu import relu_add_conv_cuts, relu_create_new_constr
 from algoverify.canonicalizers.huchette_cuts.soft_threshold import (
     st_add_neg_conv_cuts,
@@ -13,6 +10,8 @@ from algoverify.canonicalizers.huchette_cuts.soft_threshold import (
     st_create_new_neg_constr,
     st_create_new_pos_constr,
 )
+from algoverify.constraint import Constraint
+from algoverify.methods.method import Method
 from algoverify.steps import Relu, SoftThreshold
 
 

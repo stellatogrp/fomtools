@@ -5,7 +5,7 @@ import numpy as np
 
 from algoverify import LinearExpression
 from algoverify.solvers.solver import Solver
-from algoverify.constraint import Constraint
+
 log = logging.getLogger(__name__)
 
 
