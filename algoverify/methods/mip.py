@@ -183,7 +183,7 @@ class MIP(Method):
                         ]
                     )
 
-        self.solver.constraints_to_solver(step, constraints)
+        self.solver.constraints_to_solver(constraints)
 
     def add_saturated_linear_constraints(self, step):
         assert step.lhs in self.solver.vector_var_map
@@ -277,11 +277,11 @@ class MIP(Method):
                 else:
                     raise RuntimeError("Unreachable code")
 
-        self.solver.constraints_to_solver(step, constraints)
+        self.solver.constraints_to_solver(constraints)
 
     def add_saturated_linear_param_constraints(self, step):
         assert step.lhs in self.solver.vector_var_map
-        self.solver.constraints_to_solver(step, [])
+        self.solver.constraints_to_solver([])
         return None
 
     def add_soft_threshold_constraints(self, step, lhs_lb, lhs_ub):
@@ -374,7 +374,7 @@ class MIP(Method):
                 else:
                     raise RuntimeError("Unreachable code")
 
-        self.solver.constraints_to_solver(step, constraints)
+        self.solver.constraints_to_solver(constraints)
 
     def add_theory_cut(self, C, target_expr, bound_lb, bound_ub):
         if C == np.inf:

@@ -53,7 +53,7 @@ class LinearExpression:
 
         const : ndarray or None, optional
             A one-dimensional array or None (default). If `const` is None, the `const` attribute
-            of this object will be set to a `numpy.ndarray` of length `ndim` filled with zeros.
+            of this object will be set to a `numpy.ndarray` of length `shape` filled with zeros.
 
 
         Raises
@@ -98,9 +98,9 @@ class LinearExpression:
     @classmethod
     def from_int(cls, ndim: int) -> Self:
         """
-        Initialize a `LinearExpression` object with an integer `ndim`. Internally, this
+        Initialize a `LinearExpression` object with an integer `shape`. Internally, this
         creates a decomposition dictionary that maps the `LinearExpression` object with a sparse
-        identity matrix of shape `(ndim, ndim)`.
+        identity matrix of shape `(shape, shape)`.
 
         Parameters
         ----------
@@ -112,7 +112,7 @@ class LinearExpression:
         LinearExpression
             A new `LinearExpression` instance whose decomposition contains a single
             entry: the instance itself as a key, and a SciPy sparse identity matrix of
-            shape `(ndim, ndim)` as the value.
+            shape `(shape, shape)` as the value.
         """
         obj = cls.__new__(cls)  # uninitialized instance
         obj.is_leaf = True

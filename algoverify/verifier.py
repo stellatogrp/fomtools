@@ -125,7 +125,7 @@ class Verifier(object):
         Returns
         -------
         LinearExpression
-            A new :class:`LinearExpression` of dimenstion `ndim`.
+            A new :class:`LinearExpression` of dimenstion `shape`.
 
         Raises
         ------
@@ -154,7 +154,7 @@ class Verifier(object):
     ) -> LinearExpression:
         """
         Create and add the initial iterate to the Problem instance. This
-        method creates a new :class:`LinearExpression` of dimension `ndim`
+        method creates a new :class:`LinearExpression` of dimension `shape`
         and registers it with the underlying method instance.
 
         Parameters
@@ -172,7 +172,7 @@ class Verifier(object):
         Returns
         -------
         LinearExpression
-            A new :class:`LinearExpression` of dimension `ndim`.
+            A new :class:`LinearExpression` of dimension `shape`.
 
         Raises
         ------
@@ -185,7 +185,7 @@ class Verifier(object):
     def add_param(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
         """
         Create and add a parameter to the Problem instance. This method
-        constructs a new :class:`LinearExpression` of dimension `ndim`
+        constructs a new :class:`LinearExpression` of dimension `shape`
         and attaches it to the underlying method instance as a problem
         parameter.
 
@@ -204,7 +204,7 @@ class Verifier(object):
         Returns
         -------
         LinearExpression
-            A new :class:`LinearExpression` of dimension `ndim`.
+            A new :class:`LinearExpression` of dimension `shape`.
 
         Raises
         ------
