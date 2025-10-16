@@ -250,7 +250,7 @@ class Verifier(object):
             - Do the OBBT (if self.num_obbt >= 0`)
             - Return the out var Vector object
         """
-        iterate = LinearExpression.from_int(lhs_mat.ndim)
+        iterate = LinearExpression.from_int(lhs_mat.shape[0])
         self.iterates.append(iterate)
 
         step = Affine(
