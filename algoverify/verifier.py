@@ -13,42 +13,102 @@ log = logging.getLogger(__name__)
 class Verifier(object):
     def __init__(
         self,
-        n_obbt=3,
         theory_func=None,
-        obbt=True,
         method="mip",
         solver="gurobi",
         obbt_handler="gurobi",
         solver_params={},
     ):
-        self.n_obbt = n_obbt
-        self.objective = None
         self.theory_func = theory_func
-        self.obbt = obbt
-
-        self.params = []
         self.iterates = []
         self.steps = []
-        self.constraint_sets = []
-        if method == "mip":
-            self.method = MIP(solver_params=solver_params, solver=solver)
 
-        if obbt_handler == "gurobi":
-            self.obbt_handler = GurobiOBBTHandler()
+        self.method = self._get_method(method, solver_params, solver)
+        self.obbt_handler = self._get_obbt_handler(obbt_handler)
+        self.bounds = {}
 
-        self.lower_bounds = {}
-        self.upper_bounds = {}
+    @staticmethod
+    def _get_method(method: str, solver_params, solver):
+        """
+        Return an initialized instance for the requested method.
+
+        Parameters
+        ----------
+        method: str
+            Case-insensitive identifier for the solver to use. Supported values include:
+            - ``"mip"``
+            - ``"sdp"``
+
+        solver_params: dict
+            ...
+
+        solver: str
+            Case-insensitive identifier for the solver to use. Supported values
+            (and common aliases) include:
+            - ``"gurobi"``, ``"grb"``
+
+        Returns
+        -------
+        Method
+            A ready-to-use instance of a subclass of :class:`Method`
+            (e.g. :class:`mip.MIP()`).
+
+        Raises
+        ------
+        ValueError
+            If the requested method is one of the supported options.
+        """
+        match method.lower():
+            case "mip":
+                return MIP(solver_params=solver_params, solver=solver)
+            case "sdp":
+                raise NotImplementedError()
+            case _:
+                raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
+
+    @staticmethod
+    def _get_obbt_handler(handler):
+        """
+        Return an initialized instance for the requested optimization-based bound
+        tightening (OBBT) handler.
+
+        Parameters
+        ----------
+        handler: str or None, optional
+            Case-insensitive identifier for the OBBT handler to use. Supported values
+            (and common aliases) include:
+            - ``"gurobi"``, ``"grb"``
+            If None, no OBBT handling is performed.
+
+        Returns
+        -------
+        ObbtHandler
+            A ready-to-use instance of a subclass of :class:`ObbtHandler`
+            (e.g., :class:`gurobi_obbt_handler.GurobiOBBTHandler()`).
+
+        Raises
+        ------
+        ValueError
+            If the requested handler is one of the supported options.
+        """
+        match handler:
+            case "gurobi" | "grb":
+                return GurobiOBBTHandler()
+            case None:
+                return None
+            case _:
+                raise ValueError(f"Method must be 'gurobi' or 'grb', got {handler}")
 
 
     def add_param(self, n, lb=-np.inf, ub=np.inf):
-        assert np.all(lb <= ub)
+        if not np.all(lb <= ub):
+            raise ValueError("Lower bound must be less than or equal to upper bound.")
+
         param = LinearExpression.from_int(n)
-        self.params.append(param)
-        self.lower_bounds[param] = as_array(lb, n)
-        self.upper_bounds[param] = as_array(ub, n)
+        self.bounds[param] = (as_array(lb, n), as_array(ub, n))
         self.method.add_var(param, lb=lb, ub=ub)
 
-        if self.obbt:
+        if self.obbt_handler is not None:
             self.obbt_handler.add_param_var(param, lb=lb, ub=ub)
 
         return param
@@ -60,20 +120,19 @@ class Verifier(object):
 
         for p in param_list:
             # TODO: the following line uses '==' operator which we just overloaded
-            # assert p in self.params
             dim += p.ndim
-            lbs.append(self.lower_bounds[p])
-            ubs.append(self.upper_bounds[p])
+            lbs.append(self.bounds[p][0])
+            ubs.append(self.bounds[p][1])
+
         lb = np.hstack(lbs)
         ub = np.hstack(ubs)
 
         param_stack_var = LinearExpression.from_int(dim)
-        self.lower_bounds[param_stack_var] = lb
-        self.upper_bounds[param_stack_var] = ub
+        self.bounds[param_stack_var] = (lb, ub)
 
         self.method.add_param_stack_var(param_stack_var, param_list)
 
-        if self.obbt:
+        if self.obbt_handler is not None:
             self.obbt_handler.add_param_stack_var(param_stack_var, param_list)
 
         return param_stack_var
@@ -82,17 +141,14 @@ class Verifier(object):
         assert np.all(lb <= ub)
         iterate = LinearExpression.from_int(n)
         self.iterates.append(iterate)
-        self.lower_bounds[iterate] = as_array(lb, n)
-        self.upper_bounds[iterate] = as_array(ub, n)
+        self.bounds[iterate] = (as_array(lb, n), as_array(ub, n))
         self.method.add_var(iterate, lb=lb, ub=ub)
 
-        if self.obbt:
+        if self.obbt_handler is not None:
             self.obbt_handler.add_initial_iterate_var(iterate, lb=lb, ub=ub)
 
         return iterate
 
-    # def add_iterate(self, n):
-    #     return var
 
     def add_step(self, step):
         self.steps.append(step)
@@ -122,13 +178,12 @@ class Verifier(object):
         iterate_lb, iterate_ub = self.linear_bound_propagation(Minv_rhs)
         assert np.all(iterate_lb <= iterate_ub)
 
-        self.lower_bounds[iterate] = iterate_lb
-        self.upper_bounds[iterate] = iterate_ub
+        self.bounds[iterate] = (iterate_lb, iterate_ub)
 
         self.method.add_var(iterate, lb=iterate_lb, ub=iterate_ub)
-        self.method.add_equality_constraint(lhs_mat @ iterate, rhs_expr)
+        self.method.add_constraint(lhs_mat @ iterate == rhs_expr)
 
-        if self.obbt:
+        if self.obbt_handler is not None:
             self.obbt_handler.add_iterate_var(iterate, lb=iterate_lb, ub=iterate_ub)
             self.obbt_handler.add_equality_constraint(lhs_mat @ iterate, rhs_expr)
 
@@ -137,25 +192,52 @@ class Verifier(object):
         return iterate
 
     def relu_step(self, rhs_expr, proj_ranges=None, relax_binary_vars=False):
-        if proj_ranges is None:
-            proj_ranges = [(0, rhs_expr.get_output_dim())]
-        else:
-            proj_ranges = list_upcast(proj_ranges)
 
-        out_iterate = LinearExpression.from_int(rhs_expr.get_output_dim())
+        def _indices_from_ranges(ranges: tuple[int, int] | list[tuple[int, int]]):
+            """
+            Return the set of integers covered by one or more of half-open intervals.
+
+            Parameters
+            ----------
+            ranges: tuple[int, int] or Iterable[tuple[int, int]]
+                Either a single (start, end) pair or an iterable of such pair.
+                Each pair is interpreted as a half-open interval ``[start, end)``.
+
+            Returns
+            -------
+            set[int]
+                The unique integers contained in the given half-open range(s)
+
+            Examples
+            --------
+            >>> _indices_from_ranges(((1, 2), (5, 9)))
+            {1, 2, 5, 6, 7, 8}
+
+            >>> _indices_from_ranges((4, 7))
+            {4, 5, 6}
+            """
+            try:
+                ranges.append((0, 0))
+                return {i for (min, max) in ranges for i in range(min, max)}
+            except AttributeError:
+                return set(range(ranges[0], ranges[1]))
+
+        proj_indices = _indices_from_ranges(proj_ranges) if proj_ranges else set(range(0, rhs_expr.ndim))
+
+        out_iterate = LinearExpression.from_int(rhs_expr.ndim)
 
         rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
-        relu_rhs_lb = relu(rhs_lb, proj_ranges=proj_ranges)
-        relu_rhs_ub = relu(rhs_ub, proj_ranges=proj_ranges)
+        relu_rhs_lb = relu(rhs_lb, proj_indices=proj_indices)
+        relu_rhs_ub = relu(rhs_ub, proj_indices=proj_indices)
 
-        if self.obbt:
-            # obbt_lb, obbt_ub = self.method.obbt(rhs_expr)
+        if self.obbt_handler is not None:
+            # obbt_lb, obbt_ub = self.method.handler(rhs_expr)
             obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
             rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
             rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
 
-            relu_obbt_lb = relu(obbt_lb, proj_ranges=proj_ranges)
-            relu_obbt_ub = relu(obbt_ub, proj_ranges=proj_ranges)
+            relu_obbt_lb = relu(obbt_lb, proj_indices=proj_indices)
+            relu_obbt_ub = relu(obbt_ub, proj_indices=proj_indices)
 
             out_lb = relu_obbt_lb
             out_ub = relu_obbt_ub
@@ -169,17 +251,16 @@ class Verifier(object):
             lb=rhs_lb,
             ub=rhs_ub,
             relax_binary_vars=relax_binary_vars,
-            proj_ranges=proj_ranges,
+            proj_indices=proj_indices,
         )
 
         self.iterates.append(out_iterate)
-        self.lower_bounds[out_iterate] = out_lb
-        self.upper_bounds[out_iterate] = out_ub
+        self.bounds[out_iterate] = (out_lb, out_ub)
 
         self.method.add_var(out_iterate, lb=out_lb, ub=out_ub)
         self.method.add_relu_constraints(step)
 
-        if self.obbt:
+        if self.obbt_handler is not None:
             self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
             self.obbt_handler.add_relu_constraints(step, out_lb, out_ub)
 
@@ -194,8 +275,8 @@ class Verifier(object):
         sl_rhs_lb = saturated_linear(rhs_lb, l, u)
         sl_rhs_ub = saturated_linear(rhs_ub, l, u)
 
-        if self.obbt:
-            # obbt_lb, obbt_ub = self.method.obbt(rhs_expr)
+        if self.obbt_handler is not None:
+            # obbt_lb, obbt_ub = self.method.handler(rhs_expr)
             obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
             rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
             rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
@@ -220,13 +301,12 @@ class Verifier(object):
         )
 
         self.iterates.append(out_iterate)
-        self.lower_bounds[out_iterate] = out_lb
-        self.upper_bounds[out_iterate] = out_ub
+        self.bounds[out_iterate] = (out_lb, out_ub)
 
         self.method.add_var(out_iterate, lb=out_lb, ub=out_ub)
         self.method.add_saturated_linear_constraints(step)
 
-        if self.obbt:
+        if self.obbt_handler is not None:
             self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
             self.obbt_handler.add_saturated_linear_constraints(step, out_lb, out_ub)
 
@@ -241,8 +321,8 @@ class Verifier(object):
         out_iterate = LinearExpression.from_int(rhs_expr.get_output_dim())
         rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
 
-        l_lb, l_ub = self.lower_bounds[l], self.upper_bounds[l]
-        u_lb, u_ub = self.lower_bounds[u], self.upper_bounds[u]
+        l_lb, l_ub = self.bounds[l][0], self.bounds[l][1]
+        u_lb, u_ub = self.bounds[u][0], self.bounds[u][1]
 
         assert np.all(l_lb <= l_ub)
         assert np.all(u_lb <= u_ub)
@@ -250,10 +330,7 @@ class Verifier(object):
         sl_rhs_lb = saturated_linear(rhs_lb, l_lb, u_ub)
         sl_rhs_ub = saturated_linear(rhs_ub, l_lb, u_ub)
 
-        # print(rhs_lb, rhs_ub)
-        # print(sl_rhs_lb, sl_rhs_ub)
-
-        if self.obbt:
+        if self.obbt_handler is not None:
             obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
             rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
             rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
@@ -279,13 +356,12 @@ class Verifier(object):
         )
 
         self.iterates.append(out_iterate)
-        self.lower_bounds[out_iterate] = out_lb
-        self.upper_bounds[out_iterate] = out_ub
+        self.bounds[out_iterate] = (out_lb, out_ub)
 
         self.method.add_var(out_iterate, lb=out_lb, ub=out_ub)
         self.method.add_saturated_linear_param_constraints(step)
 
-        if self.obbt:
+        if self.obbt_handler is not None:
             self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
             self.obbt_handler.add_saturated_linear_param_constraints(
                 step, out_lb, out_ub, l_lb, l_ub, u_lb, u_ub
@@ -303,8 +379,8 @@ class Verifier(object):
         st_rhs_lb = soft_threshold(rhs_lb, lambd)
         st_rhs_ub = soft_threshold(rhs_ub, lambd)
 
-        if self.obbt:
-            # obbt_lb, obbt_ub = self.method.obbt(rhs_expr)
+        if self.obbt_handler is not None:
+            # obbt_lb, obbt_ub = self.method.handler(rhs_expr)
             obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
             rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
             rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
@@ -328,14 +404,13 @@ class Verifier(object):
         )
 
         self.iterates.append(out_iterate)
-        self.lower_bounds[out_iterate] = out_lb
-        self.upper_bounds[out_iterate] = out_ub
+        self.bounds[out_iterate] = (out_lb, out_ub)
 
         # add new var and st constraints to method
         self.method.add_var(out_iterate, lb=out_lb, ub=out_ub)
         self.method.add_soft_threshold_constraints(step, out_lb, out_ub)
 
-        if self.obbt:
+        if self.obbt_handler is not None:
             self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
             self.obbt_handler.add_soft_threshold_constraints(step, out_lb, out_ub)
 
@@ -343,23 +418,19 @@ class Verifier(object):
 
         return out_iterate
 
-    def add_constraint_set(self, constraint_set):
-        self.constraint_sets.append(constraint_set)
-
-    def equality_constraint(self, lhs_expr, rhs_expr):
-        self.method.add_equality_constraint(lhs_expr, rhs_expr)
-
     # TODO: consider if we should make the theory func local to this func and not a verifier property
     def theory_bound(self, k, target_expr, bound_expr, return_improv_frac=True):
         C = self.theory_func(k)
         lb, ub = self.linear_bound_propagation(bound_expr)
         if target_expr.is_leaf:
-            self.lower_bounds[target_expr], lb_improv_frac = update_lb(
-                self.lower_bounds[target_expr], lb - C
+            _lb, lb_improv_frac = update_lb(
+                self.bounds[target_expr][0], lb - C
             )
-            self.upper_bounds[target_expr], ub_improv_frac = update_ub(
-                self.upper_bounds[target_expr], lb + C
+            _ub, ub_improv_frac = update_ub(
+                self.bounds[target_expr][1], lb + C
             )
+            self.bounds[target_expr] = (_lb, _ub)
+
             improv_frac = (lb_improv_frac + ub_improv_frac) / 2.0
         self.method.add_theory_cut(C, target_expr, lb, ub)
 
@@ -367,21 +438,54 @@ class Verifier(object):
         if return_improv_frac:
             return improv_frac
 
-    def linear_bound_propagation(self, expression):
-        n = expression.get_output_dim()
-        out_lb, out_ub = np.zeros(n), np.zeros(n)
+    def linear_bound_propagation(self, expression: LinearExpression) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Compute the elementwise lower and upper bounds of a linear expression
+        given the bound constraints of its coefficient matrices.
 
+        Parameters
+        ----------
+        expression : LinearExpression
+            The linear expression for which to compute output bounds.
+
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray]
+            A pair (lower, upper) representing the elementwise lower and upper
+            bounds of the evaluated expression.
+
+        Raises
+        ------
+        ValueError
+            If any computed lower bound exceeds its corresponding upper bound.
+        """
+        def _interval_bound_propagation(a: np.matrix, lb: np.ndarray, ub: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            """
+            Bounds the linear image y = A @ x for any x with lb ≤ x ≤ ub.
+
+            Using midpoint m = (ub + lb)/2 and radius r = (ub - lb)/2:
+                y_min = A @ m - |A| @ r
+                y_max = A @ m + |A| @ r
+
+            Returns (y_min, y_max).
+
+            References
+            ----------
+                .. S. Gowal, K. Dvijotham, R. Stanforth, R. Bunel, C. Qin, J. Uesato, R. Arand-
+                   jelovi´c, T. Mann, and P. Kohli. "On the effectiveness of interval bound propa-
+                   gation for training verifiably robust models. arXiv:1810.12715, 2018."
+            """
+            return (a @ (ub + lb) - np.abs(a) @ (ub - lb)) / 2, (a @ (ub + lb) + np.abs(a) @ (ub - lb)) / 2
+
+        out_lb, out_ub = np.zeros(expression.ndim), np.zeros(expression.ndim)
         for k, v in expression.decomposition_dict.items():
-            Ax_lower, Ax_upper = interval_bound_prop(v, self.lower_bounds[k], self.upper_bounds[k])
+            _lb, _ub = _interval_bound_propagation(v, self.bounds[k][0], self.bounds[k][1])
 
-            if np.any(Ax_lower > Ax_upper):
+            if np.any(_lb > _ub):
                 raise ValueError("Lower bound cannot exceed upper bound .")
 
-            out_lb += Ax_lower
-            out_ub += Ax_upper
-
-        if np.any(out_lb > out_ub):
-            raise ValueError("Lower bound cannot exceed upper bound .")
+            out_lb += _lb
+            out_ub += _ub
 
         return out_lb, out_ub
 
@@ -403,27 +507,19 @@ class Verifier(object):
 
     def solve(self, **kwargs):
         return self.method.solve_model(
-            self.steps, self.lower_bounds, self.upper_bounds, **kwargs
+            self.steps, self.bounds, **kwargs
         )
-
-    def extract_solver_data(self):
-        return self.method.get_solve_data()
 
     def extract_sol(self, iterate):
         return self.method.extract_sol(iterate)
 
-    def extract_bounds(self, iterate):
-        if iterate.is_leaf:
-            return self.lower_bounds[iterate], self.upper_bounds[iterate]
-        else:
-            raise NotImplementedError
 
     def post_process(
         self, var_to_bound, var_for_init_bounds, residual_values, return_improv_frac=True
     ):
         delta_sum = np.sum(residual_values)
-        lower_bounds = self.lower_bounds[var_for_init_bounds]
-        upper_bounds = self.upper_bounds[var_for_init_bounds]
+        lower_bounds = self.bounds[var_for_init_bounds][0]
+        upper_bounds = self.bounds[var_for_init_bounds][1]
         new_lower_bounds = lower_bounds - delta_sum
         new_upper_bounds = upper_bounds + delta_sum
 
@@ -435,21 +531,6 @@ class Verifier(object):
 
         if return_improv_frac:
             return improv_frac
-
-
-def interval_bound_prop(A, l, u):
-    """
-    Given :math:`x \\in [l, u]`, give bounds on :math:`Ax`.
-
-    References
-    ----------
-        .. S. Gowal, K. Dvijotham, R. Stanforth, R. Bunel, C. Qin, J. Uesato, R. Arand-
-           jelovi´c, T. Mann, and P. Kohli. "On the effectiveness of interval bound propa-
-           gation for training verifiably robust models. arXiv:1810.12715, 2018."
-    """
-
-    absA = np.abs(A)
-    return (A @ (u + l) - absA @ (u - l)) / 2, (A @ (u + l) + absA @ (u - l)) / 2
 
 
 def as_array(val, n):
@@ -464,16 +545,8 @@ def as_array(val, n):
     return np.array(val)
 
 
-def relu(v, proj_ranges=None):
-    if proj_ranges is None:
-        return np.maximum(v, 0)
-    else:
-        out = v.copy()
-
-        for left, right in proj_ranges:
-            out[left:right] = np.maximum(v[left:right], 0)
-
-        return out
+def relu(v, proj_indices):
+    return np.where(np.isin(np.arange(len(v)), list(proj_indices)), np.maximum(0, v), v)
 
 
 def saturated_linear(x, l, u):
@@ -490,11 +563,3 @@ def update_lb(old_lb, new_lb):
 
 def update_ub(old_ub, new_ub):
     return np.minimum(old_ub, new_ub), (new_ub < old_ub).sum() / old_ub.shape[0]
-
-
-def list_upcast(val):
-    # if val is a list then keep it as is otherwise put it in a list
-    if isinstance(val, list):
-        return val
-    else:
-        return [val]

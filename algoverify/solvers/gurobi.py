@@ -105,7 +105,7 @@ class GurobiSolver(Solver):
 
     def get_solve_data(self):
         return {
-            "objVal": self.model.objVal,
+            "objVal": self.model.ObjVal,
             "objBound": self.model.objBound,
             "MIPGap": self.model.MIPGap,
             "Runtime": self.model.Runtime,

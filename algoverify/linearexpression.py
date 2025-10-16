@@ -90,9 +90,7 @@ class LinearExpression:
                 self.ndim = const.shape[0]
 
         self.const = np.zeros(self.ndim) if const is None else const
-        self.const = const
         self.decomposition_dict = decomposition_dict
-        # TODO: Use a number rather than a None
         self.counter = LinearExpression.counter
         LinearExpression.counter += 1
         self.is_leaf = False

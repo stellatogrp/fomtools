@@ -1,11 +1,42 @@
 import numpy as np
 
+from algoverify import LinearExpression
 from algoverify.solvers import gurobi
 from algoverify.solvers.solver import Solver
 
 
-class Method():
-    def __init__(self, solver_params=None, solver="gurobi"):
+class Method:
+    """
+    A base class for mathematical-optimization methods. This class
+    defines a common interface for mixed-integer programming (MIP),
+    and semidefinite programming (SDP).
+
+    Attributes
+    ----------
+    solver: Solver
+        A ready-to-use instance of a subclass of :class:`Solver`
+        (e.g., ``gurobi.Gurobi()``).
+
+    Methods
+    -------
+    ...
+
+    """
+
+    def __init__(self, solver_params: list[LinearExpression] = None, solver: str = "gurobi"):
+        """
+        Initialize an instance of :class:`Method`.
+
+        Parameters
+        ----------
+        solver_params: list or None, optional
+            List of solver parameters to start with.
+
+        solver: str, default "gurobi"
+            Case-insensitive identifier for the solver to use. Supported
+            values (and common aliases) include:
+            - ``"gurobi"``, ``"grb"``
+        """
         self.solver_params = solver_params
         self.solver = self._get_solver(solver)
 
@@ -16,7 +47,7 @@ class Method():
 
         Parameters
         ----------
-        solver: str, default 'gurobi'
+        solver: str
             Case-insensitive identifier for the solver to use. Supported values
             (and common aliases) include:
             - ``"gurobi"``, ``"grb"``
