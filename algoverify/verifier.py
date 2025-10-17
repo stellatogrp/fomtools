@@ -101,7 +101,11 @@ class Verifier(object):
                 raise ValueError(f"Method must be 'gurobi' or 'grb', got {handler}")
 
     def _add_var(
-        self, ndim: int, lb: list[float] = -np.inf, ub: list[float] = np.inf, param_list: list[LinearExpression] = None
+        self,
+        ndim: int,
+        lb: list[float] = -np.inf,
+        ub: list[float] = np.inf,
+        param_list: list[LinearExpression] = None,
     ) -> LinearExpression:
         """
         Create and register a :class:`LinearExpression` variable with the Problem
@@ -237,8 +241,6 @@ class Verifier(object):
         self.params.append(param := self._add_var(dim, lb=bounds[0], ub=bounds[1]))
         return param
 
-
-
     def implicit_linear_step(self, lhs_mat, rhs_expr, lhs_mat_factorization=None):
         # need to think about best way to bound prop here/set up the api
         """
@@ -322,7 +324,7 @@ class Verifier(object):
         )
 
         if self.obbt_handler is not None:
-            rhs_lb, rhs_ub = self.obbt_handler.obbt(rhs_expr,rhs_lb, rhs_ub)
+            rhs_lb, rhs_ub = self.obbt_handler.obbt(rhs_expr, rhs_lb, rhs_ub)
 
         out_lb = relu(rhs_lb, proj_indices=proj_indices)
         out_ub = relu(rhs_ub, proj_indices=proj_indices)
@@ -335,29 +337,13 @@ class Verifier(object):
 
         if self.obbt_handler is not None:
             self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
-            self.obbt_handler.add_relu_constraints(step)
 
         self.steps.append(step)
-
         return out_iterate
 
     def saturated_linear_step(self, rhs_expr, l, u, relax_binary_vars=False):
-        out_iterate = LinearExpression.from_int(rhs_expr.get_output_dim())
+        out_iterate = LinearExpression.from_int(rhs_expr.ndim)
         rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
-
-        sl_rhs_lb = saturated_linear(rhs_lb, l, u)
-        sl_rhs_ub = saturated_linear(rhs_ub, l, u)
-
-        if self.obbt_handler is not None:
-            obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr,rhs_lb, rhs_ub)
-            sl_obbt_lb = saturated_linear(obbt_lb, l, u)
-            sl_obbt_ub = saturated_linear(obbt_ub, l, u)
-
-            out_lb = sl_obbt_lb
-            out_ub = sl_obbt_ub
-        else:
-            out_lb = sl_rhs_lb
-            out_ub = sl_rhs_ub
 
         step = SaturatedLinear(
             lhs=out_iterate,
@@ -369,6 +355,12 @@ class Verifier(object):
             u=u,
         )
 
+        if self.obbt_handler is not None:
+            rhs_lb, rhs_ub = self.obbt_handler.obbt(rhs_expr, rhs_lb, rhs_ub)
+
+        out_lb = saturated_linear(rhs_lb, l, u)
+        out_ub = saturated_linear(rhs_ub, l, u)
+
         self.iterates.append(out_iterate)
         self.bounds[out_iterate] = (out_lb, out_ub)
 
@@ -377,7 +369,6 @@ class Verifier(object):
 
         if self.obbt_handler is not None:
             self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
-            self.obbt_handler.add_saturated_linear_constraints(step, out_lb, out_ub)
 
         self.steps.append(step)
 
@@ -400,7 +391,7 @@ class Verifier(object):
         sl_rhs_ub = saturated_linear(rhs_ub, l_lb, u_ub)
 
         if self.obbt_handler is not None:
-            obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr,rhs_lb, rhs_ub)
+            obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr, rhs_lb, rhs_ub)
             rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
             rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
 
@@ -445,21 +436,6 @@ class Verifier(object):
 
         rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
 
-        st_rhs_lb = soft_threshold(rhs_lb, lambd)
-        st_rhs_ub = soft_threshold(rhs_ub, lambd)
-
-        if self.obbt_handler is not None:
-            obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr,rhs_lb, rhs_ub)
-
-            st_obbt_lb = soft_threshold(obbt_lb, lambd)
-            st_obbt_ub = soft_threshold(obbt_ub, lambd)
-
-            out_lb = st_obbt_lb
-            out_ub = st_obbt_ub
-        else:
-            out_lb = st_rhs_lb
-            out_ub = st_rhs_ub
-
         step = SoftThreshold(
             lhs=out_iterate,
             rhs=rhs_expr,
@@ -469,28 +445,30 @@ class Verifier(object):
             lambd=lambd,
         )
 
+        if self.obbt_handler is not None:
+            rhs_lb, rhs_ub = self.obbt_handler.obbt(rhs_expr, rhs_lb, rhs_ub)
+
+        out_lb = soft_threshold(rhs_lb, lambd)
+        out_ub = soft_threshold(rhs_ub, lambd)
+
         self.iterates.append(out_iterate)
         self.bounds[out_iterate] = (out_lb, out_ub)
 
-        # add new var and st constraints to method
         self.method.add_var(out_iterate, lb=out_lb, ub=out_ub)
         self.method.add_soft_threshold_constraints(step, out_lb, out_ub)
 
         if self.obbt_handler is not None:
             self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
-            self.obbt_handler.add_soft_threshold_constraints(step, out_lb, out_ub)
 
         self.steps.append(step)
-
         return out_iterate
-
 
     def add_constraint_set(self, constraint_set):
         self.constraint_sets.append(constraint_set)
 
     def equality_constraint(self, lhs_expr, rhs_expr):
         self.method.add_constraint(lhs_expr == rhs_expr)
-        
+
     def fixed_point(self, n_dim, operator, lb=-100, ub=100):
         z_star = self.initial_iterate(n_dim, lb=lb, ub=ub)
         s_star = operator(z_star)
