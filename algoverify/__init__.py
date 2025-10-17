@@ -6,8 +6,6 @@ from algoverify.verifier import (
     as_array,
     relu,
     saturated_linear,
-    soft_threshold,
-    update_lb,
-    update_ub,
+    soft_threshold
 )
 from algoverify.steps.step import Step

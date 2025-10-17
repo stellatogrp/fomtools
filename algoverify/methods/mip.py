@@ -150,8 +150,6 @@ class MIP(Method):
         -------
 
         """
-        assert step.lhs in self.solver.vector_var_map
-
         lhs = self.solver.expression_to_solver(step.lhs)
         rhs = self.solver.expression_to_solver(step.rhs)
 

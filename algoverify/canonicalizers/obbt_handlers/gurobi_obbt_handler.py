@@ -12,10 +12,9 @@ class GurobiOBBTHandler(object):
 
     def __init__(self):
         self.vector_var_map = {}
-        self.model = gp.Model()
         self.solver = gurobi.GurobiSolver()
 
-        self.model.Params.OutputFlag = 0
+
         self.step_constr_map = {}
 
     def add_var(self, var, lb=-np.inf, ub=np.inf):
@@ -30,17 +29,15 @@ class GurobiOBBTHandler(object):
 
         self.solver.add_constr(lhs_gp_expr == rhs_gp_expr)
 
-    def obbt(self, linexpr):
+    def obbt(self, linexpr, lb, ub):
         self.solver.update_model()
-        n = linexpr.get_output_dim()
-
-        lb_out = np.zeros(n)
-        ub_out = np.zeros(n)
+        lb_out = np.zeros(linexpr.ndim)
+        ub_out = np.zeros(linexpr.ndim)
 
         gp_expr = self.solver.expression_to_solver(linexpr)
 
         for sense in ["minimize", "maximize"]:
-            for i in range(n):
+            for i in range(linexpr.ndim):
                 self.solver.set_objective(gp_expr[i], sense)
                 self.solver.optimize()
 
@@ -48,8 +45,7 @@ class GurobiOBBTHandler(object):
                 if self.solver.model.status != gp.GRB.OPTIMAL:
                     log.info(f'bound tighting failed, GRB model status: {self.solver.model.status}')
                     log.info(f'i = {i}, sense={sense}')
-                    exit(0)
-                    return None
+                    return
 
                 if sense == "maximize":
                     ub_out[i] = self.solver.model.objVal
@@ -60,41 +56,28 @@ class GurobiOBBTHandler(object):
         self.solver.set_objective(0)
 
         assert np.all(lb_out <= ub_out)
+        return np.maximum(lb, lb_out), np.minimum(ub, ub_out)
 
-        return lb_out, ub_out
+    def add_relu_constraints(self, step):
+        lhs = self.solver.expression_to_solver(step.lhs)
+        rhs = self.solver.expression_to_solver(step.rhs)
 
-    def add_relu_constraints(self, step, lhs_lb, lhs_ub):
-        lhs = step.lhs
-        rhs = step.rhs
-        # assert lhs in self.vector_var_map
+        constraints = []
 
-        lhs_gp_expr = self.solver.expression_to_solver(lhs)
-        rhs_gp_expr = self.solver.expression_to_solver(rhs)
-        rhs_lb = step.lb
-        rhs_ub = step.ub
+        for i in step.nonproj_indices:
+            constraints.append(lhs[i] == rhs[i])
 
-        out_constraints = []
-
-        proj_indices = step.proj_indices
-        nonproj_indices = step.nonproj_indices
-
-        # after ranges are added, remove the range(n) and add the constraints when needed
-        # make sure to enforce equality constraints between lhs and rhs for other indices
-
-        for i in nonproj_indices:
-            out_constraints.append(lhs_gp_expr[i] == rhs_gp_expr[i])
-
-        for i in proj_indices:
-            if rhs_ub[i] <= 0:
-                out_constraints.append(lhs_gp_expr[i] == 0)
-            elif rhs_lb[i] > 0:
-                out_constraints.append(lhs_gp_expr[i] == rhs_gp_expr[i])
+        for i in step.proj_indices:
+            if step.ub[i] <= 0:
+                constraints.append(lhs[i] == 0)
+            elif step.lb[i] > 0:
+                constraints.append(lhs[i] == rhs[i])
             else:
-                out_constraints.append(lhs_gp_expr[i] >= 0)
-                out_constraints.append(lhs_gp_expr[i] <= rhs_ub[i] / (rhs_ub[i] - rhs_lb[i]) * (rhs_gp_expr[i] - rhs_lb[i]))
-                out_constraints.append(lhs_gp_expr[i] >= rhs_gp_expr[i])
+                constraints.append(lhs[i] >= 0)
+                constraints.append(lhs[i] <= step.ub[i] / (step.ub[i] - step.lb[i]) * (rhs[i] - step.lb[i]))
+                constraints.append(lhs[i] >= rhs[i])
 
-        self.step_constr_map[step] = [self.solver.add_constr(constr) for constr in out_constraints]
+        self.solver.constraints_to_solver(constraints)
 
     def add_saturated_linear_constraints(self, step, lhs_lb, lhs_ub):
         lhs = step.lhs

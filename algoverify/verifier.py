@@ -312,24 +312,6 @@ class Verifier(object):
         out_iterate = LinearExpression.from_int(rhs_expr.ndim)
 
         rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
-        relu_rhs_lb = relu(rhs_lb, proj_indices=proj_indices)
-        relu_rhs_ub = relu(rhs_ub, proj_indices=proj_indices)
-
-        if self.obbt_handler is not None:
-            # obbt_lb, obbt_ub = self.method.handler(rhs_expr)
-            obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
-            rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
-            rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
-
-            relu_obbt_lb = relu(obbt_lb, proj_indices=proj_indices)
-            relu_obbt_ub = relu(obbt_ub, proj_indices=proj_indices)
-
-            out_lb = relu_obbt_lb
-            out_ub = relu_obbt_ub
-        else:
-            out_lb = relu_rhs_lb
-            out_ub = relu_rhs_ub
-
         step = Relu(
             lhs=out_iterate,
             rhs=rhs_expr,
@@ -339,6 +321,12 @@ class Verifier(object):
             proj_indices=proj_indices,
         )
 
+        if self.obbt_handler is not None:
+            rhs_lb, rhs_ub = self.obbt_handler.obbt(rhs_expr,rhs_lb, rhs_ub)
+
+        out_lb = relu(rhs_lb, proj_indices=proj_indices)
+        out_ub = relu(rhs_ub, proj_indices=proj_indices)
+
         self.iterates.append(out_iterate)
         self.bounds[out_iterate] = (out_lb, out_ub)
 
@@ -347,7 +335,7 @@ class Verifier(object):
 
         if self.obbt_handler is not None:
             self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
-            self.obbt_handler.add_relu_constraints(step, out_lb, out_ub)
+            self.obbt_handler.add_relu_constraints(step)
 
         self.steps.append(step)
 
@@ -361,11 +349,7 @@ class Verifier(object):
         sl_rhs_ub = saturated_linear(rhs_ub, l, u)
 
         if self.obbt_handler is not None:
-            # obbt_lb, obbt_ub = self.method.handler(rhs_expr)
-            obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
-            rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
-            rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
-
+            obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr,rhs_lb, rhs_ub)
             sl_obbt_lb = saturated_linear(obbt_lb, l, u)
             sl_obbt_ub = saturated_linear(obbt_ub, l, u)
 
@@ -416,7 +400,7 @@ class Verifier(object):
         sl_rhs_ub = saturated_linear(rhs_ub, l_lb, u_ub)
 
         if self.obbt_handler is not None:
-            obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
+            obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr,rhs_lb, rhs_ub)
             rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
             rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
 
@@ -465,10 +449,7 @@ class Verifier(object):
         st_rhs_ub = soft_threshold(rhs_ub, lambd)
 
         if self.obbt_handler is not None:
-            # obbt_lb, obbt_ub = self.method.handler(rhs_expr)
-            obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr)
-            rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
-            rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
+            obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr,rhs_lb, rhs_ub)
 
             st_obbt_lb = soft_threshold(obbt_lb, lambd)
             st_obbt_ub = soft_threshold(obbt_ub, lambd)
