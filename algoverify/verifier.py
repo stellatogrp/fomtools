@@ -423,9 +423,6 @@ class Verifier(object):
 
         if self.obbt_handler is not None:
             self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
-            self.obbt_handler.add_saturated_linear_param_constraints(
-                step, out_lb, out_ub, l_lb, l_ub, u_lb, u_ub
-            )
 
         self.steps.append(step)
 
