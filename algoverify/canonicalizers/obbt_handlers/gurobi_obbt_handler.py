@@ -21,29 +21,14 @@ class GurobiOBBTHandler(object):
     def add_var(self, var, lb=-np.inf, ub=np.inf):
         self.solver.add_var(var, lb, ub)
 
-    def add_param_var(self, param, lb=-np.inf, ub=np.inf):
-        self.add_var(param, lb, ub)
-
     def add_param_stack_var(self, param_stack_var, param_list):
-        '''
-            param_stack_var is the VP param object and param_list is the list of previous params to stack
-        '''
         self.solver.add_param_stack_var(param_stack_var, param_list)
 
-    def add_initial_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
-        self.add_var(iterate, lb, ub)
-
-    def add_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
-        self.add_var(iterate, lb, ub)
-
     def add_equality_constraint(self, lhs_expr, rhs_expr):
-        lhs_gp_expr = self.lin_expr_to_gp_expr(lhs_expr)
-        rhs_gp_expr = self.lin_expr_to_gp_expr(rhs_expr)
+        lhs_gp_expr = self.solver.expression_to_solver(lhs_expr)
+        rhs_gp_expr = self.solver.expression_to_solver(rhs_expr)
 
         self.solver.add_constr(lhs_gp_expr == rhs_gp_expr)
-
-    def lin_expr_to_gp_expr(self, linexpr):
-        return self.solver.expression_to_solver(expression=linexpr)
 
     def obbt(self, linexpr):
         self.solver.update_model()
@@ -52,7 +37,7 @@ class GurobiOBBTHandler(object):
         lb_out = np.zeros(n)
         ub_out = np.zeros(n)
 
-        gp_expr = self.lin_expr_to_gp_expr(linexpr)
+        gp_expr = self.solver.expression_to_solver(linexpr)
 
         for sense in ["minimize", "maximize"]:
             for i in range(n):
@@ -83,8 +68,8 @@ class GurobiOBBTHandler(object):
         rhs = step.rhs
         # assert lhs in self.vector_var_map
 
-        lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
-        rhs_gp_expr = self.lin_expr_to_gp_expr(rhs)
+        lhs_gp_expr = self.solver.expression_to_solver(lhs)
+        rhs_gp_expr = self.solver.expression_to_solver(rhs)
         rhs_lb = step.lb
         rhs_ub = step.ub
 
@@ -116,8 +101,8 @@ class GurobiOBBTHandler(object):
         rhs = step.rhs
         l, u = step.l, step.u
 
-        lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
-        rhs_gp_expr = self.lin_expr_to_gp_expr(rhs)
+        lhs_gp_expr = self.solver.expression_to_solver(lhs)
+        rhs_gp_expr = self.solver.expression_to_solver(rhs)
         rhs_lb = step.lb
         rhs_ub = step.ub
         n = lhs.get_output_dim()
@@ -157,16 +142,16 @@ class GurobiOBBTHandler(object):
         rhs = step.rhs
         l, u = step.l, step.u
 
-        lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
-        rhs_gp_expr = self.lin_expr_to_gp_expr(rhs)
+        lhs_gp_expr = self.solver.expression_to_solver(lhs)
+        rhs_gp_expr = self.solver.expression_to_solver(rhs)
         rhs_lb = step.lb
         rhs_ub = step.ub
         n = lhs.get_output_dim()
 
         out_constraints = []
 
-        l_gp_var = self.lin_expr_to_gp_expr(l)
-        u_gp_var = self.lin_expr_to_gp_expr(u)
+        l_gp_var = self.solver.expression_to_solver(l)
+        u_gp_var = self.solver.expression_to_solver(u)
 
         for i in range(n):
             if rhs_lb[i] >= u_ub[i]:
@@ -202,8 +187,8 @@ class GurobiOBBTHandler(object):
         rhs = step.rhs
         lambd = step.lambd
 
-        lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
-        rhs_gp_expr = self.lin_expr_to_gp_expr(rhs)
+        lhs_gp_expr = self.solver.expression_to_solver(lhs)
+        rhs_gp_expr = self.solver.expression_to_solver(rhs)
         rhs_lb = step.lb
         rhs_ub = step.ub
         n = lhs.get_output_dim()

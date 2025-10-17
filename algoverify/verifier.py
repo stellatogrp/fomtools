@@ -141,7 +141,7 @@ class Verifier(object):
         if param_list is None:
             self.method.add_var(var, lb=lb, ub=ub)
             if self.obbt_handler is not None:
-                self.obbt_handler.add_initial_iterate_var(var, lb=lb, ub=ub)
+                self.obbt_handler.add_var(var, lb=lb, ub=ub)
         else:
             self.method.add_param_stack_var(var, param_list)
             if self.obbt_handler is not None:
@@ -270,7 +270,7 @@ class Verifier(object):
         self.method.add_constraint(lhs_mat @ iterate == rhs_expr)
 
         if self.obbt_handler is not None:
-            self.obbt_handler.add_iterate_var(iterate, lb=iterate_lb, ub=iterate_ub)
+            self.obbt_handler.add_var(iterate, lb=iterate_lb, ub=iterate_ub)
             self.obbt_handler.add_equality_constraint(lhs_mat @ iterate, rhs_expr)
 
         self.steps.append(step)
@@ -346,7 +346,7 @@ class Verifier(object):
         self.method.add_relu_constraints(step)
 
         if self.obbt_handler is not None:
-            self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
+            self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
             self.obbt_handler.add_relu_constraints(step, out_lb, out_ub)
 
         self.steps.append(step)
@@ -392,7 +392,7 @@ class Verifier(object):
         self.method.add_saturated_linear_constraints(step)
 
         if self.obbt_handler is not None:
-            self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
+            self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
             self.obbt_handler.add_saturated_linear_constraints(step, out_lb, out_ub)
 
         self.steps.append(step)
@@ -447,7 +447,7 @@ class Verifier(object):
         self.method.add_saturated_linear_param_constraints(step)
 
         if self.obbt_handler is not None:
-            self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
+            self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
             self.obbt_handler.add_saturated_linear_param_constraints(
                 step, out_lb, out_ub, l_lb, l_ub, u_lb, u_ub
             )
@@ -496,7 +496,7 @@ class Verifier(object):
         self.method.add_soft_threshold_constraints(step, out_lb, out_ub)
 
         if self.obbt_handler is not None:
-            self.obbt_handler.add_iterate_var(out_iterate, lb=out_lb, ub=out_ub)
+            self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
             self.obbt_handler.add_soft_threshold_constraints(step, out_lb, out_ub)
 
         self.steps.append(step)
