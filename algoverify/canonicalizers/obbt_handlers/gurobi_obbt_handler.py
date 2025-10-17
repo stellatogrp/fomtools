@@ -1,8 +1,9 @@
 import logging
 
+import gurobipy
 import gurobipy as gp
 import numpy as np
-
+from algoverify.solvers import gurobi
 log = logging.getLogger(__name__)
 
 
@@ -11,6 +12,7 @@ class GurobiOBBTHandler(object):
     def __init__(self):
         self.vector_var_map = {}
         self.model = gp.Model()
+        self.solver = gurobi.GurobiSolver()
 
         self.model.Params.OutputFlag = 0
         self.step_constr_map = {}
@@ -43,20 +45,6 @@ class GurobiOBBTHandler(object):
         self.model.addConstr(lhs_gp_expr == rhs_gp_expr)
         self.model.update()
 
-    def update_vector_bounds(self, iterate, lb, ub):
-        gp_var = self.vector_var_map[iterate]
-
-        old_lb = gp_var.lb
-        gp_var.lb = np.maximum(old_lb, lb)
-
-        old_ub = gp_var.ub
-        gp_var.ub = np.minimum(old_ub, ub)
-
-    def leaf_expr_to_gp_var(self, leaf):
-        assert leaf.is_leaf
-
-        key = next(iter(leaf.decomposition_dict))
-        return self.vector_var_map[key]
 
     def lin_expr_to_gp_expr(self, linexpr):
         gp_expr = None
