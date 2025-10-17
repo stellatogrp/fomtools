@@ -17,49 +17,35 @@ class GurobiOBBTHandler(object):
         self.model.Params.OutputFlag = 0
         self.step_constr_map = {}
 
+    def add_var(self, var, lb=-np.inf, ub=np.inf):
+        self.solver.add_var(var, lb, ub)
+
     def add_param_var(self, param, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[param] = self.model.addMVar(param.ndim, lb=lb, ub=ub)
+        self.add_var(param, lb, ub)
 
     def add_param_stack_var(self, param_stack_var, param_list):
         '''
             param_stack_var is the VP param object and param_list is the list of previous params to stack
         '''
-        prev_var_stack = []
-        for p in param_list:
-            prev_var_stack.append(self.vector_var_map[p])
-        self.vector_var_map[param_stack_var] = gp.hstack(prev_var_stack)
-        self.model.update()
+        self.solver.add_param_stack_var(param_stack_var, param_list)
 
     def add_initial_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[iterate] = self.model.addMVar(iterate.ndim, lb=lb, ub=ub)
-        self.model.update()
+        self.add_var(iterate, lb, ub)
 
     def add_iterate_var(self, iterate, lb=-np.inf, ub=np.inf):
-        self.vector_var_map[iterate] = self.model.addMVar(iterate.ndim, lb=lb, ub=ub)
-        self.model.update()
+        self.add_var(iterate, lb, ub)
 
     def add_equality_constraint(self, lhs_expr, rhs_expr):
         lhs_gp_expr = self.lin_expr_to_gp_expr(lhs_expr)
         rhs_gp_expr = self.lin_expr_to_gp_expr(rhs_expr)
 
-        self.model.addConstr(lhs_gp_expr == rhs_gp_expr)
-        self.model.update()
-
+        self.solver.add_constr(lhs_gp_expr == rhs_gp_expr)
 
     def lin_expr_to_gp_expr(self, linexpr):
-        gp_expr = None
-        for key, value in linexpr.decomposition_dict.items():
-            gp_var = self.vector_var_map[key]
-
-            if gp_expr is None:
-                gp_expr = value @ gp_var
-            else:
-                gp_expr += value @ gp_var
-
-        return gp_expr
+        return self.solver.expression_to_solver(expression=linexpr)
 
     def obbt(self, linexpr):
-        self.model.update()
+        self.solver.update_model()
         n = linexpr.get_output_dim()
 
         lb_out = np.zeros(n)
@@ -67,27 +53,25 @@ class GurobiOBBTHandler(object):
 
         gp_expr = self.lin_expr_to_gp_expr(linexpr)
 
-        for sense in [gp.GRB.MINIMIZE, gp.GRB.MAXIMIZE]:
+        for sense in ["minimize", "maximize"]:
             for i in range(n):
-                self.model.setObjective(gp_expr[i], sense)
-                self.model.update()
+                self.solver.set_objective(gp_expr[i], sense)
+                self.solver.optimize()
 
-                self.model.update()
-                self.model.optimize()
 
-                if self.model.status != gp.GRB.OPTIMAL:
-                    log.info(f'bound tighting failed, GRB model status: {self.model.status}')
+                if self.solver.model.status != gp.GRB.OPTIMAL:
+                    log.info(f'bound tighting failed, GRB model status: {self.solver.model.status}')
                     log.info(f'i = {i}, sense={sense}')
                     exit(0)
                     return None
 
-                if sense == gp.GRB.MAXIMIZE:
-                    ub_out[i] = self.model.objVal
+                if sense == "maximize":
+                    ub_out[i] = self.solver.model.objVal
                 else:
-                    lb_out[i] = self.model.objVal
+                    lb_out[i] = self.solver.model.objVal
 
         # reset objective
-        self.model.setObjective(0)
+        self.solver.set_objective(0)
 
         assert np.all(lb_out <= ub_out)
 
@@ -96,7 +80,7 @@ class GurobiOBBTHandler(object):
     def add_relu_constraints(self, step, lhs_lb, lhs_ub):
         lhs = step.lhs
         rhs = step.rhs
-        assert lhs in self.vector_var_map
+        # assert lhs in self.vector_var_map
 
         lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
         rhs_gp_expr = self.lin_expr_to_gp_expr(rhs)
@@ -124,13 +108,11 @@ class GurobiOBBTHandler(object):
                 out_constraints.append(lhs_gp_expr[i] <= rhs_ub[i] / (rhs_ub[i] - rhs_lb[i]) * (rhs_gp_expr[i] - rhs_lb[i]))
                 out_constraints.append(lhs_gp_expr[i] >= rhs_gp_expr[i])
 
-        self.step_constr_map[step] = [self.model.addConstr(constr) for constr in out_constraints]
-        self.model.update()
+        self.step_constr_map[step] = [self.solver.add_constr(constr) for constr in out_constraints]
 
     def add_saturated_linear_constraints(self, step, lhs_lb, lhs_ub):
         lhs = step.lhs
         rhs = step.rhs
-        assert lhs in self.vector_var_map
         l, u = step.l, step.u
 
         lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
@@ -166,13 +148,12 @@ class GurobiOBBTHandler(object):
                 else:
                     raise RuntimeError('Unreachable code')
 
-        self.step_constr_map[step] = [self.model.addConstr(constr) for constr in out_constraints]
-        self.model.update()
+        self.step_constr_map[step] = [self.solver.add_constr(constr) for constr in out_constraints]
+
 
     def add_saturated_linear_param_constraints(self, step, out_lb, out_ub, l_lb, l_ub, u_lb, u_ub):
         lhs = step.lhs
         rhs = step.rhs
-        assert lhs in self.vector_var_map
         l, u = step.l, step.u
 
         lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
@@ -212,13 +193,12 @@ class GurobiOBBTHandler(object):
                     out_constraints.append(lhs_gp_expr[i] <= (u_ub[i] - l_ub[i]) / (u_ub[i] - rhs_lb[i]) * (rhs_gp_expr[i] - u_gp_var[i]) + u_gp_var[i])
                     out_constraints.append(lhs_gp_expr[i] >= (u_lb[i] - l_lb[i]) / (rhs_ub[i] - l_lb[i]) * (rhs_gp_expr[i] - l_gp_var[i]) + l_gp_var[i])
 
-        self.step_constr_map[step] = [self.model.addConstr(constr) for constr in out_constraints]
-        self.model.update()
+        self.step_constr_map[step] = [self.solver.add_constr(constr) for constr in out_constraints]
+
 
     def add_soft_threshold_constraints(self, step, lhs_lb, lhs_ub):
         lhs = step.lhs
         rhs = step.rhs
-        assert lhs in self.vector_var_map
         lambd = step.lambd
 
         lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
@@ -258,5 +238,5 @@ class GurobiOBBTHandler(object):
                 else:
                     raise RuntimeError('Unreachable code')
 
-        self.step_constr_map[step] = [self.model.addConstr(constr) for constr in out_constraints]
-        self.model.update()
+        self.step_constr_map[step] = [self.solver.add_constr(constr) for constr in out_constraints]
+

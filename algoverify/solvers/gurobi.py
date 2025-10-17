@@ -352,11 +352,13 @@ class GurobiSolver(Solver):
             If provided objective ``type`` is not ``"minimize"`` or ``"maximize"``.
 
         """
-        match type.lower():
+        match type:
             case "minimize":
                 type = gp.GRB.MINIMIZE
             case "maximize":
                 type = gp.GRB.MAXIMIZE
+            case None:
+                type = None
             case _:
                 raise TypeError(f"Objective type must be either minimize or maximize, got {type}")
         self.model.setObjective(expression, sense=type)
@@ -417,6 +419,7 @@ class GurobiSolver(Solver):
 
     def get_solve_data(self):
         return {
+            "status": self.model.status,
             "objVal": self.model.ObjVal,
             "objBound": self.model.objBound,
             "MIPGap": self.model.MIPGap,
