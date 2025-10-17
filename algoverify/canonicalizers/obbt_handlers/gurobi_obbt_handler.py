@@ -1,9 +1,10 @@
 import logging
 
-import gurobipy
 import gurobipy as gp
 import numpy as np
+
 from algoverify.solvers import gurobi
+
 log = logging.getLogger(__name__)
 
 
