@@ -19,20 +19,22 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(
-        r"""
+    r"""
     In this tutorial we show how to use our package to verify projected gradient descent for the nonnegative least-squares problem:
 
-        \begin{array}{ll}
-            \text{minimize} & (1/2) \lVert Az - x \rVert^2 \\
-        \text{subject to} & z \ge 0,
+    \begin{array}{ll} 
+        \text{minimize} & (1/2) \lVert Az - x \rVert^2 \\ \text{subject to} & z \ge 0, 
     \end{array}
-    $$
+    
+    
     where $A \in {\bf R}^{m \times n}$, $m \ge n$, $z \in {\bf R}^n$ is the decision variable, and $x \in {\bf R}^m$ parameterizes the family.
 
     For the first order method, we choose projected gradient descent with step size $\eta > 0$, with iterates given by
-    $$
-    z^{k+1} = {\bf ReLU}(z^{k} - \eta A^T(Az^{k} - x)),
-    $$
+    
+    \begin{array}{ll} 
+        z^{k+1} = {\bf ReLU}(z^{k} - \eta A^T(Az^{k} - x)),
+    \end{array}
+    
     where $\bf ReLU(v) = \max\{v, 0\}$ element-wise.
     """
     )
