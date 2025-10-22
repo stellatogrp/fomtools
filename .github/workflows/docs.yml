@@ -40,7 +40,10 @@ jobs:
         run: pip freeze
 
       - name: Export marimo notebooks
-        run: marimo export html docs/tutorials/NNLS.py -o docs/tutorials/NNLS.html
+        run: |
+          for file in docs/tutorials/*.py; do
+            marimo export html "$file" -o "${file%.py}.html"
+          done
 
       - name: Verify html generation
         run: ls docs/tutorials
