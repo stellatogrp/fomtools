@@ -33,19 +33,17 @@ jobs:
       - name: Build wheels for package
         run: python -m build
 
-      - name: Stage wheel into docs/static
-        run: | 
-          mkdir -p docs/static 
-          cp dist/*-py3-none-any.whl docs/static/
-
-      - name: Verify staging
-        run: ls -l docs/static
-
       - name: Install Package with docs extra
         run: pip install .[docs]
 
       - name: List dependencies
         run: pip freeze
+
+      - name: Export marimo notebooks
+        run: marimo export html docs/tutorials/NNLS.py -o docs/tutorials/NNLS.html
+
+      - name: Verify html generation
+        run: ls docs/tutorials
 
       - name: Configure Git Credentials
         run: |
