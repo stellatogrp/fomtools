@@ -28,7 +28,6 @@ dev = [
        "pre-commit",
        "ruff",
        "ruff-lsp",
-       "matplotlib",
        "ipdb",
        "hydra-core",
        "pandas",
@@ -37,6 +36,7 @@ dev = [
 
 docs = [
        "marimo",
+       "matplotlib",
        "mkdocs",
        "mkdocstrings-python",
        "mkdocs-marimo",
