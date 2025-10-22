@@ -1,8 +1,9 @@
-from typing import Union
+from typing import Self, Union
 
 import numpy as np
 import scipy.sparse as spa
 
+from algoverify.constraint import EqualityConstraint, InequalityConstraint
 from algoverify.dict_utils import merge_dict, prune_dict
 
 
@@ -37,56 +38,92 @@ class LinearExpression:
     """
 
     counter = 0
-    list_of_leaf_LinExprs = list()  # TODO: figure out if we need these
-    __array_priority__ = (
-        1000  # this is necessary else numpy will not even look at the @ operator due to precedence
-    )
+    # this is necessary else numpy will not even look at the @ operator due to precedence
+    __array_priority__ = 1000
 
-    # TODO: ndim and decomposition_dict seem to be mutually exclusive
-    #  (If decomposition dict is provided, we can programmatically figure out ndim. )
-
-    def __init__(self, ndim: int, decomposition_dict: dict = None):
+    def __init__(self, decomposition_dict: dict, const: np.ndarray = None):
         """
-        Initialize a `LinearExpression` object.
+        Initialize a `LinearExpression` object with decomposition dictionary.
+
+        Parameters
+        ----------
+        decomposition_dict : dict
+            A mapping from each leaf `LinearExpression` to its coefficient matrix (an nxn sparse
+            matrix).
+
+        const : ndarray or None, optional
+            A one-dimensional array or None (default). If `const` is None, the `const` attribute
+            of this object will be set to a `numpy.ndarray` of length `ndim` filled with zeros.
+
+
+        Raises
+        ------
+        ValueError
+            If all the coefficient matrices in the `decomposition_dict` doesn't have the same number
+            of rows.
+
+        ValueError
+            If `const` is not one-dimensional.
+
+        ValueError
+            If the number of rows in `const` does not equal the number of rows in coefficient
+            matrices in the `decomposition_dict`.
+        """
+
+        shapes = {mat.shape[0] for mat in decomposition_dict.values()}
+        if len(shapes) > 1:
+            raise ValueError(
+                f"""All coefficient matrices must have the same number of rows;
+                    found row counts {len(shapes)}"""
+            )
+
+        self.ndim = shapes.pop() if len(shapes) == 1 else 0
+        if const is not None:
+            if const.ndim != 1:
+                raise ValueError("Matrix for a constant must be 1-dimensional.")
+            if 0 < self.ndim != const.shape[0]:
+                raise ValueError(
+                    "Matrix for a constant must have same number of rows as decomposition dict."
+                )
+            # in case the only remaining term in an expression is a constant
+            elif self.ndim == 0:
+                self.ndim = const.shape[0]
+
+        self.const = np.zeros(self.ndim) if const is None else const
+        self.const = const
+        self.decomposition_dict = decomposition_dict
+        # TODO: Use a number rather than a None
+        self.counter = LinearExpression.counter
+        LinearExpression.counter += 1
+        self.is_leaf = False
+
+    @classmethod
+    def from_int(cls, ndim: int) -> Self:
+        """
+        Initialize a `LinearExpression` object with an integer `ndim`. Internally, this
+        creates a decomposition dictionary that maps the `LinearExpression` object with a sparse
+        identity matrix of shape `(ndim, ndim)`.
 
         Parameters
         ----------
         ndim : int
             The dimension of underlying space, i.e., the size of each coefficient matrix.
 
-        decomposition_dict : dict or None, optional
-            A mapping from each leaf `LinearExpression` to its coefficient matrix (an nxn sparse
-            matrix). If `decomposition_dict` is None, this object is treated as a leaf and its
-            decomposition is set to :: {self: I_n} :: where `I_n` is the nxn identity matrix.
-
-        Raises
-        ------
-        ValueError
-            If all the coefficient matrices in the decomposition dict doesn't have the same number
-            of rows.
-
+        Returns
+        -------
+        LinearExpression
+            A new `LinearExpression` instance whose decomposition contains a single
+            entry: the instance itself as a key, and a SciPy sparse identity matrix of
+            shape `(ndim, ndim)` as the value.
         """
-        self.ndim = ndim
-
-        if decomposition_dict is None:
-            self.decomposition_dict = {self: spa.eye(ndim)}
-            self.counter = LinearExpression.counter
-            LinearExpression.counter += 1
-            LinearExpression.list_of_leaf_LinExprs.append(self)
-
-            assert self.decomposition_dict[self].shape[1] == ndim
-            self.is_leaf = True
-        else:
-            shapes = {mat.shape[0] for mat in decomposition_dict.values()}
-            if len(shapes) > 1:
-                raise ValueError(
-                    f"""All coefficient matrices must have the same number of rows;
-                        found row counts {shapes}"""
-                )
-
-            self.decomposition_dict = decomposition_dict
-            self.counter = None
-            self.is_leaf = False
+        obj = cls.__new__(cls)  # uninitialized instance
+        obj.is_leaf = True
+        obj.decomposition_dict = {obj: spa.eye(ndim)}
+        obj.ndim = ndim
+        obj.counter = cls.counter
+        obj.const = np.zeros(ndim)
+        cls.counter += 1
+        return obj
 
     def __str__(self):
         return f"Var{self.counter}"
@@ -94,14 +131,22 @@ class LinearExpression:
     def __repr__(self):
         return f"<LinearExpression {'Leaf' if self.is_leaf else ''}, dim={self.ndim}>"
 
-    def __add__(self, other: "LinearExpression") -> "LinearExpression":
+    def __hash__(self):
+        """
+        The class variable `counter` is used to assign each `LinearExpression` a unique,
+        monotonically increasing ID at construction. This ID can serve as an
+        identity-based hash.
+        """
+        return hash(str(self))
+
+    def __add__(self, other: Union[Self, np.array, list, int, float]) -> Self:
         """
         Add two `LinearExpression` objects, ensuring they have the same dimension.
 
         Parameters
         ----------
-        other : LinearExpression
-            The expression to add to this one.
+        other : LinearExpression, np.array, list, int, float
+            The expression or a vector to add to this one.
 
         Returns
         -------
@@ -113,17 +158,79 @@ class LinearExpression:
         Raises:
         ------
         ValueError
-            If the `LinearExpression` objects to be added together does not have the same dimension.
+            If the objects (`LinearExpression` or a vector) to be added together does not have
+            the same dimension.
+
+        ValueError
+            If the object to be added is not of one of the following types: `LinearExpression`,
+            `np.ndarray`,  `float`, `int`, or `list`.
         """
-        if self.ndim != other.ndim:
-            raise ValueError(f"""Cannot add LinearExpression objects with mismatched dimensions:
-                             {self.ndim} != {other.ndim} """)
+        try:
+            return LinearExpression(
+                decomposition_dict=self.decomposition_dict,
+                const=self.const + np.full(self.ndim, float(other)),
+            )
+        except TypeError:
+            try:
+                # Check to see if other is of type list or a numpy array
+                if len(other) == self.ndim:
+                    return LinearExpression(
+                        decomposition_dict=self.decomposition_dict, const=self.const + other
+                    )
+                else:
+                    raise ValueError(
+                        f"Cannot add constant of mismatched dimensions. Expected dimension: {self.ndim}, got {len(other)}"
+                    )
+            except TypeError:
+                try:
+                    # Check to see if other is of type LinearExpression
+                    if self.ndim == other.ndim:
+                        merged_decomposition_dict = merge_dict(
+                            self.decomposition_dict, other.decomposition_dict
+                        )
+                        return LinearExpression(
+                            decomposition_dict=prune_dict(merged_decomposition_dict),
+                            const=self.const + other.const,
+                        )
+                except AttributeError:
+                    raise ValueError(
+                        f"Can only add LinearExpression objects to a LinearExpression object, numpy arrays, list, float, or an int got type {type(other)}."
+                    )
 
-        merged_decomposition_dict = merge_dict(self.decomposition_dict, other.decomposition_dict)
+    def __radd__(self, other: Union[Self, np.array, list]) -> Self:
+        """
+        Reflected addition to support other + expression.
 
-        return LinearExpression(self.ndim, decomposition_dict=prune_dict(merged_decomposition_dict))
+        This method is invoked when a `LinearExpression` object appears on
+        the right-hand side of a `+` operation (e.g. `np.array([1,2,3]) + expr`).
+        It delegates to `__add__`, so that both `np.array([1,2,3]) + expr` and
+        `expr + np.array([1,2,3])` behave identically.
 
-    def __mul__(self, scalar: Union[float, int]) -> "LinearExpression":
+        Parameters
+        ----------
+        other : LinearExpression, np.array, list
+            The expression or a vector to add to this one.
+
+        Returns
+        -------
+        LinearExpression
+            A new `LinearExpression` object whose decomposition maps each leaf in the union of both
+            expressiom to the sum of its coefficient matrices, treating any leaf missing from one
+            operand as having a zero coefficient matrix.
+
+        Raises:
+        ------
+        ValueError
+            If the objects (`LinearExpression` or a vector) to be added together does not have
+            the same dimension.
+
+        ValueError
+            If the object to be added is not of one of the following types: `LinearExpression`,
+            `np.ndarray`, or `list`.
+        """
+        return self + other
+
+    def __mul__(self, scalar: Union[float, int]) -> Self:
         """
         Multiply this `LinearExpression` object by a scalar.
 
@@ -146,10 +253,10 @@ class LinearExpression:
         """
         try:
             return LinearExpression(
-                ndim=self.ndim,
                 decomposition_dict={
                     k: v * float(scalar) for k, v in self.decomposition_dict.items()
                 },
+                const=self.const * float(scalar),
             )
         except ValueError:
             raise TypeError(
@@ -157,7 +264,7 @@ class LinearExpression:
                  a matrix, use the @ symbol with the matrix on the left."""
             )
 
-    def __rmul__(self, scalar: Union[float, int]) -> "LinearExpression":
+    def __rmul__(self, scalar: Union[float, int]) -> Self:
         """
         Reflected multiplication to support scalar * expression.
 
@@ -183,7 +290,7 @@ class LinearExpression:
         """
         return self * scalar
 
-    def __truediv__(self, scalar: Union[float, int]) -> "LinearExpression":
+    def __truediv__(self, scalar: Union[float, int]) -> Self:
         """
         Divide this LinearExpression by a scalar factor.
 
@@ -214,7 +321,7 @@ class LinearExpression:
 
         return self * (1 / scalar)
 
-    def __neg__(self) -> "LinearExpression":
+    def __neg__(self) -> Self:
         """
         Compute the negation of this LinearExpression.
 
@@ -228,14 +335,14 @@ class LinearExpression:
         """
         return self * -1
 
-    def __sub__(self, other: "LinearExpression") -> "LinearExpression":
+    def __sub__(self, other: Self) -> Self:
         """
         Subtract one LinearExpression from another.
 
         Parameters
         ----------
-        other : LinearExpression
-            The expression to subtract from this one.
+        other : LinearExpression, np.array, list
+            The expression or a vector xto subtract from this one.
 
         Returns
         -------
@@ -249,6 +356,43 @@ class LinearExpression:
         ValueError
             If the two `LinearExpression` instances have mismatched dimensions.
 
+        ValueError
+            If the object to be subtracted is not of one of the following types: `LinearExpression`,
+            `np.ndarray`, or `list`.
+
+        """
+        return self + (-other)
+
+    def __rsub__(self, other: Self) -> Self:
+        """
+        Reflected subtraction to support other - expression.
+
+        This method is invoked when a `LinearExpression` object appears on
+        the right-hand side of a `-` operation (e.g. `np.array([1,2,3]) - expr`).
+        It delegates to `__sub__`, so that both `np.array([1,2,3]) - expr` and
+        `expr - np.array([1,2,3])` behave identically.
+
+        Parameters
+        ----------
+        other : LinearExpression, np.array, list
+            The expression or a vector that this one is to be subtracted from.
+
+        Returns
+        -------
+        LinearExpression
+            A new `LinearExpression` object whose decomposition maps each leaf in the union of
+            both expression to the difference of its coefficient matrices, treating any leaf
+            missing from one operand as having a zero coefficient matrix.
+
+        Raises
+        ------
+        ValueError
+            If the two `LinearExpression` instances have mismatched dimensions.
+
+        ValueError
+            If the object to be subtracted is not of one of the following types: `LinearExpression`,
+            `np.ndarray`, or `list`.
+
         """
         return self + (-other)
 
@@ -256,7 +400,7 @@ class LinearExpression:
         # TODO
         raise NotImplementedError("np matrix or sp matrix should be on the left of the @")
 
-    def __rmatmul__(self, matrix: Union[np.ndarray, spa.spmatrix]) -> "LinearExpression":
+    def __rmatmul__(self, matrix: Union[np.ndarray, spa.spmatrix]) -> Self:
         """
         Multiply this `LinearExpression` object by another matrix.
 
@@ -291,8 +435,8 @@ class LinearExpression:
 
         try:
             return LinearExpression(
-                matrix.shape[0],
                 decomposition_dict={k: matrix @ v for k, v in self.decomposition_dict.items()},
+                const=np.asarray(matrix @ self.const).ravel(),
             )
         except TypeError:
             raise TypeError(
@@ -311,3 +455,99 @@ class LinearExpression:
     def eval(self):
         # TODO
         raise NotImplementedError("LinExpr.eval() needs to be implemented.")
+
+    def __le__(self, rhs: Union[Self, np.ndarray, list]) -> InequalityConstraint:
+        """
+        Build a less-than-or-equality (`<=`) constraint between this expression and
+        another `LinearExpression` object or numpy vector.`
+
+        Parameters
+        ----------
+        rhs: LinearExpression, np.array, list
+            The right-hand side of the inequalit. Scalars are broadcast to the shape of
+            `self`. Arrays or expressions must be of same shape with `self`.
+
+        Returns
+        -------
+        InequalityConstraint
+            A constraint object representing `self <= rhs`.
+
+        Raises
+        ------
+        TypeError
+            If `rhs` is not a LinearExpression object, NumPy array or a list.
+
+        ValueError
+            If the shapes of `self` and `rhs` are not compatible (i.e., not equal and
+            not broadcastable).
+
+        Notes
+        -----
+        This method does not evaluate the inequality; it only builds a constraint
+        for the solver.
+        """
+        return InequalityConstraint(self, rhs)
+
+    def __eq__(self, rhs: Union[Self, np.ndarray, list]) -> EqualityConstraint:
+        """
+        Build a equality (`==`) constraint between this expression and
+        another `LinearExpression` object or numpy vector.`
+
+        Parameters
+        ----------
+        rhs: LinearExpression, np.array, list
+            The right-hand side of the inequalit. Scalars are broadcast to the shape of
+            `self`. Arrays or expressions must be of same shape with `self`.
+
+        Returns
+        -------
+        EqualityConstraint
+            A constraint object representing `self == rhs`.
+
+        Raises
+        ------
+        TypeError
+            If `rhs` is not a LinearExpression object, NumPy array or a list.
+
+        ValueError
+            If the shapes of `self` and `rhs` are not compatible (i.e., not equal and
+            not broadcastable).
+
+        Notes
+        -----
+        This method does not evaluate the equality; it only builds a constraint
+        for the solver.
+        """
+        return EqualityConstraint(self, rhs)
+
+    def __ge__(self, rhs: Union[Self, np.ndarray, list]) -> InequalityConstraint:
+        """
+        Build a greater-than-or-equality (`>=`) constraint between this expression and
+        another `LinearExpression` object or numpy vector.`
+
+        Parameters
+        ----------
+        rhs: LinearExpression, np.array, list
+            The right-hand side of the inequality. Scalars are broadcast to the shape of
+            `self`. Arrays or expressions must be of same shape with `self`.
+
+        Returns
+        -------
+        InequalityConstraint
+            A constraint object representing `self >= rhs`.
+
+        Raises
+        ------
+        TypeError
+            If `rhs` is not a LinearExpression object, NumPy array or a list.
+
+        ValueError
+            If the shapes of `self` and `rhs` are not compatible (i.e., not equal and
+            not broadcastable).
+
+        Notes
+        -----
+        This method does not evaluate the inequality; it only builds a constraint
+        for the solver.
+        """
+        return InequalityConstraint(-self, -rhs)

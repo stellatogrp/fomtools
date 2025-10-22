@@ -26,5 +26,25 @@ theme:
 
 plugins:
   - search
-  - mkdocstrings
   - marimo
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          options:
+            docstring_style: numpy
+            docstring_section_style: spacy
+
+            merge_init_into_class: true
+            docstring_options:
+              ignore_init_summary: true
+
+markdown_extensions:
+  - pymdownx.superfences
+  - pymdownx.arithmatex:
+      generic: true
+      smart_dollar: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js

@@ -12,14 +12,12 @@ from algoverify.canonicalizers.huchette_cuts.soft_threshold import (
     st_create_new_neg_constr,
     st_create_new_pos_constr,
 )
-from algoverify.steps.relu import ReluStep
-from algoverify.steps.soft_threshold import SoftThresholdStep
+from algoverify.steps import Relu, SoftThreshold
 
 log = logging.getLogger(__name__)
 
 
 class GurobiCanonicalizer(Canonicalizer):
-
     def __init__(self, solver_params={}):
         self.vector_var_map = {}
         self.model = gp.Model()
@@ -91,14 +89,14 @@ class GurobiCanonicalizer(Canonicalizer):
         return gp_expr
 
     def add_relu_constraints(self, step):
-        lhs = step.lhs_expr
-        rhs = step.rhs_expr
+        lhs = step.lhs
+        rhs = step.rhs
         assert lhs in self.vector_var_map
 
         lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
         rhs_gp_expr = self.lin_expr_to_gp_expr(rhs)
-        rhs_lb = step.rhs_lb
-        rhs_ub = step.rhs_ub
+        rhs_lb = step.lb
+        rhs_ub = step.ub
         # n = lhs.get_output_dim()
 
         out_constraints = []
@@ -137,15 +135,15 @@ class GurobiCanonicalizer(Canonicalizer):
         self.model.update()
 
     def add_saturated_linear_constraints(self, step, out_lb, out_ub):
-        lhs = step.lhs_expr
-        rhs = step.rhs_expr
+        lhs = step.lhs
+        rhs = step.rhs
         assert lhs in self.vector_var_map
         l, u = step.l, step.u
 
         lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
         rhs_gp_expr = self.lin_expr_to_gp_expr(rhs)
-        rhs_lb = step.rhs_lb
-        rhs_ub = step.rhs_ub
+        rhs_lb = step.lb
+        rhs_ub = step.ub
         n = lhs.get_output_dim()
 
         out_constraints = []
@@ -239,8 +237,8 @@ class GurobiCanonicalizer(Canonicalizer):
         self.model.update()
 
     def add_saturated_linear_param_constraints(self, step, out_lb, out_ub, l_lb, l_ub, u_lb, u_ub):
-        lhs = step.lhs_expr
-        rhs = step.rhs_expr
+        lhs = step.lhs
+        rhs = step.rhs
         assert lhs in self.vector_var_map
         l, u = step.l, step.u
 
@@ -249,8 +247,8 @@ class GurobiCanonicalizer(Canonicalizer):
 
         lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
         rhs_gp_expr = self.lin_expr_to_gp_expr(rhs)
-        rhs_lb = step.rhs_lb
-        rhs_ub = step.rhs_ub
+        rhs_lb = step.lb
+        rhs_ub = step.ub
         # n = lhs.get_output_dim()
 
         out_constraints = []
@@ -348,15 +346,15 @@ class GurobiCanonicalizer(Canonicalizer):
         self.model.update()
 
     def add_soft_threshold_constraints(self, step, lhs_lb, lhs_ub):
-        lhs = step.lhs_expr
-        rhs = step.rhs_expr
+        lhs = step.lhs
+        rhs = step.rhs
         assert lhs in self.vector_var_map
         lambd = step.lambd
 
         lhs_gp_expr = self.lin_expr_to_gp_expr(lhs)
         rhs_gp_expr = self.lin_expr_to_gp_expr(rhs)
-        rhs_lb = step.rhs_lb
-        rhs_ub = step.rhs_ub
+        rhs_lb = step.lb
+        rhs_ub = step.ub
         n = lhs.get_output_dim()
 
         out_constraints = []
@@ -619,15 +617,17 @@ class GurobiCanonicalizer(Canonicalizer):
         print('relaxed model obj:', relaxed_model.objVal)
 
         for step in steps:
-            if isinstance(step, ReluStep):
+            if isinstance(step, Relu):
                 self.relu_huchette_cuts(relaxed_model, step, lower_bounds, upper_bounds, **kwargs)
-            elif isinstance(step, SoftThresholdStep):
-                self.soft_threshold_huchette_cuts(relaxed_model, step, lower_bounds, upper_bounds, **kwargs)
+            elif isinstance(step, SoftThreshold):
+                self.soft_threshold_huchette_cuts(
+                    relaxed_model, step, lower_bounds, upper_bounds, **kwargs
+                )
 
         self.model_to_opt.update()
 
     def relu_huchette_cuts(self, relaxed_model, step, lower_bounds, upper_bounds, **kwargs):
-        n = step.lhs_expr.get_output_dim()
+        n = step.lhs.get_output_dim()
         # huchette cuts for w = relu(a^T y)
 
         w, A, y, l, u, w_var, y_var = self.extract_vecs_for_huchette_cuts(relaxed_model, step, lower_bounds, upper_bounds, **kwargs)
@@ -644,7 +644,7 @@ class GurobiCanonicalizer(Canonicalizer):
                 self.model_to_opt.addConstr(new_constr)
 
     def soft_threshold_huchette_cuts(self, relaxed_model, step, lower_bounds, upper_bounds, **kwargs):
-        n = step.lhs_expr.get_output_dim()
+        n = step.lhs.get_output_dim()
         lambd = step.lambd
         # huchette cuts for w = soft_thresh(a^T y, lambd)
 
@@ -679,11 +679,11 @@ class GurobiCanonicalizer(Canonicalizer):
         # n = step.lhs_expr.get_output_dim()
         # huchette cuts for w = relu(a^T y)
 
-        w_var = self.leaf_expr_to_gp_var(step.lhs_expr)
+        w_var = self.leaf_expr_to_gp_var(step.lhs)
         w_var = self.extract_vec_var_by_name(w_var, relaxed_model)
         w = w_var.X
 
-        rhs = step.rhs_expr
+        rhs = step.rhs
 
         A = []
         y_var = []
