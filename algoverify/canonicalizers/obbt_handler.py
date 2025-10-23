@@ -3,19 +3,14 @@ import logging
 import gurobipy as gp
 import numpy as np
 
-from algoverify.solvers import gurobi
+from algoverify.canonicalizers.canonicalizer import Canonicalizer
 
 log = logging.getLogger(__name__)
 
 
-class GurobiOBBTHandler(object):
-
+class OBBTHandler(Canonicalizer):
     def __init__(self):
-        self.vector_var_map = {}
-        self.solver = gurobi.GurobiSolver()
-
-
-        self.step_constr_map = {}
+        super().__init__()
 
     def add_var(self, var, lb=-np.inf, ub=np.inf):
         self.solver.add_var(var, lb, ub)

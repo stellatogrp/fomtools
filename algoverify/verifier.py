@@ -3,7 +3,7 @@ import logging
 import numpy as np
 
 from algoverify.canonicalizers.mip import MIP
-from algoverify.canonicalizers.obbt_handlers import GurobiOBBTHandler
+from algoverify.canonicalizers.obbt_handler import OBBTHandler
 from algoverify.linearexpression import LinearExpression
 from algoverify.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
@@ -85,7 +85,7 @@ class Verifier(object):
         -------
         ObbtHandler
             A ready-to-use instance of a subclass of :class:`ObbtHandler`
-            (e.g., :class:`gurobi_obbt_handler.GurobiOBBTHandler()`).
+            (e.g., :class:`gurobi_obbt_handler.OBBTHandler()`).
 
         Raises
         ------
@@ -94,7 +94,7 @@ class Verifier(object):
         """
         match handler:
             case "gurobi" | "grb":
-                return GurobiOBBTHandler()
+                return OBBTHandler()
             case None:
                 return None
             case _:
