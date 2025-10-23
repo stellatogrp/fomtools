@@ -4,7 +4,7 @@ import numpy as np
 
 from algoverify.canonicalizers.obbt_handlers import GurobiOBBTHandler
 from algoverify.linearexpression import LinearExpression
-from algoverify.methods.mip import MIP
+from algoverify.canonicalizers.mip import MIP
 from algoverify.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 log = logging.getLogger(__name__)

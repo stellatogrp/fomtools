@@ -11,11 +11,11 @@ from algoverify.canonicalizers.huchette_cuts.soft_threshold import (
     st_create_new_pos_constr,
 )
 from algoverify.constraint import Constraint
-from algoverify.methods.method import Method
+from algoverify.canonicalizers.canonicalizer import Canonicalizer
 from algoverify.steps import Relu, SoftThreshold
 
 
-class MIP(Method):
+class MIP(Canonicalizer):
     """
     An interface for mixed-integer programming (MIP) methods.
 

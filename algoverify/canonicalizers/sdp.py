@@ -1,9 +1,9 @@
 import numpy as np
 
-from algoverify.methods.method import Method
+from algoverify.canonicalizers.canonicalizer import Canonicalizer
 
 
-class SDP(Method):
+class SDP(Canonicalizer):
     def __init__(self, solver_params=None, solver="gurobi"):
         super(SDP, self).__init__(solver_params, solver)
 

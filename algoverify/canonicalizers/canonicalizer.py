@@ -5,7 +5,7 @@ from algoverify.solvers import gurobi
 from algoverify.solvers.solver import Solver
 
 
-class Method:
+class Canonicalizer:
     """
     A base class for mathematical-optimization methods. This class
     defines a common interface for mixed-integer programming (MIP),
