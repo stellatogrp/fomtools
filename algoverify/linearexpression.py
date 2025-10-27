@@ -137,6 +137,18 @@ class LinearExpression:
         """
         return hash(str(self))
 
+    def __getitem__(self, item: Self):
+        """
+        Retrieve the cofficient matrix corresponding to the given leaf expression `item`.
+        """
+        return self.decomposition_dict[item]
+
+    def __iter__(self):
+        """
+        Iterate over all the leaf expressions in the decomposition dictionary.
+        """
+        return iter(self.decomposition_dict)
+
     def __add__(self, other: Union[Self, np.array, list, int, float]) -> Self:
         """
         Add two `LinearExpression` objects, ensuring they have the same dimension.
