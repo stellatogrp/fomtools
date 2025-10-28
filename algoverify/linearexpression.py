@@ -22,6 +22,9 @@ class LinearExpression:
             itself built from other `LinearExpression` objects). If `is_leaf` is True, this
             object is a function value defined from scratch.
 
+        is_binary : bool
+            Indicates whether a leaf expression is intended to be binary or not (i.e. constrained to only have values 0 or 1 in each dimension).
+
         decomposition_dict : dict
             A mapping from each leaf expression to its corresponding coefficient matrix. If
             `is_leaf` is True, this dict maps the object to its own coefficient matrix.
@@ -31,6 +34,8 @@ class LinearExpression:
 
     References
     ----------
+        .. S. Diamond and S. Boyd. "CVXPY: A Python-Embedded Modeling Language for Convex
+           Optimization." Journal of Machine Learning Research, 17(83):1-5, 2016.
         .. B. Goujaud, C. Moucer, F. Glineur, J. Hendrickx, A. Taylor, A. Dieuleveut (2022).
            "PEPit: computer-assisted worst-case analyses of first-order optimization methods
            in Python."
@@ -41,7 +46,10 @@ class LinearExpression:
     # this is necessary else numpy will not even look at the @ operator due to precedence
     __array_priority__ = 1000
 
-    def __init__(self, decomposition_dict: dict, const: np.ndarray = None):
+    def __init__(self,
+                 decomposition_dict: dict,
+                 const: np.ndarray = None,
+                 is_binary: bool = False):
         """
         Initialize a `LinearExpression` object with decomposition dictionary.
 
@@ -55,6 +63,8 @@ class LinearExpression:
             A one-dimensional array or None (default). If `const` is None, the `const` attribute
             of this object will be set to a `numpy.ndarray` of length `shape` filled with zeros.
 
+        is_binary : bool, optional
+            A flag to determine if a leaf element is intended to be binary (0 or 1 in each dimension) or not. Defaults to `False`.
 
         Raises
         ------
@@ -94,9 +104,10 @@ class LinearExpression:
         self.counter = LinearExpression.counter
         LinearExpression.counter += 1
         self.is_leaf = False
+        self.is_binary = is_binary
 
     @classmethod
-    def from_int(cls, ndim: int) -> Self:
+    def from_int(cls, ndim: int, is_binary: bool = False) -> Self:
         """
         Initialize a `LinearExpression` object with an integer `shape`. Internally, this
         creates a decomposition dictionary that maps the `LinearExpression` object with a sparse
@@ -106,6 +117,8 @@ class LinearExpression:
         ----------
         ndim : int
             The dimension of underlying space, i.e., the size of each coefficient matrix.
+        is_binary: bool
+            Flag to determine if the leaf expression is binary or not (0 or 1 in each dimension).
 
         Returns
         -------
@@ -120,6 +133,7 @@ class LinearExpression:
         obj.ndim = ndim
         obj.counter = cls.counter
         obj.const = np.zeros(ndim)
+        obj.is_binary = is_binary
         cls.counter += 1
         return obj
 

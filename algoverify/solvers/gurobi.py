@@ -20,7 +20,7 @@ class GurobiSolver(Solver):
     model: gp.Model
         The underlying Gurobi model instance.
 
-    ... 
+    ...
 
     """
 
@@ -228,7 +228,7 @@ class GurobiSolver(Solver):
             )
         except KeyError:
             raise KeyError(
-                """One or more elements in 'param_list' are not registered with the Gurobi model. 
+                """One or more elements in 'param_list' are not registered with the Gurobi model.
                 Ensure that all parameters in 'param_list' have been added to 'vector_var_map' before stacking."""
             )
 

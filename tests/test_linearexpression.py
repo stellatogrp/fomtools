@@ -133,6 +133,7 @@ def test_LinearExpression_const():
 
     y6 = np.full(m, 2.0) - x2
     assert np.allclose(y6.const, np.full(m, 1.0))
+    assert np.allclose(-np.eye(m), list(y6.decomposition_dict.values())[0].todense())
 
 
 def test_LinearExpression_constr():
@@ -161,3 +162,24 @@ def test_LinearExpression_constr():
 
     assert np.allclose(constr_4.lhs.const, np.full(m, -1.0))
     assert np.allclose(constr_5.lhs.const, np.full(m, -3.0))
+
+
+def test_LinearExpression_bool():
+    n = 10
+    M = 10
+    x_notbinary = LinearExpression.from_int(n)
+    assert not x_notbinary.is_binary
+
+    xb = LinearExpression.from_int(n, is_binary=True)
+    assert xb.is_binary
+    assert xb.is_leaf
+
+    M_xb = M * xb
+    assert not M_xb.is_leaf
+
+    y = LinearExpression.from_int(n)
+    constr = y <= M_xb
+
+    assert xb in constr.lhs.decomposition_dict
+    assert M_xb not in constr.lhs.decomposition_dict
+    assert np.allclose(constr.lhs.decomposition_dict[xb].todense(), -M * np.eye(n))
