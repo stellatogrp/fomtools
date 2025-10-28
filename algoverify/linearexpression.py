@@ -369,8 +369,6 @@ class LinearExpression:
 
         This method is invoked when a `LinearExpression` object appears on
         the right-hand side of a `-` operation (e.g. `np.array([1,2,3]) - expr`).
-        It delegates to `__sub__`, so that both `np.array([1,2,3]) - expr` and
-        `expr - np.array([1,2,3])` behave identically.
 
         Parameters
         ----------
@@ -394,7 +392,7 @@ class LinearExpression:
             `np.ndarray`, or `list`.
 
         """
-        return self + (-other)
+        return (-self) + other
 
     def __matmul__(self, other):
         # TODO
