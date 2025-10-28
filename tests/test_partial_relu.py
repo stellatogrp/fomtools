@@ -23,7 +23,7 @@ def test_partial_nnqp():
     constraints = [x[proj_ranges[0]: proj_ranges[1]] >= 0]
     prob = cp.Problem(cp.Minimize(obj), constraints)
 
-    prob.solve()
+    prob.solve(solver=cp.CLARABEL)
     print('test solution from cp:', x.value)
 
     K = 1000

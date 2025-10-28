@@ -349,7 +349,7 @@ class Verifier(object):
 
     def equality_constraint(self, lhs_expr, rhs_expr):
         self.canonicalizer.add_equality_constraint(lhs_expr, rhs_expr)
-        
+
     def fixed_point(self, n_dim, operator, lb=-100, ub=100):
         z_star = self.add_initial_iterate(n_dim, lb=lb, ub=ub)
         s_star = operator(z_star)

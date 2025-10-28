@@ -30,7 +30,7 @@ def test_portfolio():
     obj = mu.T @ x - gamma * cp.quad_form(x, Sigma) - lambd * cp.sum_squares(x - x_prev)
     constraints = [cp.sum(x) == 1, x >= 0]
     prob = cp.Problem(cp.Maximize(obj), constraints)
-    prob.solve()
+    prob.solve(solver=cp.CLARABEL)
     x_orig = x.value
 
     print(x_orig)
@@ -41,7 +41,7 @@ def test_portfolio():
     obj = cp.quad_form(x, gamma * D + lambd * np.eye(n)) + gamma * cp.sum_squares(y) - (mu + 2 * lambd * x_prev) @ x
     constraints = [cp.sum(x) == 1, x >= 0, y == F.T @ x]
     prob = cp.Problem(cp.Minimize(obj), constraints)
-    prob.solve()
+    prob.solve(solver=cp.CLARABEL)
     x_reformed = x.value
     print(x_reformed)
 
@@ -76,7 +76,7 @@ def test_portfolio():
         A3 @ z <= b3,
     ]
     prob = cp.Problem(cp.Minimize(obj), constraints)
-    prob.solve()
+    prob.solve(solver=cp.CLARABEL)
     # print(z.value)
     z_triple_block = z.value[:n]
     print(z_triple_block)
@@ -185,7 +185,7 @@ def test_portfolio_l1():
     obj = mu.T @ x - gamma * cp.quad_form(x, Sigma) - lambd * cp.norm(x - x_prev, 1)
     constraints = [cp.sum(x) == 1, x >= 0, x <= C]
     prob = cp.Problem(cp.Maximize(obj), constraints)
-    prob.solve()
+    prob.solve(solver=cp.CLARABEL)
     x_orig = x.value
 
     print(x_orig)
@@ -233,7 +233,7 @@ def test_portfolio_l1():
     ]
 
     prob = cp.Problem(cp.Minimize(obj), constraints)
-    prob.solve()
+    prob.solve(solver=cp.CLARABEL)
     print(z.value)
 
     # z_full = z.value

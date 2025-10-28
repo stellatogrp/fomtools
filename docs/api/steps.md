@@ -1,4 +1,4 @@
-## Step Operators 
+## Step Operators
 
 ### Step
 ::: algoverify.steps.step.Step

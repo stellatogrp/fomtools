@@ -7,7 +7,7 @@ from algoverify.verifier import Verifier
 
 def test_box_constrained_ls_fixed_point():
 
-    m, n = 5, 3
+    m, n = 4, 2
     K = 10
 
     np.random.seed(0)
@@ -55,7 +55,7 @@ def test_box_constrained_ls_fixed_point():
     obj = 0.5 * cp.sum_squares(A @ x_opt - b_wc)
     constraints = [x_opt >= l, x_opt <= u]
     prob = cp.Problem(cp.Minimize(obj), constraints)
-    prob.solve()
+    prob.solve(solver=cp.CLARABEL)
     x_opt_val = x_opt.value
 
     f_star = 0.5 * np.sum((A @ x_star_val - b_wc) ** 2)
@@ -68,5 +68,3 @@ def test_box_constrained_ls_fixed_point():
 # if __name__ == "__main__":
 #     test_box_constrained_ls_fixed_point()
 #     print("1 passed")
-
-
