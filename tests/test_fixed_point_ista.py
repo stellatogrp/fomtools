@@ -68,5 +68,3 @@ def test_box_constrained_ls_fixed_point():
 # if __name__ == "__main__":
 #     test_box_constrained_ls_fixed_point()
 #     print("1 passed")
-
-

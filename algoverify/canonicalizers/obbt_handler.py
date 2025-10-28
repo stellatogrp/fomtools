@@ -52,4 +52,3 @@ class OBBTHandler(Canonicalizer):
 
         assert np.all(lb_out <= ub_out)
         return np.maximum(lb, lb_out), np.minimum(ub, ub_out)
-
