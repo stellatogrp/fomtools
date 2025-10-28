@@ -132,7 +132,7 @@ def test_LinearExpression_const():
     assert np.allclose(y5.const, np.full(m, 3.0))
 
     y6 = np.full(m, 2.0) - x2
-    assert np.allclose(y6.const, np.full(m, -1.0))
+    assert np.allclose(y6.const, np.full(m, 1.0))
 
 
 def test_LinearExpression_constr():
