@@ -1,6 +1,7 @@
 from typing import Union
 
 import numpy as np
+import scipy.sparse as spa
 
 
 def merge_dict(dict1: dict, dict2: dict) -> dict:
@@ -52,11 +53,14 @@ def prune_dict(my_dict: dict) -> dict:
 
     """
 
-    def has_nonzero(arr: Union[np.ndarray, np.matrix]) -> bool:
+    def has_nonzero(arr: Union[np.ndarray, np.matrix, spa.sparray]) -> bool:
         """
         Check if the provided array contains at least one
         non-zero element.
         """
+        if spa.issparse(arr):
+            return arr.count_nonzero()
+
         try:
             return not np.allclose(arr, 0, atol=1e-9)
         except ValueError:

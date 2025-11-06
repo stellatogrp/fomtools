@@ -21,7 +21,7 @@ def test_ista():
     x = cp.Variable(n)
     obj = .5 * cp.sum_squares(A @ x - b) + lambd * cp.norm(x, 1)
     problem = cp.Problem(cp.Minimize(obj))
-    res = problem.solve()
+    res = problem.solve(solver=cp.CLARABEL)
     print(res)
     print(x.value)
 

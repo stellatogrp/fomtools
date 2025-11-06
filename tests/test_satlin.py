@@ -27,7 +27,7 @@ def test_satlin():
     obj = .5 * cp.quad_form(x, P) + q.T @ x
     constraints = [x >= l, x <=u]
     prob = cp.Problem(cp.Minimize(obj), constraints)
-    res = prob.solve()
+    res = prob.solve(solver=cp.CLARABEL)
 
     print('test solution from cvxpy:', x.value)
 
@@ -107,7 +107,7 @@ def test_satlin_param():
     obj = .5 * cp.quad_form(x, P) + q.T @ x
     constraints = [x >= l, x <=u]
     prob = cp.Problem(cp.Minimize(obj), constraints)
-    res = prob.solve()
+    res = prob.solve(solver=cp.CLARABEL)
 
     print('test solution from cvxpy:', x.value)
 

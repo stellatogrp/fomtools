@@ -30,7 +30,7 @@ def test_dr():
     obj = .5 * cp.quad_form(x, P) + c.T @ x
     constraints = [A @ x + s == b, s >= 0]
     prob = cp.Problem(cp.Minimize(obj), constraints)
-    prob.solve()
+    prob.solve(solver=cp.CLARABEL)
     print('optimal x from cp:', x.value)
     print('optimal s from cp:', s.value)
     print('optimal y from cp:', constraints[1].dual_value)

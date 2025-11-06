@@ -6,8 +6,8 @@ np.set_printoptions(suppress=True)  # Suppress scientific notation
 
 
 def test_convergence():
-    m = 10
-    n = 15
+    m = 5
+    n = 10
     K = 10000
 
     np.random.seed(0)
@@ -31,7 +31,7 @@ def test_convergence():
     x = cp.Variable(n)
     obj = cp.Minimize(.5 * cp.sum_squares(A @ x - b) + lambd * cp.norm(x, 1))
     prob = cp.Problem(obj)
-    prob.solve()
+    prob.solve(solver=cp.CLARABEL)
     print(x.value)
 
     At = np.eye(n) - t * A.T @ A
