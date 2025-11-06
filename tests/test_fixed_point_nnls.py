@@ -52,7 +52,7 @@ def test_nnls_convergence():
     )
 
     # Set up initial iterate
-    z0 = VP.add_initial_iterate(n, lb=1, ub=1)
+    z0 = VP.initial_iterate(n, lb=1, ub=1)
     z = [None for _ in range(K + 1)]
     z[0] = z0
 
@@ -152,68 +152,3 @@ def test_nnls_convergence():
 
     # Assert that verification bounds are at least as good as sample max
     assert np.all(verification_bounds >= sample_max - 1e-6), "Verification bounds not valid"
-
-
-# def test_nnls_with_random_sampling():
-#     """
-#     Test NNLS by comparing verification results with random sampling.
-#     """
-#     residuals, z_star, z_star_value, z_optimal_value = test_nnls_convergence()
-
-#     m, n = 5, 3
-#     K = 10
-#     N = 100  # number of samples
-
-#     np.random.seed(0)
-#     A = np.random.normal(size=(m, n))
-#     x_lb, x_ub = 10, 11
-
-#     ATA = A.T @ A
-#     L = np.max(np.linalg.eigvals(ATA))
-#     eta = 0.5 / L
-
-#     sample_residuals = np.zeros((N, K))
-
-#     for i in range(N):
-#         # Generate random x_param
-#         x_param_sample = np.random.uniform(x_lb, x_ub, m)
-
-#         # Find z* by solving the QP directly using CVXPY
-#         z_star_sample = cp.Variable(n)
-#         obj = 0.5 * cp.sum_squares(A @ z_star_sample - x_param_sample)
-#         constraints = [z_star_sample >= 0]
-#         prob = cp.Problem(cp.Minimize(obj), constraints)
-#         prob.solve(solver=cp.CLARABEL)
-#         z_star_sample = z_star_sample.value
-
-#         # Initialize z
-#         z_k = np.ones(n)  # Start from z0 = 1
-
-#         for k in range(1, K+1):
-#             # Perform ReLU step
-#             z_k_new = np.maximum(z_k - eta * A.T @ (A @ z_k - x_param_sample), 0)
-
-#             # Record residual
-#             sample_residuals[i, k-1] = np.max(np.abs(z_k_new - z_star_sample))
-
-#             # Update z for next iteration
-#             z_k = z_k_new
-
-#     # Compare results
-#     verification_bounds = np.array(residuals)
-#     sample_max = np.max(sample_residuals, axis=0)
-
-#     print(f'sample max resids: {sample_max}')
-
-#     # Assert that verification bounds are at least as good as sample max
-#     assert np.all(verification_bounds >= sample_max - 1e-6), "Verification bounds not valid"
-
-#     return residuals, sample_residuals
-
-
-# if __name__ == "__main__":
-#     # Run the verification test
-#     test_nnls_convergence()
-
-#     # Run the comparison with random sampling
-#     test_nnls_with_random_sampling()

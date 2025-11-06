@@ -38,7 +38,7 @@ def test_box_constrained_ls_fixed_point():
         ub=u,
     )
 
-    x0 = VP.add_initial_iterate(n, lb=-10, ub=10)
+    x0 = VP.initial_iterate(n, lb=-10, ub=10)
     x = [None for _ in range(K + 1)]
     x[0] = x0
 
