@@ -1,9 +1,9 @@
 import logging
+from functools import cached_property
 from typing import List
 
 import gurobipy as gp
 import numpy as np
-from functools import cached_property
 
 from algoverify import LinearExpression
 from algoverify.constraint import Constraint
