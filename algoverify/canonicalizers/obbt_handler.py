@@ -9,8 +9,8 @@ log = logging.getLogger(__name__)
 
 
 class OBBTHandler(Canonicalizer):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, solver):
+        super().__init__(solver)
 
     def add_var(self, var, lb=-np.inf, ub=np.inf):
         self.solver.add_var(var, lb, ub)

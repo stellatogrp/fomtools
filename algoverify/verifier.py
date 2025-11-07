@@ -25,7 +25,7 @@ class Verifier(object):
         self.steps = []
 
         self.canonicalizer = self._get_canonicalizer(method, solver_params, solver)
-        self.obbt_handler = self._get_obbt_handler(obbt_handler)
+        self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
         self.bounds = {}
 
     @staticmethod
@@ -66,39 +66,6 @@ class Verifier(object):
                 raise NotImplementedError()
             case _:
                 raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
-
-    @staticmethod
-    def _get_obbt_handler(handler):
-        """
-        Return an initialized instance for the requested optimization-based bound
-        tightening (OBBT) handler.
-
-        Parameters
-        ----------
-        handler: str or None, optional
-            Case-insensitive identifier for the OBBT handler to use. Supported values
-            (and common aliases) include:
-            - ``"gurobi"``, ``"grb"``
-            If None, no OBBT handling is performed.
-
-        Returns
-        -------
-        ObbtHandler
-            A ready-to-use instance of a subclass of :class:`ObbtHandler`
-            (e.g., :class:`gurobi_obbt_handler.OBBTHandler()`).
-
-        Raises
-        ------
-        ValueError
-            If the requested handler is one of the supported options.
-        """
-        match handler:
-            case "gurobi" | "grb":
-                return OBBTHandler()
-            case None:
-                return None
-            case _:
-                raise ValueError(f"Handler must be 'gurobi' or 'grb', got {handler}")
 
     def _add_var(
         self,
