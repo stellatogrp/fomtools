@@ -1,11 +1,24 @@
+from functools import cached_property
+
 import numpy as np
 
 from algoverify.utils.huchette_cuts import create_new_constr, get_cuts
 
 
 class Solver(object):
-    def __init__(self, solver_params={}):
-        self.solver_params = solver_params
+    def __init__(self, solver_params=None):
+        self._relaxed_model = None
+        self.vector_var_map = {}
+
+    @cached_property
+    def relaxed_model(self):
+        """
+        Return the relaxed version of the MIP model, in which all integrality
+        restrictions, SOS conditions, semi-continuous and semi-integer
+        requirements on variables have been relaxed and general constraints
+        have been removed.
+        """
+        return self._relaxed_model
 
     def add_param_stack_var(self, param_stack_var, param_list):
         raise NotImplementedError
@@ -16,7 +29,7 @@ class Solver(object):
     def add_var(self, iterate, lb=-np.inf, ub=np.inf):
         raise NotImplementedError
 
-    def add_equality_constraint(self, lhs_expr, rhs_expr):
+    def constraints_to_solver(self, constraints):
         raise NotImplementedError
 
     def relax_model(self):

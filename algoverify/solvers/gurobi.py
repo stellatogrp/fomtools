@@ -1,5 +1,4 @@
 import logging
-from functools import cached_property
 from typing import List
 
 import gurobipy as gp
@@ -27,7 +26,7 @@ class GurobiSolver(Solver):
 
     """
 
-    def __init__(self, solver_params={}):
+    def __init__(self, solver_params=None):
         """
         Initialize an instance of the `GurobiSolver` class.
 
@@ -35,12 +34,12 @@ class GurobiSolver(Solver):
         ----------
         solver_params
         """
-        self._relaxed_model = None
-        self.vector_var_map = {}
+        super().__init__(solver_params)
         self.model = gp.Model()
 
-        for key, val in solver_params.items():
-            self.model.setParam(key, val)
+        if solver_params:
+            for key, val in solver_params.items():
+                self.model.setParam(key, val)
 
     def __getitem__(self, item):
         return getattr(self.model, item)
@@ -60,16 +59,6 @@ class GurobiSolver(Solver):
         self._relaxed_model.optimize()
 
         self.__dict__.pop("relaxed_model", None)
-
-    @cached_property
-    def relaxed_model(self):
-        """
-        Return the relaxed version of the MIP model, in which all integrality
-        restrictions, SOS conditions, semi-continuous and semi-integer
-        requirements on variables have been relaxed and general constraints
-        have been removed.
-        """
-        return self._relaxed_model
 
     def add_var(self, var: LinearExpression, lb: float = -np.inf, ub: float = np.inf) -> gp.Var:
         """
@@ -102,9 +91,10 @@ class GurobiSolver(Solver):
         ValueError
             If the provided variable type string is not recognized.
         """
-        self.vector_var_map[var] = self.model.addMVar(
-            var.ndim, lb=lb, ub=ub, vtype="binary" if var.is_binary else "continuous"
-        )
+        for k in var.decomposition_dict.keys():
+            self.vector_var_map[k] = self.model.addMVar(
+                var.ndim, lb=lb, ub=ub, vtype=gp.GRB.BINARY if var.is_binary else gp.GRB.CONTINUOUS
+            )
         self.model.update()
 
     def add_param_stack_var(
@@ -399,3 +389,6 @@ class GurobiSolver(Solver):
                 )
             )
         return gp.hstack(gp_vars)
+
+    def is_optimal(self):
+        return self['status'] == gp.GRB.OPTIMAL

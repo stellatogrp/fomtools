@@ -56,7 +56,8 @@ def test_verifier():
 
     print(f'x from DR: {xk}')
 
-    VP = Verifier()
+    VP = Verifier(solver='highs', obbt_handler='highs')
+    # VP = Verifier(solver='highs')
 
     # c_param = Verifier.add_param(n, lb=c, ub=c)
     b_offset = 0.1

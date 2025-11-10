@@ -1,7 +1,7 @@
 import numpy as np
 
 from algoverify import LinearExpression
-from algoverify.solvers import gurobi
+from algoverify.solvers import gurobi, highs
 from algoverify.solvers.solver import Solver
 
 
@@ -51,6 +51,7 @@ class Canonicalizer:
             Case-insensitive identifier for the solver to use. Supported values
             (and common aliases) include:
             - ``"gurobi"``, ``"grb"``
+            - ``"highs"``
 
         Returns
         -------
@@ -66,6 +67,8 @@ class Canonicalizer:
         match solver.lower():
             case "gurobi" | "grb":
                 return gurobi.GurobiSolver()
+            case "highs":
+                return highs.HiGHSSolver()
             case _:
                 raise ValueError(f"Solver must be 'gurobi' or 'TBD', got {solver}.")
 
