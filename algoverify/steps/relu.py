@@ -27,9 +27,6 @@ class Relu(Step):
     relax_binary_vars: bool
         If true, binary decision variables associated with the operator
         are relaxed to take continuous values.
-    proj_ranges: list
-        List of index intervals that specify which parts of the output should be
-        projected in the ReLU step
     idx_with_binary_vars: set[int]
         Indices corresponding to binary decision variables.
     proj_indices: set[int]
@@ -38,17 +35,13 @@ class Relu(Step):
         Set of output indices not subjected to ReLU.
     """
 
-    proj_ranges: list
+    proj_indices: set[int]
     idx_with_binary_vars: set[int] = field(default_factory=set)
 
     def __hash__(self):
         return hash((self.rhs, self.lhs))
 
-    @property
-    def proj_indices(self):
-        """Returns indices of output coordinates that are subjected to ReLU projections."""
-        return {i for (min, max) in self.proj_ranges for i in range(min, max)}
-
+    # TODO: is this even necessary
     @property
     def nonproj_indices(self):
         """Returns indices of output coordinates that bypass the ReLU projections."""

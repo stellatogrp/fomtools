@@ -37,6 +37,11 @@ docs = [
        "mkdocs-material"
 ]
 
+[tool.mypy]
+allow_redefinition = true
+ignore_missing_imports = true
+exclude = ["test"]
+
 [tool.setuptools_scm]
 
 [tool.ruff]
