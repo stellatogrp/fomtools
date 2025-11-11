@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.sparse as spa
+
 from tests.cvxpy import pdhg as pdhg_cvxpy
 
 np.set_printoptions(precision=5)  # Print few decimal places

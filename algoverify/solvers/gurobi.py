@@ -27,7 +27,7 @@ class GurobiSolver(Solver):
 
     """
 
-    def __init__(self, solver_params={}):
+    def __init__(self, solver_params=None):
         """
         Initialize an instance of the `GurobiSolver` class.
 
@@ -35,15 +35,27 @@ class GurobiSolver(Solver):
         ----------
         solver_params
         """
+        super().__init__(solver_params)
         self._relaxed_model = None
         self.vector_var_map = {}
         self.model = gp.Model()
 
-        for key, val in solver_params.items():
-            self.model.setParam(key, val)
-
     def __getitem__(self, item):
         return getattr(self.model, item)
+
+    def set_param(self, param: str, val: int | float):
+        """
+        Configure a solver parameter that controls its behavior.
+
+        Parameters
+        ----------
+        param: str
+            The name of the solver parameter to set.
+
+        val: int | float
+            The value to assign to the specified parameter.
+        """
+        self.model.setParam(param, val)
 
     def relax_model(self):
         """

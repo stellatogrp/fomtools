@@ -1,6 +1,7 @@
+from typing import Tuple
+
 import cvxpy as cp
 import numpy as np
-from typing import Tuple
 import scipy.sparse as spa
 
 
@@ -63,7 +64,7 @@ def mincost_flow(
     b_supply: spa.csc_array = None,
     u: float = np.inf,
 ) -> Tuple[np.ndarray, float]:
-    """ Solve the minimum cost-flow problem using CVXPY. """
+    """Solve the minimum cost-flow problem using CVXPY."""
     x = cp.Variable(n)
     obj = cp.Minimize(c.T @ x)
 
@@ -77,7 +78,7 @@ def mincost_flow(
 
 
 def partial_relu(n: int, proj_ranges: Tuple[int, int], P: np.ndarray, q: np.ndarray) -> np.ndarray:
-    """ Solve the partial ReLU problem using CVXPY. """
+    """Solve the partial ReLU problem using CVXPY."""
     x = cp.Variable(n)
     obj = 0.5 * cp.quad_form(x, P) + q.T @ x
     constraints = [x[proj_ranges[0] : proj_ranges[1]] >= 0]
@@ -90,7 +91,7 @@ def partial_relu(n: int, proj_ranges: Tuple[int, int], P: np.ndarray, q: np.ndar
 def satlin(
     n: int, P: np.ndarray, q: np.ndarray, l: np.ndarray, u: np.ndarray
 ) -> Tuple[np.ndarray, float]:
-    """ Solve the Saturated Linear Unit problem using CVXPY. """
+    """Solve the Saturated Linear Unit problem using CVXPY."""
     x = cp.Variable(n)
     prob = cp.Problem(cp.Minimize(0.5 * cp.quad_form(x, P) + q.T @ x), [x >= l, x <= u])
     res = prob.solve(solver=cp.CLARABEL)
@@ -99,7 +100,7 @@ def satlin(
 
 
 def verifier(n: int, c: np.ndarray, A: np.ndarray, b: np.ndarray, x_test: np.ndarray):
-    """ Solve the standard form linear programming problem using CVXPY. """
+    """Solve the standard form linear programming problem using CVXPY."""
     x = cp.Variable(n)
     problem = cp.Problem(cp.Minimize(c.T @ x), [A @ x == b, x >= 0])
     res = problem.solve(solver=cp.CLARABEL)

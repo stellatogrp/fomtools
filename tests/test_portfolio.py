@@ -1,4 +1,5 @@
 import numpy as np
+
 from tests.cvxpy import portfolio_1 as portfolio_1_cvxpy
 from tests.cvxpy import portfolio_2 as portfolio_2_cvxpy
 from tests.cvxpy import portfolio_l1 as portfolio_l1_cvxpy
@@ -34,7 +35,9 @@ def test_portfolio():
     A = np.block([[F.T, -np.eye(d)], [np.ones(n), np.zeros(d)], [-np.eye(n), np.zeros((n, d))]])
     b = np.hstack([np.zeros(d), 1, np.zeros(n)])
     q = np.concatenate([-(mu + 2 * lambd * x_prev), np.zeros(d)])
-    z_single_block, z_full, y_full, z_triple_block = portfolio_2_cvxpy(n, mu, 0.5, P, lambd, x_prev, d, F, b, A)
+    z_single_block, z_full, y_full, z_triple_block = portfolio_2_cvxpy(
+        n, mu, 0.5, P, lambd, x_prev, d, F, b, A
+    )
 
     assert np.linalg.norm(x_orig - x_reformed) <= 1e-5
     assert np.linalg.norm(x_reformed - z_triple_block) <= 1e-5

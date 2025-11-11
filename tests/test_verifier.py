@@ -1,8 +1,9 @@
 import numpy as np
+
 from tests.cvxpy import verifier as verifier_cvxpy
 
 
-def test_verifier(vp_gurobi):
+def test_verifier(vp):
     m, n = 2, 3
     np.random.seed(1)
 
@@ -41,13 +42,11 @@ def test_verifier(vp_gurobi):
     print(f"x from DR: {xk}")
 
     b_offset = 0.1
-    c_param = vp_gurobi.add_param(n, lb=c, ub=c)
-    b_param = vp_gurobi.add_param(
-        m, lb=b - b_offset, ub=b + b_offset
-    )  # add boxes here when testing
+    c_param = vp.add_param(n, lb=c, ub=c)
+    b_param = vp.add_param(m, lb=b - b_offset, ub=b + b_offset)  # add boxes here when testing
 
-    x0 = vp_gurobi.initial_iterate(n, lb=1, ub=1)
-    y0 = vp_gurobi.initial_iterate(m, lb=1, ub=1)
+    x0 = vp.initial_iterate(n, lb=1, ub=1)
+    y0 = vp.initial_iterate(m, lb=1, ub=1)
 
     K = 10
 
@@ -60,24 +59,24 @@ def test_verifier(vp_gurobi):
     all_res = []
     for k in range(1, K + 1):
         print(k)
-        x[k] = vp_gurobi.relu_step(x[k - 1] - t * (c_param - A.T @ y[k - 1]))
+        x[k] = vp.relu_step(x[k - 1] - t * (c_param - A.T @ y[k - 1]))
         y[k] = y[k - 1] - t * (A @ (2 * x[k] - x[k - 1]) - b_param)
 
-        vp_gurobi.set_infinity_norm_objective([x[k] - x[k - 1], y[k] - y[k - 1]])
-        res = vp_gurobi.solve()
+        vp.set_infinity_norm_objective([x[k] - x[k - 1], y[k] - y[k - 1]])
+        res = vp.solve()
         all_res.append(res)
 
     print(f"VP resids: {all_res}")
     print(f"DR resids: {DR_resids[:K]}")
 
     print(f"b_c: {b}")
-    print(vp_gurobi.extract_sol(b_param))
-    b_test = vp_gurobi.extract_sol(b_param)
+    print(vp.extract_sol(b_param))
+    b_test = vp.extract_sol(b_param)
 
-    xK = vp_gurobi.extract_sol(x[K])
-    xKminus1 = vp_gurobi.extract_sol(x[K - 1])
-    yK = vp_gurobi.extract_sol(y[K])
-    yKminus1 = vp_gurobi.extract_sol(y[K - 1])
+    xK = vp.extract_sol(x[K])
+    xKminus1 = vp.extract_sol(x[K - 1])
+    yK = vp.extract_sol(y[K])
+    yKminus1 = vp.extract_sol(y[K - 1])
 
     test_resid = np.max(np.abs(np.hstack([xK - xKminus1, yK - yKminus1])))
     print(test_resid)

@@ -1,6 +1,7 @@
 import networkx as nx
 import numpy as np
 import scipy.sparse as spa
+
 from tests.cvxpy import mincost_flow as mincost_flow_cvxpy
 
 np.set_printoptions(precision=5)  # Print few decimal places
