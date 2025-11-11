@@ -20,6 +20,14 @@ class Solver(object):
         """
         return self._relaxed_model
 
+    def set_solver_params(self, solver_params):
+        for k, v in solver_params.items():
+            self.set_param(k, v)
+
+    def set_param(self, param, value):
+        raise NotImplementedError
+
+
     def add_param_stack_var(self, param_stack_var, param_list):
         raise NotImplementedError
 

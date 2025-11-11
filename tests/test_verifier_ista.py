@@ -1,14 +1,12 @@
-import cvxpy as cp
 import numpy as np
 
-# from algoverify.vector import Vector
-from algoverify.verifier import Verifier
+from tests.cvxpy import ista
 
 np.set_printoptions(precision=5)  # Print few decimal places
 np.set_printoptions(suppress=True)  # Suppress scientific notation
 
 
-def test_ista():
+def test_ista(vp_theory):
     m, n = 4, 2
 
     np.random.seed(0)
@@ -17,20 +15,13 @@ def test_ista():
     b = np.random.normal(size=(m,))
     lambd = 1
 
-    print('testing regularization')
-    x = cp.Variable(n)
-    obj = .5 * cp.sum_squares(A @ x - b) + lambd * cp.norm(x, 1)
-    problem = cp.Problem(cp.Minimize(obj))
-    res = problem.solve(solver=cp.CLARABEL)
-    print(res)
-    print(x.value)
-
+    x = ista(n, A, b, lambd)
     # t = 0.1
     lambd_max = np.max(np.real(np.linalg.eigvals(A.T @ A)))
     print(lambd_max)
     t = 1 / lambd_max
 
-    print('testing ista')
+    print("testing ista")
     xk = np.ones(n)
     I = np.eye(n)
     K = 1000
@@ -41,20 +32,12 @@ def test_ista():
         xk = soft_threshold(At @ xk + Bt @ b, t * lambd)
 
     print(xk)
-    assert np.linalg.norm(x.value - xk) <= 1e-7
+    assert np.linalg.norm(x - xk) <= 1e-7
+    b_offset = 1.0
+    b_param = vp_theory.add_param(m, lb=b - b_offset, ub=b + b_offset)
 
-    init_C = 0.5 # placeholder for now
 
-    def theory_func(k):
-        if k == 1:
-            return np.inf
-        return 2 * init_C / np.sqrt((k-1) * (k+2))
-
-    VP = Verifier(theory_func=theory_func)
-    b_offset = 1.
-    b_param = VP.add_param(m, lb=b-b_offset, ub=b+b_offset)
-
-    z0 = VP.initial_iterate(n, lb=2, ub=2)
+    z0 = vp_theory.initial_iterate(n, lb=2, ub=2)
 
     K = 5
     z = [None for _ in range(K + 1)]
@@ -63,22 +46,22 @@ def test_ista():
 
     lambda_t = lambd * t
     all_res = []
-    for k in range(1, K+1):
+    for k in range(1, K + 1):
         print(k)
 
-        z[k] = VP.soft_threshold_step(At @ z[k-1] + Bt @ b_param, lambda_t)
-        VP.theory_bound(k, z[k], z[k-1])
+        z[k] = vp_theory.soft_threshold_step(At @ z[k - 1] + Bt @ b_param, lambda_t)
+        vp_theory.theory_bound(k, z[k], z[k - 1])
 
-        VP.set_infinity_norm_objective(z[k] - z[k-1])
-        res = VP.solve(huchette_cuts=True)
+        vp_theory.set_infinity_norm_objective(z[k] - z[k - 1])
+        res = vp_theory.solve(huchette_cuts=True)
         all_res.append(res)
 
-    print(f'opt b_param at last K: {VP.extract_sol(b_param)}')
+    print(f"opt b_param at last K: {vp_theory.extract_sol(b_param)}")
 
-    print(f'VP resids: {all_res}')
+    print(f"VP resids: {all_res}")
 
     zk = 2 * np.ones(n)
-    b = VP.extract_sol(b_param)
+    b = vp_theory.extract_sol(b_param)
     ISTA_resids = []
 
     for k in range(K):
@@ -86,7 +69,7 @@ def test_ista():
         ISTA_resids.append(np.max(np.abs(znew - zk)))
         zk = znew
 
-    print(f'ISTA resids: {ISTA_resids}')
+    print(f"ISTA resids: {ISTA_resids}")
 
     assert np.all(np.array(ISTA_resids) <= np.array(all_res) + 1e-7)
     assert np.abs(ISTA_resids[-1] - all_res[-1]) <= 1e-8
