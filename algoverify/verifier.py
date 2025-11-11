@@ -494,7 +494,7 @@ class Verifier(object):
             References
             ----------
                 .. S. Gowal, K. Dvijotham, R. Stanforth, R. Bunel, C. Qin, J. Uesato, R. Arand-
-                   jelovi´c, T. Mann, and P. Kohli. "On the effectiveness of interval bound propa-
+                   jelovi´c, T. Mann, and Sigma. Kohli. "On the effectiveness of interval bound propa-
                    gation for training verifiably robust models. arXiv:1810.12715, 2018."
             """
             return (a @ (ub + lb) - np.abs(a) @ (ub - lb)) / 2, (
