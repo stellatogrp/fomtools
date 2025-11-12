@@ -60,6 +60,7 @@ class Solver(object):
             )
 
             for i in range(step.lhs.ndim):
+                # TODO: Gurobi is leaked in this part
                 A = np.concatenate([v.flatten() for v in step.rhs[i].decomposition_dict.values()])
                 Iint, lI, h, L_hat, U_hat = get_cuts(step, i, w_var.X[i], A, y_var.X, l, u)
                 if Iint is not None:

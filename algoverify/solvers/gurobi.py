@@ -35,9 +35,6 @@ class GurobiSolver(Solver):
         solver_params
         """
         super().__init__(solver_params)
-        # TODO: REMOVE THESE TWO ATTRIBUTES FROM HERE
-        self._relaxed_model = None
-        self.vector_var_map = {}
         self.model = gp.Model()
 
     def __getitem__(self, item):

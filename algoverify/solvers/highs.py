@@ -12,6 +12,9 @@ import scipy.sparse as spa
 class HiGHSSolver(Solver):
     def __init__(self, solver_params={}):
         super().__init__(solver_params)
+        # Variable to keep track of number of highs variable created
+        self._var_counter = -1
+
         self.model = hp.Highs()
 
     def __getitem__(self, item):
@@ -20,18 +23,35 @@ class HiGHSSolver(Solver):
         }
         return val[item]
 
+    def set_param(self, param, val):
+        pass
+
+    def relax_model(self):
+        self._relaxed_model = hp.Highs()
+        lp = self.model.getModel().lp_
+        for l, u in zip(lp.col_lower_, lp.col_upper_):
+            self._relaxed_model.addVariable(lb=l, ub=u)
+        for i, coeff in enumerate(lp.col_cost_):
+            self._relaxed_model.changeColCost(i, coeff)
+
+        self._relaxed_model.run()
+        self.__dict__.pop("relaxed_model", None)
+
+
     def add_var(self, var, lb=-np.inf, ub=np.inf):
         lb = np.full(var.ndim, lb)
         ub = np.full(var.ndim, ub)
 
         def create_single_var(_lb, _ub, is_binary):
+            self._var_counter += 1
             if is_binary:
-                return self.model.addIntegral(lb=0, ub=1)
+                return self.model.addIntegral(lb=0, ub=1,  name=f"v{self._var_counter}")
             else:
-                try:
-                    return self.model.addVariable(lb=_lb, ub=_ub)
-                except:
-                    return self.model.addVariable(lb=_lb, ub=_ub)
+                return self.model.addVariable(lb=_lb, ub=_ub, name=f"v{self._var_counter}")
+
+
+
+
 
         for k, v in var.decomposition_dict.items():
             self.vector_var_map[k] = [create_single_var(lb[i], ub[i], k.is_binary) for i in range(k.ndim)]
@@ -46,7 +66,7 @@ class HiGHSSolver(Solver):
     def expression_to_solver(self, expression: LinearExpression):
         highs_var = np.zeros(expression.ndim)
         for k, v in expression.decomposition_dict.items():
-            v = v.toarray() if spa.issparse(v) else v
+            v = v.toarray() if spa.issparse(v) else np.array(v)
             if self.vector_var_map.get(k, None) is None:
                 self.add_var(k)
 
@@ -104,11 +124,15 @@ class HiGHSSolver(Solver):
             out += v @ np.array([self.model.val(i) for i in self.vector_var_map[k]])
         return out
 
-    def relaxed_model(self):
-        pass
 
-    def get_relaxed_variables(self, var):
-        pass
+    def get_relaxed_variables(self, expression):
+        # If no relaxed model currently exists, build and solve it first.
+        if self.relaxed_model is None:
+            self.relax_model()
+
+        highs_var = []
+        for k in expression.decomposition_dict.keys():
+            print('breakopint')
 
     def is_optimal(self):
         return self.model.getModelStatus() == hp.HighsModelStatus.kOptimal
