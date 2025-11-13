@@ -12,7 +12,7 @@ authors = [
        { name = "Vinit Ranjan", email = "vranjan@princeton.edu" },
        { name = "Bartolomeo Stellato", email = "bstellato@princeton.edu" },
 ]
-dependencies = ["cvxpy", "jax"]
+dependencies = ["cvxpy", "jax", "highspy"]
 
 [tool.setuptools]
 packages = ["algoverify"]
@@ -36,6 +36,11 @@ docs = [
        "mkdocstrings-python",
        "mkdocs-material"
 ]
+
+[tool.mypy]
+allow_redefinition = true
+ignore_missing_imports = true
+exclude = ["test"]
 
 [tool.setuptools_scm]
 

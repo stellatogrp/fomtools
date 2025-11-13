@@ -1,8 +1,13 @@
-import cvxpy as cp
 import numpy as np
+
+from tests.cvxpy import ista as ista_cvxpy
 
 np.set_printoptions(precision=5)  # Print few decimal places
 np.set_printoptions(suppress=True)  # Suppress scientific notation
+
+
+def soft_threshold(x, gamma):
+    return np.sign(x) * np.maximum(np.abs(x) - gamma, 0)
 
 
 def test_convergence():
@@ -14,25 +19,14 @@ def test_convergence():
     A = np.random.normal(size=(m, n))
     b = np.random.uniform(size=(m,))
 
-    ATA = A.T @ A
-    L = np.max(np.linalg.eigvals(ATA))
-    print(L)
-
-    t = 1 / L
-
-    def soft_threshold(x, gamma):
-        return np.sign(x) * np.maximum(np.abs(x) - gamma, 0)
-
+    t = 1 / np.max(np.linalg.eigvals(A.T @ A))
     lambd = 1e-2
 
     x_lstsq, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
     print(x_lstsq)
 
-    x = cp.Variable(n)
-    obj = cp.Minimize(.5 * cp.sum_squares(A @ x - b) + lambd * cp.norm(x, 1))
-    prob = cp.Problem(obj)
-    prob.solve(solver=cp.CLARABEL)
-    print(x.value)
+    cvxpy = ista_cvxpy(n, A, b, lambd)
+    print(cvxpy)
 
     At = np.eye(n) - t * A.T @ A
     Bt = t * A.T
@@ -44,21 +38,20 @@ def test_convergence():
         xk = soft_threshold(At @ xk + Bt @ b, lambda_t)
 
     print(xk)
-    assert np.linalg.norm(xk - x.value) <= 1e-7
+    assert np.linalg.norm(xk - cvxpy) <= 1e-7
 
-    print('--testing fista--')
+    print("--testing fista--")
 
-    betak = 1.
+    betak = 1.0
     xk = np.zeros(n)
     wk = xk
     for _ in range(K):
         xnew = soft_threshold(At @ wk + Bt @ b, lambda_t)
-        beta_new = .5 * (1 + np.sqrt(1 + 4 * betak ** 2))
-        wnew = xnew + (betak - 1)/beta_new * (xnew - xk)
+        beta_new = 0.5 * (1 + np.sqrt(1 + 4 * betak**2))
+        wk = xnew + (betak - 1) / beta_new * (xnew - xk)
 
         xk = xnew
         betak = beta_new
-        wk = wnew
 
     print(xk)
-    assert np.linalg.norm(xk - x.value) <= 1e-7
+    assert np.linalg.norm(xk - cvxpy) <= 1e-7
