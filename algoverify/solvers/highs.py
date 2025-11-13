@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 
 import highspy as hp
 from highspy import ObjSense, HighsModelStatus
@@ -11,7 +11,7 @@ import scipy.sparse as spa
 
 
 class HiGHSSolver(Solver):
-    def __init__(self, solver_params={}):
+    def __init__(self, solver_params=None):
         # Variable to keep track of number of highs variable created
         self._var_counter = -1
         self.model = hp.Highs()
@@ -21,7 +21,18 @@ class HiGHSSolver(Solver):
         val = {"objVal": self.model.getInfo().objective_function_value}
         return val[item]
 
-    def set_param(self, param, val):
+    def set_param(self, param: str, val: int | float):
+        """
+        Configure a solver parameter that controls its behavior.
+
+        Parameters
+        ----------
+        param: str
+            The name of the solver parameter to set.
+
+        val: int | float
+            The value to assign to the specified parameter.
+        """
         param_to_highs = {
             "TimeLimit": "time_limit",
             "MIPGap": "mip_rel_gap",
@@ -30,6 +41,16 @@ class HiGHSSolver(Solver):
         self.model.setOptionValue(param_to_highs[param], val)
 
     def relax_model(self):
+        """
+        Build and solve the continuous relaxation of the current
+        model.
+
+        This method creates a HiGHS model in which all integrality
+        constraints are relaxed to continuous domains and optimizes
+        it. It then clears any cached ``relaxed_model`` property by
+        so that future accesses re-expose the freshly computed
+        object.
+        """
         model_copy = self.model.getModel()
         self._relaxed_model = hp.Highs()
         self._relaxed_model.passModel(model_copy)
@@ -41,23 +62,80 @@ class HiGHSSolver(Solver):
 
         self.__dict__.pop("relaxed_model", None)
 
-    def add_var(self, var, lb=-np.inf, ub=np.inf):
-        lb = np.full(var.ndim, lb)
-        ub = np.full(var.ndim, ub)
+    def add_var(self, var: LinearExpression, lb: float = -np.inf, ub: float = np.inf):
+        """
+        Create and register a list of HiGHS variable corresponding to the
+        given ``LinearExpression``.
 
-        def create_single_var(_lb, _ub, is_binary):
+        This method creates a list of  HiGHS variables using  ``hp.Highs().addIntegral``
+        or ``hp.Highs().addVariable`` to create one or more decision variables whose
+        shape matches that of provided ``LinearExpression``. It also records
+        the mapping between the ``LinearExpression`` object and its associated list of
+        HiGHS variable for subsequent reference. The created variable(s) are of specified
+        bounds and types.
+
+        Parameters
+        ----------
+        var: LinearExpression
+            LinearExpression object to be registered.
+
+        lb: float, default=-np.inf
+            Lower bound for all the elements of the matrix variable.
+
+        ub: float, default=np.inf
+            Upper bound for all the elements of the matrix variable.
+
+        Returns
+        -------
+        None
+        """
+
+        def _create_single_var(_lb, _ub, is_binary):
+            """Create a HiGHS variable using the specified bounds and integrality."""
             self._var_counter += 1
             if is_binary:
                 return self.model.addIntegral(lb=0, ub=1, name=f"v{self._var_counter}")
             else:
                 return self.model.addVariable(lb=_lb, ub=_ub, name=f"v{self._var_counter}")
 
+        lb = np.full(var.ndim, lb)
+        ub = np.full(var.ndim, ub)
         for k, v in var.decomposition_dict.items():
             self.vector_var_map[k] = [
-                create_single_var(lb[i], ub[i], k.is_binary) for i in range(k.ndim)
+                _create_single_var(lb[i], ub[i], k.is_binary) for i in range(k.ndim)
             ]
 
-    def expression_to_solver(self, expression: LinearExpression):
+    def expression_to_solver(
+        self, expression: LinearExpression
+    ) -> np.ndarray[hp.highs.highs_linear_expression]:
+        """
+        Convert a ``LinearExpression`` into a list of HiGHS  ``highs_linear_expression``.
+
+        Given a ``LinearExpression`` object with a decomposition of the form
+        ``expression.decomposition_dict = {key_1: matrix_1, ..., key_n: matrix_n}``,
+        this method constructs the equivalent solver-side representation by multiplying each
+        coefficient ``matrix_i`` with its corresponding HiGHS variable and
+        summing the results:
+
+        $$
+            \sum_{i}^{N} matrix_i @ variable_i
+        $$
+
+        The resulting object is a numpy arary of HiGHS linear expressions with the same
+        dimensinoality as the input ``expression``, the elements of which can be
+        used in model constraints or objective functions.
+
+        Parameters
+        ----------
+        expression: LinearExpression
+            The LinearExpression object to be converted into its corresponding Gurobi form.
+
+        Returns
+        -------
+        np.ndarray[hp.highs.highs_linear_expression]
+            An array of HiGHS linear expression corresponding to the input ``expression``,
+            representing its solver-side linear form.
+        """
         highs_var = np.zeros(expression.ndim)
         for k, v in expression.decomposition_dict.items():
             v = v.toarray() if spa.issparse(v) else np.array(v)
@@ -68,29 +146,100 @@ class HiGHSSolver(Solver):
 
         return highs_var + expression.const
 
-    def constraints_to_solver(self, constraints: List[Constraint]):
+    def constraints_to_solver(self, constraints: List[Constraint]) -> None:
+        """
+        Add multiple constraints to the HiGHS model.
+
+        Parameters
+        ----------
+        constraints: list[Constraint]
+            A list of constraint expressions, typically of the form ``lhs == rhs``,
+            ``lhs <= rhs``, or ``lhs >= rhs`` where ``lhs`` and ``rhs`` are of type
+            ``LinearExpression``.
+
+        Returns
+        -------
+        None
+
+        """
         for i, constr in enumerate(constraints):
             self.add_constr(constr)
 
-    def update_bounds(self, target_expr, bound_lb, bound_ub):
-        for i, var in enumerate(self.expression_to_solver(target_expr)):
-            var.bounds = (bound_lb[i], bound_ub[i])
+    def update_bounds(
+        self, expression: LinearExpression, lb: float | np.ndarray, ub: float | np.ndarray
+    ):
+        """
+        Update the lower and upper bounds of the solver variables corresponding
+        to the given ``LinearExpression``.
 
-    def add_constr(self, constraint):
-        def _add_constr(_lhs):
-            match constraint.operator:
-                case "=":
-                    self.model.addConstr(_lhs == 0)
-                case "<=":
-                    self.model.addConstr(_lhs <= 0)
+        Parameters
+        ----------
+        expression: LinearExpression
+            A ``LinearExpression`` object registered with the solver whose
+            underlying variables bound are to be updated.
 
+            lb: float or np.ndarray
+            New lower bound(s).
+
+            ub: float or np.ndarray
+            New upper bound(s).
+
+        """
+        for i, var in enumerate(self.expression_to_solver(expression)):
+            var.bounds = (lb[i], ub[i])
+
+    def add_constr(self, constraint: Constraint | hp.highs.highs_linear_expression):
+        """
+        Add a single constraint to the HiGHS model.
+
+        Parameters
+        ----------
+        constraint: Constraint | hp.highs.highs_linear_expression
+            A HiGHS constraint expression compatible. Typical form includes
+            comparisons like ``lhs == rhs``, ``lhs <= rhs``, where ``lhs``,
+            and ``rhs`` are of type ``LinearExpression`` or ``hp.highs.highs_linear_expression``.
+
+        Returns
+        -------
+        None
+        """
         try:
             self.model.addConstr(constraint)
         except AttributeError:
-            for i, constr in enumerate(self.expression_to_solver(constraint.lhs)):
-                _add_constr(constr)
+            # Expression on the right hand side of the constraint object is always 0
+            for i, _lhs in enumerate(self.expression_to_solver(constraint.lhs)):
+                match constraint.operator:
+                    case "=":
+                        self.model.addConstr(_lhs == 0)
+                    case "<=":
+                        self.model.addConstr(_lhs <= 0)
 
-    def set_objective(self, expression, sense=None):
+    def set_objective(self, expression: LinearExpression, sense: str = None) -> None:
+        """
+        Set the optimization objective for the underlying HiGHS model.
+
+        Parameters
+        ----------
+        expression: LinearExpression or 0
+            A ``LinearExpression`` object registered with the solver repesenting the
+            optimization objective, or 0 if setting a zero objective.
+
+        sense: {"minimize", "maximize"}
+            Objective sense specified as a string.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        TypeError
+            If provided objective ``sense`` is not ``"minimize"`` or ``"maximize"``.
+
+        ValueError
+            If provided expression is anything other than a ``LinearExpression`` object or a 0.
+
+        """
         match sense:
             case "minimize":
                 sense = ObjSense.kMinimize
@@ -112,15 +261,65 @@ class HiGHSSolver(Solver):
             self.model.setObjective(self.expression_to_solver(expression)[0], sense=sense)
 
     def optimize(self):
+        """
+        Optimize the underlying HiGHS model.
+
+        Notes
+        -----
+        The algorithm used depends on the model objective and
+        on the parameter settings
+        """
         self.model.optimize()
 
-    def get_solution_value(self, expression: LinearExpression):
+    def get_solution_value(self, expression: LinearExpression) -> np.ndarray:
+        """
+        Compute the solution value for the given ``LinearExpression``
+        object.
+
+        For each leaf expression in the decomposition of the given
+        ``LinearExpression`` object, this method retrieves the corresponding
+        solver variables from the model and computes the dot product between
+        the coefficient matrix and the vector of variable values associated with
+        that leaf.
+
+        Parameters
+        ----------
+        expression: LinearExpression
+            A ``LinearExpression`` object registered with the solver. Each element in
+            its decomposition must have a corresponding entry in ``self.vector_var_map``.
+
+        Returns
+        -------
+        np.ndarray[float]
+            A 1-D array of shape ``(expression.ndim,)`` containing the evaluated values
+            of the expression at the current model solution.
+        """
         out = 0
         for k, v in expression.decomposition_dict.items():
             out += v @ np.array([self.model.val(i) for i in self.vector_var_map[k]])
         return out
 
-    def get_relaxed_variables(self, expression):
+    def get_relaxed_variables(
+        self, expression: LinearExpression
+    ) -> Tuple[list[hp.highs.highs_var], np.ndarray]:
+        """
+        Reconstruct solver-side variables from a ``LinearExpression`` object
+        using the relaxed HiGHS model.
+
+        Parameters
+        ----------
+        expression: LinearExpression
+            A ``LinearExpression`` object registered with the solver. Each element in
+            its decomposition must have a corresponding entry in ``self.vector_var_map``.
+
+        Returns
+        -------
+        Tuple[list[hp.highs.highs_var], np.ndarray]
+            A list of HiGHS variable formed by stacking the individual
+            ``hp.highs.highs_var`` objects corresponding to each element of
+            the input ``LinearExpression``, and a numpy array containing
+            the current value of those stacked variables.
+        """
         # If no relaxed model currently exists, build and solve it first.
         if self.relaxed_model is None:
             self.relax_model()
@@ -133,5 +332,8 @@ class HiGHSSolver(Solver):
 
         return highs_var, np.array(values)
 
-    def is_optimal(self):
+    def is_optimal(self) -> bool:
+        """
+        Check whether the underlying HiGHS model has reached an optimal solution.
+        """
         return self.model.getModelStatus() == hp.HighsModelStatus.kOptimal
