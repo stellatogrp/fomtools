@@ -53,8 +53,8 @@ class Solver(object):
         self.relax_model()
 
         for step in steps:
-            y_var = self.get_relaxed_variables(step.rhs)
-            w_var = self.get_relaxed_variables(step.lhs)
+            y_var, y_val = self.get_relaxed_variables(step.rhs)
+            w_var, w_val = self.get_relaxed_variables(step.lhs)
             l, u = tuple(
                 np.concatenate(x) for x in zip(*[bounds[k] for k in step.rhs.decomposition_dict])
             )
@@ -62,7 +62,7 @@ class Solver(object):
             for i in range(step.lhs.ndim):
                 # TODO: Gurobi is leaked in this part
                 A = np.concatenate([v.flatten() for v in step.rhs[i].decomposition_dict.values()])
-                Iint, lI, h, L_hat, U_hat = get_cuts(step, i, w_var.X[i], A, y_var.X, l, u)
+                Iint, lI, h, L_hat, U_hat = get_cuts(step, i, w_val[i], A, y_val, l, u)
                 if Iint is not None:
                     self.add_constr(
                         create_new_constr(w_var[i], A, y_var, Iint, lI, h, L_hat, U_hat)

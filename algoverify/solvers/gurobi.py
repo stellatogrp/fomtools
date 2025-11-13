@@ -398,7 +398,7 @@ class GurobiSolver(Solver):
                     [self.relaxed_model.getVarByName(i) for i in self.vector_var_map[k].VarName]
                 )
             )
-        return gp.hstack(gp_vars)
+        return gp.hstack(gp_vars), gp.hstack(gp_vars).X
 
     def is_optimal(self):
         return self['status'] == gp.GRB.OPTIMAL
