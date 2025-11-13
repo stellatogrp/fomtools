@@ -1,6 +1,5 @@
 import numpy as np
 
-from algoverify import LinearExpression
 from algoverify.solvers import gurobi, highs
 from algoverify.solvers.solver import Solver
 

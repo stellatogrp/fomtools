@@ -1,6 +1,5 @@
 import logging
 
-import gurobipy as gp
 import numpy as np
 
 from algoverify.canonicalizers.canonicalizer import Canonicalizer

@@ -1,13 +1,13 @@
 from typing import List, Tuple
 
 import highspy as hp
-from highspy import ObjSense, HighsModelStatus
 import numpy as np
+import scipy.sparse as spa
+from highspy import ObjSense
 
 from algoverify import LinearExpression
 from algoverify.constraint import Constraint
 from algoverify.solvers.solver import Solver
-import scipy.sparse as spa
 
 
 class HiGHSSolver(Solver):
