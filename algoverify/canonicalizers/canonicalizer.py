@@ -23,14 +23,15 @@ class Canonicalizer:
 
     """
 
-    def __init__(self, solver_params: list[LinearExpression] = None, solver: str = "gurobi"):
+    def __init__(self, solver_params: dict = None, solver: str = "gurobi"):
         """
         Initialize an instance of :class:`Method`.
 
         Parameters
         ----------
-        solver_params: list or None, optional
-            List of solver parameters to start with.
+        solver_params: dict or None, optional
+            Key-value pairs with solver parameters and their corresponding
+            configuration values.
 
         solver: str, default "gurobi"
             Case-insensitive identifier for the solver to use. Supported
@@ -38,10 +39,10 @@ class Canonicalizer:
             - ``"gurobi"``, ``"grb"``
         """
         self.solver_params = solver_params
-        self.solver = self._get_solver(solver)
+        self.solver = self._get_solver(solver, solver_params)
 
     @staticmethod
-    def _get_solver(solver: str) -> Solver:
+    def _get_solver(solver: str, solver_params: dict) -> Solver:
         """
         Return an initialized solver instance for the requested backend.
 
@@ -52,6 +53,10 @@ class Canonicalizer:
             (and common aliases) include:
             - ``"gurobi"``, ``"grb"``
             - ``"highs"``
+
+        solver_params: dict or None, optional
+            Key-value pairs with solver parameters and their corresponding
+            configuration values.
 
         Returns
         -------
@@ -66,9 +71,9 @@ class Canonicalizer:
         """
         match solver.lower():
             case "gurobi" | "grb":
-                return gurobi.GurobiSolver()
+                return gurobi.GurobiSolver(solver_params)
             case "highs":
-                return highs.HiGHSSolver()
+                return highs.HiGHSSolver(solver_params)
             case _:
                 raise ValueError(f"Solver must be 'gurobi' or 'TBD', got {solver}.")
 

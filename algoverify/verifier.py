@@ -29,35 +29,36 @@ class Verifier(object):
         self.bounds = {}
 
     @staticmethod
-    def _get_canonicalizer(method: str, solver_params, solver):
+    def _get_canonicalizer(method: str, solver_params: dict, solver: dict):
         """
-        Return an initialized instance for the requested method.
+         Return an initialized instance for the requested method.
 
-        Parameters
-        ----------
-        method: str
-            Case-insensitive identifier for the solver to use. Supported values include:
-            - ``"mip"``
-            - ``"sdp"``
+         Parameters
+         ----------
+         method: str
+             Case-insensitive identifier for the solver to use. Supported values include:
+             - ``"mip"``
+             - ``"sdp"``
 
         solver_params: dict
-            ...
+             Key-value pairs with solver parameters and their corresponding
+             configuration values.
 
-        solver: str
-            Case-insensitive identifier for the solver to use. Supported values
-            (and common aliases) include:
-            - ``"gurobi"``, ``"grb"``
+         solver: str
+             Case-insensitive identifier for the solver to use. Supported values
+             (and common aliases) include:
+             - ``"gurobi"``, ``"grb"``
 
-        Returns
-        -------
-        Canonicalizer
-            A ready-to-use instance of a subclass of :class:`Canonicalizer`
-            (e.g. :class:`mip.MIP()`).
+         Returns
+         -------
+         Canonicalizer
+             A ready-to-use instance of a subclass of :class:`Canonicalizer`
+             (e.g. :class:`mip.MIP()`).
 
-        Raises
-        ------
-        ValueError
-            If the requested canonicalizer is one of the supported options.
+         Raises
+         ------
+         ValueError
+             If the requested canonicalizer is one of the supported options.
         """
         match method.lower():
             case "mip":

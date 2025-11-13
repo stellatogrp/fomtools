@@ -9,6 +9,8 @@ class Solver(object):
     def __init__(self, solver_params=None):
         self._relaxed_model = None
         self.vector_var_map = {}
+        if solver_params is not None:
+            self.set_solver_params(solver_params)
 
     @cached_property
     def relaxed_model(self):
@@ -26,7 +28,6 @@ class Solver(object):
 
     def set_param(self, param, value):
         raise NotImplementedError
-
 
     def add_param_stack_var(self, param_stack_var, param_list):
         raise NotImplementedError

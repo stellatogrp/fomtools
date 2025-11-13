@@ -12,43 +12,31 @@ import scipy.sparse as spa
 
 class HiGHSSolver(Solver):
     def __init__(self, solver_params={}):
-        super().__init__(solver_params)
         # Variable to keep track of number of highs variable created
         self._var_counter = -1
         self.model = hp.Highs()
+        super().__init__(solver_params)
 
     def __getitem__(self, item):
         val = {"objVal": self.model.getInfo().objective_function_value}
         return val[item]
 
     def set_param(self, param, val):
-        pass
+        param_to_highs = {
+            "TimeLimit": "time_limit",
+            "MIPGap": "mip_rel_gap",
+            "OutputFlag": "output_flat",
+        }
+        self.model.setOptionValue(param_to_highs[param], val)
 
     def relax_model(self):
-        import copy
-
+        model_copy = self.model.getModel()
         self._relaxed_model = hp.Highs()
-        relaxed_lp = hp.HighsLp()
-        lp = self.model.getLp()
+        self._relaxed_model.passModel(model_copy)
 
-        relaxed_lp.num_col_ = copy.deepcopy(lp.num_col_)
-        relaxed_lp.num_row_ = copy.deepcopy(lp.num_row_)
+        for i in range(self._relaxed_model.getNumCol()):
+            self._relaxed_model.changeColIntegrality(i, hp.HighsVarType.kContinuous)
 
-        relaxed_lp.col_cost_ = copy.deepcopy(lp.col_cost_)
-        relaxed_lp.col_lower_ = copy.deepcopy(lp.col_lower_)
-        relaxed_lp.col_upper_ = copy.deepcopy(lp.col_upper_)
-        relaxed_lp.row_lower_ = copy.deepcopy(lp.row_lower_)
-        relaxed_lp.row_upper_ = copy.deepcopy(lp.row_upper_)
-
-        relaxed_lp.a_matrix_.start_ = copy.deepcopy(lp.a_matrix_.start_)
-        relaxed_lp.a_matrix_.index_ = copy.deepcopy(lp.a_matrix_.index_)
-        relaxed_lp.a_matrix_.value_ = copy.deepcopy(lp.a_matrix_.value_)
-
-        relaxed_lp.integrality_ = [hp.HighsVarType.kContinuous] * relaxed_lp.num_col_
-        relaxed_lp.sense_ = lp.sense_
-        relaxed_lp.offset_ = lp.offset_
-
-        self._relaxed_model.passModel(relaxed_lp)
         self._relaxed_model.optimize()
 
         self.__dict__.pop("relaxed_model", None)

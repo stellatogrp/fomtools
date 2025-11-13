@@ -34,8 +34,8 @@ class GurobiSolver(Solver):
         ----------
         solver_params
         """
-        super().__init__(solver_params)
         self.model = gp.Model()
+        super().__init__(solver_params)
 
     def __getitem__(self, item):
         return getattr(self.model, item)
@@ -401,4 +401,4 @@ class GurobiSolver(Solver):
         return gp.hstack(gp_vars), gp.hstack(gp_vars).X
 
     def is_optimal(self):
-        return self['status'] == gp.GRB.OPTIMAL
+        return self["status"] == gp.GRB.OPTIMAL
