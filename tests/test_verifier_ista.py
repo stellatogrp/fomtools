@@ -54,7 +54,7 @@ def test_ista():
     b_offset = 1.
     b_param = VP.add_param(m, lb=b-b_offset, ub=b+b_offset)
 
-    z0 = VP.add_initial_iterate(n, lb=2, ub=2)
+    z0 = VP.initial_iterate(n, lb=2, ub=2)
 
     K = 5
     z = [None for _ in range(K + 1)]
