@@ -31,7 +31,6 @@ def test_satlin(vp_param_2):
     q_offset = 1
     q_param = vp_param_2.add_param(n, lb=q - q_offset, ub=q + q_offset)
 
-
     z0 = vp_param_2.initial_iterate(n, lb=z0_init, ub=z0_init)
 
     K = 12

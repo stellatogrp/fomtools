@@ -36,7 +36,6 @@ def test_ista(vp_theory):
     b_offset = 1.0
     b_param = vp_theory.add_param(m, lb=b - b_offset, ub=b + b_offset)
 
-
     z0 = vp_theory.initial_iterate(n, lb=2, ub=2)
 
     K = 5
