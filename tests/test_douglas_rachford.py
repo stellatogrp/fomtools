@@ -58,10 +58,9 @@ def test_dr(vp):
 
     for k in range(1, K + 1):
         print(f"-K = {k}-")
-        u[k] = vp.implicit_linear_step(
-            lhs.todense(), z[k - 1] - q_param, lhs_mat_factorization=lhs_factored
-        )
-        utilde[k] = vp.relu_step(2 * u[k] - z[k - 1], proj_ranges=(n, n + m))
+        u[k] = vp.implicit_linear_step(z[k - 1] - q_param, lhs.todense(),
+                                       lhs_mat_factorization=lhs_factored)
+        utilde[k] = vp.step(2 * u[k] - z[k - 1], proj_ranges=(n, n + m), step="relu")
         z[k] = z[k - 1] + utilde[k] - u[k]
 
         vp.set_infinity_norm_objective(z[k] - z[k - 1])

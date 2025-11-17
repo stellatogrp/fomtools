@@ -49,7 +49,7 @@ def test_ista(vp_theory):
     for k in range(1, K + 1):
         print(k)
 
-        z[k] = vp_theory.soft_threshold_step(At @ z[k - 1] + Bt @ b_param, lambda_t)
+        z[k] = vp_theory.step(At @ z[k - 1] + Bt @ b_param, lambd=lambda_t, step='soft_threshold')
         vp_theory.theory_bound(k, z[k], z[k - 1])
 
         vp_theory.set_infinity_norm_objective(z[k] - z[k - 1])

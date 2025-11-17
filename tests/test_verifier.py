@@ -60,7 +60,7 @@ def test_verifier(vp):
     all_res = []
     for k in range(1, K + 1):
         print(k)
-        x[k] = vp.relu_step(x[k - 1] - t * (c_param - A.T @ y[k - 1]))
+        x[k] = vp.step(x[k - 1] - t * (c_param - A.T @ y[k - 1]), step="relu")
         y[k] = y[k - 1] - t * (A @ (2 * x[k] - x[k - 1]) - b_param)
 
         vp.set_infinity_norm_objective([x[k] - x[k - 1], y[k] - y[k - 1]])

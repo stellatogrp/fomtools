@@ -216,7 +216,50 @@ class Verifier(object):
         self.params.append(param := self._add_var(dim, lb=bounds[0], ub=bounds[1]))
         return param
 
-    def implicit_linear_step(self, lhs_mat, rhs_expr, lhs_mat_factorization=None):
+    def _get_step(self, step):
+        match step:
+            case "relu":
+                return Relu
+            case "satlin":
+                return SaturatedLinear
+            case "soft_threshold":
+                return SoftThreshold
+            case "implicit_affine":
+                return Affine
+            case _:
+                pass
+
+    def step(self, rhs_expr, step, relax_binary_vars=False, **kwargs):
+        out_iterate = LinearExpression.from_int(rhs_expr.ndim)
+        # rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
+
+        step = self._get_step(step)(
+            lhs=out_iterate,
+            rhs=rhs_expr,
+            bounds={k: v for k, v in self.bounds.items() if k in rhs_expr.decomposition_dict},
+            relax_binary_vars=relax_binary_vars,
+            **kwargs,
+        )
+
+        rhs_lb, rhs_ub = step.lb, step.ub
+        if self.obbt_handler is not None:
+            rhs_lb, rhs_ub = self.obbt_handler.obbt(rhs_expr, step.lb, step.ub)
+
+        out_lb = step.new_bound(rhs_lb)
+        out_ub = step.new_bound(rhs_ub)
+
+        self.iterates.append(out_iterate)
+        self.bounds[out_iterate] = (out_lb, out_ub)
+
+        self.canonicalizer.add_var(out_iterate, lb=out_lb, ub=out_ub)
+        self.canonicalizer.add_constraints(step.get_constraints())
+
+        if self.obbt_handler is not None:
+            self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
+        self.steps.append(step)
+        return out_iterate
+
+    def implicit_linear_step(self, rhs_expr, lhs_mat, lhs_mat_factorization=None):
         # need to think about best way to bound prop here/set up the api
         """
         Process:
@@ -227,123 +270,24 @@ class Verifier(object):
             - Do the OBBT (if self.num_obbt >= 0`)
             - Return the out var Vector object
         """
-        iterate = LinearExpression.from_int(lhs_mat.shape[0])
-        self.iterates.append(iterate)
-
+        out_iterate = LinearExpression.from_int(lhs_mat.shape[0])
         step = Affine(
-            lhs_mat @ iterate,
-            rhs_expr,
+            lhs=out_iterate,
+            rhs=rhs_expr,
+            bounds={k: v for k, v in self.bounds.items() if k in rhs_expr.decomposition_dict},
             lhs_mat=lhs_mat,
             lhs_mat_factorization=lhs_mat_factorization,
         )
-        Minv_rhs = step.lhs_mat_inverse()
-
-        iterate_lb, iterate_ub = self.linear_bound_propagation(Minv_rhs)
-        assert np.all(iterate_lb <= iterate_ub)
-
-        self.bounds[iterate] = (iterate_lb, iterate_ub)
-
-        self.canonicalizer.add_var(iterate, lb=iterate_lb, ub=iterate_ub)
-        self.canonicalizer.add_constraint(lhs_mat @ iterate == rhs_expr)
-
-        if self.obbt_handler is not None:
-            self.obbt_handler.add_var(iterate, lb=iterate_lb, ub=iterate_ub)
-            self.obbt_handler.add_equality_constraint(lhs_mat @ iterate, rhs_expr)
-
-        self.steps.append(step)
-
-        return iterate
-
-    def relu_step(self, rhs_expr, proj_ranges=None, relax_binary_vars=False):
-        def _get_ranges(ranges: tuple[int, int] | list[tuple[int, int]]):
-            """
-            Return the set of integers covered by one or more of half-open intervals.
-
-            Parameters
-            ----------
-            ranges: tuple[int, int] or Iterable[tuple[int, int]]
-                Either a single (start, end) pair or an iterable of such pair.
-                Each pair is interpreted as a half-open interval ``[start, end)``.
-
-            Returns
-            -------
-            set[int]
-                The unique integers contained in the given half-open range(s)
-
-            Examples
-            --------
-            >>> _get_ranges(((1, 2), (5, 9)))
-            {1, 2, 5, 6, 7, 8}
-
-            >>> _get_ranges((4, 7))
-            {4, 5, 6}
-            """
-            try:
-                ranges.append((0, 0))
-                return {i for (min, max) in ranges for i in range(min, max)}
-            except AttributeError:
-                return set(range(ranges[0], ranges[1]))
-
-        proj_indices = _get_ranges(proj_ranges) if proj_ranges else set(range(0, rhs_expr.ndim))
-
-        out_iterate = LinearExpression.from_int(rhs_expr.ndim)
-
-        rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
-        step = Relu(
-            lhs=out_iterate,
-            rhs=rhs_expr,
-            lb=rhs_lb,
-            ub=rhs_ub,
-            relax_binary_vars=relax_binary_vars,
-            proj_indices=proj_indices,
-        )
-
-        if self.obbt_handler is not None:
-            rhs_lb, rhs_ub = self.obbt_handler.obbt(rhs_expr, rhs_lb, rhs_ub)
-
-        out_lb = relu(rhs_lb, proj_indices=proj_indices)
-        out_ub = relu(rhs_ub, proj_indices=proj_indices)
 
         self.iterates.append(out_iterate)
-        self.bounds[out_iterate] = (out_lb, out_ub)
+        self.bounds[out_iterate] = (step.lb, step.ub)
 
-        self.canonicalizer.add_var(out_iterate, lb=out_lb, ub=out_ub)
-        self.canonicalizer.add_relu_constraints(step)
-
-        if self.obbt_handler is not None:
-            self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
-
-        self.steps.append(step)
-        return out_iterate
-
-    def saturated_linear_step(self, rhs_expr, l, u, relax_binary_vars=False):
-        out_iterate = LinearExpression.from_int(rhs_expr.ndim)
-        rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
-
-        step = SaturatedLinear(
-            lhs=out_iterate,
-            rhs=rhs_expr,
-            lb=rhs_lb,
-            ub=rhs_ub,
-            relax_binary_vars=relax_binary_vars,
-            l=l,
-            u=u,
-        )
+        self.canonicalizer.add_var(out_iterate, lb=step.lb, ub=step.ub)
+        self.canonicalizer.add_constraints(step.get_constraints())
 
         if self.obbt_handler is not None:
-            rhs_lb, rhs_ub = self.obbt_handler.obbt(rhs_expr, rhs_lb, rhs_ub)
-
-        out_lb = saturated_linear(rhs_lb, l, u)
-        out_ub = saturated_linear(rhs_ub, l, u)
-
-        self.iterates.append(out_iterate)
-        self.bounds[out_iterate] = (out_lb, out_ub)
-
-        self.canonicalizer.add_var(out_iterate, lb=out_lb, ub=out_ub)
-        self.canonicalizer.add_saturated_linear_constraints(step)
-
-        if self.obbt_handler is not None:
-            self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
+            self.obbt_handler.add_var(out_iterate, lb=step.lb, ub=step.ub)
+            self.obbt_handler.add_equality_constraint(lhs_mat @ out_iterate, rhs_expr)
 
         self.steps.append(step)
 
@@ -401,41 +345,6 @@ class Verifier(object):
         self.steps.append(step)
 
         return out_iterate
-
-    def soft_threshold_step(self, rhs_expr, lambd, relax_binary_vars=False):
-        out_iterate = LinearExpression.from_int(rhs_expr.get_output_dim())
-
-        rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
-
-        step = SoftThreshold(
-            lhs=out_iterate,
-            rhs=rhs_expr,
-            lb=rhs_lb,
-            ub=rhs_ub,
-            relax_binary_vars=relax_binary_vars,
-            lambd=lambd,
-        )
-
-        if self.obbt_handler is not None:
-            rhs_lb, rhs_ub = self.obbt_handler.obbt(rhs_expr, rhs_lb, rhs_ub)
-
-        out_lb = soft_threshold(rhs_lb, lambd)
-        out_ub = soft_threshold(rhs_ub, lambd)
-
-        self.iterates.append(out_iterate)
-        self.bounds[out_iterate] = (out_lb, out_ub)
-
-        self.canonicalizer.add_var(out_iterate, lb=out_lb, ub=out_ub)
-        self.canonicalizer.add_soft_threshold_constraints(step, out_lb, out_ub)
-
-        if self.obbt_handler is not None:
-            self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
-
-        self.steps.append(step)
-        return out_iterate
-
-    def add_constraint_set(self, constraint_set):
-        self.constraint_sets.append(constraint_set)
 
     def equality_constraint(self, lhs_expr, rhs_expr):
         self.canonicalizer.add_constraint(lhs_expr == rhs_expr)
@@ -571,16 +480,8 @@ def as_array(val, n):
     return np.array(val)
 
 
-def relu(v, proj_indices):
-    return np.where(np.isin(np.arange(len(v)), list(proj_indices)), np.maximum(0, v), v)
-
-
 def saturated_linear(x, l, u):
     return np.minimum(np.maximum(x, l), u)
-
-
-def soft_threshold(x, gamma):
-    return np.sign(x) * np.maximum(np.abs(x) - gamma, 0)
 
 
 def update_lb(old_lb, new_lb):

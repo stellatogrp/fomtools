@@ -39,7 +39,7 @@ def test_nnls_convergence(vp_param_1):
     # Get fixed point z* using Verifier's fixed_point method
     z_star = vp_param_1.fixed_point(
         n_dim=n,
-        operator=lambda z: vp_param_1.relu_step(z - eta * A.T @ (A @ z - x_param)),
+        operator=lambda z: vp_param_1.step(z - eta * A.T @ (A @ z - x_param), step="relu"),
         lb=0,
         ub=100,
     )
@@ -54,7 +54,7 @@ def test_nnls_convergence(vp_param_1):
     for k in range(1, K + 1):
         print(k)
         # Perform ReLU step: z[k] = ReLU(z[k-1] - eta * A^T(Az[k-1] - x))
-        z[k] = vp_param_1.relu_step(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x_param))
+        z[k] = vp_param_1.step(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x_param), step="relu")
 
         # Set objective to measure ||z[k] - z*||_inf
         vp_param_1.set_infinity_norm_objective([z[k] - z_star])

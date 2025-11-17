@@ -41,7 +41,7 @@ def test_satlin(vp_param_2):
     all_res = []
     for k in range(1, K + 1):
         print(k)
-        z[k] = vp_param_2.saturated_linear_step(z[k - 1] - t * (P @ z[k - 1] + q_param), l, u)
+        z[k] = vp_param_2.step(z[k - 1] - t * (P @ z[k - 1] + q_param), l=l, u=u, step='satlin')
 
         vp_param_2.set_infinity_norm_objective(z[k] - z[k - 1])
         res = vp_param_2.solve()

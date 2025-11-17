@@ -5,7 +5,7 @@ import numpy as np
 from algoverify.linearexpression import LinearExpression
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class Step:
     """
     A base class for thresholding and activation steps. This class
@@ -29,9 +29,11 @@ class Step:
 
     lhs: LinearExpression
     rhs: LinearExpression
+    bounds: dict = None
     lb: float = -np.inf
     ub: float = np.inf
     relax_binary_vars: bool = False
+
 
     # TODO: figure out a better way to hash these objects
     def __hash__(self):

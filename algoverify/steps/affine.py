@@ -3,10 +3,11 @@ from dataclasses import dataclass
 import numpy as np
 
 from algoverify.linearexpression import LinearExpression
+from algoverify.utils.steps_utils import linear_bound_propagation
 from algoverify.steps.step import Step
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=False, kw_only=True)
 class Affine(Step):
     r"""
     An affine operator of the following form:
@@ -43,6 +44,13 @@ class Affine(Step):
     lhs_mat_factorization: np.matrix
     # TODO: the code for when lhs_mat_factorization is missing is not implemented yet, do it
 
+
+    def __post_init__(self):
+        self.lb, self.ub = linear_bound_propagation(expression=self.lhs_mat_inverse(), bounds=self.bounds)
+
+    def new_bound(self, x):
+        return x
+
     def lhs_mat_inverse(self):
         """
         Return a `LinearExpression` formed by applying $A^{-1}$ (with $A=$ `self.lhs_mat`) to each
@@ -53,3 +61,8 @@ class Affine(Step):
                 for k, v in self.rhs.decomposition_dict.items()
             },
         )
+
+
+    def get_constraints(self):
+        return [self.lhs_mat @ self.lhs == self.rhs]
+
