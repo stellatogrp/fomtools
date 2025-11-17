@@ -1,10 +1,9 @@
-from dataclasses import dataclass, field, InitVar
 import numpy as np
-from algoverify.steps.step import Step
-from algoverify.linearexpression import LinearExpression
-from algoverify.utils.steps_utils import linear_bound_propagation
 
-@dataclass(frozen=False, kw_only=True)
+from algoverify.linearexpression import LinearExpression
+from algoverify.steps.step import Step
+
+
 class Relu(Step):
     r"""
     Rectified Linear Unit (ReLU) step operator, defined as:
@@ -36,49 +35,51 @@ class Relu(Step):
         Set of output indices not subjected to ReLU.
     """
 
-    proj_ranges: InitVar[list[tuple[int, int]]] = None
-    idx_with_binary_vars: set[int] = field(default_factory=set)
-    proj_indices: set = field(init=False)
+    def __init__(
+        self,
+        lhs: LinearExpression,
+        rhs: LinearExpression,
+        proj_ranges=None,
+        bounds=None,
+        relax_binary_vars=False,
+    ):
+        super().__init__(lhs, rhs, bounds, relax_binary_vars)
+        self.proj_indices = (
+            set(range(0, self.rhs.ndim)) if proj_ranges is None else self._get_ranges(proj_ranges)
+        )
+        self.idx_with_binary_vars = set()
 
     def __hash__(self):
         return hash((self.rhs, self.lhs))
 
-    def __post_init__(self, proj_ranges: list[tuple[int, int]]) -> list[int]:
-        def _get_ranges(ranges):
-            """
-            Return the set of integers covered by one or more of half-open intervals.
+    def _get_ranges(self, ranges):
+        """
+        Return the set of integers covered by one or more of half-open intervals.
 
-            Parameters
-            ----------
-            ranges: tuple[int, int] or Iterable[tuple[int, int]]
-                Either a single (start, end) pair or an iterable of such pair.
-                Each pair is interpreted as a half-open interval ``[start, end)``.
+        Parameters
+        ----------
+        ranges: tuple[int, int] or Iterable[tuple[int, int]]
+            Either a single (start, end) pair or an iterable of such pair.
+            Each pair is interpreted as a half-open interval ``[start, end)``.
 
-            Returns
-            -------
-            set[int]
-                The unique integers contained in the given half-open range(s)
+        Returns
+        -------
+        set[int]
+            The unique integers contained in the given half-open range(s)
 
-            Examples
-            --------
-            >>> _get_ranges(((1, 2), (5, 9)))
-            {1, 2, 5, 6, 7, 8}
+        Examples
+        --------
+        >>> self._get_ranges(((1, 2), (5, 9)))
+        {1, 2, 5, 6, 7, 8}
 
-            >>> _get_ranges((4, 7))
-            {4, 5, 6}
-            """
-            try:
-                ranges.append((0, 0))
-                return {i for (min, max) in ranges for i in range(min, max)}
-            except AttributeError:
-                return set(range(ranges[0], ranges[1]))
-
-        object.__setattr__(
-            self,
-            "proj_indices",
-            set(range(0, self.rhs.ndim)) if proj_ranges is None else _get_ranges(proj_ranges),
-        )
-        self.lb, self.ub = linear_bound_propagation(expression=self.rhs, bounds=self.bounds)
+        >>> self._get_ranges((4, 7))
+        {4, 5, 6}
+        """
+        try:
+            ranges.append((0, 0))
+            return {i for (min, max) in ranges for i in range(min, max)}
+        except AttributeError:
+            return set(range(ranges[0], ranges[1]))
 
     # TODO : out_lb and out_ub can have common function that they can call from
     def new_bound(self, b):

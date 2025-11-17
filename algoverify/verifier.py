@@ -224,16 +224,15 @@ class Verifier(object):
                 return SaturatedLinear
             case "soft_threshold":
                 return SoftThreshold
-            case "implicit_affine":
+            case "implicit_linear":
                 return Affine
             case _:
                 pass
 
     def step(self, rhs_expr, step, relax_binary_vars=False, **kwargs):
         out_iterate = LinearExpression.from_int(rhs_expr.ndim)
-        # rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
 
-        step = self._get_step(step)(
+        _step = self._get_step(step)(
             lhs=out_iterate,
             rhs=rhs_expr,
             bounds={k: v for k, v in self.bounds.items() if k in rhs_expr.decomposition_dict},
@@ -241,56 +240,23 @@ class Verifier(object):
             **kwargs,
         )
 
-        rhs_lb, rhs_ub = step.lb, step.ub
-        if self.obbt_handler is not None:
-            rhs_lb, rhs_ub = self.obbt_handler.obbt(rhs_expr, step.lb, step.ub)
+        rhs_lb, rhs_ub = _step.lb, _step.ub
+        if self.obbt_handler is not None and step != "implicit_linear":
+            rhs_lb, rhs_ub = self.obbt_handler.obbt(rhs_expr, rhs_lb, rhs_ub)
 
-        out_lb = step.new_bound(rhs_lb)
-        out_ub = step.new_bound(rhs_ub)
+        out_lb = _step.new_bound(rhs_lb)
+        out_ub = _step.new_bound(rhs_ub)
 
         self.iterates.append(out_iterate)
         self.bounds[out_iterate] = (out_lb, out_ub)
 
         self.canonicalizer.add_var(out_iterate, lb=out_lb, ub=out_ub)
-        self.canonicalizer.add_constraints(step.get_constraints())
+        self.canonicalizer.add_constraints(_step.get_constraints())
 
         if self.obbt_handler is not None:
             self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
-        self.steps.append(step)
-        return out_iterate
 
-    def implicit_linear_step(self, rhs_expr, lhs_mat, lhs_mat_factorization=None):
-        # need to think about best way to bound prop here/set up the api
-        """
-        Process:
-            - Construct out var
-            - Construct affine step object
-            - Do the interval bound propagations as necessary
-            - Add the var and constraints to the method
-            - Do the OBBT (if self.num_obbt >= 0`)
-            - Return the out var Vector object
-        """
-        out_iterate = LinearExpression.from_int(lhs_mat.shape[0])
-        step = Affine(
-            lhs=out_iterate,
-            rhs=rhs_expr,
-            bounds={k: v for k, v in self.bounds.items() if k in rhs_expr.decomposition_dict},
-            lhs_mat=lhs_mat,
-            lhs_mat_factorization=lhs_mat_factorization,
-        )
-
-        self.iterates.append(out_iterate)
-        self.bounds[out_iterate] = (step.lb, step.ub)
-
-        self.canonicalizer.add_var(out_iterate, lb=step.lb, ub=step.ub)
-        self.canonicalizer.add_constraints(step.get_constraints())
-
-        if self.obbt_handler is not None:
-            self.obbt_handler.add_var(out_iterate, lb=step.lb, ub=step.ub)
-            self.obbt_handler.add_equality_constraint(lhs_mat @ out_iterate, rhs_expr)
-
-        self.steps.append(step)
-
+        self.steps.append(_step)
         return out_iterate
 
     def saturated_linear_param_step(

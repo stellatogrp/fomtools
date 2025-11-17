@@ -1,11 +1,6 @@
-from dataclasses import dataclass
-
-import numpy as np
-
-from algoverify.linearexpression import LinearExpression
+from algoverify.utils.steps_utils import linear_bound_propagation
 
 
-@dataclass(frozen=False)
 class Step:
     """
     A base class for thresholding and activation steps. This class
@@ -27,13 +22,13 @@ class Step:
         are relaxed to take continuous values.
     """
 
-    lhs: LinearExpression
-    rhs: LinearExpression
-    bounds: dict = None
-    lb: float = -np.inf
-    ub: float = np.inf
-    relax_binary_vars: bool = False
-
+    def __init__(self, lhs, rhs, bounds=None, relax_binary_vars=False):
+        self.lhs = lhs
+        self.rhs = rhs
+        if bounds:
+            self.lb, self.ub = linear_bound_propagation(expression=self.rhs, bounds=bounds)
+        self.bounds = bounds
+        self.relax_binary_vars = relax_binary_vars
 
     # TODO: figure out a better way to hash these objects
     def __hash__(self):

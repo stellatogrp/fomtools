@@ -1,13 +1,11 @@
-from dataclasses import dataclass
 
 import numpy as np
 
 from algoverify.linearexpression import LinearExpression
-from algoverify.utils.steps_utils import linear_bound_propagation
 from algoverify.steps.step import Step
+from algoverify.utils.steps_utils import linear_bound_propagation
 
 
-@dataclass(frozen=False, kw_only=True)
 class Affine(Step):
     r"""
     An affine operator of the following form:
@@ -38,15 +36,27 @@ class Affine(Step):
         ...
     """
 
+    def __init__(
+        self,
+        lhs: LinearExpression,
+        rhs: LinearExpression,
+        lhs_mat,
+        lhs_mat_factorization: np.matrix,
+        bounds=None,
+        relax_binary_vars: bool = False,
+    ):
+        super().__init__(lhs, rhs, bounds, relax_binary_vars)
+        self.lhs_mat = lhs_mat
+        self.lhs_mat_factorization = lhs_mat_factorization
+        self.lb, self.ub = linear_bound_propagation(
+            expression=self.lhs_mat_inverse(), bounds=self.bounds
+        )
+
     # todo: complete the docstring
-    # TODO: Can't we retrive this from the decomposition dict of the lhs linearexpression?
-    lhs_mat: np.matrix
-    lhs_mat_factorization: np.matrix
+    # # TODO: Can't we retrive this from the decomposition dict of the lhs linearexpression?
+    # lhs_mat: np.matrix
+    # lhs_mat_factorization: np.matrix
     # TODO: the code for when lhs_mat_factorization is missing is not implemented yet, do it
-
-
-    def __post_init__(self):
-        self.lb, self.ub = linear_bound_propagation(expression=self.lhs_mat_inverse(), bounds=self.bounds)
 
     def new_bound(self, x):
         return x
@@ -62,7 +72,5 @@ class Affine(Step):
             },
         )
 
-
     def get_constraints(self):
         return [self.lhs_mat @ self.lhs == self.rhs]
-

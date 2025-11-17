@@ -3,7 +3,6 @@ import numpy as np
 from algoverify import LinearExpression
 from algoverify.canonicalizers.canonicalizer import Canonicalizer
 from algoverify.constraint import Constraint
-from algoverify.steps import Relu
 
 
 class MIP(Canonicalizer):

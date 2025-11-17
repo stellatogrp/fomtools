@@ -1,14 +1,9 @@
-from dataclasses import dataclass, InitVar
-from functools import cached_property
 import numpy as np
 
 from algoverify import LinearExpression
-from algoverify.steps import step
 from algoverify.steps.step import Step
-from algoverify.utils.steps_utils import linear_bound_propagation
 
 
-@dataclass(frozen=False, kw_only=True)
 class SaturatedLinear(Step):
     r"""
     Saturated Linear Unit step operator, defined as:
@@ -51,15 +46,22 @@ class SaturatedLinear(Step):
         Indices of output coordinates not subjected to Saturated Linear Unit projection.
     """
 
-    # todo: complete the docstring
-    l: np.ndarray[int]
-    u: np.ndarray[int]
-    equality_ranges: InitVar[list] = None
-
-    def __hash__(self):
-        return hash((self.rhs, self.lhs))
-
-    def __post_init__(self, equality_ranges):
+    # # todo: complete the docstring
+    def __init__(
+        self,
+        lhs: LinearExpression,
+        rhs: LinearExpression,
+        l,
+        u,
+        equality_ranges=None,
+        bounds=None,
+        relax_binary_vars: bool = False,
+        lb: float = None,
+        ub: float = None,
+    ):
+        super().__init__(lhs, rhs, bounds, relax_binary_vars)
+        self.l = l
+        self.u = u
         self.eq_indices = (
             set()
             if equality_ranges is None
@@ -68,21 +70,9 @@ class SaturatedLinear(Step):
         self.ineq_indices = {
             i for i in range(self.rhs.get_output_dim()) if i not in self.eq_indices
         }
-        if self.bounds:
-            self.lb, self.ub = linear_bound_propagation(expression=self.rhs, bounds=self.bounds)
 
-
-    # @cached_property
-    # def eq_indices(self):
-    #     """Returns indices of output coordinates that are subjected to Saturated Linear Unit projections."""
-    #     if self.equality_ranges is not None:
-    #         return {i for (min, max) in self.equality_ranges for i in range(min, max)}
-    #     return set()
-
-    # @cached_property
-    # def ineq_indices(self):
-    #     """Returns indices of output coordinates that bypass the Saturated Linear Unit projections."""
-    #     return {i for i in range(self.rhs.get_output_dim()) if i not in self.eq_indices}
+    def __hash__(self):
+        return hash((self.rhs, self.lhs))
 
     def new_bound(self, x):
         return np.minimum(np.maximum(x, self.l), self.u)

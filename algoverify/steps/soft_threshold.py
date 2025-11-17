@@ -1,13 +1,9 @@
-from dataclasses import dataclass, field
-
-from algoverify.steps.step import Step
-from algoverify.linearexpression import LinearExpression
 import numpy as np
 
-from algoverify.utils.steps_utils import linear_bound_propagation
+from algoverify.linearexpression import LinearExpression
+from algoverify.steps.step import Step
 
 
-@dataclass(frozen=False, kw_only=True)
 class SoftThreshold(Step):
     r"""
     A soft-thresholding operator for shrinkage, defined as:
@@ -46,15 +42,14 @@ class SoftThreshold(Step):
         Indices tied to “left-branch” indicators (e.g., $t<-\lambda$).
     """
 
-    lambd: float
-    idx_with_right_binary_vars: set[int] = field(default_factory=set)
-    idx_with_left_binary_vars: set[int] = field(default_factory=set)
+    def __init__(self, lhs, rhs, lambd, bounds, relax_binary_vars=False):
+        super().__init__(lhs, rhs, bounds, relax_binary_vars)
+        self.lambd = lambd
+        self.idx_with_right_binary_vars = set()
+        self.idx_with_left_binary_vars = set()
 
     def __hash__(self):
         return hash((self.rhs, self.lhs))
-
-    def __post_init__(self):
-        self.lb, self.ub = linear_bound_propagation(expression=self.rhs, bounds=self.bounds)
 
     def soft_threshold(self, x):
         return np.sign(x) * np.maximum(np.abs(x) - self.lambd, 0)
