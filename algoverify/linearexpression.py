@@ -492,6 +492,57 @@ class LinearExpression:
                 got {type(matrix).__name__}. """
             )
 
+    def bound_propagation(self) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Compute the elementwise lower and upper bounds of a linear expression
+        given the bound constraints of its coefficient matrices.
+
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray]
+            A pair (lower, upper) representing the elementwise lower and upper
+            bounds of the evaluated expression.
+
+        Raises
+        ------
+        ValueError
+            If any computed lower bound exceeds its corresponding upper bound.
+        """
+
+        def _interval_bound_propagation(
+            a: np.matrix, lb: np.ndarray, ub: np.ndarray
+        ) -> tuple[np.ndarray, np.ndarray]:
+            """
+            Bounds the linear image y = A @ x for any x with lb ≤ x ≤ ub.
+
+            Using midpoint m = (ub + lb)/2 and radius r = (ub - lb)/2:
+                y_min = A @ m - |A| @ r
+                y_max = A @ m + |A| @ r
+
+            Returns (y_min, y_max).
+
+            References
+            ----------
+                .. S. Gowal, K. Dvijotham, R. Stanforth, R. Bunel, C. Qin, J. Uesato, R. Arand-
+                   jelovi´c, T. Mann, and Sigma. Kohli. "On the effectiveness of interval bound propa-
+                   gation for training verifiably robust models. arXiv:1810.12715, 2018."
+            """
+            return (a @ (ub + lb) - np.abs(a) @ (ub - lb)) / 2, (
+                a @ (ub + lb) + np.abs(a) @ (ub - lb)
+            ) / 2
+
+        out_lb, out_ub = np.zeros(self.ndim), np.zeros(self.ndim)
+        for k, v in self.decomposition_dict.items():
+            _lb, _ub = _interval_bound_propagation(v, k.lb, k.ub)
+
+            if np.any(_lb > _ub):
+                raise ValueError("Lower bound cannot exceed upper bound .")
+
+            out_lb += _lb
+            out_ub += _ub
+
+        return out_lb, out_ub
+
     def get_output_dim(self) -> int:
         """
         Return the dimension of this `LinearExpression`. The dimension is given by

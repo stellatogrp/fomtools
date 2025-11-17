@@ -265,7 +265,7 @@ class Verifier(object):
     # TODO: consider if we should make the theory func local to this func and not a verifier property
     def theory_bound(self, k, target_expr, bound_expr, return_improv_frac=True):
         C = self.theory_func(k)
-        lb, ub = self.linear_bound_propagation(bound_expr)
+        lb, ub = bound_expr.bound_propagation()
         if target_expr.is_leaf:
             _lb, lb_improv_frac = update_lb(target_expr.lb, lb - C)
             _ub, ub_improv_frac = update_ub(target_expr.ub, lb + C)
@@ -279,64 +279,6 @@ class Verifier(object):
         if return_improv_frac:
             return improv_frac
 
-    def linear_bound_propagation(
-        self, expression: LinearExpression
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Compute the elementwise lower and upper bounds of a linear expression
-        given the bound constraints of its coefficient matrices.
-
-        Parameters
-        ----------
-        expression : LinearExpression
-            The linear expression for which to compute output bounds.
-
-        Returns
-        -------
-        tuple[np.ndarray, np.ndarray]
-            A pair (lower, upper) representing the elementwise lower and upper
-            bounds of the evaluated expression.
-
-        Raises
-        ------
-        ValueError
-            If any computed lower bound exceeds its corresponding upper bound.
-        """
-
-        def _interval_bound_propagation(
-            a: np.matrix, lb: np.ndarray, ub: np.ndarray
-        ) -> tuple[np.ndarray, np.ndarray]:
-            """
-            Bounds the linear image y = A @ x for any x with lb ≤ x ≤ ub.
-
-            Using midpoint m = (ub + lb)/2 and radius r = (ub - lb)/2:
-                y_min = A @ m - |A| @ r
-                y_max = A @ m + |A| @ r
-
-            Returns (y_min, y_max).
-
-            References
-            ----------
-                .. S. Gowal, K. Dvijotham, R. Stanforth, R. Bunel, C. Qin, J. Uesato, R. Arand-
-                   jelovi´c, T. Mann, and Sigma. Kohli. "On the effectiveness of interval bound propa-
-                   gation for training verifiably robust models. arXiv:1810.12715, 2018."
-            """
-            return (a @ (ub + lb) - np.abs(a) @ (ub - lb)) / 2, (
-                a @ (ub + lb) + np.abs(a) @ (ub - lb)
-            ) / 2
-
-        out_lb, out_ub = np.zeros(expression.ndim), np.zeros(expression.ndim)
-        for k, v in expression.decomposition_dict.items():
-            _lb, _ub = _interval_bound_propagation(v, k.lb, k.ub)
-
-            if np.any(_lb > _ub):
-                raise ValueError("Lower bound cannot exceed upper bound .")
-
-            out_lb += _lb
-            out_ub += _ub
-
-        return out_lb, out_ub
-
     def set_zero_objective(self):
         self.canonicalizer.set_zero_objective()
 
@@ -347,7 +289,7 @@ class Verifier(object):
         lb_list = []
         ub_list = []
         for expression in expr_list:
-            lb, ub = self.linear_bound_propagation(expression)
+            lb, ub = expression.bound_propagation()
             lb_list.append(lb)
             ub_list.append(ub)
 

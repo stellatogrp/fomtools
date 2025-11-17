@@ -1,6 +1,3 @@
-from algoverify.utils.steps_utils import linear_bound_propagation
-
-
 class Step:
     """
     A base class for thresholding and activation steps. This class
@@ -25,7 +22,7 @@ class Step:
     def __init__(self, lhs, rhs, relax_binary_vars=False):
         self.lhs = lhs
         self.rhs = rhs
-        self.lb, self.ub = linear_bound_propagation(expression=self.rhs)
+        self.lb, self.ub = self.rhs.bound_propagation()
         self.relax_binary_vars = relax_binary_vars
 
     # TODO: figure out a better way to hash these objects

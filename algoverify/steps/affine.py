@@ -2,7 +2,6 @@ import numpy as np
 
 from algoverify.linearexpression import LinearExpression
 from algoverify.steps.step import Step
-from algoverify.utils.steps_utils import linear_bound_propagation
 
 
 class Affine(Step):
@@ -46,7 +45,7 @@ class Affine(Step):
         super().__init__(lhs, rhs, relax_binary_vars)
         self.lhs_mat = lhs_mat
         self.lhs_mat_factorization = lhs_mat_factorization
-        self.lb, self.ub = linear_bound_propagation(expression=self.lhs_mat_inverse())
+        self.lb, self.ub = self.lhs_mat_inverse().bound_propagation()
 
     # todo: complete the docstring
     # # TODO: Can't we retrive this from the decomposition dict of the lhs linearexpression?
