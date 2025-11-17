@@ -26,7 +26,6 @@ class Verifier(object):
 
         self.canonicalizer = self._get_canonicalizer(method, params, solver)
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
-        self.bounds = {}
 
     @staticmethod
     def _get_canonicalizer(method: str, solver_params: dict, solver: dict):
@@ -69,11 +68,7 @@ class Verifier(object):
                 raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
 
     def _add_var(
-        self,
-        ndim: int,
-        lb: list[float] = -np.inf,
-        ub: list[float] = np.inf,
-        param_list: list[LinearExpression] = None,
+        self, ndim: int, lb: list[float] = -np.inf, ub: list[float] = np.inf
     ) -> LinearExpression:
         """
         Create and register a :class:`LinearExpression` variable with the Problem
@@ -91,8 +86,6 @@ class Verifier(object):
         ub: list[float]
             Upper bound of the variable.
 
-        param_list: list[LinearExpression] or None, optional
-            List of :class:`LinearExpression` parameters.
 
         Returns
         -------
@@ -107,17 +100,11 @@ class Verifier(object):
         if not np.all(lb <= ub):
             raise ValueError("Lower bound must be less than or equal to upper bound.")
 
-        var = LinearExpression.from_int(ndim)
-        self.bounds[var] = (as_array(lb, ndim), as_array(ub, ndim))
+        var = LinearExpression.from_int(ndim, lb=lb, ub=ub)
 
-        if param_list is None:
-            self.canonicalizer.add_var(var, lb=lb, ub=ub)
-            if self.obbt_handler is not None:
-                self.obbt_handler.add_var(var, lb=lb, ub=ub)
-        else:
-            self.canonicalizer.add_param_stack_var(var, param_list)
-            if self.obbt_handler is not None:
-                self.obbt_handler.add_param_stack_var(var, param_list)
+        self.canonicalizer.add_var(var, lb=lb, ub=ub)
+        if self.obbt_handler is not None:
+            self.obbt_handler.add_var(var, lb=lb, ub=ub)
 
         return var
 
@@ -190,6 +177,13 @@ class Verifier(object):
         ValueError
             If the lower bound is greater than the upper bound.
         """
+        try:
+            lb = np.full(ndim, lb)
+            ub = np.full(ndim, ub)
+        except ValueError:
+            raise ValueError(""" Lower bounds and upper bounds must either be scalars or 
+                                have the same length as the dimension of the expression.""")
+
         self.params.append(param := self._add_var(ndim, lb, ub))
         return param
 
@@ -211,7 +205,7 @@ class Verifier(object):
 
         for p in param_list:
             dim += p.ndim
-            tuple(map(list.extend, bounds, self.bounds[p]))
+            tuple(map(list.extend, bounds, (p.lb, p.ub)))
 
         self.params.append(param := self._add_var(dim, lb=bounds[0], ub=bounds[1]))
         return param
@@ -235,8 +229,6 @@ class Verifier(object):
         _step = self._get_step(step)(
             lhs=out_iterate,
             rhs=rhs_expr,
-            bounds=self.bounds,
-            # bounds={k: v for k, v in self.bounds.items() if k in rhs_expr.decomposition_dict},
             relax_binary_vars=relax_binary_vars,
             **kwargs,
         )
@@ -249,7 +241,7 @@ class Verifier(object):
         out_ub = _step.new_bound(rhs_ub)
 
         self.iterates.append(out_iterate)
-        self.bounds[out_iterate] = (out_lb, out_ub)
+        out_iterate.update_bounds(lb=out_lb, ub=out_ub)
 
         self.canonicalizer.add_var(out_iterate, lb=out_lb, ub=out_ub)
         self.canonicalizer.add_constraints(_step.get_constraints())
@@ -275,9 +267,10 @@ class Verifier(object):
         C = self.theory_func(k)
         lb, ub = self.linear_bound_propagation(bound_expr)
         if target_expr.is_leaf:
-            _lb, lb_improv_frac = update_lb(self.bounds[target_expr][0], lb - C)
-            _ub, ub_improv_frac = update_ub(self.bounds[target_expr][1], lb + C)
-            self.bounds[target_expr] = (_lb, _ub)
+            _lb, lb_improv_frac = update_lb(target_expr.lb, lb - C)
+            _ub, ub_improv_frac = update_ub(target_expr.ub, lb + C)
+
+            target_expr.update_bounds(lb=_lb, ub=_ub)
 
             improv_frac = (lb_improv_frac + ub_improv_frac) / 2.0
         self.canonicalizer.add_theory_cut(C, target_expr, lb, ub)
@@ -334,7 +327,7 @@ class Verifier(object):
 
         out_lb, out_ub = np.zeros(expression.ndim), np.zeros(expression.ndim)
         for k, v in expression.decomposition_dict.items():
-            _lb, _ub = _interval_bound_propagation(v, self.bounds[k][0], self.bounds[k][1])
+            _lb, _ub = _interval_bound_propagation(v, k.lb, k.ub)
 
             if np.any(_lb > _ub):
                 raise ValueError("Lower bound cannot exceed upper bound .")
@@ -361,7 +354,7 @@ class Verifier(object):
         self.canonicalizer.set_infinity_norm_objective(expr_list, lb_list, ub_list)
 
     def solve(self, **kwargs):
-        return self.canonicalizer.solve_model(self.steps, self.bounds, **kwargs)
+        return self.canonicalizer.solve_model(self.steps, **kwargs)
 
     def extract_sol(self, iterate):
         return self.canonicalizer.extract_sol(iterate)
@@ -370,11 +363,13 @@ class Verifier(object):
         self, var_to_bound, var_for_init_bounds, residual_values, return_improv_frac=True
     ):
         delta_sum = np.sum(residual_values)
-        lower_bounds = self.bounds[var_for_init_bounds][0]
-        upper_bounds = self.bounds[var_for_init_bounds][1]
 
-        new_lower_bounds, lb_improv_frac = update_lb(lower_bounds, lower_bounds - delta_sum)
-        new_upper_bounds, ub_improv_frac = update_ub(upper_bounds, upper_bounds + delta_sum)
+        new_lower_bounds, lb_improv_frac = update_lb(
+            var_for_init_bounds.lb, var_for_init_bounds.lb - delta_sum
+        )
+        new_upper_bounds, ub_improv_frac = update_ub(
+            var_for_init_bounds.ub, var_for_init_bounds.ub + delta_sum
+        )
 
         self.canonicalizer.post_process(var_to_bound, new_lower_bounds, new_upper_bounds)
 
@@ -392,10 +387,6 @@ def as_array(val, n):
     if np.isscalar(val):
         return float(val) * np.ones(n)
     return np.array(val)
-
-
-def saturated_linear(x, l, u):
-    return np.minimum(np.maximum(x, l), u)
 
 
 def update_lb(old_lb, new_lb):

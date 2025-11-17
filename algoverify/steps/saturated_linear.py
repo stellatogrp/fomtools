@@ -53,12 +53,11 @@ class SaturatedLinear(Step):
         rhs: LinearExpression,
         l,
         u,
-        bounds=None,
         relax_binary_vars: bool = False,
         lb: float = None,
         ub: float = None,
     ):
-        super().__init__(lhs, rhs, bounds, relax_binary_vars)
+        super().__init__(lhs, rhs, relax_binary_vars)
         self.l = l
         self.u = u
 
@@ -67,8 +66,8 @@ class SaturatedLinear(Step):
 
     def new_bound(self, x):
         try:
-            return np.minimum(np.maximum(x, self.bounds[self.l][0]), self.bounds[self.u][1])
-        except TypeError:
+            return np.minimum(np.maximum(x, self.l.lb), self.u.ub)
+        except AttributeError:
             return np.minimum(np.maximum(x, self.l), self.u)
 
     def get_constraints(self):

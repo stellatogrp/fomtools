@@ -126,9 +126,9 @@ class MIP(Canonicalizer):
         self.solver.constraints_to_solver(constraints)
         self.solver.set_objective(expression=q, sense="maximize")
 
-    def solve_model(self, steps, bounds, **kwargs):
+    def solve_model(self, steps, **kwargs):
         if kwargs.get("huchette_cuts", False):
-            self.solver.add_huchette_cuts(steps, bounds)
+            self.solver.add_huchette_cuts(steps)
 
         self.solver.optimize()
         return self.solver["objVal"]

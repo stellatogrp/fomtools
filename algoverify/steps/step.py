@@ -22,12 +22,10 @@ class Step:
         are relaxed to take continuous values.
     """
 
-    def __init__(self, lhs, rhs, bounds=None, relax_binary_vars=False):
+    def __init__(self, lhs, rhs, relax_binary_vars=False):
         self.lhs = lhs
         self.rhs = rhs
-        if bounds:
-            self.lb, self.ub = linear_bound_propagation(expression=self.rhs, bounds=bounds)
-        self.bounds = bounds
+        self.lb, self.ub = linear_bound_propagation(expression=self.rhs)
         self.relax_binary_vars = relax_binary_vars
 
     # TODO: figure out a better way to hash these objects

@@ -102,6 +102,8 @@ class LinearExpression:
         LinearExpression.counter += 1
         self.is_leaf = False
         self.is_binary = is_binary
+        self.lb = [i.lb for i in decomposition_dict.keys()]
+        self.ub = [i.ub for i in decomposition_dict.keys()]
 
     @classmethod
     def from_int(
@@ -137,6 +139,10 @@ class LinearExpression:
         obj.ub = 1 if is_binary else ub
         cls.counter += 1
         return obj
+
+    def update_bounds(self, lb, ub) -> None:
+        self.lb = np.maximum(self.lb, lb)
+        self.ub = np.minimum(self.ub, ub)
 
     def __str__(self):
         return f"Var{self.counter}"

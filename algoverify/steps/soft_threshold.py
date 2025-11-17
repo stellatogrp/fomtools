@@ -42,8 +42,8 @@ class SoftThreshold(Step):
         Indices tied to “left-branch” indicators (e.g., $t<-\lambda$).
     """
 
-    def __init__(self, lhs, rhs, lambd, bounds, relax_binary_vars=False):
-        super().__init__(lhs, rhs, bounds, relax_binary_vars)
+    def __init__(self, lhs, rhs, lambd, relax_binary_vars=False):
+        super().__init__(lhs, rhs, relax_binary_vars)
         self.lambd = lambd
         self.idx_with_right_binary_vars = set()
         self.idx_with_left_binary_vars = set()
