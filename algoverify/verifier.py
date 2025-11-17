@@ -259,35 +259,17 @@ class Verifier(object):
         self.steps.append(_step)
         return out_iterate
 
-    def saturated_linear_param_step(
-        self, rhs_expr, l, u, relax_binary_vars=False, equality_ranges=None
-    ):
-        assert isinstance(l, LinearExpression) and isinstance(u, LinearExpression)
-        out_iterate = LinearExpression.from_int(rhs_expr.get_output_dim())
+    def saturated_linear_param_step(self, rhs_expr, l, u, relax_binary_vars=False):
+        out_iterate = LinearExpression.from_int(rhs_expr.ndim)
         rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
-
-        l_lb, l_ub = self.bounds[l][0], self.bounds[l][1]
-        u_lb, u_ub = self.bounds[u][0], self.bounds[u][1]
-
-        assert np.all(l_lb <= l_ub)
-        assert np.all(u_lb <= u_ub)
-
-        sl_rhs_lb = saturated_linear(rhs_lb, l_lb, u_ub)
-        sl_rhs_ub = saturated_linear(rhs_ub, l_lb, u_ub)
 
         if self.obbt_handler is not None:
             obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr, rhs_lb, rhs_ub)
             rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
             rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
 
-            sl_obbt_lb = saturated_linear(obbt_lb, l_lb, u_ub)
-            sl_obbt_ub = saturated_linear(obbt_ub, l_lb, u_ub)
-
-            out_lb = sl_obbt_lb
-            out_ub = sl_obbt_ub
-        else:
-            out_lb = sl_rhs_lb
-            out_ub = sl_rhs_ub
+        out_lb = saturated_linear(rhs_lb, self.bounds[l][0], self.bounds[u][1])
+        out_ub = saturated_linear(rhs_ub, self.bounds[l][0], self.bounds[u][1])
 
         step = SaturatedLinear(
             lhs=out_iterate,
@@ -297,7 +279,6 @@ class Verifier(object):
             relax_binary_vars=relax_binary_vars,
             l=l,
             u=u,
-            equality_ranges=equality_ranges,
         )
 
         self.iterates.append(out_iterate)

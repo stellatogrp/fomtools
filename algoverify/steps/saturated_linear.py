@@ -53,7 +53,6 @@ class SaturatedLinear(Step):
         rhs: LinearExpression,
         l,
         u,
-        equality_ranges=None,
         bounds=None,
         relax_binary_vars: bool = False,
         lb: float = None,
@@ -62,14 +61,6 @@ class SaturatedLinear(Step):
         super().__init__(lhs, rhs, bounds, relax_binary_vars)
         self.l = l
         self.u = u
-        self.eq_indices = (
-            set()
-            if equality_ranges is None
-            else {i for (min, max) in equality_ranges for i in range(min, max)}
-        )
-        self.ineq_indices = {
-            i for i in range(self.rhs.get_output_dim()) if i not in self.eq_indices
-        }
 
     def __hash__(self):
         return hash((self.rhs, self.lhs))
