@@ -235,7 +235,8 @@ class Verifier(object):
         _step = self._get_step(step)(
             lhs=out_iterate,
             rhs=rhs_expr,
-            bounds={k: v for k, v in self.bounds.items() if k in rhs_expr.decomposition_dict},
+            bounds=self.bounds,
+            # bounds={k: v for k, v in self.bounds.items() if k in rhs_expr.decomposition_dict},
             relax_binary_vars=relax_binary_vars,
             **kwargs,
         )
@@ -257,40 +258,6 @@ class Verifier(object):
             self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
 
         self.steps.append(_step)
-        return out_iterate
-
-    def saturated_linear_param_step(self, rhs_expr, l, u, relax_binary_vars=False):
-        out_iterate = LinearExpression.from_int(rhs_expr.ndim)
-        rhs_lb, rhs_ub = self.linear_bound_propagation(rhs_expr)
-
-        if self.obbt_handler is not None:
-            obbt_lb, obbt_ub = self.obbt_handler.obbt(rhs_expr, rhs_lb, rhs_ub)
-            rhs_lb, _ = update_lb(obbt_lb, rhs_lb)
-            rhs_ub, _ = update_ub(obbt_ub, rhs_ub)
-
-        out_lb = saturated_linear(rhs_lb, self.bounds[l][0], self.bounds[u][1])
-        out_ub = saturated_linear(rhs_ub, self.bounds[l][0], self.bounds[u][1])
-
-        step = SaturatedLinear(
-            lhs=out_iterate,
-            rhs=rhs_expr,
-            lb=rhs_lb,
-            ub=rhs_ub,
-            relax_binary_vars=relax_binary_vars,
-            l=l,
-            u=u,
-        )
-
-        self.iterates.append(out_iterate)
-        self.bounds[out_iterate] = (out_lb, out_ub)
-
-        self.canonicalizer.add_var(out_iterate, lb=out_lb, ub=out_ub)
-
-        if self.obbt_handler is not None:
-            self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
-
-        self.steps.append(step)
-
         return out_iterate
 
     def equality_constraint(self, lhs_expr, rhs_expr):

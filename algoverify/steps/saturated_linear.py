@@ -66,12 +66,20 @@ class SaturatedLinear(Step):
         return hash((self.rhs, self.lhs))
 
     def new_bound(self, x):
-        return np.minimum(np.maximum(x, self.l), self.u)
+        try:
+            return np.minimum(np.maximum(x, self.bounds[self.l][0]), self.bounds[self.u][1])
+        except TypeError:
+            return np.minimum(np.maximum(x, self.l), self.u)
 
     def get_constraints(self):
         constraints = []
 
         for l, u, lb, ub, lhs, rhs in zip(self.l, self.u, self.lb, self.ub, self.lhs, self.rhs):
+            try:
+                float(l), float(u)
+            except TypeError:
+                return constraints
+
             if lb >= u:
                 constraints.append(lhs == u)
             elif ub <= l:

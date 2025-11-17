@@ -102,6 +102,7 @@ def test_satlin_param(vp_param_2):
     l_param = vp_param_2.add_param_stack([top_param, l_rest])
     u_param = vp_param_2.add_param_stack([top_param, u_rest])
 
+
     t = 0.1
     K = 5
 
@@ -111,9 +112,7 @@ def test_satlin_param(vp_param_2):
     all_res = []
     for k in range(1, K + 1):
         print(k)
-        z[k] = vp_param_2.saturated_linear_param_step(
-            z[k - 1] - t * (P @ z[k - 1] + q_param), l_param, u_param
-        )
+        z[k] = vp_param_2.step(z[k - 1] - t * (P @ z[k - 1] + q_param), l=l_param, u=u_param, step='satlin')
 
         vp_param_2.set_infinity_norm_objective(z[k] - z[k - 1])
         res = vp_param_2.solve()
