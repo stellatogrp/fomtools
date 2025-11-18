@@ -37,12 +37,11 @@ class Relu(Step):
 
     def __init__(
         self,
-        lhs: LinearExpression,
         rhs: LinearExpression,
         proj_ranges=None,
         relax_binary_vars=False,
     ):
-        super().__init__(lhs, rhs, relax_binary_vars)
+        super().__init__(rhs, relax_binary_vars)
         self.proj_indices = (
             set(range(0, self.rhs.ndim)) if proj_ranges is None else self._get_ranges(proj_ranges)
         )

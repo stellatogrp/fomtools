@@ -47,17 +47,8 @@ class SaturatedLinear(Step):
     """
 
     # # todo: complete the docstring
-    def __init__(
-        self,
-        lhs: LinearExpression,
-        rhs: LinearExpression,
-        l,
-        u,
-        relax_binary_vars: bool = False,
-        lb: float = None,
-        ub: float = None,
-    ):
-        super().__init__(lhs, rhs, relax_binary_vars)
+    def __init__(self, rhs: LinearExpression, l, u, relax_binary_vars: bool = False):
+        super().__init__(rhs, relax_binary_vars)
         self.l = l
         self.u = u
 

@@ -224,10 +224,7 @@ class Verifier(object):
                 pass
 
     def step(self, rhs_expr, step, relax_binary_vars=False, **kwargs):
-        out_iterate = LinearExpression.from_int(rhs_expr.ndim)
-
         _step = self._get_step(step)(
-            lhs=out_iterate,
             rhs=rhs_expr,
             relax_binary_vars=relax_binary_vars,
             **kwargs,
@@ -240,17 +237,17 @@ class Verifier(object):
         out_lb = _step.new_bound(rhs_lb)
         out_ub = _step.new_bound(rhs_ub)
 
-        self.iterates.append(out_iterate)
-        out_iterate.update_bounds(lb=out_lb, ub=out_ub)
+        self.iterates.append(_step.lhs)
+        _step.lhs.update_bounds(lb=out_lb, ub=out_ub)
 
-        self.canonicalizer.add_var(out_iterate)
+        self.canonicalizer.add_var(_step.lhs)
         self.canonicalizer.add_constraints(_step.get_constraints())
 
         if self.obbt_handler is not None:
-            self.obbt_handler.add_var(out_iterate)
+            self.obbt_handler.add_var(_step.lhs)
 
         self.steps.append(_step)
-        return out_iterate
+        return _step.lhs
 
     def equality_constraint(self, lhs_expr, rhs_expr):
         self.canonicalizer.add_constraint(lhs_expr == rhs_expr)

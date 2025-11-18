@@ -1,3 +1,8 @@
+from functools import cached_property
+
+from algoverify import LinearExpression
+
+
 class Step:
     """
     A base class for thresholding and activation steps. This class
@@ -19,11 +24,14 @@ class Step:
         are relaxed to take continuous values.
     """
 
-    def __init__(self, lhs, rhs, relax_binary_vars=False):
-        self.lhs = lhs
+    def __init__(self, rhs, relax_binary_vars=False):
         self.rhs = rhs
         self.lb, self.ub = self.rhs.bound_propagation()
         self.relax_binary_vars = relax_binary_vars
+
+    @cached_property
+    def lhs(self):
+        return LinearExpression.from_int(self.rhs.ndim)
 
     # TODO: figure out a better way to hash these objects
     def __hash__(self):

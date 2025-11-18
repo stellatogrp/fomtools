@@ -36,13 +36,12 @@ class Affine(Step):
 
     def __init__(
         self,
-        lhs: LinearExpression,
         rhs: LinearExpression,
         lhs_mat,
         lhs_mat_factorization: np.matrix,
         relax_binary_vars: bool = False,
     ):
-        super().__init__(lhs, rhs, relax_binary_vars)
+        super().__init__(rhs, relax_binary_vars)
         self.lhs_mat = lhs_mat
         self.lhs_mat_factorization = lhs_mat_factorization
         self.lb, self.ub = self.lhs_mat_inverse().bound_propagation()
