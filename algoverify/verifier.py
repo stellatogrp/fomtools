@@ -21,7 +21,6 @@ class Verifier(object):
     ):
         self.theory_func = theory_func
         self.iterates = []
-        self.params = []
         self.steps = []
 
         self.canonicalizer = self._get_canonicalizer(method, params, solver)
@@ -184,8 +183,8 @@ class Verifier(object):
             raise ValueError(""" Lower bounds and upper bounds must either be scalars or 
                                 have the same length as the dimension of the expression.""")
 
-        self.params.append(param := self._add_var(ndim, lb, ub))
-        return param
+        return self._add_var(ndim, lb, ub)
+
 
     def add_param_stack(self, param_list):
         """
@@ -207,8 +206,8 @@ class Verifier(object):
             dim += p.ndim
             tuple(map(list.extend, bounds, (p.lb, p.ub)))
 
-        self.params.append(param := self._add_var(dim, lb=bounds[0], ub=bounds[1]))
-        return param
+        return self._add_var(dim, lb=bounds[0], ub=bounds[1])
+
 
     def _get_step(self, step):
         match step:
