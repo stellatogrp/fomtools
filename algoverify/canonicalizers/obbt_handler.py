@@ -11,8 +11,8 @@ class OBBTHandler(Canonicalizer):
     def __init__(self, solver):
         super().__init__(solver=solver)
 
-    def add_var(self, var, lb=-np.inf, ub=np.inf):
-        self.solver.add_var(var, lb, ub)
+    def add_var(self, var):
+        self.solver.add_var(var, var.lb, var.ub)
 
     def add_param_stack_var(self, param_stack_var, param_list):
         self.solver.add_param_stack_var(param_stack_var, param_list)

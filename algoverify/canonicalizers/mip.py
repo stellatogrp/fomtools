@@ -27,7 +27,7 @@ class MIP(Canonicalizer):
     def __init__(self, solver_params=None, solver="gurobi"):
         super(MIP, self).__init__(solver_params, solver)
 
-    def add_var(self, var: LinearExpression, lb=-np.inf, ub=np.inf) -> None:
+    def add_var(self, var: LinearExpression) -> None:
         """
         Add a variable to the MIP instance. This method registers
         a new variable with the MIP program and attaches it to the
@@ -39,17 +39,11 @@ class MIP(Canonicalizer):
             Linear expression object to add to the MIP instance. Later to
             be used in objective function, constraints or parameter.
 
-        lb: float
-            Lower bound of the variable.
-
-        ub: float
-            Upper bound of the variable.
-
         Returns
         -------
         None
         """
-        self.solver.add_var(var=var, lb=lb, ub=ub)
+        self.solver.add_var(var=var, lb=var.lb, ub=var.ub)
 
     def add_param_stack_var(self, param_stack_var, param_list):
         self.solver.add_param_stack_var(param_stack_var, param_list)

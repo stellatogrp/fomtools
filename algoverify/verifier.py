@@ -102,9 +102,9 @@ class Verifier(object):
 
         var = LinearExpression.from_int(ndim, lb=lb, ub=ub)
 
-        self.canonicalizer.add_var(var, lb=lb, ub=ub)
+        self.canonicalizer.add_var(var)
         if self.obbt_handler is not None:
-            self.obbt_handler.add_var(var, lb=lb, ub=ub)
+            self.obbt_handler.add_var(var)
 
         return var
 
@@ -243,11 +243,11 @@ class Verifier(object):
         self.iterates.append(out_iterate)
         out_iterate.update_bounds(lb=out_lb, ub=out_ub)
 
-        self.canonicalizer.add_var(out_iterate, lb=out_lb, ub=out_ub)
+        self.canonicalizer.add_var(out_iterate)
         self.canonicalizer.add_constraints(_step.get_constraints())
 
         if self.obbt_handler is not None:
-            self.obbt_handler.add_var(out_iterate, lb=out_lb, ub=out_ub)
+            self.obbt_handler.add_var(out_iterate)
 
         self.steps.append(_step)
         return out_iterate
@@ -317,18 +317,6 @@ class Verifier(object):
 
         if return_improv_frac:
             return (lb_improv_frac + ub_improv_frac) / 2.0
-
-
-def as_array(val, n):
-    """
-    Ensure val is an array of length n.
-    If val is a scalar, return float(val) * np.ones(n).
-    If val is already an array, return it unchanged.
-    """
-    # TODO: This can simply return float(val) * np.ones(n) and not care about val if its an array
-    if np.isscalar(val):
-        return float(val) * np.ones(n)
-    return np.array(val)
 
 
 def update_lb(old_lb, new_lb):

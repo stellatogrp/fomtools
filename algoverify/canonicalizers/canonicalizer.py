@@ -76,7 +76,7 @@ class Canonicalizer:
             case _:
                 raise ValueError(f"Solver must be 'gurobi' or 'TBD', got {solver}.")
 
-    def add_var(self, iterate, lb=-np.inf, ub=np.inf):
+    def add_var(self, iterate):
         raise NotImplementedError
 
     def add_param_stack_var(self, param_stack_var, param_list):
