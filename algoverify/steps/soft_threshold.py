@@ -60,10 +60,10 @@ class SoftThreshold(Step):
     def get_constraints(self):
         constraints = []
 
-        lhs_lb = self.soft_threshold(self.lb)
-        lhs_ub = self.soft_threshold(self.ub)
         i = 0
-        for lb, ub, _lb, _ub, lhs, rhs in zip(self.lb, self.ub, lhs_lb, lhs_ub, self.lhs, self.rhs):
+        for lb, ub, lhs_lb, lhs_ub, lhs, rhs in zip(
+            self.lb, self.ub, self.lhs.lb, self.lhs.ub, self.lhs, self.rhs
+        ):
             if lb >= self.lambd:
                 constraints.append(lhs == rhs - self.lambd)
             elif ub <= -self.lambd:
@@ -89,14 +89,14 @@ class SoftThreshold(Step):
                         if lb < -self.lambd:
                             constraints.extend(
                                 [
-                                    lhs <= _ub * w1,
-                                    lhs >= _lb * w2,
+                                    lhs <= lhs_ub * w1,
+                                    lhs >= lhs_lb * w2,
                                     w1 + w2 <= 1,
                                 ]
                             )
 
                         if -self.lambd <= lb <= self.lambd:
-                            constraints.append(lhs <= _ub * w1)
+                            constraints.append(lhs <= lhs_ub * w1)
 
                     if lb < -self.lambd:
                         self.idx_with_left_binary_vars.add(i)
@@ -109,15 +109,15 @@ class SoftThreshold(Step):
                         )
 
                         if -self.lambd <= lb <= self.lambd:
-                            constraints.append(lhs >= _lb * w2)
+                            constraints.append(lhs >= lhs_lb * w2)
 
                 if lb < -self.lambd and ub > self.lambd:
                     constraints.extend(
                         [
                             lhs >= rhs - self.lambd,
                             lhs <= rhs + self.lambd,
-                            lhs <= _ub / (ub + self.lambd) * (rhs + self.lambd),
-                            lhs >= _lb / (lb - self.lambd) * (rhs - self.lambd),
+                            lhs <= lhs_ub / (ub + self.lambd) * (rhs + self.lambd),
+                            lhs >= lhs_lb / (lb - self.lambd) * (rhs - self.lambd),
                         ]
                     )
 
@@ -125,7 +125,7 @@ class SoftThreshold(Step):
                     constraints.extend(
                         [
                             lhs >= 0,
-                            lhs <= _ub / (ub - lb) * (rhs - lb),
+                            lhs <= lhs_ub / (ub - lb) * (rhs - lb),
                             lhs >= rhs - self.lambd,
                         ]
                     )
@@ -134,7 +134,7 @@ class SoftThreshold(Step):
                     constraints.extend(
                         [
                             lhs <= 0,
-                            lhs >= _lb / (lb - ub) * (rhs - ub),
+                            lhs >= lhs_lb / (lb - ub) * (rhs - ub),
                             lhs <= rhs + self.lambd,
                         ]
                     )
