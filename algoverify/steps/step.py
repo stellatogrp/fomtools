@@ -33,6 +33,9 @@ class Step:
     def lhs(self):
         return LinearExpression.from_int(self.rhs.ndim)
 
+    def update_bounds(self, lb, ub):
+        pass
+
     # TODO: figure out a better way to hash these objects
     def __hash__(self):
         return hash((self.rhs, self.lhs))

@@ -55,11 +55,14 @@ class SaturatedLinear(Step):
     def __hash__(self):
         return hash((self.rhs, self.lhs))
 
-    def new_bound(self, x):
+    def satlin(self, x):
         try:
             return np.minimum(np.maximum(x, self.l.lb), self.u.ub)
         except AttributeError:
             return np.minimum(np.maximum(x, self.l), self.u)
+
+    def update_bounds(self, lb, ub):
+        self.lhs.update_bounds(lb=self.satlin(lb), ub=self.satlin(ub))
 
     def get_constraints(self):
         constraints = []

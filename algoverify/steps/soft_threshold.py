@@ -54,8 +54,8 @@ class SoftThreshold(Step):
     def soft_threshold(self, x):
         return np.sign(x) * np.maximum(np.abs(x) - self.lambd, 0)
 
-    def new_bound(self, x):
-        return np.sign(x) * np.maximum(np.abs(x) - self.lambd, 0)
+    def update_bounds(self, lb, ub):
+        self.lhs.update_bounds(lb=self.soft_threshold(lb), ub=self.soft_threshold(ub))
 
     def get_constraints(self):
         constraints = []

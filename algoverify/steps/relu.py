@@ -80,12 +80,15 @@ class Relu(Step):
             return set(range(ranges[0], ranges[1]))
 
     # TODO : out_lb and out_ub can have common function that they can call from
-    def new_bound(self, b):
+    def relu(self, b):
         return np.where(
             np.isin(np.arange(len(b)), list(self.proj_indices)),
             np.maximum(0, b),
             b,
         )
+
+    def update_bounds(self, lb, ub):
+        self.lhs.update_bounds(lb=self.relu(lb), ub=self.relu(ub))
 
     def get_constraints(self):
         constraints = []

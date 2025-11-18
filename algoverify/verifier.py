@@ -224,27 +224,21 @@ class Verifier(object):
                 pass
 
     def step(self, rhs_expr, step, relax_binary_vars=False, **kwargs):
-        _step = self._get_step(step)(
-            rhs=rhs_expr,
-            relax_binary_vars=relax_binary_vars,
-            **kwargs,
-        )
+        _step = self._get_step(step)(rhs=rhs_expr, relax_binary_vars=relax_binary_vars, **kwargs)
 
         rhs_lb, rhs_ub = _step.lb, _step.ub
         if self.obbt_handler is not None and step != "implicit_linear":
             rhs_lb, rhs_ub = self.obbt_handler.obbt(rhs_expr, rhs_lb, rhs_ub)
 
-        out_lb = _step.new_bound(rhs_lb)
-        out_ub = _step.new_bound(rhs_ub)
+        _step.update_bounds(rhs_lb, rhs_ub)
+
 
         self.iterates.append(_step.lhs)
-        _step.lhs.update_bounds(lb=out_lb, ub=out_ub)
-
         self.canonicalizer.add_var(_step.lhs)
-        self.canonicalizer.add_constraints(_step.get_constraints())
-
         if self.obbt_handler is not None:
             self.obbt_handler.add_var(_step.lhs)
+
+        self.canonicalizer.add_constraints(_step.get_constraints())
 
         self.steps.append(_step)
         return _step.lhs

@@ -52,8 +52,8 @@ class Affine(Step):
     # lhs_mat_factorization: np.matrix
     # TODO: the code for when lhs_mat_factorization is missing is not implemented yet, do it
 
-    def new_bound(self, x):
-        return x
+    def update_bounds(self, lb, ub):
+        self.lhs.update_bounds(lb=lb, ub=ub)
 
     def lhs_mat_inverse(self):
         """
