@@ -9,6 +9,13 @@ from algoverify.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 log = logging.getLogger(__name__)
 
+STEP_CLASSES = {
+    "implicit_linear": Affine,
+    "relu": Relu,
+    "satlin": SaturatedLinear,
+    "soft_threshold": SoftThreshold,
+}
+
 
 class Verifier(object):
     def __init__(
@@ -201,34 +208,30 @@ class Verifier(object):
 
         return self.add_param(dim, lb=bounds[0], ub=bounds[1])
 
-    def _get_step(self, step):
-        match step:
-            case "relu":
-                return Relu
-            case "satlin":
-                return SaturatedLinear
-            case "soft_threshold":
-                return SoftThreshold
-            case "implicit_linear":
-                return Affine
-            case _:
-                pass
+    def _get_step_class(self, name: str):
+        try:
+            return STEP_CLASSES[name]
+        except KeyError:
+            raise AttributeError(f"Unknown step type: '{name}'.")
 
     def step(self, rhs_expr, step, relax_binary_vars=False, **kwargs):
-        _step = self._get_step(step)(rhs=rhs_expr, relax_binary_vars=relax_binary_vars, **kwargs)
+        _step = self._get_step_class(step)(
+            rhs=rhs_expr, relax_binary_vars=relax_binary_vars, **kwargs
+        )
 
         rhs_lb, rhs_ub = _step.lb, _step.ub
         if self.obbt_handler is not None and step != "implicit_linear":
-            rhs_lb, rhs_ub = self.obbt_handler.obbt(rhs_expr, rhs_lb, rhs_ub)
+            rhs_lb, rhs_ub = self.obbt_handler.obbt(_step.rhs, rhs_lb, rhs_ub)
 
         _step.update_bounds(rhs_lb, rhs_ub)
 
-        self._register_var(_step.lhs)
-        self.iterates.append(_step.lhs)
+        lhs = _step.lhs
+        self._register_var(lhs)
+        self.iterates.append(lhs)
         self.canonicalizer.add_constraints(_step.get_constraints())
-
         self.steps.append(_step)
-        return _step.lhs
+
+        return lhs
 
     def equality_constraint(self, lhs_expr, rhs_expr):
         self.canonicalizer.add_constraint(lhs_expr == rhs_expr)
