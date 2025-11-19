@@ -39,7 +39,7 @@ def test_partial_nnqp(vp):
     all_res = []
     for k in range(1, K + 1):
         print(k)
-        z[k] = vp.step(z[k - 1] - t * (P @ z[k - 1] + q_param), step='relu', proj_ranges=proj_ranges)
+        z[k] = vp.step.relu(z[k - 1] - t * (P @ z[k - 1] + q_param), proj_ranges=proj_ranges)
 
         vp.set_infinity_norm_objective(z[k] - z[k - 1])
         res = vp.solve(huchette_cuts=True)

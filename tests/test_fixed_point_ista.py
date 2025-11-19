@@ -25,7 +25,7 @@ def test_box_constrained_ls_fixed_point(vp_param_1):
     # Fixed point: x* = Sat_{[l,u]}(x* - t * A^T(A x* - b))
     x_star = vp_param_1.fixed_point(
         n_dim=n,
-        operator=lambda x: vp_param_1.step(x - t * A.T @ (A @ x - b_param), l=l, u=u, step='satlin'),
+        operator=lambda x: vp_param_1.step.satlin(x - t * A.T @ (A @ x - b_param), l=l, u=u),
         lb=l,
         ub=u,
     )
@@ -35,7 +35,7 @@ def test_box_constrained_ls_fixed_point(vp_param_1):
     x[0] = x0
 
     for k in range(1, K + 1):
-        x[k] = vp_param_1.step(x[k - 1] - t * A.T @ (A @ x[k - 1] - b_param), l=l, u=u, step='satlin')
+        x[k] = vp_param_1.step.satlin(x[k - 1] - t * A.T @ (A @ x[k - 1] - b_param), l=l, u=u)
         vp_param_1.set_infinity_norm_objective([x[k] - x_star])
         _ = vp_param_1.solve()
 

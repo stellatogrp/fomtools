@@ -32,6 +32,8 @@ class Verifier(object):
 
         self.canonicalizer = self._get_canonicalizer(method, params, solver)
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
+        self.use_obbt_hander = True if obbt_handler else False
+        self._step_proxy = _StepProxy(self)
 
     @staticmethod
     def _get_canonicalizer(method: str, solver_params: dict, solver: dict):
@@ -208,28 +210,25 @@ class Verifier(object):
 
         return self.add_param(dim, lb=bounds[0], ub=bounds[1])
 
-    def _get_step_class(self, name: str):
-        try:
-            return STEP_CLASSES[name]
-        except KeyError:
-            raise AttributeError(f"Unknown step type: '{name}'.")
+    @property
+    def step(self):
+        return self._step_proxy
 
-    def step(self, rhs_expr, step, relax_binary_vars=False, **kwargs):
-        _step = self._get_step_class(step)(
-            rhs=rhs_expr, relax_binary_vars=relax_binary_vars, **kwargs
-        )
+    def run_step(self, rhs, step_cls, relax_binary_vars=False, **kwargs):
+        step = step_cls(rhs=rhs, relax_binary_vars=relax_binary_vars, **kwargs)
 
-        rhs_lb, rhs_ub = _step.lb, _step.ub
-        if self.obbt_handler is not None and step != "implicit_linear":
-            rhs_lb, rhs_ub = self.obbt_handler.obbt(_step.rhs, rhs_lb, rhs_ub)
+        rhs_lb, rhs_ub = step.lb, step.ub
+        if self.use_obbt_hander:
+            rhs_lb, rhs_ub = self.obbt_handler.obbt(step.rhs, rhs_lb, rhs_ub)
 
-        _step.update_bounds(rhs_lb, rhs_ub)
+        step.update_bounds(rhs_lb, rhs_ub)
 
-        lhs = _step.lhs
+        lhs = step.lhs
+
         self._register_var(lhs)
         self.iterates.append(lhs)
-        self.canonicalizer.add_constraints(_step.get_constraints())
-        self.steps.append(_step)
+        self.canonicalizer.add_constraints(step.get_constraints())
+        self.steps.append(step)
 
         return lhs
 
@@ -306,3 +305,23 @@ def update_lb(old_lb, new_lb):
 
 def update_ub(old_ub, new_ub):
     return np.minimum(old_ub, new_ub), (new_ub < old_ub).sum() / old_ub.shape[0]
+
+
+class _StepProxy:
+    def __init__(self, verifier: Verifier):
+        self._verifier = verifier
+
+    def __getattr__(self, name):
+        step_cls = self._get_step_class(name)
+        self._verifier.use_obbt_hander = False if name == "implicit_linear" else True
+
+        def wrapper(rhs, relax_binary_vars=False, **kwargs):
+            return self._verifier.run_step(rhs, step_cls, relax_binary_vars, **kwargs)
+
+        return wrapper
+
+    def _get_step_class(self, name: str):
+        try:
+            return STEP_CLASSES[name]
+        except KeyError:
+            raise AttributeError(f"Unknown step type: '{name}'.")
