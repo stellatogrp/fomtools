@@ -46,8 +46,8 @@ def test_verifier(vp):
     b_param = vp.add_param(m, lb=b - b_offset, ub=b + b_offset)  # add boxes here when testing
 
 
-    x0 = vp.initial_iterate(n, lb=1, ub=1)
-    y0 = vp.initial_iterate(m, lb=1, ub=1)
+    x0 = vp.add_iterate(n, lb=1, ub=1)
+    y0 = vp.add_iterate(m, lb=1, ub=1)
 
     K = 10
 

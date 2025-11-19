@@ -45,7 +45,7 @@ def test_nnls_convergence(vp_param_1):
     )
 
     # Set up initial iterate
-    z0 = vp_param_1.initial_iterate(n, lb=1, ub=1)
+    z0 = vp_param_1.add_iterate(n, lb=1, ub=1)
     z = [None for _ in range(K + 1)]
     z[0] = z0
 

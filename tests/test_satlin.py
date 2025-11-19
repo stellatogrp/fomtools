@@ -32,7 +32,7 @@ def test_satlin(vp_param_2):
     q_param = vp_param_2.add_param(n, lb=q - q_offset, ub=q + q_offset)
 
 
-    z0 = vp_param_2.initial_iterate(n, lb=z0_init, ub=z0_init)
+    z0 = vp_param_2.add_iterate(n, lb=z0_init, ub=z0_init)
 
     K = 12
     z = [None for _ in range(K + 1)]
@@ -103,7 +103,7 @@ def test_satlin_param(vp_param_2):
     K = 5
 
     z = [None for _ in range(K + 1)]
-    z[0] = vp_param_2.initial_iterate(n, lb=0, ub=0)
+    z[0] = vp_param_2.add_iterate(n, lb=0, ub=0)
 
     all_res = []
     for k in range(1, K + 1):

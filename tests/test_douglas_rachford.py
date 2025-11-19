@@ -47,7 +47,7 @@ def test_dr(vp):
     q_param = vp.add_param(n + m, lb=q_l, ub=q_u)
 
     z0_init = np.zeros(n + m)
-    z0 = vp.initial_iterate(m + n, lb=z0_init, ub=z0_init)
+    z0 = vp.add_iterate(m + n, lb=z0_init, ub=z0_init)
     K = 5
     u = [None for _ in range(K + 1)]
     utilde = [None for _ in range(K + 1)]

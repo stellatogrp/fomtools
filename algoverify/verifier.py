@@ -66,7 +66,7 @@ class Verifier(object):
             case _:
                 raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
 
-    def _add_var(
+    def _create_var(
         self, ndim: int, lb: list[float] = -np.inf, ub: list[float] = np.inf
     ) -> LinearExpression:
         """
@@ -99,17 +99,21 @@ class Verifier(object):
         if not np.all(lb <= ub):
             raise ValueError("Lower bound must be less than or equal to upper bound.")
 
-        var = LinearExpression.from_int(ndim, lb=lb, ub=ub)
+        try:
+            lb = np.full(ndim, lb)
+            ub = np.full(ndim, ub)
+        except ValueError:
+            raise ValueError(""" Lower bounds and upper bounds must either be scalars or 
+                                have the same length as the dimension of the expression.""")
 
+        return LinearExpression.from_int(ndim, lb=lb, ub=ub)
+
+    def _register_var(self, var: LinearExpression):
         self.canonicalizer.add_var(var)
         if self.obbt_handler is not None:
             self.obbt_handler.add_var(var)
 
-        return var
-
-    def initial_iterate(
-        self, ndim: int, lb: float = -np.inf, ub: float = np.inf
-    ) -> LinearExpression:
+    def add_iterate(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
         """
         Create and add the initial iterate to the Problem instance. This
         method creates a new :class:`LinearExpression` of dimension `shape`
@@ -137,14 +141,9 @@ class Verifier(object):
         ValueError
             If the lower bound is greater than the upper bound.
         """
-        try:
-            lb = np.full(ndim, lb)
-            ub = np.full(ndim, ub)
-        except ValueError:
-            raise ValueError(""" Lower bounds and upper bounds must either be scalars or 
-                                have the same length as the dimension of the expression.""")
 
-        self.iterates.append(iterate := self._add_var(ndim, lb, ub))
+        self.iterates.append(iterate := self._create_var(ndim, lb, ub))
+        self._register_var(iterate)
         return iterate
 
     def add_param(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
@@ -176,15 +175,9 @@ class Verifier(object):
         ValueError
             If the lower bound is greater than the upper bound.
         """
-        try:
-            lb = np.full(ndim, lb)
-            ub = np.full(ndim, ub)
-        except ValueError:
-            raise ValueError(""" Lower bounds and upper bounds must either be scalars or 
-                                have the same length as the dimension of the expression.""")
-
-        return self._add_var(ndim, lb, ub)
-
+        var = self._create_var(ndim, lb, ub)
+        self._register_var(var)
+        return var
 
     def add_param_stack(self, param_list):
         """
@@ -206,8 +199,7 @@ class Verifier(object):
             dim += p.ndim
             tuple(map(list.extend, bounds, (p.lb, p.ub)))
 
-        return self._add_var(dim, lb=bounds[0], ub=bounds[1])
-
+        return self.add_param(dim, lb=bounds[0], ub=bounds[1])
 
     def _get_step(self, step):
         match step:
@@ -231,12 +223,8 @@ class Verifier(object):
 
         _step.update_bounds(rhs_lb, rhs_ub)
 
-
+        self._register_var(_step.lhs)
         self.iterates.append(_step.lhs)
-        self.canonicalizer.add_var(_step.lhs)
-        if self.obbt_handler is not None:
-            self.obbt_handler.add_var(_step.lhs)
-
         self.canonicalizer.add_constraints(_step.get_constraints())
 
         self.steps.append(_step)
@@ -246,7 +234,7 @@ class Verifier(object):
         self.canonicalizer.add_constraint(lhs_expr == rhs_expr)
 
     def fixed_point(self, n_dim, operator, lb=-100, ub=100):
-        z_star = self.initial_iterate(n_dim, lb=lb, ub=ub)
+        z_star = self.add_iterate(n_dim, lb=lb, ub=ub)
         s_star = operator(z_star)
         self.equality_constraint(z_star, s_star)
 
