@@ -1,4 +1,5 @@
 import logging
+from typing import List
 
 import numpy as np
 
@@ -75,12 +76,13 @@ class Verifier(object):
             case _:
                 raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
 
+    @staticmethod
     def _create_var(
-        self, ndim: int, lb: list[float] = -np.inf, ub: list[float] = np.inf
+        ndim: int, lb: list[float] = -np.inf, ub: list[float] = np.inf
     ) -> LinearExpression:
         """
-        Create and register a :class:`LinearExpression` variable with the Problem
-        instance and its underlying canonicalizer instance.
+        Create a :class:LinearExpression variable with the specified
+        dimension, and lower and upper bounds
 
         Parameters
         ----------
@@ -104,6 +106,10 @@ class Verifier(object):
         ------
         ValueError
             If the lower bound is greater than the upper bound.
+
+        ValueError
+            If the lower or upper bound is neither a scalar nor equal in
+            length to the dimension of the expression.
         """
         if not np.all(lb <= ub):
             raise ValueError("Lower bound must be less than or equal to upper bound.")
@@ -118,15 +124,26 @@ class Verifier(object):
         return LinearExpression.from_int(ndim, lb=lb, ub=ub)
 
     def _register_var(self, var: LinearExpression):
+        """
+        Register the given :class:`LinearExpression` variable with
+        the underlying canonicalizer and OBBT Handler instance.
+
+        Parameters
+        ----------
+        var : LinearExpression
+            A new :class:`LinearExpression` variable to register.
+
+        """
         self.canonicalizer.add_var(var)
         if self.obbt_handler is not None:
             self.obbt_handler.add_var(var)
 
     def add_iterate(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
         """
-        Create and add the initial iterate to the Problem instance. This
-        method creates a new :class:`LinearExpression` of dimension `shape`
-        and registers it with the underlying canonicalizer instance.
+        Create and register an iterate to the Problem instance. This
+        method creates a new :class:`LinearExpression` of dimension `ndim`
+        and registers it with the underlying canonicalizer and OBBT
+        Handler instance.
 
         Parameters
         ----------
@@ -157,10 +174,9 @@ class Verifier(object):
 
     def add_param(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
         """
-        Create and add a parameter to the Problem instance. This method
-        constructs a new :class:`LinearExpression` of dimension `shape`
-        and attaches it to the underlying canonicalizer instance as a problem
-        parameter.
+        Create and register a new parameter. This method creates a new
+        :class:`LinearExpression` of dimension `ndim` and registers it with
+        the underlying canonicalizer and OBBT Handler instance.
 
         Parameters
         ----------
@@ -177,18 +193,22 @@ class Verifier(object):
         Returns
         -------
         LinearExpression
-            A new :class:`LinearExpression` of dimension `shape`.
+            A new :class:`LinearExpression` of dimension `ndim`.
 
         Raises
         ------
         ValueError
             If the lower bound is greater than the upper bound.
+
+        ValueError
+            If the lower or upper bound is neither a scalar nor equal in
+            length to the dimension of the expression.
         """
         var = self._create_var(ndim, lb, ub)
         self._register_var(var)
         return var
 
-    def add_param_stack(self, param_list):
+    def add_param_stack(self, param_list: List[LinearExpression]) -> LinearExpression:
         """
         Add a stack of parameters to the Problem instance.
 
@@ -211,7 +231,7 @@ class Verifier(object):
         return self.add_param(dim, lb=bounds[0], ub=bounds[1])
 
     @property
-    def step(self):
+    def step(self) -> "_StepProxy":
         """
         Interface for constructing and executing steps.
 
@@ -398,7 +418,7 @@ class _StepProxy:
         self._verifier.use_obbt_hander = False if name == "implicit_linear" else True
 
         def wrapper(rhs, relax_binary_vars=False, **kwargs):
-            """ Execute the specified thresholding or activation step."""
+            """Execute the specified thresholding or activation step."""
             return self._verifier.run_step(rhs, step_cls, relax_binary_vars, **kwargs)
 
         return wrapper
