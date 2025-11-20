@@ -20,8 +20,6 @@ class MIP(Canonicalizer):
     add_var(var, lb, ub)
         ...
 
-    add_param_stack_var()
-        ...
     """
 
     def __init__(self, solver_params=None, solver="gurobi"):
@@ -44,9 +42,6 @@ class MIP(Canonicalizer):
         None
         """
         self.solver.add_var(var=var, lb=var.lb, ub=var.ub)
-
-    def add_param_stack_var(self, param_stack_var, param_list):
-        self.solver.add_param_stack_var(param_stack_var, param_list)
 
     def add_constraint(self, constraint: Constraint) -> None:
         """

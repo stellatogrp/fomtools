@@ -76,9 +76,3 @@ class Canonicalizer:
 
     def add_var(self, iterate):
         raise NotImplementedError
-
-    def add_param_stack_var(self, param_stack_var, param_list):
-        raise NotImplementedError
-
-    def add_equality_constraint(self, lhs_expr, rhs_expr):
-        raise NotImplementedError

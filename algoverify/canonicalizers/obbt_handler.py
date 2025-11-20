@@ -14,12 +14,6 @@ class OBBTHandler(Canonicalizer):
     def add_var(self, var):
         self.solver.add_var(var, var.lb, var.ub)
 
-    def add_param_stack_var(self, param_stack_var, param_list):
-        self.solver.add_param_stack_var(param_stack_var, param_list)
-
-    def add_equality_constraint(self, lhs_expr, rhs_expr):
-        self.solver.add_constr(lhs_expr == rhs_expr)
-
     def obbt(self, linexpr, lb, ub):
         lb_out = np.zeros(linexpr.ndim)
         ub_out = np.zeros(linexpr.ndim)
