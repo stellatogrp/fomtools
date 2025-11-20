@@ -9,16 +9,16 @@ class SaturatedLinear(Step):
     Saturated Linear Unit step operator, defined as:
 
     $$
-        (\phi(v, x))_i = S_{[b, c]}(a^T y) =
+        (\phi(v, x))_i = S_{[x, c]}(a^T y) =
         \begin{cases}
-            b & a^T y < b, \\\\
-            a^T y & b \leq a^T y \leq c, \\\\
+            x & a^T y < x, \\\\
+            a^T y & x \leq a^T y \leq c, \\\\
             c & a^T y > c,
         \end{cases}
         \quad \text{with } y = (v, x).
     $$
 
-    where $b, c \in \mathbb{R}$.
+    where $x, c \in \mathbb{R}$.
 
     Attributes
     ----------

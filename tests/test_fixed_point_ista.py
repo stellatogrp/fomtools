@@ -22,7 +22,7 @@ def test_box_constrained_ls_fixed_point(vp_param_1):
     b_offset = 0.5
     b_param = vp_param_1.add_param(m, lb=b - b_offset, ub=b + b_offset)
 
-    # Fixed point: x* = Sat_{[l,u]}(x* - t * A^T(A x* - b))
+    # Fixed point: x* = Sat_{[l,u]}(x* - t * A^T(A x* - x))
     x_star = vp_param_1.fixed_point(
         n_dim=n,
         operator=lambda x: vp_param_1.step.satlin(x - t * A.T @ (A @ x - b_param), l=l, u=u),
