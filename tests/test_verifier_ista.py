@@ -56,12 +56,12 @@ def test_ista(vp_theory):
         res = vp_theory.solve(huchette_cuts=True)
         all_res.append(res)
 
-    print(f"opt b_param at last K: {vp_theory.extract_sol(b_param)}")
+    print(f"opt b_param at last K: {vp_theory.get_solution_value(b_param)}")
 
     print(f"VP resids: {all_res}")
 
     zk = 2 * np.ones(n)
-    b = vp_theory.extract_sol(b_param)
+    b = vp_theory.get_solution_value(b_param)
     ISTA_resids = []
 
     for k in range(K):

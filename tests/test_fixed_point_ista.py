@@ -39,8 +39,8 @@ def test_box_constrained_ls_fixed_point(vp_param_1):
         vp_param_1.set_infinity_norm_objective([x[k] - x_star])
         _ = vp_param_1.solve()
 
-    x_star_val = vp_param_1.extract_sol(x_star)
-    b_wc = vp_param_1.extract_sol(b_param)
+    x_star_val = vp_param_1.get_solution_value(x_star)
+    b_wc = vp_param_1.get_solution_value(b_param)
 
     x_opt_val = fixed_point_cvxpy(n, A, b_wc, l, u)
 

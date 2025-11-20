@@ -61,18 +61,18 @@ def test_nnls_convergence(vp_param_1):
         res = vp_param_1.solve()
         all_residuals.append(res)
 
-    print(f"opt x_param at last K: {vp_param_1.extract_sol(x_param)}")
+    print(f"opt x_param at last K: {vp_param_1.get_solution_value(x_param)}")
     print(f"VP resids: {all_residuals}")
 
     # Extract the actual values from the verification
-    z_star_value = vp_param_1.extract_sol(z_star)
-    x_worst_case = vp_param_1.extract_sol(x_param)  # Extract the worst-case x that was used
+    z_star_value = vp_param_1.get_solution_value(z_star)
+    x_worst_case = vp_param_1.get_solution_value(x_param)  # Extract the worst-case x that was used
 
     print(f"\nExtracted z_star from verification: {z_star_value}")
     print("extracting values from VP:")
     for k in range(K + 1):
         print(f"-K={k}-")
-        print(vp_param_1.extract_sol(z[k]))
+        print(vp_param_1.get_solution_value(z[k]))
 
     # Solve the same problem with CVXPY using the exact same x that verification used
     z_optimal_value = fixed_point(n, A, x_worst_case, l=0)

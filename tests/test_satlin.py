@@ -47,20 +47,20 @@ def test_satlin(vp_param_2):
         res = vp_param_2.solve()
         all_res.append(res)
 
-    print(f"opt q_param at last K: {vp_param_2.extract_sol(q_param)}")
+    print(f"opt q_param at last K: {vp_param_2.get_solution_value(q_param)}")
     print(f"VP resids: {all_res}")
 
     print("extracting values from VP:")
     for k in range(K + 1):
         print(f"-K={k}-")
-        print(vp_param_2.extract_sol(z[k]))
+        print(vp_param_2.get_solution_value(z[k]))
 
     z_test = np.array([-0.91651, 1, 0])
-    print("test grad step from K-1:", z_test - t * (P @ z_test + vp_param_2.extract_sol(q_param)))
+    print("test grad step from K-1:", z_test - t * (P @ z_test + vp_param_2.get_solution_value(q_param)))
     print("bounds:", vp_param_2.iterates[-1].lb, vp_param_2.iterates[-1].ub)
 
     zk = z0_init
-    q = vp_param_2.extract_sol(q_param)
+    q = vp_param_2.get_solution_value(q_param)
     PGD_resids = []
 
     for k in range(K):
@@ -114,8 +114,8 @@ def test_satlin_param(vp_param_2):
         res = vp_param_2.solve()
         all_res.append(res)
 
-        l_test = vp_param_2.extract_sol(l_param)
-        u_test = vp_param_2.extract_sol(u_param)
+        l_test = vp_param_2.get_solution_value(l_param)
+        u_test = vp_param_2.get_solution_value(u_param)
         print(l_test, u_test)
 
         assert l_test[0] == u_test[0]

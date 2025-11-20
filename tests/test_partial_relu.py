@@ -46,12 +46,12 @@ def test_partial_nnqp(vp):
         all_res.append(res)
         vp.post_process(z[k], z[0], all_res)
 
-    print(f"opt q_param at last K: {vp.extract_sol(q_param)}")
+    print(f"opt q_param at last K: {vp.get_solution_value(q_param)}")
 
     print(f"vp_gurobi resids: {all_res}")
 
     zk = -np.ones(n)
-    q = vp.extract_sol(q_param)
+    q = vp.get_solution_value(q_param)
     PGD_resids = []
 
     for k in range(K):

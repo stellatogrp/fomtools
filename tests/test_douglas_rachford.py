@@ -67,11 +67,11 @@ def test_dr(vp):
         res = vp.solve()
         all_res.append(res)
 
-    print(f"opt q_param at last K: {vp.extract_sol(q_param)}")
+    print(f"opt q_param at last K: {vp.get_solution_value(q_param)}")
     print(f"vp_gurobi resids: {all_res}")
 
     zk = z0_init
-    q = vp.extract_sol(q_param)
+    q = vp.get_solution_value(q_param)
     PGD_resids = []
 
     for k in range(K):

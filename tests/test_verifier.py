@@ -71,13 +71,13 @@ def test_verifier(vp):
     print(f"DR resids: {DR_resids[:K]}")
 
     print(f"b_c: {b}")
-    print(vp.extract_sol(b_param))
-    b_test = vp.extract_sol(b_param)
+    print(vp.get_solution_value(b_param))
+    b_test = vp.get_solution_value(b_param)
 
-    xK = vp.extract_sol(x[K])
-    xKminus1 = vp.extract_sol(x[K - 1])
-    yK = vp.extract_sol(y[K])
-    yKminus1 = vp.extract_sol(y[K - 1])
+    xK = vp.get_solution_value(x[K])
+    xKminus1 = vp.get_solution_value(x[K - 1])
+    yK = vp.get_solution_value(y[K])
+    yKminus1 = vp.get_solution_value(y[K - 1])
 
     test_resid = np.max(np.abs(np.hstack([xK - xKminus1, yK - yKminus1])))
     print(test_resid)

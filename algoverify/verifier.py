@@ -295,13 +295,10 @@ class Verifier(object):
 
         return lhs
 
-    def equality_constraint(self, lhs_expr, rhs_expr):
-        self.canonicalizer.add_constraint(lhs_expr == rhs_expr)
-
-    def fixed_point(self, n_dim, operator, lb=-100, ub=100):
+    def fixed_point(self, n_dim, operator, lb=-np.inf, ub=np.inf):
         z_star = self.add_iterate(n_dim, lb=lb, ub=ub)
         s_star = operator(z_star)
-        self.equality_constraint(z_star, s_star)
+        self.canonicalizer.add_constraint(z_star == s_star)
 
         return z_star
 
@@ -341,9 +338,6 @@ class Verifier(object):
     def solve(self, **kwargs):
         return self.canonicalizer.solve_model(self.steps, **kwargs)
 
-    def extract_sol(self, iterate):
-        return self.canonicalizer.extract_sol(iterate)
-
     def post_process(
         self, var_to_bound, var_for_init_bounds, residual_values, return_improv_frac=True
     ):
@@ -360,6 +354,30 @@ class Verifier(object):
 
         if return_improv_frac:
             return (lb_improv_frac + ub_improv_frac) / 2.0
+
+    def get_solution_value(self, iterate: LinearExpression) -> np.ndarray:
+        """
+        Get the solution value for the given iterate.
+
+        For each leaf expression in the decomposition of the
+        given ``LinearExpression`` object, this method retrieves
+        corresponding solution value and computes the dot product
+        between the coefficient matrix and the vector of variable values
+        associated with that leaf.
+
+        Parameters
+        ----------
+        iterate: LinearExpression
+            A ``LinearExpression`` object to retrieve solution value for.
+
+        Returns
+        -------
+        np.ndarray[float]
+            A 1-D array of shape ``(iterate.ndim,)`` containing the
+            evaluated values of the iterate at the current model
+            solution.
+        """
+        return self.canonicalizer.get_solution_value(iterate)
 
 
 def update_lb(old_lb, new_lb):

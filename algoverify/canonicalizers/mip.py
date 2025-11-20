@@ -127,5 +127,5 @@ class MIP(Canonicalizer):
         self.solver.optimize()
         return self.solver["objVal"]
 
-    def extract_sol(self, iterate):
+    def get_solution_value(self, iterate):
         return self.solver.get_solution_value(iterate)
