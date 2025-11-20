@@ -1,5 +1,5 @@
 import logging
-from typing import List
+from typing import List, Sequence
 
 import numpy as np
 
@@ -303,57 +303,120 @@ class Verifier(object):
         return z_star
 
     # TODO: consider if we should make the theory func local to this func and not a verifier property
-    def theory_bound(self, k, target_expr, bound_expr, return_improv_frac=True):
-        C = self.theory_func(k)
-        lb, ub = bound_expr.bound_propagation()
-        if target_expr.is_leaf:
-            _lb, lb_improv_frac = update_lb(target_expr.lb, lb - C)
-            _ub, ub_improv_frac = update_ub(target_expr.ub, lb + C)
+    def theory_bound(self, k, target_expr, ref_expr):
+        """
+        Apply theory-specific bound tightening to a target expression.
 
+        Parameters
+        ----------
+        k: int
+            Index used by the theory function to compute the constant
+            shift `C`. If it is a leaf node, its lower and upper
+            bounds are tightened based on the propagated bounds of
+            `bound_expr` and the theory function dependent constant `C`.
+
+        target_expr: LinearExpression
+            The expression whose bound to update.
+
+        ref_expr: LinearExpression
+            The expression from which bounds are propagated to derive
+            new constraints on the target expression.
+
+        Returns
+        -------
+        float
+            The average fractional improvement in the target expression's bound.
+
+        """
+        improv_frac = 0
+
+        C = self.theory_func(k)
+        lb, ub = ref_expr.bound_propagation()
+        if target_expr.is_leaf:
+            _lb, _ub = lb - C, lb + C
             target_expr.update_bounds(lb=_lb, ub=_ub)
 
-            improv_frac = (lb_improv_frac + ub_improv_frac) / 2.0
-        self.canonicalizer.add_theory_cut(C, target_expr, lb, ub)
+            improv_frac = (sum(_lb > lb) + sum(_ub < ub)) / (2.0 * len(lb))
 
-        # TODO: think if we might need to safeguard this with nonleaf theory bounds
-        if return_improv_frac:
-            return improv_frac
+        self.canonicalizer.add_theory_cut(C, target_expr, lb, ub)
+        return improv_frac
 
     def set_zero_objective(self):
+        """
+        Set the optimization objective to zero.
+
+        This method replaces the current objective with a constant
+        zero objective, turning it into a feasibility problem.
+        """
         self.canonicalizer.set_zero_objective()
 
-    def set_infinity_norm_objective(self, expr_list):
-        if not isinstance(expr_list, list):
+    def set_infinity_norm_objective(self, expr_list: Sequence[LinearExpression] | LinearExpression):
+        """
+        Create an infinity-norm objective over the set of ``LinearExpression``
+        objects.
+
+        Parameters
+        ----------
+        expr_list: Sequence[LinearExpression] | LinearExpression
+            A single LinearExpression or a list of LinearExpression objects for
+            which the infinity-norm objective will be constructed.
+
+        """
+        try:
+            iter(expr_list)
+        except TypeError:
             expr_list = [expr_list]
 
-        lb_list = []
-        ub_list = []
-        for expression in expr_list:
-            lb, ub = expression.bound_propagation()
-            lb_list.append(lb)
-            ub_list.append(ub)
-
-        self.canonicalizer.set_infinity_norm_objective(expr_list, lb_list, ub_list)
+        lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
+        self.canonicalizer.set_infinity_norm_objective(expr_list, list(lb), list(ub))
 
     def solve(self, **kwargs):
+        """
+        Solve the optimization problem.
+
+        This method delegates to the canonicalizer to solve the
+        optimization problem using the recorded thresholding or
+        activation steps.
+
+        Returns
+        -------
+        float
+            The objective value for the current solution, if the
+            model was solved to optimality.
+        """
         return self.canonicalizer.solve_model(self.steps, **kwargs)
 
-    def post_process(
-        self, var_to_bound, var_for_init_bounds, residual_values, return_improv_frac=True
-    ):
-        delta_sum = np.sum(residual_values)
+    def post_process(self, target_expr, ref_expr, residuals):
+        """
+        Apply post-processing bound tightening based on accumulated
+        residual values.
 
-        new_lower_bounds, lb_improv_frac = update_lb(
-            var_for_init_bounds.lb, var_for_init_bounds.lb - delta_sum
-        )
-        new_upper_bounds, ub_improv_frac = update_ub(
-            var_for_init_bounds.ub, var_for_init_bounds.ub + delta_sum
-        )
 
-        self.canonicalizer.post_process(var_to_bound, new_lower_bounds, new_upper_bounds)
+        Parameters
+        ----------
+        target_expr: LinearExpression
+            The expression whose bound to update.
 
-        if return_improv_frac:
-            return (lb_improv_frac + ub_improv_frac) / 2.0
+        ref_expr: LinearExpression
+            The expression that provides the initial lower and
+            upper bounds.
+
+        residuals: Sequence[float]
+            A sequence of residual values whose sum determines how
+            much the bounds should be relaxed.
+
+        Returns
+        -------
+        float
+            The average fractional improvement in the target expression's bound.
+
+        """
+        delta_sum = np.sum(residuals)
+        _lb = np.maximum(ref_expr.lb - delta_sum, ref_expr.lb)
+        _ub = np.minimum(ref_expr.ub + delta_sum, ref_expr.ub)
+        self.canonicalizer.post_process(target_expr, _lb, _ub)
+
+        return (sum(_lb > ref_expr.lb) + sum(_ub < ref_expr.ub)) / (2.0 * len(_lb))
 
     def get_solution_value(self, iterate: LinearExpression) -> np.ndarray:
         """
@@ -378,14 +441,6 @@ class Verifier(object):
             solution.
         """
         return self.canonicalizer.get_solution_value(iterate)
-
-
-def update_lb(old_lb, new_lb):
-    return np.maximum(old_lb, new_lb), (new_lb > old_lb).sum() / old_lb.shape[0]
-
-
-def update_ub(old_ub, new_ub):
-    return np.minimum(old_ub, new_ub), (new_ub < old_ub).sum() / old_ub.shape[0]
 
 
 class _StepProxy:
