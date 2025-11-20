@@ -212,12 +212,55 @@ class Verifier(object):
 
     @property
     def step(self):
+        """
+        Interface for constructing and executing steps.
+
+        This property exposes an interface for building
+        steps on the ``Verifier``. Attribute access on ``step``
+        (e.g. ``verifier.step.relu``) resolves to a callable
+        that runs the corresponding step.
+
+        Examples
+        -------
+        >>> verifier = Verifier()
+        >>> expr = verifier.add_param(2)
+        >>> x = verifier.step.relu(rhs=expr, relax_binary_vars=True)
+
+        """
         return self._step_proxy
 
     def run_step(self, rhs, step_cls, relax_binary_vars=False, **kwargs):
+        """
+        Construct and execute the specified thresholding or activation step.
+
+        This method centralizes the execution pipeline for all step-like
+        operators. It instantiates ``step_cls`` with the provided arguments,
+        optionally invokes the OBBT handler to refine bounds, and then
+        incorporates constraints produced by the respective step object
+        into the verification problem.
+
+        Parameters
+        ----------
+        rhs: LinearExpression
+            Right-hand side linear expression in the operator definition.
+
+        step_cls: Step
+            The concrete step class to be instantiated. This class encapsulates
+            the thresholding or activation operator and is responsible
+            for producing the constraints according to the verifier's step interface.
+
+        relax_binary_vars: bool
+            If true, binary decision variables associated with the operator
+            are relaxed to take continuous values.
+
+        Returns
+        -------
+            Left-hand side linear expression in the operator definition.
+        """
         step = step_cls(rhs=rhs, relax_binary_vars=relax_binary_vars, **kwargs)
 
         rhs_lb, rhs_ub = step.lb, step.ub
+        # TODO: figure out a better way to prevent obbt call for implicit linear step
         if self.use_obbt_hander:
             rhs_lb, rhs_ub = self.obbt_handler.obbt(step.rhs, rhs_lb, rhs_ub)
 
@@ -308,19 +351,66 @@ def update_ub(old_ub, new_ub):
 
 
 class _StepProxy:
+    """
+    Internal helper used by the `Verifier.step` API.
+
+    This proxy enables the syntax ``verifier.step.<step_name>(rhs=..., **kwargs)``
+    where ``step_name`` identifies a thresholding or activation step
+    class. Attribute access on the proxy (e.g., ``relu``, ``satlin``)
+    is resolved dynamically and returns a callable that constructs and runs
+    the corresponding step on the underlying ``Verifier` object.
+
+    Notes
+    -----
+    This class is intended to be created and managed by
+    the ``Verifier`` class. Users should not construct
+    this class directly.
+    """
+
     def __init__(self, verifier: Verifier):
         self._verifier = verifier
 
     def __getattr__(self, name):
+        """
+        Resolve a step name to a callable that executes
+        that step. It constructs the corresponding step
+        object and delegates execution to the verifier's
+        step-running function.
+
+        Parameters
+        ----------
+        name: str
+            The identifier of the step type to execute.
+
+        Returns
+        -------
+        Callable
+            A function that executes the step on the underlying
+            ``Verifier`` object.
+
+        Raises
+        ------
+        AttributeError
+            If ``name`` does not correspond to any registered step
+            class.
+        """
         step_cls = self._get_step_class(name)
         self._verifier.use_obbt_hander = False if name == "implicit_linear" else True
 
         def wrapper(rhs, relax_binary_vars=False, **kwargs):
+            """ Execute the specified thresholding or activation step."""
             return self._verifier.run_step(rhs, step_cls, relax_binary_vars, **kwargs)
 
         return wrapper
 
-    def _get_step_class(self, name: str):
+    @staticmethod
+    def _get_step_class(name: str):
+        """
+        Return the step class associated with the given identifier.
+
+        This method looks up ``name`` in the internal ``STEP_CLASSES``
+        registry and returns the corresponding step class.
+        """
         try:
             return STEP_CLASSES[name]
         except KeyError:

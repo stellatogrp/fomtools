@@ -11,8 +11,6 @@ class Step:
 
     Attributes
     ----------
-    lhs: LinearExpression
-        Left-hand side linear expression in the operator definition.
     rhs: LinearExpression
         Right-hand side linear expression in the operator definition.
     lb: float
@@ -24,13 +22,14 @@ class Step:
         are relaxed to take continuous values.
     """
 
-    def __init__(self, rhs, relax_binary_vars=False):
+    def __init__(self, rhs: LinearExpression, relax_binary_vars: bool = False):
         self.rhs = rhs
         self.lb, self.ub = self.rhs.bound_propagation()
         self.relax_binary_vars = relax_binary_vars
 
     @cached_property
-    def lhs(self):
+    def lhs(self) -> LinearExpression:
+        """Left-hand side linear expression in the operator definition."""
         return LinearExpression.from_int(self.rhs.ndim)
 
     def update_bounds(self, lb, ub):
