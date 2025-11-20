@@ -1,5 +1,6 @@
+from typing import List, Tuple
+
 import numpy as np
-from typing import Sequence, List, Tuple
 
 from algoverify.constraint import Constraint
 from algoverify.linearexpression import LinearExpression
@@ -31,8 +32,6 @@ class Relu(Step):
         Indices corresponding to binary decision variables.
     proj_indices: set[int]
         Indices of output coordinates subjected to ReLU projection.
-    nonproj_indices: set[int]
-        Set of output indices not subjected to ReLU.
     """
 
     def __init__(
@@ -80,20 +79,20 @@ class Relu(Step):
         except AttributeError:
             return set(range(ranges[0], ranges[1]))
 
-    def relu(self, x):
+    def relu(self, x: np.ndarray) -> np.ndarray:
         """
-        Apply ReLU activation selectively to specified indices. 
-        
+        Apply ReLU activation selectively to specified indices.
+
         Parameters
         ----------
         x: np.ndarray
             A 1-D array of vlaues on which to apply the activation.
 
         Returns
-        ------- 
+        -------
         np.ndarray
-            A new array where elements are positions specified in 
-            ``self.proj_indices`` are passed through ReLU, while 
+            A new array where elements are positions specified in
+            ``self.proj_indices`` are passed through ReLU, while
             all other elements are left unchanged.
         """
         proj_mask = np.isin(np.arange(len(x)), list(self.proj_indices))
@@ -177,7 +176,7 @@ class Relu(Step):
         List[Constraint]
             A list of constraint objects describing the convex hull of the feasible region
             defined by the ReLU activation.
-       """
+        """
         constraints = []
         for i, (_lhs, _rhs) in enumerate(zip(self.lhs, self.rhs)):
             if i not in self.proj_indices:

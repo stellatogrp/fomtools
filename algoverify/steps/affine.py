@@ -1,5 +1,8 @@
+from typing import List
+
 import numpy as np
 
+from algoverify.constraint import Constraint
 from algoverify.linearexpression import LinearExpression
 from algoverify.steps.step import Step
 
@@ -34,6 +37,10 @@ class Affine(Step):
         ...
     """
 
+    # todo: complete the docstring
+    # # TODO: Can't we retrive this from the decomposition dict of the lhs linearexpression?
+    # TODO: the code for when lhs_mat_factorization is missing is not implemented yet, do it
+
     def __init__(
         self,
         rhs: LinearExpression,
@@ -46,16 +53,14 @@ class Affine(Step):
         self.lhs_mat_factorization = lhs_mat_factorization
         self.lb, self.ub = self.lhs_mat_inverse().bound_propagation()
 
-    # todo: complete the docstring
-    # # TODO: Can't we retrive this from the decomposition dict of the lhs linearexpression?
-    # lhs_mat: np.matrix
-    # lhs_mat_factorization: np.matrix
-    # TODO: the code for when lhs_mat_factorization is missing is not implemented yet, do it
-
-    def update_bounds(self, lb, ub):
+    def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
+        """
+        Update the bounds of the left-hand side with provided
+        upper and lower bounds.
+        """
         self.lhs.update_bounds(lb=lb, ub=ub)
 
-    def lhs_mat_inverse(self):
+    def lhs_mat_inverse(self) -> LinearExpression:
         """
         Return a `LinearExpression` formed by applying $A^{-1}$ (with $A=$ `self.lhs_mat`) to each
         RHS component $b_k$—i.e., solving $A x_k = b_k$ for all $k$."""
@@ -66,5 +71,5 @@ class Affine(Step):
             },
         )
 
-    def get_constraints(self):
+    def get_constraints(self) -> List[Constraint]:
         return [self.lhs_mat @ self.lhs == self.rhs]

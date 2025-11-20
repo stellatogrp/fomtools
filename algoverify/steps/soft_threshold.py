@@ -23,8 +23,6 @@ class SoftThreshold(Step):
 
     Attributes
     ----------
-    lhs: LinearExpression
-        Left-hand side linear expression in the operator definition.
     rhs: LinearExpression
         Right-hand side linear expression in the operator definition.
     lb: float
@@ -42,7 +40,7 @@ class SoftThreshold(Step):
         Indices tied to “left-branch” indicators (e.g., $t<-\lambda$).
     """
 
-    def __init__(self, rhs, lambd, relax_binary_vars=False):
+    def __init__(self, rhs: LinearExpression, lambd: float, relax_binary_vars: bool = False):
         super().__init__(rhs, relax_binary_vars)
         self.lambd = lambd
         self.idx_with_right_binary_vars = set()
@@ -51,13 +49,54 @@ class SoftThreshold(Step):
     def __hash__(self):
         return hash((self.rhs, self.lhs))
 
-    def soft_threshold(self, x):
+    def soft_threshold(self, x: np.ndarray) -> np.ndarray:
+        """
+        Apply the soft-thresholding operator to the input array.
+
+        Parameters
+        ----------
+        x: np.ndarray
+            A 1-D array of values on which to apply the activation.
+
+        Returns
+        -------
+        np.ndarray
+            A new array representing obtained by applying the soft-thresholding
+            operator element-wise. Values with magnitude less than `self.lambd`
+            are mapped to zero, while others are shrunk toward zero by
+            `self.lambd`.
+
+        """
         return np.sign(x) * np.maximum(np.abs(x) - self.lambd, 0)
 
-    def update_bounds(self, lb, ub):
+    def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
+        """
+        Update the bounds of the left-land side after applying
+        soft-thresholding operator.
+
+        Parameters
+        ----------
+        lb: float or np.ndarray
+            The new lower bound(s) before applying soft-thresholding.
+
+        ub: float or np.ndarray
+            The new upper bound(s) before applying soft-thresholding.
+        """
         self.lhs.update_bounds(lb=self.soft_threshold(lb), ub=self.soft_threshold(ub))
 
     def get_constraints(self):
+        """
+        Construct the convex-hull linear constraints corresponding to the
+        soft-thresholding operator.
+
+        ...
+
+        Returns
+        -------
+        List[Constraint]
+            A list of constraint objects describing the convex hull of
+            the feasible region defined by the soft-thresholding operator.
+        """
         constraints = []
 
         i = 0

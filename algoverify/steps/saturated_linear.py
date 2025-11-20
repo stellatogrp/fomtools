@@ -22,8 +22,6 @@ class SaturatedLinear(Step):
 
     Attributes
     ----------
-    lhs: LinearExpression
-        Left-hand side linear expression in the operator definition.
     rhs: LinearExpression
         Right-hand side linear expression in the operator definition.
     lb: float
@@ -33,21 +31,23 @@ class SaturatedLinear(Step):
     relax_binary_vars: bool
         If true, binary decision variables associated with the operator
         are relaxed to take continuous values.
-    l: np.ndarray[int]
-        ...
-    u: np.ndarray[int]
-        ...
-    equality_ranges: list
-        List of index intervals that specify which parts of the output receive
-        the SatLU projection.
-    eq_indices: set[int]
-        Indices of output coordinates subjected to Saturated Linear Unit projection.
-    ineq_indices: set[int]
-        Indices of output coordinates not subjected to Saturated Linear Unit projection.
+    l: np.ndarray[float] | LinearExpression
+        The lower saturation bound of the saturated linear operator.
+        Can be either a numeric value or a LinearExpression object whose
+        lower boudnds acts as the lower saturation bound.
+    u: np.ndarray[float] | LinearExpression
+        The lower saturation bound of the saturated linear operator.
+        Can be either a numeric value or a LinearExpression object whose
+        lower boudnds acts as the upper saturation bound.
     """
 
-    # # todo: complete the docstring
-    def __init__(self, rhs: LinearExpression, l, u, relax_binary_vars: bool = False):
+    def __init__(
+        self,
+        rhs: LinearExpression,
+        l: LinearExpression | np.ndarray[float],
+        u: LinearExpression | np.ndarray[float],
+        relax_binary_vars: bool = False,
+    ):
         super().__init__(rhs, relax_binary_vars)
         self.l = l
         self.u = u
@@ -55,16 +55,59 @@ class SaturatedLinear(Step):
     def __hash__(self):
         return hash((self.rhs, self.lhs))
 
-    def satlin(self, x):
+    def satlin(self, x: np.ndarray) -> np.ndarray:
+        """
+        Apply Saturated Linear Unit operator to the input
+        arrray.
+
+        Parameters
+        ----------
+        x: np.ndarray
+            A 1-D array of values on which to apply the activation.
+
+        Returns
+        -------
+        np.ndarray
+            A new array representing saturated output, obtained by
+            clipping `x` to the range [lower bound, upper bound].
+        """
         try:
             return np.minimum(np.maximum(x, self.l.lb), self.u.ub)
         except AttributeError:
             return np.minimum(np.maximum(x, self.l), self.u)
 
-    def update_bounds(self, lb, ub):
+    def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
+        """
+        Update the bounds of the left-land side after applying
+        Saturated Linear Unit activation.
+
+        Parameters
+        ----------
+        lb: float or np.ndarray
+            The new lower bound(s) before applying Saturated Linear
+            Unit.
+
+        ub: float or np.ndarray
+            The new upper bound(s) before applying Saturated Linear
+            Unit.
+
+        """
         self.lhs.update_bounds(lb=self.satlin(lb), ub=self.satlin(ub))
 
     def get_constraints(self):
+        r"""
+        Construct the convex-hull linear constraints corresponding to
+        the saturated linear unit operator.
+
+        ...
+
+        Returns
+        -------
+        List[Constraint]
+            A list of constraint objects describing the convex hull of the
+            feasible region defined by the saturated linear unit activation.
+
+        """
         constraints = []
 
         for l, u, lb, ub, lhs, rhs in zip(self.l, self.u, self.lb, self.ub, self.lhs, self.rhs):
