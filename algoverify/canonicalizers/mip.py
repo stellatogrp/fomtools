@@ -85,7 +85,7 @@ class MIP(Canonicalizer):
         all_gammas = []
 
         for expr, lb, ub in zip(expr_list, lb_list, ub_list):
-            n = expr.get_output_dim()
+            n = expr.ndim
             up = LinearExpression.from_int(ndim=n, ub=np.abs(ub))
             un = LinearExpression.from_int(ndim=n, ub=np.abs(lb))
             constraints.append(up - un == expr)

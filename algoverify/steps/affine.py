@@ -79,6 +79,6 @@ class Affine(Step):
 
         Returns
         -------
-         A Linear Constraint that enforces the affine relation. 
+         A Linear Constraint that enforces the affine relation.
         """
         return [self.lhs_mat @ self.lhs == self.rhs]
