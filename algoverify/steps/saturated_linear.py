@@ -22,6 +22,8 @@ class SaturatedLinear(Step):
 
     Attributes
     ----------
+    lhs: LinearExpression
+        Left-hand side linear expression in the operator definition.
     rhs: LinearExpression
         Right-hand side linear expression in the operator definition.
     lb: float
@@ -99,7 +101,80 @@ class SaturatedLinear(Step):
         Construct the convex-hull linear constraints corresponding to
         the saturated linear unit operator.
 
-        ...
+        Given a saturated linear unit operator, defined as:
+
+        $$
+            (\phi(v, b))_i = S_{[b, c]}(a^T y) =
+            \begin{cases}
+            b & a^T y < b, \\\\
+            a^T y & b \leq a^T y \leq c, \\\\
+            c & a^T y > c,
+            \end{cases}
+            \quad \text{with } y = (v, b), \text{and }
+             b, c \in \mathbb{R}.
+        $$
+
+        This method derives the convex hull of the region defined by:
+
+        $$
+            \Phi = \{ (y, w) \in [\underline{y}, \bar{y}] \times [b, c] \mid w =
+            \mathcal{S}_{[b,c]}(a^\top y) \}.
+        $$
+
+        and expresses it as a set of Constraint objects. The convex hull of the
+        region is:
+
+        $$
+            \operatorname{conv}(\Phi) =
+            \left\{
+            (y, w) \in [\underline{y}, \bar{y}] \times [b, c]
+            \;\middle|\;
+            \begin{cases}
+            w = b & u_J < b, \\[4pt]
+            w = c & \ell_J > c, \\[4pt]
+            w = a^\top y & b \le \ell_J \le u_J \le c, \\[4pt]
+            (y, w) \in Q & \text{otherwise}
+            \end{cases}
+            \right\},
+        $$
+
+        with
+
+        $$
+            Q =
+            \left\{
+            (y, w) \in \mathbb{R}^{p + d + 1}
+            \;\middle|\;
+            \begin{aligned}
+            & b \le w \le c, \\[4pt]
+            & \frac{b - c}{b - u_J}(a^\top y - u_J) + c
+            \;\le\;
+            w
+            \;\le\;
+            \frac{c - b}{c - \ell_J}(a^\top y - \ell_J) + b, \\[6pt]
+            & w \le \sum_{i \in I} a_i (y_i - \ell^0_i)
+            + \frac{\ell_I - b}{u^0_o - \ell^0_o}(y_o - \ell^0_o) + b,
+            \qquad \forall (I, o) \in \mathcal{I}^+, \\[6pt]
+            & w \ge \sum_{i \in I} a_i (y_i - u^0_i)
+            + \frac{u_I - c}{\ell^0_o - u^0_o}(y_o - u^0_o) + c,
+            \qquad \forall (I, o) \in \mathcal{I}^-
+            \end{aligned}
+            \right\}.
+        $$
+
+        where:
+
+        - vector $l^{0} \in \mathbb{R}^{d}$ with entries $l_i^{0} = \underline{y}_i \text{ if }
+        a_i \geq 0 \text{ and } \overline{y}_i$ otherwise,
+        - vector $u^{0} \in \mathbb{R}^{d}$ with entries $u_i^{0} = \overline{y}_i \text{ if }
+        a_i \geq 0 \text{ and } \underline{y}_i$ otherwise,
+        - Given $\textbf{I} \subseteq \textbf{J} = \left\{1, ..., n\right\}$, the lower bound is
+        defined as $l_I = \sum_{i \in I}a_il_i^{0} + \sum_{i \notin I}a_iu_i^{0}$ and the
+        upper bounds $u_I = \sum_{i \in I}a_iu_i^{0} + \sum_{i \notin I}a_il_i^{0}$,
+        - $\mathcal{I}^+ = \{ (I, o) \in 2^J \times J \mid \ell_I \ge b,\; \ell_{I \cup \{o\}}
+        < b,\; w_I \neq 0 \},$
+        - $\mathcal{I}^- = \{ (I, o) \in 2^J \times J \mid u_I \le c,\; u_{I \cup \{o\}} >
+        c,\; w_I \neq 0 \}.$
 
         Returns
         -------

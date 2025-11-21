@@ -23,6 +23,8 @@ class SoftThreshold(Step):
 
     Attributes
     ----------
+    lhs: LinearExpression
+        Left-hand side linear expression in the operator definition.
     rhs: LinearExpression
         Right-hand side linear expression in the operator definition.
     lb: float
@@ -85,11 +87,87 @@ class SoftThreshold(Step):
         self.lhs.update_bounds(lb=self.soft_threshold(lb), ub=self.soft_threshold(ub))
 
     def get_constraints(self):
-        """
+        r"""
         Construct the convex-hull linear constraints corresponding to the
         soft-thresholding operator.
 
-        ...
+        Given a soft-thresholding operator for shrinkage, defined as:
+
+        $$
+            (\phi(v,x))_i=\mathcal{T}_{\lambda}(a^\top y)=
+            \begin{cases}
+            a^\top y-\lambda,& a^\top y>\lambda,\\[6pt]
+            0,& |a^\top y|\le \lambda,\\[6pt]
+            a^\top y+\lambda,& a^\top y<-\lambda,
+            \end{cases}
+            \quad \text{with } y=(v,x).
+        $$
+
+        where, $\mathcal{T}_{\lambda}$ is the soft-thresholding operator with constant $\lambda>0$,
+        and $a\in\mathbf{R}^d$.
+
+        This method derives the convex hull of the region defined by:
+
+        $$
+            \Phi = \{ (y, w) \in [\underline{y}, \bar{y}] \times [b, c]
+            \mid w = \mathcal{S}_{[b,c]}(a^\top y) \}.
+        $$
+
+        and expresses it as a set of Constraint objects. The convex hull of the
+        region is:
+
+        $$
+            \operatorname{conv}(\Phi) =
+            \left\{
+            (y, w) \in [\underline{y}, \bar{y}] \times \mathbf{R}
+            \;\middle|\;
+            \begin{cases}
+            w = a^\top y - \lambda & \ell_J > \lambda, \\[4pt]
+            w = a^\top y  + \lambda & u_J < - \lambda, \\[4pt]
+            w = 0 & - \lambda \le \ell_J \le u_J \le \lambda, \\[4pt]
+            (y, w) \in Q & \text{otherwise}
+            \end{cases}
+            \right\},
+        $$
+
+        with
+
+        $$
+            Q = \left\{
+            (y, w) \in \mathbb{R}^{p + d + 1}
+            \;\middle|\;
+            \begin{aligned}
+            & a^\top y - \lambda \le w \le a^\top y + \lambda, \\[4pt]
+            & \frac{l_J + \lambda}{l_J - \lambda}(a^\top y - \lambda)
+            \;\le\;
+            w
+            \;\le\;
+            \frac{u_J - \lambda}{u_J + \lambda}(a^\top y + \lambda), \\[6pt]
+            & w \le \sum_{i \in I} a_i (y_i - \ell^0_i)
+            + \frac{\ell_I - \lambda}{u^0_o - \ell^0_o}(y_o - \ell^0_o),
+            \qquad \forall (I, o) \in \mathcal{I}^+, \\[6pt]
+            & w \ge \sum_{i \in I} a_i (y_i - u^0_i)
+            + \frac{u_I + \lambda}{u^0_o - u^0_o}(y_o - u^0_o),
+            \qquad \forall (I, o) \in \mathcal{I}^- .
+            \end{aligned}
+            \right\}.
+        $$
+
+        where:
+
+        - vector $l^{0} \in \mathbb{R}^{d}$ with entries $l_i^{0} = \underline{y}_i \text{ if }
+        a_i \geq 0 \text{ and } \overline{y}_i$ otherwise,
+        - vector $u^{0} \in \mathbb{R}^{d}$ with entries $u_i^{0} = \overline{y}_i \text{ if }
+        a_i \geq 0 \text{ and } \underline{y}_i$ otherwise,
+        - Given $\textbf{I} \subseteq \textbf{J} = \left\{1, ..., n\right\}$, the lower bound is
+        defined as $l_I = \sum_{i \in I}a_il_i^{0} + \sum_{i \notin I}a_iu_i^{0}$ and the
+        upper bounds $u_I = \sum_{i \in I}a_iu_i^{0} + \sum_{i \notin I}a_il_i^{0}$,
+        - $\mathcal{I}^+ = \{ (I, o) \in 2^J \times J \mid \ell_I \ge \lambda,\; \ell_{I \cup \{o\}}
+        < \lambda,\; w_I \neq 0 \},$
+        -  $\mathcal{I}^- = \{ (I, o) \in 2^J \times J \mid u_I \le - \lambda,\; u_{I \cup \{o\}} >
+        -\lambda,\; w_I \neq 0 \}.$
+        - and $w_I$ is the slicing of vector $w$ over $I$.
+
 
         Returns
         -------

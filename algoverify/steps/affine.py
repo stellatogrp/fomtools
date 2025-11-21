@@ -72,4 +72,13 @@ class Affine(Step):
         )
 
     def get_constraints(self) -> List[Constraint]:
+        """
+        Construct the linear equality constraints corresponding to the
+        affine iteration step. The constraint is used to express the affine update step in the
+        verification problem
+
+        Returns
+        -------
+         A Linear Constraint that enforces the affine relation. 
+        """
         return [self.lhs_mat @ self.lhs == self.rhs]

@@ -11,6 +11,8 @@ class Step:
 
     Attributes
     ----------
+    lhs: LinearExpression
+        Left-hand side linear expression in the operator definition.
     rhs: LinearExpression
         Right-hand side linear expression in the operator definition.
     lb: float

@@ -67,10 +67,11 @@ class Relu(Step):
 
         Examples
         --------
-        >>> self._get_ranges(((1, 2), (5, 9)))
+        >>> relu = Relu()
+        >>> relu._get_ranges(((1, 2), (5, 9)))
         {1, 2, 5, 6, 7, 8}
 
-        >>> self._get_ranges((4, 7))
+        >>> relu._get_ranges((4, 7))
         {4, 5, 6}
         """
         try:
@@ -128,7 +129,7 @@ class Relu(Step):
             \mathbb{R} | w = \textbf{ReLU}(a^{T}y) \right\},
         $$
 
-        and expresses it as a set of LinearExpression objects. The convex hull
+        and expresses it as a set of Constraint objects. The convex hull
         of the region is:
 
 
