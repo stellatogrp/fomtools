@@ -28,7 +28,7 @@ class SaturatedLinear(Step):
         Right-hand side linear expression in the operator definition.
     lb: float
         Lower bound associated with the transformed values.
-    ub: float
+    ub: floatg
         Lower bound associated with the transformed values.
     relax_binary_vars: bool
         If true, binary decision variables associated with the operator

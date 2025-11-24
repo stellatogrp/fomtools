@@ -29,6 +29,7 @@ class Verifier(object):
     ):
         self.theory_func = theory_func
         self.iterates = []
+        self.params = []
         self.steps = []
 
         self.canonicalizer = self._get_canonicalizer(method, params, solver)

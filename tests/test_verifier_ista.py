@@ -36,7 +36,6 @@ def test_ista(vp_theory):
     b_offset = 1.0
     b_param = vp_theory.add_param(m, lb=b - b_offset, ub=b + b_offset)
 
-
     z0 = vp_theory.add_iterate(n, lb=2, ub=2)
 
     K = 5
@@ -57,7 +56,6 @@ def test_ista(vp_theory):
         all_res.append(res)
 
     print(f"opt b_param at last K: {vp_theory.get_solution_value(b_param)}")
-
     print(f"VP resids: {all_res}")
 
     zk = 2 * np.ones(n)

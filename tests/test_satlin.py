@@ -31,7 +31,6 @@ def test_satlin(vp_param_2):
     q_offset = 1
     q_param = vp_param_2.add_param(n, lb=q - q_offset, ub=q + q_offset)
 
-
     z0 = vp_param_2.add_iterate(n, lb=z0_init, ub=z0_init)
 
     K = 12
@@ -98,7 +97,6 @@ def test_satlin_param(vp_param_2):
     l_param = vp_param_2.add_param_stack([top_param, l_rest])
     u_param = vp_param_2.add_param_stack([top_param, u_rest])
 
-
     t = 0.1
     K = 5
 
@@ -109,7 +107,6 @@ def test_satlin_param(vp_param_2):
     for k in range(1, K + 1):
         print(k)
         z[k] = vp_param_2.step.satlin(z[k - 1] - t * (P @ z[k - 1] + q_param), l=l_param, u=u_param)
-
         vp_param_2.set_infinity_norm_objective(z[k] - z[k - 1])
         res = vp_param_2.solve()
         all_res.append(res)

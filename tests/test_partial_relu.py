@@ -29,7 +29,6 @@ def test_partial_nnqp(vp):
 
     q_offset = 1
     q_param = vp.add_param(n, lb=q - q_offset, ub=q + q_offset)
-
     z0 = vp.add_iterate(n, lb=-1, ub=-1)
 
     K = 10
@@ -47,7 +46,6 @@ def test_partial_nnqp(vp):
         vp.post_process(z[k], z[0], all_res)
 
     print(f"opt q_param at last K: {vp.get_solution_value(q_param)}")
-
     print(f"vp_gurobi resids: {all_res}")
 
     zk = -np.ones(n)

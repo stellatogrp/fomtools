@@ -1,6 +1,7 @@
 from functools import cached_property
 
 import numpy as np
+import scipy.sparse as spa
 
 from algoverify.utils.huchette_cuts import create_new_constr, get_cuts
 
@@ -61,8 +62,15 @@ class Solver(object):
             u = np.concatenate(step.rhs.ub)
 
             for i in range(step.lhs.ndim):
+                # special case out sparse matrices as needed
+                A = np.concatenate(
+                    [
+                        np.asarray(v.todense()).reshape(-1) if spa.issparse(v) else v.flatten()
+                        for v in step.rhs[i].decomposition_dict.values()
+                    ]
+                )
+
                 # TODO: Gurobi is leaked in this part
-                A = np.concatenate([v.flatten() for v in step.rhs[i].decomposition_dict.values()])
                 Iint, lI, h, L_hat, U_hat = get_cuts(step, i, w_val[i], A, y_val, l, u)
                 if Iint is not None:
                     self.add_constr(
