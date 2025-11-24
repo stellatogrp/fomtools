@@ -1,9 +1,6 @@
 from algoverify.solvers import gurobi, highs
 from algoverify.solvers.solver import Solver
 
-from algoverify.solvers import gurobi, highs
-from algoverify.solvers.solver import Solver
-
 
 class Canonicalizer:
     """
