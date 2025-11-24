@@ -171,7 +171,6 @@ class LinearExpression:
             try:
                 return LinearExpression(
                     decomposition_dict={
-                        # k: np.atleast_2d((v.toarray() if spa.issparse(v) else v)[item])
                         k: v.tocsr()[item] if spa.issparse(v) else np.atleast_2d(v[item])
                         for k, v in self.decomposition_dict.items()
                     },
@@ -209,14 +208,11 @@ class LinearExpression:
             `np.ndarray`,  `float`, `int`, or `list`.
         """
         try:
-            # Need this for deprecation warning if ndim is 1
-            if isinstance(other, np.ndarray) and other.shape == (1,):
-                other = other.item()
             return LinearExpression(
                 decomposition_dict=self.decomposition_dict,
-                const=self.const + np.full(self.ndim, np.float64(other)),
+                const=self.const + np.full(self.ndim, np.array(other).astype(float)),
             )
-        except (TypeError, ValueError):
+        except ValueError:
             try:
                 # Check to see if other is of type list or a numpy array
                 if len(other) == self.ndim:
