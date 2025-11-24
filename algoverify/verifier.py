@@ -155,7 +155,7 @@ class Verifier(object):
             lb = np.full(ndim, lb)
             ub = np.full(ndim, ub)
         except ValueError:
-            raise ValueError(""" Lower bounds and upper bounds must either be scalars or 
+            raise ValueError(""" Lower bounds and upper bounds must either be scalars or
                                 have the same length as the dimension of the expression.""")
 
         self.iterates.append(iterate := self._add_var(ndim, lb, ub))
