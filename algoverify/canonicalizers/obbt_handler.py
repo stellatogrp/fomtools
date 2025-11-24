@@ -1,6 +1,5 @@
 import logging
 
-import gurobipy as gp
 import numpy as np
 
 from algoverify.canonicalizers.canonicalizer import Canonicalizer
@@ -10,7 +9,7 @@ log = logging.getLogger(__name__)
 
 class OBBTHandler(Canonicalizer):
     def __init__(self, solver):
-        super().__init__(solver)
+        super().__init__(solver=solver)
 
     def add_var(self, var, lb=-np.inf, ub=np.inf):
         self.solver.add_var(var, lb, ub)
@@ -30,7 +29,7 @@ class OBBTHandler(Canonicalizer):
                 self.solver.set_objective(expr, sense)
                 self.solver.optimize()
 
-                if self.solver["status"] != gp.GRB.OPTIMAL:
+                if not self.solver.is_optimal():
                     log.info(f"bound tighting failed, GRB model status: {self.solver['status']}")
                     log.info(f"i = {i}, sense={sense}")
                     return

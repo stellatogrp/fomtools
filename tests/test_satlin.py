@@ -103,6 +103,7 @@ def test_satlin_param(vp_param_2):
 
     t = 0.1
     K = 5
+
     z = [None for _ in range(K + 1)]
     z[0] = vp_param_2.initial_iterate(n, lb=0, ub=0)
 

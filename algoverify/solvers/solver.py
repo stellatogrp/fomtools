@@ -1,3 +1,5 @@
+from functools import cached_property
+
 import numpy as np
 
 from algoverify.utils.huchette_cuts import create_new_constr, get_cuts
@@ -5,8 +7,20 @@ from algoverify.utils.huchette_cuts import create_new_constr, get_cuts
 
 class Solver(object):
     def __init__(self, solver_params=None):
+        self._relaxed_model = None
+        self.vector_var_map = {}
         if solver_params is not None:
             self.set_solver_params(solver_params)
+
+    @cached_property
+    def relaxed_model(self):
+        """
+        Return the relaxed version of the MIP model, in which all integrality
+        restrictions, SOS conditions, semi-continuous and semi-integer
+        requirements on variables have been relaxed and general constraints
+        have been removed.
+        """
+        return self._relaxed_model
 
     def set_solver_params(self, solver_params):
         for k, v in solver_params.items():
@@ -24,7 +38,7 @@ class Solver(object):
     def add_var(self, iterate, lb=-np.inf, ub=np.inf):
         raise NotImplementedError
 
-    def add_equality_constraint(self, lhs_expr, rhs_expr):
+    def constraints_to_solver(self, constraints):
         raise NotImplementedError
 
     def relax_model(self):
@@ -40,15 +54,16 @@ class Solver(object):
         self.relax_model()
 
         for step in steps:
-            y_var = self.get_relaxed_variables(step.rhs)
-            w_var = self.get_relaxed_variables(step.lhs)
+            y_var, y_val = self.get_relaxed_variables(step.rhs)
+            w_var, w_val = self.get_relaxed_variables(step.lhs)
             l, u = tuple(
                 np.concatenate(x) for x in zip(*[bounds[k] for k in step.rhs.decomposition_dict])
             )
 
             for i in range(step.lhs.ndim):
+                # TODO: Gurobi is leaked in this part
                 A = np.concatenate([v.flatten() for v in step.rhs[i].decomposition_dict.values()])
-                Iint, lI, h, L_hat, U_hat = get_cuts(step, i, w_var.X[i], A, y_var.X, l, u)
+                Iint, lI, h, L_hat, U_hat = get_cuts(step, i, w_val[i], A, y_val, l, u)
                 if Iint is not None:
                     self.add_constr(
                         create_new_constr(w_var[i], A, y_var, Iint, lI, h, L_hat, U_hat)

@@ -104,7 +104,7 @@ class LinearExpression:
         self.is_binary = is_binary
 
     @classmethod
-    def from_int(cls, ndim: int, is_binary: bool = False, ub: float = np.inf) -> Self:
+    def from_int(cls, ndim: int, is_binary: bool = False, lb: float = -np.inf, ub: float = np.inf) -> Self:
         """
         Initialize a `LinearExpression` object with an integer `shape`. Internally, this
         creates a decomposition dictionary that maps the `LinearExpression` object with a sparse
@@ -131,6 +131,8 @@ class LinearExpression:
         obj.counter = cls.counter
         obj.const = np.zeros(ndim)
         obj.is_binary = is_binary
+        obj.lb = 0 if is_binary else lb
+        obj.ub = 1 if is_binary else ub
         cls.counter += 1
         return obj
 

@@ -1,6 +1,5 @@
 import logging
-from functools import cached_property
-from typing import List
+from typing import List, Tuple
 
 import gurobipy as gp
 import numpy as np
@@ -35,11 +34,8 @@ class GurobiSolver(Solver):
         ----------
         solver_params
         """
-        super().__init__(solver_params)
-
-        self._relaxed_model = None
-        self.vector_var_map = {}
         self.model = gp.Model()
+        super().__init__(solver_params)
 
     def __getitem__(self, item):
         return getattr(self.model, item)
@@ -74,16 +70,6 @@ class GurobiSolver(Solver):
 
         self.__dict__.pop("relaxed_model", None)
 
-    @cached_property
-    def relaxed_model(self):
-        """
-        Return the relaxed version of the MIP model, in which all integrality
-        restrictions, SOS conditions, semi-continuous and semi-integer
-        requirements on variables have been relaxed and general constraints
-        have been removed.
-        """
-        return self._relaxed_model
-
     def add_var(self, var: LinearExpression, lb: float = -np.inf, ub: float = np.inf) -> gp.Var:
         """
         Create and register a Gurobi matrix variable corresponding to the
@@ -109,15 +95,11 @@ class GurobiSolver(Solver):
         Returns
         -------
         None
-
-        Raises
-        ------
-        ValueError
-            If the provided variable type string is not recognized.
         """
-        self.vector_var_map[var] = self.model.addMVar(
-            var.ndim, lb=lb, ub=ub, vtype="binary" if var.is_binary else "continuous"
-        )
+        for k in var.decomposition_dict.keys():
+            self.vector_var_map[k] = self.model.addMVar(
+                var.ndim, lb=lb, ub=ub, vtype=gp.GRB.BINARY if var.is_binary else gp.GRB.CONTINUOUS
+            )
         self.model.update()
 
     def add_param_stack_var(
@@ -275,10 +257,10 @@ class GurobiSolver(Solver):
 
         Parameters
         ----------
-        constraint: LinearExpression
+        constraint: Constraint | gp.TempConstr
             A Gurobi constraint expression compatible. Typical form includes
             comparisons like ``lhs == rhs``, ``lhs <= rhs``, where ``lhs``,
-            and ``rhs`` are of type ``gp.MLinExpr``.
+            and ``rhs`` are of type ``LinearExpression`` or ``gp.MLinExpr``.
 
         Returns
         -------
@@ -296,7 +278,7 @@ class GurobiSolver(Solver):
                     self.model.addConstr(lhs <= 0)
             self.model.update()
 
-    def set_objective(self, expression: LinearExpression, sense=None):
+    def set_objective(self, expression: LinearExpression, sense: str = None) -> None:
         """
         Set the optimization objective for the underlying Gurobi model.
 
@@ -354,7 +336,7 @@ class GurobiSolver(Solver):
         """
         self.model.optimize()
 
-    def get_solution_value(self, expression: LinearExpression):
+    def get_solution_value(self, expression: LinearExpression) -> np.ndarray:
         """
         Compute the solution value for the given ``LinearExpression``
         object.
@@ -382,7 +364,7 @@ class GurobiSolver(Solver):
             out += v @ [self.model.getVarByName(var).X for var in self.vector_var_map[k].VarName]
         return out
 
-    def get_relaxed_variables(self, expression: LinearExpression) -> gp.MVar:
+    def get_relaxed_variables(self, expression: LinearExpression) -> Tuple[gp.MVar, np.ndarray]:
         """
         Reconstruct solver-side variables from a ``LinearExpression`` object
         using the relaxed Gurobi model.
@@ -395,10 +377,11 @@ class GurobiSolver(Solver):
 
         Returns
         -------
-        gp.MVar
+        Tuple[gp.MVar, np.ndarray]
             A single Gurobi matrix variable formed by horizontally stacking the
             individual ``gp.MVar`` objects corresponding to each element of
-            the input ``LinearExpression``.
+            the input ``LinearExpression``, and a numpy array containing the
+            current values of those stacked variables.
         """
         # If no relaxed model currently exists, build and solve it first.
         if self.relaxed_model is None:
@@ -411,4 +394,10 @@ class GurobiSolver(Solver):
                     [self.relaxed_model.getVarByName(i) for i in self.vector_var_map[k].VarName]
                 )
             )
-        return gp.hstack(gp_vars)
+        return gp.hstack(gp_vars), gp.hstack(gp_vars).X
+
+    def is_optimal(self) -> bool:
+        """
+        Check whether the underlying Gurobi model has reached an optimal solution.
+        """
+        return self["status"] == gp.GRB.OPTIMAL
