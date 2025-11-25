@@ -24,11 +24,29 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Upgrade setuptools/build
+        run: |
+            pip install wheel --upgrade
+            pip install setuptools --upgrade
+            python -m pip install --upgrade build
+
+      - name: Build wheels for package
+        run: python -m build
+
       - name: Install Package with docs extra
         run: pip install .[docs]
 
       - name: List dependencies
         run: pip freeze
+
+      - name: Export marimo notebooks
+        run: |
+          for file in docs/tutorials/*.py; do
+            marimo export html "$file" -o "${file%.py}.html"
+          done
+
+      - name: Verify html generation
+        run: ls docs/tutorials
 
       - name: Configure Git Credentials
         run: |
