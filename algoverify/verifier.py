@@ -306,13 +306,13 @@ class Verifier(object):
     # TODO: consider if we should make the theory func local to this func and not a verifier property
     def theory_bound(self, k, target_expr, ref_expr):
         """
-        Apply theory-specific bound tightening to a target expression.
+        Apply theory-specific bound relaxation to a target expression.
 
         Parameters
         ----------
         k: int
             Index used by the theory function to compute the constant
-            shift `C`. If it is a leaf node, its lower and upper
+                shift `C`. If it is a leaf node, its lower and upper
             bounds are tightened based on the propagated bounds of
             `bound_expr` and the theory function dependent constant `C`.
 
@@ -329,9 +329,11 @@ class Verifier(object):
             The average fractional improvement in the target expression's bound.
 
         """
-        improv_frac = 0
 
-        C = self.theory_func(k)
+        if np.isclose((C := self.theory_func(k)), np.inf):
+            return 0
+
+        improv_frac = 0
         lb, ub = ref_expr.bound_propagation()
         if target_expr.is_leaf:
             _lb, _ub = lb - C, lb + C
@@ -371,7 +373,7 @@ class Verifier(object):
         lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
         self.canonicalizer.set_infinity_norm_objective(expr_list, list(lb), list(ub))
 
-    def solve(self, **kwargs):
+    def solve(self, huchette_cuts: bool = False):
         """
         Solve the optimization problem.
 
@@ -379,19 +381,23 @@ class Verifier(object):
         optimization problem using the recorded thresholding or
         activation steps.
 
+        Parameters
+        ----------
+        huchette_cuts: bool
+            a
+
         Returns
         -------
         float
             The objective value for the current solution, if the
             model was solved to optimality.
         """
-        return self.canonicalizer.solve_model(self.steps, **kwargs)
+        return self.canonicalizer.solve_model(self.steps, huchette_cuts)
 
     def post_process(self, target_expr, ref_expr, residuals):
         """
         Apply post-processing bound tightening based on accumulated
         residual values.
-
 
         Parameters
         ----------
@@ -415,7 +421,7 @@ class Verifier(object):
         delta_sum = np.sum(residuals)
         _lb = np.maximum(ref_expr.lb - delta_sum, ref_expr.lb)
         _ub = np.minimum(ref_expr.ub + delta_sum, ref_expr.ub)
-        self.canonicalizer.post_process(target_expr, _lb, _ub)
+        self.canonicalizer.update_bounds(target_expr, _lb, _ub)
 
         return (sum(_lb > ref_expr.lb) + sum(_ub < ref_expr.ub)) / (2.0 * len(_lb))
 
