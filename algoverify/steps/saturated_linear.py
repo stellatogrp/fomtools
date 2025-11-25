@@ -19,7 +19,7 @@ class SaturatedLinear(Step):
         \quad \text{with } y = (v, x).
     $$
 
-    where $`b, c \in \mathbb{R}`$.
+    where $b, c \in \mathbb{R}$.
 
     Attributes
     ----------

@@ -12,10 +12,12 @@ authors = [
        { name = "Vinit Ranjan", email = "vranjan@princeton.edu" },
        { name = "Bartolomeo Stellato", email = "bstellato@princeton.edu" },
 ]
+
 dependencies = [
        "numpy",
        "gurobipy>=12.0.1",
-       "scipy"
+       "scipy",
+       "highspy"
 ]
 
 [tool.setuptools]
@@ -43,6 +45,11 @@ docs = [
        "mkdocs-material",
        "pymdown-extensions"
 ]
+
+[tool.mypy]
+allow_redefinition = true
+ignore_missing_imports = true
+exclude = ["test"]
 
 [tool.setuptools_scm]
 

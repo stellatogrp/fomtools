@@ -4,7 +4,7 @@ import numpy as np
 import scipy.sparse as spa
 
 from algoverify.constraint import EqualityConstraint, InequalityConstraint
-from algoverify.dict_utils import merge_dict, prune_dict
+from algoverify.utils.dict_utils import merge_dict, prune_dict
 
 
 class LinearExpression:
@@ -22,6 +22,9 @@ class LinearExpression:
             itself built from other `LinearExpression` objects). If `is_leaf` is True, this
             object is a function value defined from scratch.
 
+        is_binary : bool
+            Indicates whether a leaf expression is intended to be binary or not (i.e. constrained to only have values 0 or 1 in each dimension).
+
         decomposition_dict : dict
             A mapping from each leaf expression to its corresponding coefficient matrix. If
             `is_leaf` is True, this dict maps the object to its own coefficient matrix.
@@ -31,6 +34,8 @@ class LinearExpression:
 
     References
     ----------
+        .. S. Diamond and S. Boyd. "CVXPY: A Python-Embedded Modeling Language for Convex
+           Optimization." Journal of Machine Learning Research, 17(83):1-5, 2016.
         .. B. Goujaud, C. Moucer, F. Glineur, J. Hendrickx, A. Taylor, A. Dieuleveut (2022).
            "PEPit: computer-assisted worst-case analyses of first-order optimization methods
            in Python."
@@ -41,7 +46,7 @@ class LinearExpression:
     # this is necessary else numpy will not even look at the @ operator due to precedence
     __array_priority__ = 1000
 
-    def __init__(self, decomposition_dict: dict, const: np.ndarray = None):
+    def __init__(self, decomposition_dict: dict, const: np.ndarray = None, is_binary: bool = False):
         """
         Initialize a `LinearExpression` object with decomposition dictionary.
 
@@ -53,8 +58,10 @@ class LinearExpression:
 
         const : ndarray or None, optional
             A one-dimensional array or None (default). If `const` is None, the `const` attribute
-            of this object will be set to a `numpy.ndarray` of length `ndim` filled with zeros.
+            of this object will be set to a `numpy.ndarray` of length `shape` filled with zeros.
 
+        is_binary : bool, optional
+            A flag to determine if a leaf element is intended to be binary (0 or 1 in each dimension) or not. Defaults to `False`.
 
         Raises
         ------
@@ -90,31 +97,32 @@ class LinearExpression:
                 self.ndim = const.shape[0]
 
         self.const = np.zeros(self.ndim) if const is None else const
-        self.const = const
         self.decomposition_dict = decomposition_dict
-        # TODO: Use a number rather than a None
         self.counter = LinearExpression.counter
         LinearExpression.counter += 1
         self.is_leaf = False
+        self.is_binary = is_binary
 
     @classmethod
-    def from_int(cls, ndim: int) -> Self:
+    def from_int(cls, ndim: int, is_binary: bool = False, lb: float = -np.inf, ub: float = np.inf) -> Self:
         """
-        Initialize a `LinearExpression` object with an integer `ndim`. Internally, this
+        Initialize a `LinearExpression` object with an integer `shape`. Internally, this
         creates a decomposition dictionary that maps the `LinearExpression` object with a sparse
-        identity matrix of shape `(ndim, ndim)`.
+        identity matrix of shape `(shape, shape)`.
 
         Parameters
         ----------
         ndim : int
             The dimension of underlying space, i.e., the size of each coefficient matrix.
+        is_binary: bool
+            Flag to determine if the leaf expression is binary or not (0 or 1 in each dimension).
 
         Returns
         -------
         LinearExpression
             A new `LinearExpression` instance whose decomposition contains a single
             entry: the instance itself as a key, and a SciPy sparse identity matrix of
-            shape `(ndim, ndim)` as the value.
+            shape `(shape, shape)` as the value.
         """
         obj = cls.__new__(cls)  # uninitialized instance
         obj.is_leaf = True
@@ -122,6 +130,9 @@ class LinearExpression:
         obj.ndim = ndim
         obj.counter = cls.counter
         obj.const = np.zeros(ndim)
+        obj.is_binary = is_binary
+        obj.lb = 0 if is_binary else lb
+        obj.ub = 1 if is_binary else ub
         cls.counter += 1
         return obj
 
@@ -138,6 +149,37 @@ class LinearExpression:
         identity-based hash.
         """
         return hash(str(self))
+
+    def __getitem__(self, item: Self | int):
+        """
+        Retrieve a coefficient matrix or a sliced LinearExpression corresponding
+        to `item`.
+
+        If the `item` is a leaf expression, this method returns its corresponding
+        coefficient matrix. If the `item` is an `int` or a `slice`, this method
+        returns a new `LinearExpression` instance representing a specified subset of
+        rows from all the corresponding coefficients in the decomposition dictionary.
+
+        Raises
+        ------
+        KeyError
+            If the specified leaf expression is not found in this `LinearExpression` object.
+        """
+        try:
+            return self.decomposition_dict[item]
+        except KeyError:
+            try:
+                return LinearExpression(
+                    decomposition_dict={
+                        k: v.tocsr()[item] if spa.issparse(v) else np.atleast_2d(v[item])
+                        for k, v in self.decomposition_dict.items()
+                    },
+                    const=np.atleast_1d(self.const[item]),
+                )
+            except TypeError:
+                raise KeyError("""
+                The specified leaf expression is not present in this LinearExpression object.
+                """)
 
     def __add__(self, other: Union[Self, np.array, list, int, float]) -> Self:
         """
@@ -168,9 +210,9 @@ class LinearExpression:
         try:
             return LinearExpression(
                 decomposition_dict=self.decomposition_dict,
-                const=self.const + np.full(self.ndim, float(other)),
+                const=self.const + np.full(self.ndim, np.array(other).astype(float)),
             )
-        except TypeError:
+        except ValueError:
             try:
                 # Check to see if other is of type list or a numpy array
                 if len(other) == self.ndim:
@@ -254,9 +296,9 @@ class LinearExpression:
         try:
             return LinearExpression(
                 decomposition_dict={
-                    k: v * float(scalar) for k, v in self.decomposition_dict.items()
+                    k: v * np.float64(scalar) for k, v in self.decomposition_dict.items()
                 },
-                const=self.const * float(scalar),
+                const=self.const * np.float64(scalar),
             )
         except ValueError:
             raise TypeError(
@@ -369,8 +411,6 @@ class LinearExpression:
 
         This method is invoked when a `LinearExpression` object appears on
         the right-hand side of a `-` operation (e.g. `np.array([1,2,3]) - expr`).
-        It delegates to `__sub__`, so that both `np.array([1,2,3]) - expr` and
-        `expr - np.array([1,2,3])` behave identically.
 
         Parameters
         ----------
@@ -394,7 +434,7 @@ class LinearExpression:
             `np.ndarray`, or `list`.
 
         """
-        return self + (-other)
+        return (-self) + other
 
     def __matmul__(self, other):
         # TODO

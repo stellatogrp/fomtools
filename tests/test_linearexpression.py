@@ -132,7 +132,8 @@ def test_LinearExpression_const():
     assert np.allclose(y5.const, np.full(m, 3.0))
 
     y6 = np.full(m, 2.0) - x2
-    assert np.allclose(y6.const, np.full(m, -1.0))
+    assert np.allclose(y6.const, np.full(m, 1.0))
+    assert np.allclose(-np.eye(m), list(y6.decomposition_dict.values())[0].todense())
 
 
 def test_LinearExpression_constr():
@@ -161,3 +162,59 @@ def test_LinearExpression_constr():
 
     assert np.allclose(constr_4.lhs.const, np.full(m, -1.0))
     assert np.allclose(constr_5.lhs.const, np.full(m, -3.0))
+
+
+def test_LinearExpression_bool():
+    n = 10
+    M = 10
+    x_notbinary = LinearExpression.from_int(n)
+    assert not x_notbinary.is_binary
+
+    xb = LinearExpression.from_int(n, is_binary=True)
+    assert xb.is_binary
+    assert xb.is_leaf
+
+    M_xb = M * xb
+    assert not M_xb.is_leaf
+
+    y = LinearExpression.from_int(n)
+    constr = y <= M_xb
+
+    assert xb in constr.lhs.decomposition_dict
+    assert M_xb not in constr.lhs.decomposition_dict
+    assert np.allclose(constr.lhs.decomposition_dict[xb].todense(), -M * np.eye(n))
+
+
+def test_LinearExpression_slice():
+    m, n = 4, 3
+    A = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]])
+    x1 = LinearExpression.from_int(n, is_binary=True)
+
+    Ax1 = A @ x1
+    assert Ax1.ndim == m
+    assert not Ax1.is_binary
+    assert np.allclose(A, Ax1[x1])
+
+    Ax0 = Ax1[0]
+    assert Ax0.ndim == 1
+    assert np.allclose(Ax0[x1], A[0])
+
+    B = np.array([[13, 14, 15], [16, 17, 18], [19, 20, 21], [22, 23, 24]])
+    x2 = LinearExpression.from_int(n, is_binary=True)
+
+    Bx2 = B @ x2
+    assert Bx2.ndim == m
+    assert not Bx2.is_binary
+    assert np.allclose(B, Bx2[x2])
+
+    y = Ax1 + Bx2
+    assert np.allclose(y[x1], A)
+    assert np.allclose(y[x2], B)
+
+    y0 = y[0]
+    assert np.allclose(y0[x1], A[0])
+    assert np.allclose(y0[x2], B[0])
+
+    y1 = y[1:3]
+    assert np.allclose(y1[x1], A[1:3])
+    assert np.allclose(y1[x2], B[1:3])

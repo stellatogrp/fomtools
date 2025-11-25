@@ -123,7 +123,7 @@ class EqualityConstraint(Constraint):
 
     def __init__(self, lhs, rhs):
         """
-        Initize an instance of `InequalityConstraint` class.
+        Initize an instance of :class:`InequalityConstraint` class.
 
         Parameters
         ----------
