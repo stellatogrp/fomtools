@@ -71,10 +71,10 @@ def _(A, K, Verifier, eta, m, n, x_lb, x_ub):
         'OutputFlag': 0,
     }
 
-    VP = Verifier(solver_params=solver_params)
+    VP = Verifier(params=solver_params)
     x_param = VP.add_param(m, lb=x_lb, ub=x_ub)
 
-    z0 = VP.add_initial_iterate(n, lb=1, ub=1)
+    z0 = VP.initial_iterate(n, lb=1, ub=1)
     z = [None for _ in range(K + 1)]
     z[0] = z0
 
