@@ -12,19 +12,24 @@ authors = [
        { name = "Vinit Ranjan", email = "vranjan@princeton.edu" },
        { name = "Bartolomeo Stellato", email = "bstellato@princeton.edu" },
 ]
-dependencies = ["cvxpy", "jax", "highspy"]
+
+dependencies = [
+       "numpy",
+       "gurobipy>=12.0.1",
+       "scipy",
+       "highspy"
+]
 
 [tool.setuptools]
 packages = ["algoverify"]
 
 [project.optional-dependencies]
 dev = [
-       "gurobipy>=12.0.1",
+       "cvxpy",
        "pytest",
        "pre-commit",
        "ruff",
        "ruff-lsp",
-       "matplotlib",
        "ipdb",
        "hydra-core",
        "pandas",
@@ -32,9 +37,13 @@ dev = [
 ]
 
 docs = [
+       "marimo",
+       "matplotlib",
        "mkdocs",
        "mkdocstrings-python",
-       "mkdocs-material"
+       "mkdocs-marimo",
+       "mkdocs-material",
+       "pymdown-extensions"
 ]
 
 [tool.mypy]

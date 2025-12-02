@@ -3,6 +3,7 @@ nav:
   - Home: index.md
   - Installation: installation.md
   - API and modules: api.md
+  - Tutorials: tutorials.md
 theme:
   name: material
   palette:
@@ -25,6 +26,7 @@ theme:
 
 plugins:
   - search
+  - marimo
   - mkdocstrings:
       default_handler: python
       handlers:
