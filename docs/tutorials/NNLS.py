@@ -74,13 +74,13 @@ def _(A, K, Verifier, eta, m, n, x_lb, x_ub):
     VP = Verifier(params=solver_params)
     x_param = VP.add_param(m, lb=x_lb, ub=x_ub)
 
-    z0 = VP.initial_iterate(n, lb=1, ub=1)
+    z0 = VP.add_iterate(n, lb=1, ub=1)
     z = [None for _ in range(K + 1)]
     z[0] = z0
 
     all_residuals = []
     for k in range(1, K+1):
-        z[k] = VP.relu_step(z[k-1] - eta * A.T @ (A @ z[k-1] - x_param))
+        z[k] = VP.step.relu(z[k-1] - eta * A.T @ (A @ z[k-1] - x_param))
         VP.set_infinity_norm_objective([z[k] - z[k-1]])
         res = VP.solve()
         all_residuals.append(res)

@@ -1,9 +1,11 @@
-from dataclasses import dataclass, field
+from typing import List, Tuple
 
+import numpy as np
+
+from algoverify.linearexpression import LinearExpression
 from algoverify.steps.step import Step
 
 
-@dataclass(frozen=True, kw_only=True)
 class Relu(Step):
     r"""
     Rectified Linear Unit (ReLU) step operator, defined as:
@@ -16,8 +18,6 @@ class Relu(Step):
 
     Attributes
     ----------
-    lhs: LinearExpression
-        Left-hand side linear expression in the operator definition.
     rhs: LinearExpression
         Right-hand side linear expression in the operator definition.
     lb: float
@@ -31,18 +31,85 @@ class Relu(Step):
         Indices corresponding to binary decision variables.
     proj_indices: set[int]
         Indices of output coordinates subjected to ReLU projection.
-    nonproj_indices: set[int]
-        Set of output indices not subjected to ReLU.
     """
 
-    proj_indices: set[int]
-    idx_with_binary_vars: set[int] = field(default_factory=set)
+    def __init__(
+        self,
+        rhs: LinearExpression,
+        proj_ranges=None,
+        relax_binary_vars=False,
+    ):
+        super().__init__(rhs, relax_binary_vars)
+        self.proj_indices = (
+            set(range(0, self.rhs.ndim)) if proj_ranges is None else self._get_ranges(proj_ranges)
+        )
+        self.idx_with_binary_vars = set()
 
     def __hash__(self):
         return hash((self.rhs, self.lhs))
 
-    # TODO: is this even necessary
-    @property
-    def nonproj_indices(self):
-        """Returns indices of output coordinates that bypass the ReLU projections."""
-        return {i for i in range(self.rhs.get_output_dim()) if i not in self.proj_indices}
+    @staticmethod
+    def _get_ranges(ranges: Tuple[int, int] | List[Tuple[int, int]]) -> set[int]:
+        """
+        Return the set of integers covered by one or more of half-open intervals.
+
+        Parameters
+        ----------
+        ranges: Tuple[int, int] or List[Tuple[int, int]]
+            Either a single (start, end) pair or an iterable of such pair.
+            Each pair is interpreted as a half-open interval ``[start, end)``.
+
+        Returns
+        -------
+        set[int]
+            The unique integers contained in the given half-open range(s)
+
+        Examples
+        --------
+        >>> relu = Relu()
+        >>> relu._get_ranges(((1, 2), (5, 9)))
+        {1, 2, 5, 6, 7, 8}
+
+        >>> relu._get_ranges((4, 7))
+        {4, 5, 6}
+        """
+        try:
+            ranges.append((0, 0))
+            return {i for (min, max) in ranges for i in range(min, max)}
+        except AttributeError:
+            return set(range(ranges[0], ranges[1]))
+
+    def relu(self, x: np.ndarray) -> np.ndarray:
+        """
+        Apply ReLU activation selectively to specified indices.
+
+        Parameters
+        ----------
+        x: np.ndarray
+            A 1-D array of vlaues on which to apply the activation.
+
+        Returns
+        -------
+        np.ndarray
+            A new array where elements are positions specified in
+            ``self.proj_indices`` are passed through ReLU, while
+            all other elements are left unchanged.
+        """
+        proj_mask = np.isin(np.arange(len(x)), list(self.proj_indices))
+        return np.where(proj_mask, np.maximum(0, x), x)
+
+    def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
+        """
+        Update the bounds of the left-land side after applying
+        ReLU activation.
+
+        Parameters
+        ----------
+        lb: float or np.ndarray
+            The new lower bound(s) before applying ReLU.
+
+        ub: float or np.ndarray
+            The new upper bound(s) before applying ReLU.
+
+        """
+        self.lhs.update_bounds(lb=self.relu(lb), ub=self.relu(ub))

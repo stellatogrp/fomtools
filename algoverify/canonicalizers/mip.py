@@ -1,9 +1,11 @@
+from typing import List
+
 import numpy as np
 
 from algoverify import LinearExpression
 from algoverify.canonicalizers.canonicalizer import Canonicalizer
 from algoverify.constraint import Constraint
-from algoverify.steps import Relu
+from algoverify.steps import Affine, Relu, SaturatedLinear, SoftThreshold, Step
 
 
 class MIP(Canonicalizer):
@@ -21,14 +23,12 @@ class MIP(Canonicalizer):
     add_var(var, lb, ub)
         ...
 
-    add_param_stack_var()
-        ...
     """
 
     def __init__(self, solver_params=None, solver="gurobi"):
         super(MIP, self).__init__(solver_params, solver)
 
-    def add_var(self, var: LinearExpression, lb=-np.inf, ub=np.inf) -> None:
+    def add_var(self, var: LinearExpression) -> None:
         """
         Add a variable to the MIP instance. This method registers
         a new variable with the MIP program and attaches it to the
@@ -40,20 +40,11 @@ class MIP(Canonicalizer):
             Linear expression object to add to the MIP instance. Later to
             be used in objective function, constraints or parameter.
 
-        lb: float
-            Lower bound of the variable.
-
-        ub: float
-            Upper bound of the variable.
-
         Returns
         -------
         None
         """
-        self.solver.add_var(var=var, lb=lb, ub=ub)
-
-    def add_param_stack_var(self, param_stack_var, param_list):
-        self.solver.add_param_stack_var(param_stack_var, param_list)
+        self.solver.add_var(var=var, lb=var.lb, ub=var.ub)
 
     def add_constraint(self, constraint: Constraint) -> None:
         """
@@ -72,10 +63,187 @@ class MIP(Canonicalizer):
         """
         self.solver.add_constr(constraint)
 
-    def add_relu_constraints(self, step: Relu) -> None:
+    def add_constraints(self, constraints: List[Constraint]) -> None:
+        """
+        Add a list of constraints to the MIP instance. This method registers
+        multiple constraints with the MIP problem and attaches them to
+        the internal model.
+
+        Parameters
+        ----------
+        constraints: List[Constraint]
+            List of constraints to add to the MIP instance.
+
+        Returns
+        -------
+        None
+        """
+        self.solver.constraints_to_solver(constraints)
+
+    def add_theory_cut(
+        self,
+        margin: float,
+        target_expr: LinearExpression,
+        lb: float | np.ndarray,
+        ub: float | np.ndarray,
+    ):
+        """
+        Add relaxed bound constraints on the target expression up to the
+        provided relaxation margin.
+
+        Parameters
+        ----------
+        margin: float
+            Relaxation margin for the bounds. If finite, the lower bound is
+            shifted to ``lb - C`` and the upper bound to ``ub + C``. If
+            ``np.inf``, no constraints are added
+
+        target_expr: LinearExpression
+            The expression whose bounds are to be relaxed.
+
+        lb: float | np.ndarray
+            Lower bound(s) for ``target_expr`` before relaxation.
+
+        ub: float | np.ndarray
+            Upper bound(s) for ``target_expr`` before relaxation.
+
+        Returns
+        -------
+        None
+        """
+        if margin != np.inf:
+            self.solver.constraints_to_solver(
+                [target_expr >= lb - margin, target_expr <= ub + margin]
+            )
+
+    def update_bounds(
+        self, expression: LinearExpression, lb: float | np.ndarray, ub: float | np.ndarray
+    ):
+        """
+        Update the lower and upper bounds of the solver variables corresponding
+        to the given ``LinearExpression``.
+
+        Parameters
+        ----------
+        expression: LinearExpression
+            A ``LinearExpression`` object whose underlying variables
+            bound are to be updated.
+
+        lb: float or np.ndarray
+            New lower bound(s).
+
+        ub: float or np.ndarray
+            New upper bound(s).
+
+
+        Returns
+        -------
+        None
+        """
+        self.solver.update_bounds(expression, lb, ub)
+
+    def set_zero_objective(self):
+        # this function is mostly just for debugging the constraints
+        self.solver.set_objective(expression=0)
+
+    def set_infinity_norm_objective(self, expr_list, lb_list, ub_list):
+        constraints = []
+        M = np.max(np.abs(np.hstack([np.hstack(lb_list), np.hstack(ub_list)])))
+        q = LinearExpression.from_int(ndim=1, ub=M)
+        all_gammas = []
+
+        for expr, lb, ub in zip(expr_list, lb_list, ub_list):
+            n = expr.ndim
+
+            up = LinearExpression.from_int(ndim=n, ub=np.abs(ub))
+            un = LinearExpression.from_int(ndim=n, ub=np.abs(lb))
+            constraints.append(up - un == expr)
+
+            all_gammas.append(gamma := LinearExpression.from_int(ndim=n, is_binary=True))
+            for _lb, _ub, _up, _un, _gamma in zip(lb, ub, up, un, gamma):
+                if _lb >= 0:
+                    constraints.append(_un == 0)
+                elif _ub < 0:
+                    constraints.append(_up == 0)
+                else:
+                    vobji = LinearExpression.from_int(ndim=1, is_binary=True)
+                    constraints.extend(
+                        [_up <= np.abs(_ub) * vobji, _un <= np.abs(_lb) * (1 - vobji)]
+                    )
+
+                constraints.extend([q >= _up + _un, q <= _up + _un + M * (1 - _gamma)])
+
+        # need 1 gamma across all vectors in the list
+        constraints.append(sum([sum(gamma) for gamma in all_gammas]) == 1)
+
+        self.solver.constraints_to_solver(constraints)
+        self.solver.set_objective(expression=q, sense="maximize")
+
+    def solve_model(self, steps: Step, huchette_cuts: bool = False) -> float:
+        """
+        Optimize the underlying MIP problem.
+
+        Optionally, add huchette cuts
+
+        Parameters
+        ----------
+        steps: Step
+
+
+        huchette_cuts: bool
+            If ``True`` huchette cuts are added to the MIP problem.
+
+        Returns
+        -------
+        float
+            The objective value for the current solution.
+
+        """
+        if huchette_cuts:
+            self.solver.add_huchette_cuts(steps)
+
+        self.solver.optimize()
+        return self.solver["objVal"]
+
+    def get_solution_value(self, expression: LinearExpression) -> np.ndarray:
+        """
+        Return the solution value for the given ``LinearExpression``.
+
+        Parameters
+        ----------
+        expression: LinearExpression
+            The expression whose solution value is to be computed. Each element in
+            its decomposition must have been registered with the solver.
+
+        Returns
+        -------
+        np.ndarray[float]
+            A 1-D array of shape ``(expression.ndim,)`` containing the
+            evaluated values at the current model solution.
+        """
+        return self.solver.get_solution_value(expression)
+
+    def canonicalize_affine(self, step: Affine) -> None:
+        """
+        Construct the linear equality constraint corresponding to the
+        affine iteration step. The constraint is used to express the affine
+        update step in the verification problem
+
+        Parameters
+        ----------
+        step: Affine
+            An instance of the ``Affine`` class to canonicalize to a MIP problem.
+
+        Returns
+        -------
+        None
+        """
+        self.add_constraint(step.lhs_mat @ step.lhs == step.rhs)
+
+    def canonicalize_relu(self, step: Relu):
         r"""
-        Construct and add the convex-hull linear constraints corresponding
-        to the `Rectified Linear Unit (ReLU)` operator to the model.
+        Construct the convex-hull linear constraints corresponding
+        to the `Rectified Linear Unit (ReLU)` operator.
 
         Given a ReLU step: $(\phi(v,x))_i = \mathbf{ReLU}(a^T y) = \max\{a^T y, 0\}.$
 
@@ -86,8 +254,8 @@ class MIP(Canonicalizer):
             \mathbb{R} | w = \textbf{ReLU}(a^{T}y) \right\},
         $$
 
-        expresses it as a set of LinearExpression objects, and adds these constraints to
-        the internal MIP model. The convex hull of the region is:
+        and expresses it as a set of Constraint objects. The convex hull
+        of the region is:
 
 
         $$
@@ -113,8 +281,8 @@ class MIP(Canonicalizer):
             \begin{aligned}
             & w \ge a^{\mathsf{T}} y, \quad y \ge 0, \\[4pt]
             & w \le \sum_{i \in I} a_i (y_i - \ell_i^{0})
-                + \frac{\ell_I}{u_o^{0} - \ell_o^{0}} (y_o - \ell_o^{0}),
-                \quad \forall (I, o) \in \mathcal{I}
+               + \frac{\ell_I}{u_o^{0} - \ell_o^{0}} (y_o - \ell_o^{0}),
+               \quad \forall (I, o) \in \mathcal{I}
             \end{aligned}
             \right\},
         $$
@@ -131,18 +299,17 @@ class MIP(Canonicalizer):
         Parameters
         ----------
         step: Relu
+            An instance of the `Relu` step to canonicalize.
 
         Returns
         -------
-
+        List[Constraint]
+            A list of constraint objects describing the convex hull of the feasible region
+            defined by the ReLU activation.
         """
         constraints = []
-        new_vars = {}
-
-        # after ranges are added, remove the range(n) and add the constraints when needed
-        # make sure to enforce equality constraints between lhs and rhs for other indices
         for i, (_lhs, _rhs) in enumerate(zip(step.lhs, step.rhs)):
-            if i in step.nonproj_indices:
+            if i not in step.proj_indices:
                 constraints.append(_lhs == _rhs)
             else:
                 if step.ub[i] <= 0:
@@ -150,254 +317,353 @@ class MIP(Canonicalizer):
                 elif step.lb[i] > 0:
                     constraints.append(_lhs == _rhs)
                 elif step.ub[i] > 0 or step.lb[i] <= 0:
-                    if not step.relax_binary_vars:
-                        new_vars[i] = LinearExpression.from_int(_rhs.ndim, is_binary=True)
-                        step.idx_with_binary_vars.add(i)
-                        constraints.append(_lhs <= step.ub[i] * new_vars[i])
+                    new_var = LinearExpression.from_int(_rhs.ndim, is_binary=True)
+                    step.idx_with_binary_vars.add(i)
+                    constraints.append(_lhs <= step.ub[i] * new_var)
 
                     constraints.extend(
                         [
                             _lhs <= step.ub[i] / (step.ub[i] - step.lb[i]) * (_rhs - step.lb[i]),
                             _lhs >= _rhs,
-                            _lhs <= _rhs - step.lb[i] * (1 - new_vars[i]),
+                            _lhs <= _rhs - step.lb[i] * (1 - new_var),
                         ]
                     )
+        self.add_constraints(constraints)
 
-        self.solver.constraints_to_solver(constraints)
+    def canonicalize_saturatedlinear(self, step: SaturatedLinear):
+        r"""
+        Construct the convex-hull linear constraints corresponding to
+        the saturated linear unit operator.
 
-    def add_saturated_linear_constraints(self, step):
+        Given a saturated linear unit operator, defined as:
+
+        $$
+            (\phi(v, b))_i = S_{[b, c]}(a^T y) =
+            \begin{cases}
+            b & a^T y < b, \\\\
+            a^T y & b \leq a^T y \leq c, \\\\
+            c & a^T y > c,
+            \end{cases}
+            \quad \text{with } y = (v, b), \text{and }
+             b, c \in \mathbb{R}.
+        $$
+
+        This method derives the convex hull of the region defined by:
+
+        $$
+            \Phi = \{ (y, w) \in [\underline{y}, \bar{y}] \times [b, c] \mid w =
+            \mathcal{S}_{[b,c]}(a^\top y) \}.
+        $$
+
+        and expresses it as a set of Constraint objects. The convex hull of the
+        region is:
+
+        $$
+            \operatorname{conv}(\Phi) =
+            \left\{
+            (y, w) \in [\underline{y}, \bar{y}] \times [b, c]
+            \;\middle|\;
+            \begin{cases}
+            w = b & u_J < b, \\[4pt]
+            w = c & \ell_J > c, \\[4pt]
+            w = a^\top y & b \le \ell_J \le u_J \le c, \\[4pt]
+            (y, w) \in Q & \text{otherwise}
+            \end{cases}
+            \right\},
+        $$
+
+        with
+
+        $$
+            Q =
+            \left\{
+            (y, w) \in \mathbb{R}^{p + d + 1}
+            \;\middle|\;
+            \begin{aligned}
+            & b \le w \le c, \\[4pt]
+            & \frac{b - c}{b - u_J}(a^\top y - u_J) + c
+            \;\le\;
+            w
+            \;\le\;
+            \frac{c - b}{c - \ell_J}(a^\top y - \ell_J) + b, \\[6pt]
+            & w \le \sum_{i \in I} a_i (y_i - \ell^0_i)
+            + \frac{\ell_I - b}{u^0_o - \ell^0_o}(y_o - \ell^0_o) + b,
+            \qquad \forall (I, o) \in \mathcal{I}^+, \\[6pt]
+            & w \ge \sum_{i \in I} a_i (y_i - u^0_i)
+            + \frac{u_I - c}{\ell^0_o - u^0_o}(y_o - u^0_o) + c,
+            \qquad \forall (I, o) \in \mathcal{I}^-
+            \end{aligned}
+            \right\}.
+        $$
+
+        where:
+
+        - vector $l^{0} \in \mathbb{R}^{d}$ with entries $l_i^{0} = \underline{y}_i \text{ if }
+        a_i \geq 0 \text{ and } \overline{y}_i$ otherwise,
+        - vector $u^{0} \in \mathbb{R}^{d}$ with entries $u_i^{0} = \overline{y}_i \text{ if }
+        a_i \geq 0 \text{ and } \underline{y}_i$ otherwise,
+        - Given $\textbf{I} \subseteq \textbf{J} = \left\{1, ..., n\right\}$, the lower bound is
+        defined as $l_I = \sum_{i \in I}a_il_i^{0} + \sum_{i \notin I}a_iu_i^{0}$ and the
+        upper bounds $u_I = \sum_{i \in I}a_iu_i^{0} + \sum_{i \notin I}a_il_i^{0}$,
+        - $\mathcal{I}^+ = \{ (I, o) \in 2^J \times J \mid \ell_I \ge b,\; \ell_{I \cup \{o\}}
+        < b,\; w_I \neq 0 \},$
+        - $\mathcal{I}^- = \{ (I, o) \in 2^J \times J \mid u_I \le c,\; u_{I \cup \{o\}} >
+        c,\; w_I \neq 0 \}.$
+
+        Parameters
+        ----------
+        step: SaturatedLinear
+            An instance of the `SaturatedLinear` step to canonicalize.
+
+        Returns
+        -------
+        None
+        """
         constraints = []
 
-        for i, (_lhs, _rhs) in enumerate(zip(step.lhs, step.rhs)):
-            if step.lb[i] >= step.u[i]:
-                constraints.append(_lhs == step.u[i])
-            elif step.ub[i] <= step.l[i]:
-                constraints.append(_lhs == step.l[i])
-            elif step.lb[i] >= step.l[i] and step.ub[i] <= step.u[i]:
-                constraints.append(_lhs == _rhs)
+        for l, u, lb, ub, lhs, rhs in zip(step.l, step.u, step.lb, step.ub, step.lhs, step.rhs):
+            # If the lower and upper saturation bounds are LinearExpression objects,
+            # then the lower and upper bounds of the LinearExpression will define
+            # the respective lower and upper saturation bounds
+            # These objects have already been registered with the solver
+            # so no further action is needed
+            try:
+                float(l), float(u)
+            except TypeError:
+                return
+
+            if lb >= u:
+                constraints.append(lhs == u)
+            elif ub <= l:
+                constraints.append(lhs == l)
+            elif lb >= l and ub <= u:
+                constraints.append(lhs == rhs)
             else:
                 if not step.relax_binary_vars:
-                    w1 = LinearExpression.from_int(_rhs.ndim, is_binary=True)
-                    w2 = LinearExpression.from_int(_rhs.ndim, is_binary=True)
-                    if step.lb[i] < step.l[i]:
+                    w1 = LinearExpression.from_int(rhs.ndim, is_binary=True)
+                    w2 = LinearExpression.from_int(rhs.ndim, is_binary=True)
+
+                    if lb < l:
                         constraints.extend(
                             [
-                                _lhs <= _rhs + (step.ub[i] - step.lb[i]) * w2,
-                                _rhs >= step.l[i] + (step.lb[i] - step.l[i]) * w2,
-                                _rhs <= step.l[i] + (step.ub[i] - step.l[i]) * (1 - w2),
+                                lhs <= rhs + (ub - lb) * w2,
+                                rhs >= l + (lb - l) * w2,
+                                rhs <= l + (ub - l) * (1 - w2),
                             ]
                         )
-                        if step.ub[i] > step.u[i]:
+
+                        if ub > u:
                             constraints.extend(
                                 [
-                                    _lhs >= step.u[i] - (step.u[i] - step.l[i]) * (1 - w1),
-                                    _lhs <= step.l[i] + (step.u[i] - step.l[i]) * (1 - w2),
-                                    _lhs <= _rhs + (step.ub[i] - step.lb[i]) * w2,
+                                    lhs >= u - (u - l) * (1 - w1),
+                                    lhs <= l + (u - l) * (1 - w2),
+                                    lhs >= l + (lb - l) * w2,
                                     w1 + w2 <= 1,
                                 ]
                             )
-                        elif step.ub[i] > step.u[i]:
-                            constraints.extend(
-                                [
-                                    _lhs <= step.l[i] + (step.ub[i] - step.l[i]) * (1 - w2),
-                                    _lhs >= step.l[i] + (step.lb[i] - step.l[i]) * w2,
-                                ]
-                            )
 
-                    if step.ub[i] > step.u[i]:
+                    if ub > u:
                         constraints.extend(
                             [
-                                _lhs >= _rhs - (step.ub[i] - step.lb[i]) * w1,
-                                _rhs >= step.u[i] + (step.lb[i] - step.u[i]) * (1 - w1),
-                                _rhs <= step.u[i] + (step.ub[i] - step.u[i]) * w1,
+                                lhs >= rhs - (ub - lb) * w1,
+                                rhs >= u + (lb - u) * (1 - w1),
+                                rhs <= u + (ub - u) * w1,
                             ]
                         )
+                        if lb > l:
+                            constraints.append(lhs >= u - (u - lb) * (1 - w1))
 
-                        if step.lb[i] > step.l[i]:
-                            constraints.append(
-                                _lhs >= step.u[i] - (step.u[i] - step.lb[i]) * (1 - w1)
-                            )
+                if lb < l and ub > u:
+                    expr = (u - l) / (u - lb) * (rhs - u) + u
+                    constraints.extend([lhs <= expr, lhs >= expr])
 
-                if step.lb[i] < step.l[i] and step.ub[i] > step.u[i]:
-                    # following two are redundant due to preprocessing bounds on the left hand side var
-                    expr = (step.u[i] - step.l[i]) / (step.u[i] - step.lb[i]) * (
-                        _rhs - step.u[i]
-                    ) + step.u[i]
-
-                    constraints.extend([_lhs <= expr, _lhs >= expr])
-
-                elif step.lb[i] < step.l[i] and step.ub[i] < step.u[i]:
+                elif lb < l and ub < u:
                     constraints.extend(
-                        [
-                            _lhs >= _rhs,
-                            _lhs
-                            <= ((step.ub[i] - step.l[i]) / (step.ub[i] - step.lb[i]))
-                            * (_rhs - step.ub[i])
-                            + step.ub[i],
-                        ]
+                        [lhs >= rhs, lhs <= ((ub - l) / (ub - lb)) * (rhs - ub) + ub]
                     )
 
-                elif step.lb[i] > step.l[i] and step.ub[i] > step.u[i]:
+                elif lb > l and ub > u:
                     constraints.extend(
-                        [
-                            _lhs <= _rhs,
-                            _lhs
-                            >= ((step.u[i] - step.lb[i]) / (step.ub[i] - step.lb[i]))
-                            * (_rhs - step.lb[i])
-                            + step.lb[i],
-                        ]
+                        [lhs <= rhs, lhs >= ((u - lb) / (ub - lb) * (rhs - lb) + lb)]
                     )
 
-                else:
-                    raise RuntimeError("Unreachable code")
+        self.add_constraints(constraints)
 
-        self.solver.constraints_to_solver(constraints)
+    def canonicalize_softthreshold(self, step: SoftThreshold):
+        r"""
+        Construct the convex-hull linear constraints corresponding to the
+        soft-thresholding operator.
 
-    def add_soft_threshold_constraints(self, step, lhs_lb, lhs_ub):
+        Given a soft-thresholding operator for shrinkage, defined as:
+
+        $$
+            (\phi(v,x))_i=\mathcal{T}_{\lambda}(a^\top y)=
+            \begin{cases}
+            a^\top y-\lambda,& a^\top y>\lambda,\\[6pt]
+            0,& |a^\top y|\le \lambda,\\[6pt]
+            a^\top y+\lambda,& a^\top y<-\lambda,
+            \end{cases}
+            \quad \text{with } y=(v,x).
+        $$
+
+        where, $\mathcal{T}_{\lambda}$ is the soft-thresholding operator with constant $\lambda>0$,
+        and $a\in\mathbf{R}^d$.
+
+        This method derives the convex hull of the region defined by:
+
+        $$
+            \Phi = \{ (y, w) \in [\underline{y}, \bar{y}] \times [b, c]
+            \mid w = \mathcal{S}_{[b,c]}(a^\top y) \}.
+        $$
+
+        and expresses it as a set of Constraint objects. The convex hull of the
+        region is:
+
+        $$
+            \operatorname{conv}(\Phi) =
+            \left\{
+            (y, w) \in [\underline{y}, \bar{y}] \times \mathbf{R}
+            \;\middle|\;
+            \begin{cases}
+            w = a^\top y - \lambda & \ell_J > \lambda, \\[4pt]
+            w = a^\top y  + \lambda & u_J < - \lambda, \\[4pt]
+            w = 0 & - \lambda \le \ell_J \le u_J \le \lambda, \\[4pt]
+            (y, w) \in Q & \text{otherwise}
+            \end{cases}
+            \right\},
+        $$
+
+        with
+
+        $$
+            Q = \left\{
+            (y, w) \in \mathbb{R}^{p + d + 1}
+            \;\middle|\;
+            \begin{aligned}
+            & a^\top y - \lambda \le w \le a^\top y + \lambda, \\[4pt]
+            & \frac{l_J + \lambda}{l_J - \lambda}(a^\top y - \lambda)
+            \;\le\;
+            w
+            \;\le\;
+            \frac{u_J - \lambda}{u_J + \lambda}(a^\top y + \lambda), \\[6pt]
+            & w \le \sum_{i \in I} a_i (y_i - \ell^0_i)
+            + \frac{\ell_I - \lambda}{u^0_o - \ell^0_o}(y_o - \ell^0_o),
+            \qquad \forall (I, o) \in \mathcal{I}^+, \\[6pt]
+            & w \ge \sum_{i \in I} a_i (y_i - u^0_i)
+            + \frac{u_I + \lambda}{u^0_o - u^0_o}(y_o - u^0_o),
+            \qquad \forall (I, o) \in \mathcal{I}^- .
+            \end{aligned}
+            \right\}.
+        $$
+
+        where:
+
+        - vector $l^{0} \in \mathbb{R}^{d}$ with entries $l_i^{0} = \underline{y}_i \text{ if }
+        a_i \geq 0 \text{ and } \overline{y}_i$ otherwise,
+        - vector $u^{0} \in \mathbb{R}^{d}$ with entries $u_i^{0} = \overline{y}_i \text{ if }
+        a_i \geq 0 \text{ and } \underline{y}_i$ otherwise,
+        - Given $\textbf{I} \subseteq \textbf{J} = \left\{1, ..., n\right\}$, the lower bound is
+        defined as $l_I = \sum_{i \in I}a_il_i^{0} + \sum_{i \notin I}a_iu_i^{0}$ and the
+        upper bounds $u_I = \sum_{i \in I}a_iu_i^{0} + \sum_{i \notin I}a_il_i^{0}$,
+        - $\mathcal{I}^+ = \{ (I, o) \in 2^J \times J \mid \ell_I \ge \lambda,\; \ell_{I \cup \{o\}}
+        < \lambda,\; w_I \neq 0 \},$
+        -  $\mathcal{I}^- = \{ (I, o) \in 2^J \times J \mid u_I \le - \lambda,\; u_{I \cup \{o\}} >
+        -\lambda,\; w_I \neq 0 \}.$
+        - and $w_I$ is the slicing of vector $w$ over $I$.
+
+        Parameters
+        ----------
+        step: SoftThreshold
+            An instance of the `SoftThreshold` step to canonicalize.
+
+        Returns
+        -------
+        None
+        """
         constraints = []
-        new_w1 = {}
-        new_w2 = {}
-        for i, (_lhs, _rhs) in enumerate(zip(step.lhs, step.rhs)):
-            if step.lb[i] >= step.lambd:
-                constraints.append(_lhs == _rhs - step.lambd)
-            elif step.ub[i] <= -step.lambd:
-                constraints.append(_lhs == _rhs + step.lambd)
-            elif step.lb[i] >= -step.lambd and step.ub[i] <= step.lambd:
-                constraints.append(_lhs == 0.0)
+
+        i = 0
+        for lb, ub, lhs_lb, lhs_ub, lhs, rhs in zip(
+            step.lb, step.ub, step.lhs.lb, step.lhs.ub, step.lhs, step.rhs
+        ):
+            if lb >= step.lambd:
+                constraints.append(lhs == rhs - step.lambd)
+            elif ub <= -step.lambd:
+                constraints.append(lhs == rhs + step.lambd)
+            elif lb >= -step.lambd and ub <= step.lambd:
+                constraints.append(lhs == 0)
             else:
                 if not step.relax_binary_vars:
-                    new_w1[i] = LinearExpression.from_int(_rhs.ndim, is_binary=True)
-                    new_w2[i] = LinearExpression.from_int(_rhs.ndim, is_binary=True)
+                    w1 = LinearExpression.from_int(rhs.ndim, is_binary=True)
+                    w2 = LinearExpression.from_int(rhs.ndim, is_binary=True)
                     step.idx_with_right_binary_vars.add(i)
 
-                    if step.ub[i] > step.lambd:
+                    if ub > step.lambd:
                         step.idx_with_left_binary_vars.add(i)
-                        # Upper right part: w1 = 1, y >= lambda_t
                         constraints.extend(
                             [
-                                _rhs >= step.lambd + (step.lb[i] - step.lambd) * (1 - new_w1[i]),
-                                _rhs <= step.lambd + (step.ub[i] - step.lambd) * new_w1[i],
-                                _lhs <= _rhs - step.lambd + (2 * step.lambd) * (1 - new_w1[i]),
+                                rhs >= step.lambd + (lb - step.lambd) * (1 - w1),
+                                rhs <= step.lambd + (ub - step.lambd) * w1,
+                                lhs <= rhs - step.lambd + (2 * step.lambd) * (1 - w1),
                             ]
                         )
 
-                        if step.lb[i] < -step.lambd:
+                        if lb < -step.lambd:
                             constraints.extend(
                                 [
-                                    _lhs <= lhs_ub[i] * new_w1[i],
-                                    _lhs >= lhs_lb[i] * new_w2[i],
-                                    new_w1[i] + new_w2[i] <= 1,
+                                    lhs <= lhs_ub * w1,
+                                    lhs >= lhs_lb * w2,
+                                    w1 + w2 <= 1,
                                 ]
                             )
 
-                        if -step.lambd <= step.lb[i] <= step.lambd:
-                            constraints.append(_lhs <= lhs_ub[i] * new_w1[i])
+                        if -step.lambd <= lb <= step.lambd:
+                            constraints.append(lhs <= lhs_ub * w1)
 
-                    if step.lb[i] < -step.lambd:
+                    if lb < -step.lambd:
                         step.idx_with_left_binary_vars.add(i)
-                        # Lower left part: w2 = 1, y <= -lambda_t
                         constraints.extend(
                             [
-                                _rhs <= -step.lambd + (step.ub[i] + step.lambd) * (1 - new_w2[i]),
-                                _rhs >= -step.lambd + (step.lb[i] + step.lambd) * new_w2[i],
-                                _lhs >= _rhs + step.lambd + (-2 * step.lambd) * (1 - new_w2[i]),
+                                rhs <= -step.lambd + (ub + step.lambd) * (1 - w2),
+                                rhs >= -step.lambd + (lb + step.lambd) * w2,
+                                lhs >= rhs + step.lambd + (-2 * step.lambd) * (1 - w2),
                             ]
                         )
 
-                        if -step.lambd <= step.lb[i] <= step.lambd:
-                            constraints.append(_lhs >= lhs_lb[i] * new_w2[i])
+                        if -step.lambd <= lb <= step.lambd:
+                            constraints.append(lhs >= lhs_lb * w2)
 
-                if step.lb[i] < -step.lambd and step.ub[i] > step.lambd:
+                if lb < -step.lambd and ub > step.lambd:
                     constraints.extend(
                         [
-                            _lhs >= _rhs - step.lambd,
-                            _lhs <= _rhs + step.lambd,
-                            _lhs <= lhs_ub[i] / (step.ub[i] + step.lambd) * (_rhs + step.lambd),
-                            _lhs >= lhs_lb[i] / (step.lb[i] - step.lambd) * (_rhs - step.lambd),
+                            lhs >= rhs - step.lambd,
+                            lhs <= rhs + step.lambd,
+                            lhs <= lhs_ub / (ub + step.lambd) * (rhs + step.lambd),
+                            lhs >= lhs_lb / (lb - step.lambd) * (rhs - step.lambd),
                         ]
                     )
 
-                elif -step.lambd <= step.lb[i] <= step.lambd < step.ub[i]:
+                elif -step.lambd <= lb <= step.lambd < ub:
                     constraints.extend(
                         [
-                            _lhs >= 0,
-                            _lhs <= lhs_ub[i] / (step.ub[i] - step.lb[i]) * (_rhs - step.lb[i]),
-                            _lhs >= _rhs - step.lambd,
+                            lhs >= 0,
+                            lhs <= lhs_ub / (ub - lb) * (rhs - lb),
+                            lhs >= rhs - step.lambd,
                         ]
                     )
 
-                elif step.lambd >= step.ub[i] >= -step.lambd >= step.lb[i]:
+                elif step.lambd >= ub >= -step.lambd >= lb:
                     constraints.extend(
                         [
-                            _lhs <= 0,
-                            _lhs >= lhs_lb[i] / (step.lb[i] - step.ub[i]) * (_rhs - step.ub[i]),
-                            _lhs <= _rhs + step.lambd,
+                            lhs <= 0,
+                            lhs >= lhs_lb / (lb - ub) * (rhs - ub),
+                            lhs <= rhs + step.lambd,
                         ]
                     )
 
                 else:
                     raise RuntimeError("Unreachable code")
 
-        self.solver.constraints_to_solver(constraints)
+            i += 1
 
-    def add_theory_cut(self, C, target_expr, bound_lb, bound_ub):
-        if C != np.inf:
-            self.solver.constraints_to_solver(
-                [target_expr >= bound_lb - C, target_expr <= bound_ub + C]
-            )
-
-    def post_process(self, target_expr, bound_lb, bound_ub):
-        self.solver.update_bounds(target_expr, bound_lb, bound_ub)
-
-    def set_zero_objective(self):
-        # this function is mostly just for debugging the constraints
-        self.solver.set_objective(expression=0)
-
-    def set_infinity_norm_objective(self, expr_list, lb_list, ub_list):
-        constraints = []
-        M = np.maximum(np.max(np.abs(np.hstack(ub_list))), np.max(np.abs(np.hstack(lb_list))))
-        # q = self.solver.get_var(ub=M)
-        q = LinearExpression.from_int(ndim=1, ub=M)
-
-        all_gammas = []
-
-        for expr, lb, ub in zip(expr_list, lb_list, ub_list):
-            n = expr.get_output_dim()
-            up = LinearExpression.from_int(ndim=n, ub=np.abs(ub))
-            un = LinearExpression.from_int(ndim=n, ub=np.abs(lb))
-            constraints.append(up - un == expr)
-
-            for i in range(n):
-                if lb[i] >= 0:
-                    constraints.append(un[i] == 0)
-                elif ub[i] < 0:
-                    constraints.append(up[i] == 0)
-                else:
-                    vobji = LinearExpression.from_int(ndim=1, is_binary=True)
-                    constraints.extend(
-                        [up[i] <= np.abs(ub[i]) * vobji, un[i] <= np.abs(lb[i]) * (1 - vobji)]
-                    )
-
-            gamma = LinearExpression.from_int(ndim=n, is_binary=True)
-            for i in range(n):
-                constraints.extend([q >= up[i] + un[i], q <= up[i] + un[i] + M * (1 - gamma[i])])
-
-            all_gammas.append(gamma)
-        # need 1 gamma across all vectors in the list
-        gamma_constr = 0
-        for gamma in all_gammas:
-            gamma_constr += sum([i for i in gamma])
-        constraints.append(gamma_constr == 1)
-
-        self.solver.constraints_to_solver(constraints)
-        self.solver.set_objective(expression=q, sense="maximize")
-
-    def solve_model(self, steps, bounds, **kwargs):
-        if kwargs.get("huchette_cuts", False):
-            self.solver.add_huchette_cuts(steps, bounds)
-
-        self.solver.optimize()
-        return self.solver["objVal"]
-
-    def extract_sol(self, iterate):
-        return self.solver.get_solution_value(iterate)
+        self.add_constraints(constraints)

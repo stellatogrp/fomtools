@@ -51,20 +51,24 @@ class Solver(object):
     def optimize(self):
         raise NotImplementedError
 
-    def add_huchette_cuts(self, steps, bounds):
+    def add_huchette_cuts(self, steps):
         self.relax_model()
 
         for step in steps:
             y_var, y_val = self.get_relaxed_variables(step.rhs)
             w_var, w_val = self.get_relaxed_variables(step.lhs)
-            l, u = tuple(
-                np.concatenate(x) for x in zip(*[bounds[k] for k in step.rhs.decomposition_dict])
-            )
+
+            l = np.concatenate(step.rhs.lb)
+            u = np.concatenate(step.rhs.ub)
 
             for i in range(step.lhs.ndim):
                 # special case out sparse matrices as needed
-                A = np.concatenate([np.asarray(v.todense()).reshape(-1) if spa.issparse(v) else v.flatten()
-                                    for v in step.rhs[i].decomposition_dict.values()])
+                A = np.concatenate(
+                    [
+                        np.asarray(v.todense()).reshape(-1) if spa.issparse(v) else v.flatten()
+                        for v in step.rhs[i].decomposition_dict.values()
+                    ]
+                )
 
                 # TODO: Gurobi is leaked in this part
                 Iint, lI, h, L_hat, U_hat = get_cuts(step, i, w_val[i], A, y_val, l, u)

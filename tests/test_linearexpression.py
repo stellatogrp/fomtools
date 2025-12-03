@@ -66,7 +66,7 @@ def test_composite_LinearExpressions():
     # x_test = np.random.uniform(size=(n,))
     A = np.random.normal(size=(m, n))
     # c = np.random.uniform(size=(n,))
-    # b = A @ x_test
+    # x = A @ x_test
 
     x = LinearExpression.from_int(n)
     y = LinearExpression.from_int(m)

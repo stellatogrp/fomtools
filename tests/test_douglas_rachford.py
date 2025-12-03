@@ -47,7 +47,8 @@ def test_dr(vp):
     q_param = vp.add_param(n + m, lb=q_l, ub=q_u)
 
     z0_init = np.zeros(n + m)
-    z0 = vp.initial_iterate(m + n, lb=z0_init, ub=z0_init)
+    z0 = vp.add_iterate(m + n, lb=z0_init, ub=z0_init)
+
     K = 5
     u = [None for _ in range(K + 1)]
     utilde = [None for _ in range(K + 1)]
@@ -58,21 +59,20 @@ def test_dr(vp):
 
     for k in range(1, K + 1):
         print(f"-K = {k}-")
-        u[k] = vp.implicit_linear_step(
-            lhs.todense(), z[k - 1] - q_param, lhs_mat_factorization=lhs_factored
-        )
-        utilde[k] = vp.relu_step(2 * u[k] - z[k - 1], proj_ranges=(n, n + m))
+        u[k] = vp.step.implicit_linear(z[k - 1] - q_param, lhs_mat=lhs.todense(),
+                            lhs_mat_factorization=lhs_factored)
+        utilde[k] = vp.step.relu(2 * u[k] - z[k - 1], proj_ranges=(n, n + m))
         z[k] = z[k - 1] + utilde[k] - u[k]
 
         vp.set_infinity_norm_objective(z[k] - z[k - 1])
         res = vp.solve()
         all_res.append(res)
 
-    print(f"opt q_param at last K: {vp.extract_sol(q_param)}")
+    print(f"opt q_param at last K: {vp.get_solution_value(q_param)}")
     print(f"vp_gurobi resids: {all_res}")
 
     zk = z0_init
-    q = vp.extract_sol(q_param)
+    q = vp.get_solution_value(q_param)
     PGD_resids = []
 
     for k in range(K):

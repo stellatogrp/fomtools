@@ -29,7 +29,7 @@ def test_partial_nnqp(vp):
 
     q_offset = 1
     q_param = vp.add_param(n, lb=q - q_offset, ub=q + q_offset)
-    z0 = vp.initial_iterate(n, lb=-1, ub=-1)
+    z0 = vp.add_iterate(n, lb=-1, ub=-1)
 
     K = 10
     z = [None for _ in range(K + 1)]
@@ -38,19 +38,18 @@ def test_partial_nnqp(vp):
     all_res = []
     for k in range(1, K + 1):
         print(k)
-        z[k] = vp.relu_step(z[k - 1] - t * (P @ z[k - 1] + q_param), proj_ranges=proj_ranges)
+        z[k] = vp.step.relu(z[k - 1] - t * (P @ z[k - 1] + q_param), proj_ranges=proj_ranges)
 
         vp.set_infinity_norm_objective(z[k] - z[k - 1])
         res = vp.solve(huchette_cuts=True)
         all_res.append(res)
         vp.post_process(z[k], z[0], all_res)
 
-    print(f"opt q_param at last K: {vp.extract_sol(q_param)}")
-
+    print(f"opt q_param at last K: {vp.get_solution_value(q_param)}")
     print(f"vp_gurobi resids: {all_res}")
 
     zk = -np.ones(n)
-    q = vp.extract_sol(q_param)
+    q = vp.get_solution_value(q_param)
     PGD_resids = []
 
     for k in range(K):
