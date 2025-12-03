@@ -6,7 +6,6 @@ from algoverify import LinearExpression
 from algoverify.canonicalizers.canonicalizer import Canonicalizer
 from algoverify.constraint import Constraint
 from algoverify.steps import Affine, Relu, SaturatedLinear, SoftThreshold, Step
-from algoverify.steps.step import Step
 
 
 class MIP(Canonicalizer):

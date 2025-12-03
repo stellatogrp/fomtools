@@ -1,4 +1,3 @@
-
 import numpy as np
 
 from algoverify.linearexpression import LinearExpression
