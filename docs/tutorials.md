@@ -1,2 +1,2 @@
-## Tutorials 
+## Tutorials
 * [NNLS](tutorials/NNLS.html)
