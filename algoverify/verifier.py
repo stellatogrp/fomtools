@@ -291,7 +291,7 @@ class Verifier(object):
 
         self._register_var(lhs)
         self.iterates.append(lhs)
-        self.canonicalizer.add_constraints(step.get_constraints())
+        self.canonicalizer.canonicalize(step)
         self.steps.append(step)
 
         return lhs

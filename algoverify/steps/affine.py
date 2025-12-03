@@ -1,8 +1,6 @@
-from typing import List
 
 import numpy as np
 
-from algoverify.constraint import Constraint
 from algoverify.linearexpression import LinearExpression
 from algoverify.steps.step import Step
 
@@ -70,15 +68,3 @@ class Affine(Step):
                 for k, v in self.rhs.decomposition_dict.items()
             },
         )
-
-    def get_constraints(self) -> List[Constraint]:
-        """
-        Construct the linear equality constraints corresponding to the
-        affine iteration step. The constraint is used to express the affine update step in the
-        verification problem
-
-        Returns
-        -------
-         A Linear Constraint that enforces the affine relation.
-        """
-        return [self.lhs_mat @ self.lhs == self.rhs]

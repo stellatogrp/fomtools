@@ -1,5 +1,6 @@
 from algoverify.solvers import gurobi, highs
 from algoverify.solvers.solver import Solver
+from algoverify.steps.step import Step
 
 
 class Canonicalizer:
@@ -73,6 +74,44 @@ class Canonicalizer:
                 return highs.HiGHSSolver(solver_params)
             case _:
                 raise ValueError(f"Solver must be 'gurobi' or 'TBD', got {solver}.")
+
+    def canonicalize(self, step: Step):
+        """
+        Dispatch the provided step into a backend-specific encoding.
+
+        This method converts a `Step` instance (e.g., ``Relu``, ``SoftThreshold``,
+        ``Affine``) into a collection of backend-specific constraints for the
+        underlying optimization problem. The canonicalizer inspects the concrete
+        type of ``step`` and forwards the call to a method of the form
+        ``canonicalize_<step_class_name>()`` defined on the subclasses,
+        for example ``canonicalize_relu`` or ``canonicalize_soft_threshold``.
+
+        Parameters
+        ----------
+        step: Step
+            The concrete step class to canonicalize. This class encapsulates
+            the thresholding or activation operator.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        NotImplementedError
+            If this canonicalizer does not provide an encoder for the concrete
+            type of ``step`` (i.e. no matching ``canonicalize_<step_class_name>`` method
+            is implemented).
+
+        """
+        method_name = f"canonicalize_{type(step).__name__.lower()}"
+        try:
+            canonicalizer = getattr(self, method_name)
+        except AttributeError:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} does not support {type(step).__name__}"
+            )
+        canonicalizer(step)
 
     def add_var(self, iterate):
         raise NotImplementedError

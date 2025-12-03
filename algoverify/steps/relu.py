@@ -2,7 +2,6 @@ from typing import List, Tuple
 
 import numpy as np
 
-from algoverify.constraint import Constraint
 from algoverify.linearexpression import LinearExpression
 from algoverify.steps.step import Step
 
@@ -114,89 +113,3 @@ class Relu(Step):
 
         """
         self.lhs.update_bounds(lb=self.relu(lb), ub=self.relu(ub))
-
-    def get_constraints(self) -> List[Constraint]:
-        r"""
-        Construct the convex-hull linear constraints corresponding
-        to the `Rectified Linear Unit (ReLU)` operator.
-
-        Given a ReLU step: $(\phi(v,x))_i = \mathbf{ReLU}(a^T y) = \max\{a^T y, 0\}.$
-
-        This method derives the convex hull of the region defined by:
-
-        $$
-            \phi = \left\{ (y, w) \in \left [\underline{y}, \overline{y} \right ] \times
-            \mathbb{R} | w = \textbf{ReLU}(a^{T}y) \right\},
-        $$
-
-        and expresses it as a set of Constraint objects. The convex hull
-        of the region is:
-
-
-        $$
-            \operatorname{conv}(\Phi) =
-            \left\{
-            (y, w) \in [\underline{y}, \overline{y}] \times \mathbb{R}
-            \;\middle|\;
-            \begin{cases}
-            w = a^{\mathsf{T}} y, & \ell_J \ge 0, \\[6pt]
-            w = 0, & \ell_J < 0, \\[6pt]
-            (y, w) \in Q, & \text{otherwise}
-            \end{cases}
-            \right\},
-        $$
-
-        with
-
-        $$
-            Q =
-            \left\{
-            (y, w) \in \mathbb{R}^{d + p + 1}
-            \;\middle|\;
-            \begin{aligned}
-            & w \ge a^{\mathsf{T}} y, \quad y \ge 0, \\[4pt]
-            & w \le \sum_{i \in I} a_i (y_i - \ell_i^{0})
-               + \frac{\ell_I}{u_o^{0} - \ell_o^{0}} (y_o - \ell_o^{0}),
-               \quad \forall (I, o) \in \mathcal{I}
-            \end{aligned}
-            \right\},
-        $$
-
-        where:
-
-        - vector $l^{0} \in \mathbb{R}^{d}$ with entries $l_i^{0} = \underline{y}_i \text{ if }
-        a_i \geq 0 \text{ and } \overline{y}_i$ otherwise,
-        - vector $u^{0} \in \mathbb{R}^{d}$ with entries $u_i^{0} = \overline{y}_i \text{ if }
-        a_i \geq 0 \text{ and } \underline{y}_i$ otherwise,
-        - Given $\textbf{I} \subseteq \textbf{J} = \left\{1, ..., n\right\}$, the lower bound is
-        defined as $l_I = \sum_{i \in I}a_il_i^{0} + \sum_{i \notin I}a_iu_i^{0}$
-
-
-        Returns
-        -------
-        List[Constraint]
-            A list of constraint objects describing the convex hull of the feasible region
-            defined by the ReLU activation.
-        """
-        constraints = []
-        for i, (_lhs, _rhs) in enumerate(zip(self.lhs, self.rhs)):
-            if i not in self.proj_indices:
-                constraints.append(_lhs == _rhs)
-            else:
-                if self.ub[i] <= 0:
-                    constraints.append(_lhs == 0)
-                elif self.lb[i] > 0:
-                    constraints.append(_lhs == _rhs)
-                elif self.ub[i] > 0 or self.lb[i] <= 0:
-                    new_var = LinearExpression.from_int(_rhs.ndim, is_binary=True)
-                    self.idx_with_binary_vars.add(i)
-                    constraints.append(_lhs <= self.ub[i] * new_var)
-
-                    constraints.extend(
-                        [
-                            _lhs <= self.ub[i] / (self.ub[i] - self.lb[i]) * (_rhs - self.lb[i]),
-                            _lhs >= _rhs,
-                            _lhs <= _rhs - self.lb[i] * (1 - new_var),
-                        ]
-                    )
-        return constraints
