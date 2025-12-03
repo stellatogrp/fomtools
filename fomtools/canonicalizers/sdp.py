@@ -2,10 +2,11 @@ import numpy as np
 
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
 from fomtools.linearexpression import LinearExpression
+from fomtools.steps import Relu
 
 
 class SDP(Canonicalizer):
-    def __init__(self, solver_params=None, solver="gurobi"):
+    def __init__(self, solver_params=None, solver="clarabel"):
         super(SDP, self).__init__(solver_params, solver)
         self.range_marker = 1
         self.lower_bounds = {}
@@ -25,3 +26,6 @@ class SDP(Canonicalizer):
 
     def add_equality_constraint(self, lhs_expr, rhs_expr):
         raise NotImplementedError
+
+    def add_relu_constraints(self, step: Relu) -> None:
+        pass
