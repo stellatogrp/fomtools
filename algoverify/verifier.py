@@ -6,8 +6,8 @@ import numpy as np
 from algoverify.canonicalizers.mip import MIP
 from algoverify.canonicalizers.obbt_handler import OBBTHandler
 from algoverify.linearexpression import LinearExpression
-from algoverify.steps import Step, Affine, Relu, SaturatedLinear, SoftThreshold
-from algoverify.proxable_functions import NormL1, ProxableFunction
+from algoverify.proxable_functions import ProxableFunction
+from algoverify.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 log = logging.getLogger(__name__)
 

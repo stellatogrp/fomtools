@@ -1,4 +1,3 @@
-from algoverify import LinearExpression
 
 
 class ProxableFunction:

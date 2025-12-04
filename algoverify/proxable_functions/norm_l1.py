@@ -1,5 +1,6 @@
-from algoverify.proxable_functions import ProxableFunction
 import numpy as np
+
+from algoverify.proxable_functions import ProxableFunction
 
 
 class NormL1(ProxableFunction):
