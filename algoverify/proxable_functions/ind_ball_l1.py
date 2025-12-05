@@ -5,5 +5,5 @@ class IndBallL1(ProxableFunction):
     def __init__(self, r: float):
         self.r = r
 
-    def prox(self, x, gamma):
+    def prox(self, x, gamma=1):
         pass

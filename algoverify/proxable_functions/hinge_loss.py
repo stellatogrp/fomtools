@@ -5,5 +5,5 @@ class HingeLoss(ProxableFunction):
     def __init__(self, mu):
         self.mu = mu
 
-    def prox(self, x, gamma):
+    def prox(self, x, gamma=1):
         pass

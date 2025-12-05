@@ -13,5 +13,5 @@ class ElasticNet(ProxableFunction):
     def elastic_net(self, x):
         return self.mu * norm(x, 1) + (self.lambd / 2) * norm(x, 2) ** 2
 
-    def prox(self, x, gamma):
+    def prox(self, x, gamma=1):
         pass

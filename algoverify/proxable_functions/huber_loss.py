@@ -6,5 +6,5 @@ class HuberLoss(ProxableFunction):
         self.mu = mu
         self.rho = rho
 
-    def prox(self, x, gamma):
+    def prox(self, x, gamma=1):
         pass

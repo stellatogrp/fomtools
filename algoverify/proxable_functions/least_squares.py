@@ -6,5 +6,5 @@ class LeastSquares(ProxableFunction):
         self.lambd = lambd
         self.iterative = iterative
 
-    def prox(self, x, gamma):
+    def prox(self, x, gamma=1):
         pass

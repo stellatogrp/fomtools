@@ -9,5 +9,5 @@ class IndHalfSpace(ProxableFunction):
         self.b = b
         self.norm_a = norm_a
 
-    def prox(self, x, gamma):
+    def prox(self, x, gamma=1):
         pass

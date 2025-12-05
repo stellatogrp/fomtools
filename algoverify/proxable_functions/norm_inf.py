@@ -5,5 +5,5 @@ class NormInf(ProxableFunction):
     def __init__(self, float=1):
         self.float = float
 
-    def prox(self, x, gamma):
+    def prox(self, x, gamma=1):
         pass

@@ -11,5 +11,5 @@ class IndPolyhedral(ProxableFunction):
         self.xmin = xmin
         self.xmax = xmax
 
-    def prox(self, x, gamma):
+    def prox(self, x, gamma=1):
         pass

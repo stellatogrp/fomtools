@@ -10,5 +10,5 @@ class Quadratic(ProxableFunction):
         self.q = q
         self.iterative = iterative
 
-    def prox(self, x, gamma):
+    def prox(self, x, gamma=1):
         pass
