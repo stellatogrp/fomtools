@@ -45,8 +45,8 @@ def test_verifier(vp):
     c_param = vp.add_param(n, lb=c, ub=c)
     b_param = vp.add_param(m, lb=b - b_offset, ub=b + b_offset)  # add boxes here when testing
 
-    x0 = vp.initial_iterate(n, lb=1, ub=1)
-    y0 = vp.initial_iterate(m, lb=1, ub=1)
+    x0 = vp.add_iterate(n, lb=1, ub=1)
+    y0 = vp.add_iterate(m, lb=1, ub=1)
 
     K = 10
 
@@ -59,7 +59,7 @@ def test_verifier(vp):
     all_res = []
     for k in range(1, K + 1):
         print(k)
-        x[k] = vp.relu_step(x[k - 1] - t * (c_param - A.T @ y[k - 1]))
+        x[k] = vp.step.relu(x[k - 1] - t * (c_param - A.T @ y[k - 1]))
         y[k] = y[k - 1] - t * (A @ (2 * x[k] - x[k - 1]) - b_param)
 
         vp.set_infinity_norm_objective([x[k] - x[k - 1], y[k] - y[k - 1]])
@@ -70,13 +70,13 @@ def test_verifier(vp):
     print(f"DR resids: {DR_resids[:K]}")
 
     print(f"b_c: {b}")
-    print(vp.extract_sol(b_param))
-    b_test = vp.extract_sol(b_param)
+    print(vp.get_solution_value(b_param))
+    b_test = vp.get_solution_value(b_param)
 
-    xK = vp.extract_sol(x[K])
-    xKminus1 = vp.extract_sol(x[K - 1])
-    yK = vp.extract_sol(y[K])
-    yKminus1 = vp.extract_sol(y[K - 1])
+    xK = vp.get_solution_value(x[K])
+    xKminus1 = vp.get_solution_value(x[K - 1])
+    yK = vp.get_solution_value(y[K])
+    yKminus1 = vp.get_solution_value(y[K - 1])
 
     test_resid = np.max(np.abs(np.hstack([xK - xKminus1, yK - yKminus1])))
     print(test_resid)

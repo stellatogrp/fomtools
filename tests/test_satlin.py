@@ -31,7 +31,7 @@ def test_satlin(vp_param_2):
     q_offset = 1
     q_param = vp_param_2.add_param(n, lb=q - q_offset, ub=q + q_offset)
 
-    z0 = vp_param_2.initial_iterate(n, lb=z0_init, ub=z0_init)
+    z0 = vp_param_2.add_iterate(n, lb=z0_init, ub=z0_init)
 
     K = 12
     z = [None for _ in range(K + 1)]
@@ -40,30 +40,26 @@ def test_satlin(vp_param_2):
     all_res = []
     for k in range(1, K + 1):
         print(k)
-        z[k] = vp_param_2.saturated_linear_step(z[k - 1] - t * (P @ z[k - 1] + q_param), l, u)
+        z[k] = vp_param_2.step.satlin(z[k - 1] - t * (P @ z[k - 1] + q_param), l=l, u=u)
 
         vp_param_2.set_infinity_norm_objective(z[k] - z[k - 1])
         res = vp_param_2.solve()
         all_res.append(res)
 
-    print(f"opt q_param at last K: {vp_param_2.extract_sol(q_param)}")
+    print(f"opt q_param at last K: {vp_param_2.get_solution_value(q_param)}")
     print(f"VP resids: {all_res}")
 
     print("extracting values from VP:")
     for k in range(K + 1):
         print(f"-K={k}-")
-        print(vp_param_2.extract_sol(z[k]))
+        print(vp_param_2.get_solution_value(z[k]))
 
     z_test = np.array([-0.91651, 1, 0])
-    print("test grad step from K-1:", z_test - t * (P @ z_test + vp_param_2.extract_sol(q_param)))
-    print(
-        "bounds:",
-        vp_param_2.bounds[vp_param_2.iterates[-1]][0],
-        vp_param_2.bounds[vp_param_2.iterates[-1]][1],
-    )
+    print("test grad step from K-1:", z_test - t * (P @ z_test + vp_param_2.get_solution_value(q_param)))
+    print("bounds:", vp_param_2.iterates[-1].lb, vp_param_2.iterates[-1].ub)
 
     zk = z0_init
-    q = vp_param_2.extract_sol(q_param)
+    q = vp_param_2.get_solution_value(q_param)
     PGD_resids = []
 
     for k in range(K):
@@ -105,21 +101,18 @@ def test_satlin_param(vp_param_2):
     K = 5
 
     z = [None for _ in range(K + 1)]
-    z[0] = vp_param_2.initial_iterate(n, lb=0, ub=0)
+    z[0] = vp_param_2.add_iterate(n, lb=0, ub=0)
 
     all_res = []
     for k in range(1, K + 1):
         print(k)
-        z[k] = vp_param_2.saturated_linear_param_step(
-            z[k - 1] - t * (P @ z[k - 1] + q_param), l_param, u_param
-        )
-
+        z[k] = vp_param_2.step.satlin(z[k - 1] - t * (P @ z[k - 1] + q_param), l=l_param, u=u_param)
         vp_param_2.set_infinity_norm_objective(z[k] - z[k - 1])
         res = vp_param_2.solve()
         all_res.append(res)
 
-        l_test = vp_param_2.extract_sol(l_param)
-        u_test = vp_param_2.extract_sol(u_param)
+        l_test = vp_param_2.get_solution_value(l_param)
+        u_test = vp_param_2.get_solution_value(u_param)
         print(l_test, u_test)
 
         assert l_test[0] == u_test[0]

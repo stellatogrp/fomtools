@@ -1,11 +1,8 @@
-from dataclasses import dataclass
+from functools import cached_property
 
-import numpy as np
-
-from algoverify.linearexpression import LinearExpression
+from algoverify import LinearExpression
 
 
-@dataclass(frozen=True)
 class Step:
     """
     A base class for thresholding and activation steps. This class
@@ -27,11 +24,18 @@ class Step:
         are relaxed to take continuous values.
     """
 
-    lhs: LinearExpression
-    rhs: LinearExpression
-    lb: float = -np.inf
-    ub: float = np.inf
-    relax_binary_vars: bool = False
+    def __init__(self, rhs: LinearExpression, relax_binary_vars: bool = False):
+        self.rhs = rhs
+        self.lb, self.ub = self.rhs.bound_propagation()
+        self.relax_binary_vars = relax_binary_vars
+
+    @cached_property
+    def lhs(self) -> LinearExpression:
+        """Left-hand side linear expression in the operator definition."""
+        return LinearExpression.from_int(self.rhs.ndim)
+
+    def update_bounds(self, lb, ub):
+        pass
 
     # TODO: figure out a better way to hash these objects
     def __hash__(self):

@@ -39,13 +39,13 @@ def test_nnls_convergence(vp_param_1):
     # Get fixed point z* using Verifier's fixed_point method
     z_star = vp_param_1.fixed_point(
         n_dim=n,
-        operator=lambda z: vp_param_1.relu_step(z - eta * A.T @ (A @ z - x_param)),
+        operator=lambda z: vp_param_1.step.relu(z - eta * A.T @ (A @ z - x_param)),
         lb=0,
         ub=100,
     )
 
     # Set up initial iterate
-    z0 = vp_param_1.initial_iterate(n, lb=1, ub=1)
+    z0 = vp_param_1.add_iterate(n, lb=1, ub=1)
     z = [None for _ in range(K + 1)]
     z[0] = z0
 
@@ -54,25 +54,24 @@ def test_nnls_convergence(vp_param_1):
     for k in range(1, K + 1):
         print(k)
         # Perform ReLU step: z[k] = ReLU(z[k-1] - eta * A^T(Az[k-1] - x))
-        z[k] = vp_param_1.relu_step(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x_param))
-
+        z[k] = vp_param_1.step.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x_param))
         # Set objective to measure ||z[k] - z*||_inf
         vp_param_1.set_infinity_norm_objective([z[k] - z_star])
         res = vp_param_1.solve()
         all_residuals.append(res)
 
-    print(f"opt x_param at last K: {vp_param_1.extract_sol(x_param)}")
+    print(f"opt x_param at last K: {vp_param_1.get_solution_value(x_param)}")
     print(f"VP resids: {all_residuals}")
 
     # Extract the actual values from the verification
-    z_star_value = vp_param_1.extract_sol(z_star)
-    x_worst_case = vp_param_1.extract_sol(x_param)  # Extract the worst-case x that was used
+    z_star_value = vp_param_1.get_solution_value(z_star)
+    x_worst_case = vp_param_1.get_solution_value(x_param)  # Extract the worst-case x that was used
 
     print(f"\nExtracted z_star from verification: {z_star_value}")
     print("extracting values from VP:")
     for k in range(K + 1):
         print(f"-K={k}-")
-        print(vp_param_1.extract_sol(z[k]))
+        print(vp_param_1.get_solution_value(z[k]))
 
     # Solve the same problem with CVXPY using the exact same x that verification used
     z_optimal_value = fixed_point(n, A, x_worst_case, l=0)

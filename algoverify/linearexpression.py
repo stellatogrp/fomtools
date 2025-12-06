@@ -102,9 +102,13 @@ class LinearExpression:
         LinearExpression.counter += 1
         self.is_leaf = False
         self.is_binary = is_binary
+        self.lb = [i.lb for i in decomposition_dict.keys()]
+        self.ub = [i.ub for i in decomposition_dict.keys()]
 
     @classmethod
-    def from_int(cls, ndim: int, is_binary: bool = False, lb: float = -np.inf, ub: float = np.inf) -> Self:
+    def from_int(
+        cls, ndim: int, is_binary: bool = False, lb: float = -np.inf, ub: float = np.inf
+    ) -> Self:
         """
         Initialize a `LinearExpression` object with an integer `shape`. Internally, this
         creates a decomposition dictionary that maps the `LinearExpression` object with a sparse
@@ -484,18 +488,6 @@ class LinearExpression:
                 got {type(matrix).__name__}. """
             )
 
-    def get_output_dim(self) -> int:
-        """
-        Return the dimension of this `LinearExpression`. The dimension is given by
-        the number of rows of the coefficient matrices in `decomposition_dict`.
-        """
-
-        return [mat.shape[0] for mat in self.decomposition_dict.values()][0]
-
-    def eval(self):
-        # TODO
-        raise NotImplementedError("LinExpr.eval() needs to be implemented.")
-
     def __le__(self, rhs: Union[Self, np.ndarray, list]) -> InequalityConstraint:
         """
         Build a less-than-or-equality (`<=`) constraint between this expression and
@@ -591,3 +583,63 @@ class LinearExpression:
         for the solver.
         """
         return InequalityConstraint(-self, -rhs)
+
+    def update_bounds(self, lb: np.ndarray, ub: np.ndarray) -> None:
+        """Update lower and upper bounds of the `LinearExpression` objects."""
+        self.lb = np.maximum(self.lb, lb)
+        self.ub = np.minimum(self.ub, ub)
+
+    def bound_propagation(self) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Compute the elementwise lower and upper bounds of a linear expression
+        given the bound constraints of its coefficient matrices.
+
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray]
+            A pair (lower, upper) representing the elementwise lower and upper
+            bounds of the evaluated expression.
+
+        Raises
+        ------
+        ValueError
+            If any computed lower bound exceeds its corresponding upper bound.
+        """
+
+        def _interval_bound_propagation(
+            a: np.matrix, lb: np.ndarray, ub: np.ndarray
+        ) -> tuple[np.ndarray, np.ndarray]:
+            """
+            Bounds the linear image y = A @ x for any x with lb ≤ x ≤ ub.
+
+            Using midpoint m = (ub + lb)/2 and radius r = (ub - lb)/2:
+                y_min = A @ m - |A| @ r
+                y_max = A @ m + |A| @ r
+
+            Returns (y_min, y_max).
+
+            References
+            ----------
+                .. S. Gowal, K. Dvijotham, R. Stanforth, R. Bunel, C. Qin, J. Uesato, R. Arand-
+                   jelovi´c, T. Mann, and Sigma. Kohli. "On the effectiveness of interval bound propa-
+                   gation for training verifiably robust models. arXiv:1810.12715, 2018."
+            """
+            return (a @ (ub + lb) - np.abs(a) @ (ub - lb)) / 2, (
+                a @ (ub + lb) + np.abs(a) @ (ub - lb)
+            ) / 2
+
+        out_lb, out_ub = np.zeros(self.ndim), np.zeros(self.ndim)
+        for k, v in self.decomposition_dict.items():
+            _lb, _ub = _interval_bound_propagation(v, k.lb, k.ub)
+
+            if np.any(_lb > _ub):
+                raise ValueError("Lower bound cannot exceed upper bound .")
+
+            out_lb += _lb
+            out_ub += _ub
+
+        return out_lb, out_ub
+
+    def eval(self):
+        # TODO
+        raise NotImplementedError("LinExpr.eval() needs to be implemented.")

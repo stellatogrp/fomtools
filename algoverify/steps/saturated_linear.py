@@ -1,25 +1,24 @@
-from dataclasses import dataclass
-from functools import cached_property
+import numpy as np
 
+from algoverify import LinearExpression
 from algoverify.steps.step import Step
 
 
-@dataclass(frozen=True, kw_only=True)
 class SaturatedLinear(Step):
     r"""
     Saturated Linear Unit step operator, defined as:
 
     $$
-        (\phi(v, x))_i = S_{[b, c]}(a^T y) =
+        (\phi(v, x))_i = S_{[x, c]}(a^T y) =
         \begin{cases}
-            b & a^T y < b, \\\\
-            a^T y & b \leq a^T y \leq c, \\\\
+            x & a^T y < x, \\\\
+            a^T y & x \leq a^T y \leq c, \\\\
             c & a^T y > c,
         \end{cases}
         \quad \text{with } y = (v, x).
     $$
 
-    where $b, c \in \mathbb{R}$.
+    where $x, c \in \mathbb{R}$.
 
     Attributes
     ----------
@@ -29,40 +28,70 @@ class SaturatedLinear(Step):
         Right-hand side linear expression in the operator definition.
     lb: float
         Lower bound associated with the transformed values.
-    ub: float
+    ub: floatg
         Lower bound associated with the transformed values.
     relax_binary_vars: bool
         If true, binary decision variables associated with the operator
         are relaxed to take continuous values.
-    l: int
-        ...
-    u: int
-        ...
-    equality_ranges: list
-        List of index intervals that specify which parts of the output receive
-        the SatLU projection.
-    eq_indices: set[int]
-        Indices of output coordinates subjected to Saturated Linear Unit projection.
-    ineq_indices: set[int]
-        Indices of output coordinates not subjected to Saturated Linear Unit projection.
+    l: np.ndarray[float] | LinearExpression
+        The lower saturation bound of the saturated linear operator.
+        Can be either a numeric value or a LinearExpression object whose
+        lower boudnds acts as the lower saturation bound.
+    u: np.ndarray[float] | LinearExpression
+        The upper saturation bound of the saturated linear operator.
+        Can be either a numeric value or a LinearExpression object whose
+        upper boudnds acts as the upper saturation bound.
     """
 
-    # todo: complete the docstring
-    l: int
-    u: int
-    equality_ranges: list = None
+    def __init__(
+        self,
+        rhs: LinearExpression,
+        l: LinearExpression | np.ndarray[float],
+        u: LinearExpression | np.ndarray[float],
+        relax_binary_vars: bool = False,
+    ):
+        super().__init__(rhs, relax_binary_vars)
+        self.l = l
+        self.u = u
 
     def __hash__(self):
         return hash((self.rhs, self.lhs))
 
-    @cached_property
-    def eq_indices(self):
-        """Returns indices of output coordinates that are subjected to Saturated Linear Unit projections."""
-        if self.equality_ranges is not None:
-            return {i for (min, max) in self.equality_ranges for i in range(min, max)}
-        return set()
+    def satlin(self, x: np.ndarray) -> np.ndarray:
+        """
+        Apply Saturated Linear Unit operator to the input
+        arrray.
 
-    @cached_property
-    def ineq_indices(self):
-        """Returns indices of output coordinates that bypass the Saturated Linear Unit projections."""
-        return {i for i in range(self.rhs.get_output_dim()) if i not in self.eq_indices}
+        Parameters
+        ----------
+        x: np.ndarray
+            A 1-D array of values on which to apply the activation.
+
+        Returns
+        -------
+        np.ndarray
+            A new array representing saturated output, obtained by
+            clipping `x` to the range [lower bound, upper bound].
+        """
+        try:
+            return np.minimum(np.maximum(x, self.l.lb), self.u.ub)
+        except AttributeError:
+            return np.minimum(np.maximum(x, self.l), self.u)
+
+    def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
+        """
+        Update the bounds of the left-land side after applying
+        Saturated Linear Unit activation.
+
+        Parameters
+        ----------
+        lb: float or np.ndarray
+            The new lower bound(s) before applying Saturated Linear
+            Unit.
+
+        ub: float or np.ndarray
+            The new upper bound(s) before applying Saturated Linear
+            Unit.
+
+        """
+        self.lhs.update_bounds(lb=self.satlin(lb), ub=self.satlin(ub))

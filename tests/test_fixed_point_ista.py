@@ -22,25 +22,25 @@ def test_box_constrained_ls_fixed_point(vp_param_1):
     b_offset = 0.5
     b_param = vp_param_1.add_param(m, lb=b - b_offset, ub=b + b_offset)
 
-    # Fixed point: x* = Sat_{[l,u]}(x* - t * A^T(A x* - b))
+    # Fixed point: x* = Sat_{[l,u]}(x* - t * A^T(A x* - x))
     x_star = vp_param_1.fixed_point(
         n_dim=n,
-        operator=lambda x: vp_param_1.saturated_linear_step(x - t * A.T @ (A @ x - b_param), l, u),
+        operator=lambda x: vp_param_1.step.satlin(x - t * A.T @ (A @ x - b_param), l=l, u=u),
         lb=l,
         ub=u,
     )
 
-    x0 = vp_param_1.initial_iterate(n, lb=-10, ub=10)
+    x0 = vp_param_1.add_iterate(n, lb=-10, ub=10)
     x = [None for _ in range(K + 1)]
     x[0] = x0
 
     for k in range(1, K + 1):
-        x[k] = vp_param_1.saturated_linear_step(x[k - 1] - t * A.T @ (A @ x[k - 1] - b_param), l, u)
+        x[k] = vp_param_1.step.satlin(x[k - 1] - t * A.T @ (A @ x[k - 1] - b_param), l=l, u=u)
         vp_param_1.set_infinity_norm_objective([x[k] - x_star])
         _ = vp_param_1.solve()
 
-    x_star_val = vp_param_1.extract_sol(x_star)
-    b_wc = vp_param_1.extract_sol(b_param)
+    x_star_val = vp_param_1.get_solution_value(x_star)
+    b_wc = vp_param_1.get_solution_value(b_param)
 
     x_opt_val = fixed_point_cvxpy(n, A, b_wc, l, u)
 
