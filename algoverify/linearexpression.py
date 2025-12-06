@@ -135,8 +135,8 @@ class LinearExpression:
         obj.counter = cls.counter
         obj.const = np.zeros(ndim)
         obj.is_binary = is_binary
-        obj.lb = 0 if is_binary else lb
-        obj.ub = 1 if is_binary else ub
+        obj.lb = np.zeros(ndim) if is_binary else lb
+        obj.ub = np.ones(ndim) if is_binary else ub
         cls.counter += 1
         return obj
 

@@ -6,6 +6,7 @@ import numpy as np
 from algoverify.canonicalizers.mip import MIP
 from algoverify.canonicalizers.obbt_handler import OBBTHandler
 from algoverify.linearexpression import LinearExpression
+from algoverify.proxable_functions import ProxableFunction
 from algoverify.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 log = logging.getLogger(__name__)
@@ -230,6 +231,42 @@ class Verifier(object):
             tuple(map(list.extend, bounds, (p.lb, p.ub)))
 
         return self.add_param(dim, lb=bounds[0], ub=bounds[1])
+
+    def prox(self, function: ProxableFunction, rhs: LinearExpression, gamma: float = 1, **kwargs):
+        """
+        Interface for constructing and executing proxable functions.
+
+        This method centralizes the execution pipeline for all proxable
+        functions. It instantiates ``function`` with the provided
+        keyword arguments, and computes the proximal objective value
+        of the provided ``function`` at the current solution value of the
+        model.
+
+        Parameters
+        ----------
+        function: ProxableFunction
+            Proxable function class to be instantiated and appplied.
+
+        rhs: LinearExpression
+            Linear Expression whose current solution value is used as
+            the input to the proximal operator.
+
+        gamma: float, optional
+            Proximal step size. Default is ``1``.
+
+        **kwargs
+            Additional keyword arguments passed to the constructor of
+            ``function``.
+
+        Returns
+        -------
+        numpy.ndarray
+            The proximal objective value corresponding to the implementation of
+            ``function``.
+        """
+        rhs_value = self.get_solution_value(rhs)
+        proxable_func = function(**kwargs)
+        return proxable_func.prox(rhs_value, gamma)
 
     @property
     def step(self) -> "_StepProxy":
@@ -495,6 +532,8 @@ class _StepProxy:
             class.
         """
         step_cls = self._get_step_class(name)
+
+        # TODO: create a list of steps that don't use obbt handler
         self._verifier.use_obbt_hander = False if name == "implicit_linear" else True
 
         def wrapper(rhs, relax_binary_vars=False, **kwargs):
