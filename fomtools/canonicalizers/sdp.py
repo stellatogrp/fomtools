@@ -9,17 +9,19 @@ class SDP(Canonicalizer):
     def __init__(self, solver_params=None, solver="clarabel"):
         super(SDP, self).__init__(solver_params, solver)
         self.range_marker = 1
-        self.lower_bounds = {}
-        self.upper_bounds = {}
-        self.var_bound_map = {}
+        self.var_idx_map = {}
+
+        self.Aeq_matrices = []
+        self.beq_consts = []
+        self.Aineq_matrices = []
+        self.bineq_lowerbounds = []
+        self.bineq_upperbounds = []
 
     def add_var(self, var: LinearExpression, lb=-np.inf, ub=np.inf) -> None:
         dim = var.get_output_dim()
         bounds = (self.range_marker, self.range_marker + dim)
         self.range_marker += dim
-        self.var_bound_map[var] = bounds
-        self.lower_bounds[var] = lb
-        self.upper_bounds[var] = ub
+        self.var_idx_map[var] = bounds
 
     def add_param_stack_var(self, param_stack_var, param_list):
         raise NotImplementedError

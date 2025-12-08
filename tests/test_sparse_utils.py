@@ -35,6 +35,18 @@ def test_sparse_manipulations():
         ])
     )
 
+    new_shape3 = (3, 6)
+    A_padded3 = efficient_csc_pad(A_orig, new_shape3)
+    assert np.allclose(A_padded3.todense(),
+        np.array([
+            [1, 0, 2, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0],
+            [4, 5, 0, 0, 0, 0],
+        ])
+    )
+
+    assert np.allclose(A_orig.todense(), efficient_csc_pad(A_orig, (3, 3)).todense())
+
     # all of these should fail
     with pytest.raises(AssertionError):
         efficient_csc_pad(A_orig, (2, 2))
