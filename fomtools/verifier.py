@@ -5,6 +5,7 @@ import numpy as np
 
 from fomtools.canonicalizers.mip import MIP
 from fomtools.canonicalizers.obbt_handler import OBBTHandler
+from fomtools.canonicalizers.sdp import SDP
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
@@ -35,7 +36,6 @@ class Verifier(object):
 
         self.canonicalizer = self._get_canonicalizer(method, params, solver)
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
-        self.use_obbt_hander = True if obbt_handler else False
         self._step_proxy = _StepProxy(self)
 
     @staticmethod
@@ -74,7 +74,7 @@ class Verifier(object):
             case "mip":
                 return MIP(solver_params=solver_params, solver=solver)
             case "sdp":
-                raise NotImplementedError()
+                return SDP(solver_params=solver_params, solver=solver)
             case _:
                 raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
 
@@ -319,7 +319,7 @@ class Verifier(object):
 
         rhs_lb, rhs_ub = step.lb, step.ub
         # TODO: figure out a better way to prevent obbt call for implicit linear step
-        if self.use_obbt_hander:
+        if self.obbt_handler is not None:
             rhs_lb, rhs_ub = self.obbt_handler.obbt(step.rhs, rhs_lb, rhs_ub)
 
         step.update_bounds(rhs_lb, rhs_ub)
@@ -534,7 +534,7 @@ class _StepProxy:
         step_cls = self._get_step_class(name)
 
         # TODO: create a list of steps that don't use obbt handler
-        self._verifier.use_obbt_hander = False if name == "implicit_linear" else True
+        self._verifier.use_obbt_handler = False if name == "implicit_linear" else True
 
         def wrapper(rhs, relax_binary_vars=False, **kwargs):
             """Execute the specified thresholding or activation step."""

@@ -15,6 +15,9 @@ def efficient_csc_pad(matrix, new_shape):
     assert M_new >= M_old and N_new >= N_old, \
         f"New shape {(M_new, N_new)} must be >= old shape {(M_old, N_old)}"
 
+    if M_new == M_old and N_new == N_old:
+        return matrix
+
     num_new_cols = N_new - N_old
     nnz = matrix.indptr[-1]
 

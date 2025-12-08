@@ -68,6 +68,8 @@ class Canonicalizer:
                 return gurobi.GurobiSolver(solver_params)
             case "highs":
                 return highs.HiGHSSolver(solver_params)
+            case "cvxpy_sdp":
+                return
             case _:
                 raise ValueError(f"Solver must be 'gurobi' or 'TBD', got {solver}.")
 
