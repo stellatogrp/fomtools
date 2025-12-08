@@ -17,4 +17,6 @@ def test_nnls_sdp():
     # TODO: z1 = z0 - t * (A @ z0 - x)
     # above should error out but instead it returns None? need to investigate
 
-    # z1 = vp.step.relu(z0 - t * A.T @ (A @ z0 - x))
+    z1 = vp.step.relu(z0 - t * A.T @ (A @ z0 - x))
+
+    vp.set_two_norm_objective(z1 - z0)
