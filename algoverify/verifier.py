@@ -403,7 +403,7 @@ class Verifier(object):
 
         """
         try:
-            iter(expr_list)
+            len(expr_list)
         except TypeError:
             expr_list = [expr_list]
 

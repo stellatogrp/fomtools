@@ -238,6 +238,10 @@ class LinearExpression:
                             decomposition_dict=prune_dict(merged_decomposition_dict),
                             const=self.const + other.const,
                         )
+                    else:
+                        raise ValueError(
+                            f"Cannot add LinearExpression objects of mismatched dimensions. Expected dimension: {self.ndim}, got {other.ndim}"
+                        )
                 except AttributeError:
                     raise ValueError(
                         f"Can only add LinearExpression objects to a LinearExpression object, numpy arrays, list, float, or an int got type {type(other)}."
