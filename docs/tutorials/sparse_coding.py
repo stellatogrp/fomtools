@@ -62,14 +62,13 @@ def _(mo):
     return
 
 
-app._unparsable_cell(
-    r"""
+@app.cell
+def _(np):
     np.random.seed(0)
     p, n, lambd = 15, 20, 1e-1
     D_value = np.random.normal(size=(p, n))
     D_mask = np.random.binomial(n=1, p=0.2, size=(p, n))
     D = np.multiply(D_value, D_mask)
-    for 
 
     # signal z_star
     num_star = 100
@@ -85,9 +84,7 @@ app._unparsable_cell(
 
     # parameter set X = [x_lb, x_ub]
     x_lb, x_ub = np.min(x, axis=1), np.max(x, axis=1)
-    """,
-    name="_"
-)
+    return D, lambd, n, p, x_lb, x_ub
 
 
 @app.cell(hide_code=True)
