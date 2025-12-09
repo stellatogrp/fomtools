@@ -1,6 +1,8 @@
 import numpy as np
 
 from algoverify.proxable_functions import ProxableFunction
+from algoverify.linearexpression import LinearExpression
+from algoverify.steps import SoftThreshold
 
 
 class NormL1(ProxableFunction):
@@ -91,3 +93,29 @@ class NormL1(ProxableFunction):
         y = x + np.where(x <= -gl, gl, np.where(x >= gl, -gl, -x))
 
         return self.eval(y)
+
+    def prox_step(self, rhs: LinearExpression, gamma: float = 1., **kwargs):
+        r"""
+        Interface for constructing and executing proximal step of ``NormL1`` 
+        with step size $\gamma$ at ``rhs``. 
+
+        Parameters
+        ----------
+        rhs : LinearExpression
+            Right-hand side linear expression in the operator definition.
+
+        gamma : float or array_like
+            Step size(s) $\gamma$. Can be a scalar or an array
+            broadcastable to the shape of ``rhs``.
+
+        Returns
+        -------
+        SoftThreshold :
+            Explicit form of the proximal step in terms of ``algoverify.steps``.
+
+        kwargs :
+            The keyword arguments required to compute proximal operator of ``NormL1``
+            in terms of ``SoftThreshold`` step.
+        """
+        kwargs['lambd'] = self.lambd * gamma
+        return SoftThreshold, kwargs
