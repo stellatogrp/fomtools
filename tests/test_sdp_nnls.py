@@ -12,11 +12,14 @@ def test_nnls_sdp():
     t = 0.01
 
     x = vp.add_param(m, lb=0, ub=0.1)
-    z0 = vp.add_iterate(n, lb=10, ub=10.1)
-    z0 - t * (A @ z0 - x)
-    # TODO: z1 = z0 - t * (A @ z0 - x)
-    # above should error out but instead it returns None? need to investigate
+    z0 = vp.add_iterate(n, lb=5, ub=5.1)
 
     z1 = vp.step.relu(z0 - t * A.T @ (A @ z0 - x))
 
     vp.set_two_norm_objective(z1 - z0)
+
+    # print(x.lb, x.ub)
+    # print(z0.lb, z0.ub)
+    # print(z1.lb, z1.ub)
+
+    vp.canonicalizer.solve_via_cvxpy()

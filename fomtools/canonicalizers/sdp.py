@@ -1,3 +1,4 @@
+import cvxpy as cp
 import numpy as np
 import scipy.sparse as spa
 
@@ -20,6 +21,15 @@ class SDP(Canonicalizer):
         self.bineq_upperbounds = []
 
         self.C_obj = None
+        self._initialize_corner_constraint()
+
+    def _initialize_corner_constraint(self) -> None:
+        # adds the constraint that the upper left corner must equal 1
+        curr_prob_dim = self.get_sdp_var_dim()
+        new_A = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
+        new_A[0, 0] = 1
+        self.Aeq_matrices.append(symmetrize(new_A.tocsc()))
+        self.beq_consts.append(1)
 
     def _pad_existing_A_matrices(self) -> None:
         new_dim = self.get_sdp_var_dim()
@@ -64,8 +74,27 @@ class SDP(Canonicalizer):
         raise NotImplementedError
 
     def canonicalize_relu(self, step: Relu) -> None:
-        # raise NotImplementedError
-        pass
+        lhs, rhs = step.lhs, step.rhs
+        A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(rhs)
+        b_vec = rhs.const
+        y_idx_bounds = [self.var_idx_map[lhs]]
+
+        m, n = A_mat.shape
+        y_idx_ranges_2d = process_2d_ranges(y_idx_bounds, y_idx_bounds)
+        y_idx_ranges_1d = process_1d_ranges(y_idx_bounds)
+        xy_idx_ranges = process_2d_ranges(x_idx_bounds, y_idx_bounds)
+        I = np.eye(lhs.ndim)
+
+        curr_prob_dim = self.get_sdp_var_dim()
+        for i in range(m):
+            new_A = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
+            Ii = I[i]
+            new_A[y_idx_ranges_2d] = np.outer(Ii, Ii)
+            new_A[xy_idx_ranges] = -np.outer(A_mat[i], Ii)
+            new_A[y_idx_ranges_1d] = -b_vec[i] * Ii
+
+            self.Aeq_matrices.append(symmetrize(new_A.tocsc()))
+            self.beq_consts.append(0)
 
     def linexpr_to_Amat_and_bounds(self, expr: LinearExpression):
         # turns linexpr into Ax + b into a full matrix A
@@ -101,9 +130,26 @@ class SDP(Canonicalizer):
             C_mat[idx_ranges_1d_col] = ATb
             C_mat[0, 0] = np.trace(bbT)
 
-            overall_C_mat += C_mat
+            overall_C_mat += symmetrize(C_mat)
 
         self.C_obj = overall_C_mat
+
+    def solve_via_cvxpy(self):
+        dim = self.get_sdp_var_dim()
+        X = cp.Variable((dim, dim), symmetric=True)
+        obj = cp.Maximize(cp.trace(self.C_obj @ X))
+        constraints = [X >> 0]
+        for A, b in zip(self.Aeq_matrices, self.beq_consts):
+            constraints += [
+                cp.trace(A @ X) == b,
+            ]
+        for A, b in zip(self.Aineq_matrices, self.bineq_upperbounds):
+            constraints += [
+                cp.trace(A @ X) <= b,
+            ]
+        prob = cp.Problem(obj, constraints)
+        res = prob.solve()
+        print(res)
 
 
 def symmetrize(mat):
