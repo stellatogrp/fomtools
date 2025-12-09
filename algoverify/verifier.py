@@ -232,7 +232,7 @@ class Verifier(object):
 
         return self.add_param(dim, lb=bounds[0], ub=bounds[1])
 
-    def prox(self, function: ProxableFunction, rhs: LinearExpression, gamma: float = 1, **kwargs):
+    def prox(self, function: ProxableFunction, rhs: LinearExpression, gamma: float = 1, relax_binary_vars: bool = False, **kwargs):
         """
         Interface for constructing and executing proxable functions.
 
@@ -253,6 +253,10 @@ class Verifier(object):
 
         gamma: float, optional
             Proximal step size. Default is ``1``.
+        
+        relax_binary_vars: bool
+            If true, binary decision variables associated with the operator
+            are relaxed to take continuous values.
 
         **kwargs
             Additional keyword arguments passed to the constructor of
@@ -264,9 +268,8 @@ class Verifier(object):
             The proximal objective value corresponding to the implementation of
             ``function``.
         """
-        rhs_value = self.get_solution_value(rhs)
-        proxable_func = function(**kwargs)
-        return proxable_func.prox(rhs_value, gamma)
+        (prox_step, kwargs) = function.prox_step(gamma=gamma, **kwargs)
+        return self.run_step(rhs=rhs, step_cls=prox_step, relax_binary_vars=relax_binary_vars, **kwargs)
 
     @property
     def step(self) -> "_StepProxy":
