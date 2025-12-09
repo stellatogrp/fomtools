@@ -94,16 +94,13 @@ class NormL1(ProxableFunction):
 
         return self.eval(y)
 
-    def prox_step(self, rhs: LinearExpression, gamma: float = 1., **kwargs):
+    def prox_step(self, gamma: float = 1., **kwargs):
         r"""
         Interface for constructing and executing proximal step of ``NormL1`` 
         with step size $\gamma$ at ``rhs``. 
 
         Parameters
         ----------
-        rhs : LinearExpression
-            Right-hand side linear expression in the operator definition.
-
         gamma : float or array_like
             Step size(s) $\gamma$. Can be a scalar or an array
             broadcastable to the shape of ``rhs``.
