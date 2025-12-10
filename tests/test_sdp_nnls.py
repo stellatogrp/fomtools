@@ -15,8 +15,9 @@ def test_nnls_sdp():
     z0 = vp.add_iterate(n, lb=5, ub=5.1)
 
     z1 = vp.step.relu(z0 - t * A.T @ (A @ z0 - x))
+    z2 = vp.step.relu(z1 - t * A.T @ (A @ z1 - x))
 
-    vp.set_two_norm_objective(z1 - z0)
+    vp.set_two_norm_objective(z2 - z1)
 
     # print(x.lb, x.ub)
     # print(z0.lb, z0.ub)
