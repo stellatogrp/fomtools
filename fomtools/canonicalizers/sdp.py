@@ -4,6 +4,8 @@ import scipy.sparse as spa
 
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
 from fomtools.linearexpression import LinearExpression
+from fomtools.solvers.clarabel import ClarabelSolver
+from fomtools.solvers.cuclarabel import CuClarabelSolver
 from fomtools.steps import Relu
 from fomtools.utils.range_utils import process_1d_ranges, process_2d_ranges
 from fomtools.utils.sparse_utils import efficient_csc_pad
@@ -65,7 +67,7 @@ class SDP(Canonicalizer):
             self.Aineq_matrices.append(new_A)
             self.bineq_upperbounds.append(- u * l)
 
-    def get_sdp_var_dim(self):
+    def get_sdp_var_dim(self) -> int:
         return self.range_marker
 
     def add_param_stack_var(self, param_stack_var, param_list):
@@ -161,13 +163,36 @@ class SDP(Canonicalizer):
             constraints += [
                 cp.trace(A @ X) <= b,
             ]
-        for cone in self.psd_cone_indices:
-            idx = list(cone)
-            Z = X[np.ix_(idx, idx)]
-            constraints.append(Z >> 0)
+        constraints += [X >> 0]
         prob = cp.Problem(obj, constraints)
         res = prob.solve()
         print(res)
+
+    def solve_via_clarabel(self):
+        solver = ClarabelSolver(solver_params=self.solver_params)
+        solver.setup_clarabel_data(
+            self.get_sdp_var_dim(),
+            self.C_obj,
+            self.Aeq_matrices,
+            self.beq_consts,
+            self.Aineq_matrices,
+            self.bineq_upperbounds,
+            self.psd_cone_indices,
+        )
+        solver.solve()
+    
+    def solve_via_cuclarabel(self):
+        solver = CuClarabelSolver(solver_params=self.solver_params)
+        solver.setup_clarabel_data(
+            self.get_sdp_var_dim(),
+            self.C_obj,
+            self.Aeq_matrices,
+            self.beq_consts,
+            self.Aineq_matrices,
+            self.bineq_upperbounds,
+            self.psd_cone_indices,
+        )
+        solver.solve()
 
 
 def symmetrize(mat):

@@ -1,3 +1,4 @@
+import importlib.util
 import numpy as np
 
 from algoverify.verifier import Verifier
@@ -25,3 +26,8 @@ def test_nnls_sdp():
 
     vp.canonicalizer.solve_via_cvxpy()
     # print(vp.canonicalizer.psd_cone_indices)
+    vp.canonicalizer.solve_via_clarabel()
+    if importlib.util.find_spec('cupy') is None:
+        print("cupy not installed so skipping test")
+    else:
+        vp.canonicalizer.solve_via_cuclarabel()

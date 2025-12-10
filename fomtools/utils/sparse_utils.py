@@ -35,6 +35,7 @@ def get_submatrix_selection_matrix(n, indices, scale=np.sqrt(2)):
     """
     indices = np.array(indices)
     r = len(indices)
+    assert r <= n
 
     # 1. Generate local coordinates using the swap trick.
     #    np.tril_indices returns (rows, cols) for the lower triangle.
