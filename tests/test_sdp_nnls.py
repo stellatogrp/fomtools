@@ -24,3 +24,4 @@ def test_nnls_sdp():
     # print(z1.lb, z1.ub)
 
     vp.canonicalizer.solve_via_cvxpy()
+    # print(vp.canonicalizer.psd_cone_indices)

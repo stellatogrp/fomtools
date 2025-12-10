@@ -19,6 +19,7 @@ class SDP(Canonicalizer):
         self.beq_consts = []
         self.Aineq_matrices = []
         self.bineq_upperbounds = []
+        self.psd_cone_indices = []
 
         self.C_obj = None
         self._initialize_corner_constraint()
@@ -73,11 +74,21 @@ class SDP(Canonicalizer):
     def add_equality_constraint(self, lhs_expr, rhs_expr):
         raise NotImplementedError
 
+    def add_psd_cone_indices(self, new_indices):
+        new_idx_set = range_to_indices(new_indices)
+        new_idx_set.add(0)
+
+        # TODO: in principal, there should never be set containment
+        # but need to investigate
+        self.psd_cone_indices.append(new_idx_set)
+
     def canonicalize_relu(self, step: Relu) -> None:
         lhs, rhs = step.lhs, step.rhs
         A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(rhs)
         b_vec = rhs.const
         y_idx_bounds = [self.var_idx_map[lhs]]
+
+        relu_psd_cone_indices = y_idx_bounds + x_idx_bounds
 
         m, n = A_mat.shape
         y_idx_ranges_2d = process_2d_ranges(y_idx_bounds, y_idx_bounds)
@@ -95,6 +106,8 @@ class SDP(Canonicalizer):
 
             self.Aeq_matrices.append(symmetrize(new_A.tocsc()))
             self.beq_consts.append(0)
+
+        self.add_psd_cone_indices(relu_psd_cone_indices)
 
     def linexpr_to_Amat_and_bounds(self, expr: LinearExpression):
         # turns linexpr into Ax + b into a full matrix A
@@ -138,7 +151,8 @@ class SDP(Canonicalizer):
         dim = self.get_sdp_var_dim()
         X = cp.Variable((dim, dim), symmetric=True)
         obj = cp.Maximize(cp.trace(self.C_obj @ X))
-        constraints = [X >> 0]
+        # constraints = [X >> 0]
+        constraints = []
         for A, b in zip(self.Aeq_matrices, self.beq_consts):
             constraints += [
                 cp.trace(A @ X) == b,
@@ -147,6 +161,10 @@ class SDP(Canonicalizer):
             constraints += [
                 cp.trace(A @ X) <= b,
             ]
+        for cone in self.psd_cone_indices:
+            idx = list(cone)
+            Z = X[np.ix_(idx, idx)]
+            constraints.append(Z >> 0)
         prob = cp.Problem(obj, constraints)
         res = prob.solve()
         print(res)
@@ -154,3 +172,10 @@ class SDP(Canonicalizer):
 
 def symmetrize(mat):
     return (mat + mat.T) / 2
+
+
+def range_to_indices(idx_ranges):
+    out_set = set([])
+    for bounds in idx_ranges:
+        out_set.update(range(bounds[0], bounds[1]))
+    return out_set
