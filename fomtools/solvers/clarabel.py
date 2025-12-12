@@ -4,6 +4,7 @@ import scipy.sparse as spa
 
 from algoverify.utils.sparse_utils import get_submatrix_selection_matrix
 
+
 # TODO: inherit the generic solver interface
 # probably will have to split Solver -> MIPSolver and SDPSolver
 class ClarabelSolver(object):
@@ -18,7 +19,7 @@ class ClarabelSolver(object):
             C,
             Aeq_mats,
             beq_consts,
-            Aineq_mats, 
+            Aineq_mats,
             bineq_consts,
             psd_cone_indices,
         ):
@@ -54,7 +55,7 @@ class ClarabelSolver(object):
             psd_cone_sizes.append(n)
             M = -get_submatrix_selection_matrix(mat_problem_dim, list(cone))
             psd_cone_selectors.append(M)
-        
+
         M = spa.vstack(psd_cone_selectors)
 
         cone_dims = {
@@ -62,7 +63,7 @@ class ClarabelSolver(object):
             'nonneg': Aineq.shape[0],
             'psd': psd_cone_sizes,
         }
-        
+
         self.q = q
         self.Aeq = Aeq
         self.beq = beq
@@ -98,37 +99,37 @@ def sparse_symmetric_vectorize(P, scale_factor=np.sqrt(2)):
     """
     Vectorizes a sparse symmetric matrix P (upper triangle only)
     into Column-Major Upper Triangular format (Clarabel/SCS standard).
-    
+
     Applies scale_factor (default sqrt(2)) to off-diagonal elements.
-    
+
     Returns: 1 x (n*(n+1)/2) sparse CSC matrix.
     """
     # 1. Extract only the upper triangle
     #    We guarantee rows <= cols because we take the upper triangle.
     P_upper = spa.triu(P, format='coo')
-    
+
     # 2. Extract coordinates and data
     rows = P_upper.row
     cols = P_upper.col
     data = P_upper.data.copy()
-    
+
     # 3. Apply scaling to off-diagonal elements
     mask_off_diag = rows != cols
     data[mask_off_diag] *= scale_factor
-    
+
     # 4. Calculate 1D linear indices in Column-Major Order
     #    Formula: k = j*(j+1)/2 + i   (where j=col, i=row)
     #    Since we used spa.triu, we are guaranteed rows <= cols.
     k_indices = (cols * (cols + 1) // 2) + rows
-    
+
     # 5. Construct the new 1-row matrix
     n = P.shape[0]
     total_elements = n * (n + 1) // 2
-    
-    # Create the vector. 
+
+    # Create the vector.
     result = spa.coo_matrix(
-        (data, (np.zeros_like(k_indices), k_indices)), 
+        (data, (np.zeros_like(k_indices), k_indices)),
         shape=(1, total_elements)
     )
-    
+
     return result.tocsc()

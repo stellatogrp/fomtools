@@ -180,7 +180,7 @@ class SDP(Canonicalizer):
             self.psd_cone_indices,
         )
         solver.solve()
-    
+
     def solve_via_cuclarabel(self):
         solver = CuClarabelSolver(solver_params=self.solver_params)
         solver.setup_clarabel_data(
