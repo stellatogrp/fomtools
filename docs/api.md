@@ -3,6 +3,8 @@
 ### Contents
 * [Verifier](api/verifier.md)
 * [Linear Expression](api/linearexpression.md)
-* [Step-like Operators](api/steps.md)
 * [Constraints](api/constraint.md)
+* [Step-like Operators](api/steps.md)
+* [Canonicalizer](api/canonicalizer.md)
+* [Solvers](api/solvers.md)
 * [Proxable Functions](api/proxablefunctions.md)

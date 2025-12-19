@@ -1,0 +1,3 @@
+## Verifier
+
+::: algoverify.Verifier

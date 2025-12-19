@@ -47,6 +47,4 @@ Once `uv` is installed.
 
         pip install -e .[dev, docs]
 
-## algo_verify environment using conda
 
-(# TODO)

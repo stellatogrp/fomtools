@@ -33,7 +33,7 @@ plugins:
         python:
           options:
             docstring_style: numpy
-            docstring_section_style: spacy
+            docstring_section_style: table
 
             merge_init_into_class: true
             docstring_options:
