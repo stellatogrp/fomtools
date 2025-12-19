@@ -6,12 +6,12 @@ import numpy as np
 
 from algoverify import LinearExpression
 from algoverify.constraint import Constraint
-from algoverify.solvers.solver import Solver
+from algoverify.solvers.mip_solver import MIPSolver
 
 log = logging.getLogger(__name__)
 
 
-class GurobiSolver(Solver):
+class GurobiSolver(MIPSolver):
     """
     A wrapper around the Gurobi ``Model`` that bridges ``LinearExpression``
     and ``Constrain`` objects to solver-ready variables, expressions, and
