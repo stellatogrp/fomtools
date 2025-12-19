@@ -16,7 +16,7 @@ from algoverify.verifier import Verifier
 K = 10          # number of iterations
 n = 3           # dimension of the iterate
 step_size = 0.01
-q_offset = 1.0  # uncertainty radius for q
+q_offset = 1.0  
 
 vp = Verifier(solver="gurobi") # initialize verifier
 
@@ -28,7 +28,7 @@ q_nominal = np.random.normal(size=n)
 P = np.random.normal(size=(n, n))
 P = P @ P.T  
 
-# q is treated as an uncertain parameter
+# q is a problem parameter
 q_param = vp.add_param(dim=n, lb=q_nominal - q_offset, ub=q_nominal + q_offset)
 
 # verification loop

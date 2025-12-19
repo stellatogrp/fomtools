@@ -15,10 +15,10 @@ class SoftThreshold(Step):
         0,& |a^\top y|\le \lambda,\\[6pt]
         a^\top y+\lambda,& a^\top y<-\lambda,
         \end{cases}
-        \quad \text{with } y=(v,x).
+        \quad \text{with } y=(v,x),
     $$
 
-    where, $\mathcal{T}_{\lambda}$ is the soft-thresholding operator with constant $\lambda>0$,
+    where $\mathcal{T}_{\lambda}$ is the soft-thresholding operator with constant $\lambda>0$,
     and $a\in\mathbf{R}^d$.
 
     Attributes

@@ -1,3 +1,2 @@
-## Verifier
 
 ::: algoverify.Verifier

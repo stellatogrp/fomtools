@@ -5,19 +5,19 @@ from algoverify.proxable_functions import ProxableFunction
 
 class NormL1(ProxableFunction):
     r"""
-    A proximal operator for a positively weighted L1 norm.
+    A proximal operator for a positively weighted $\ell_1$ norm.
 
     This class represents the convex function
 
     $$
         f(x) = \lambda \|x\|_1
-             = \lambda \sum_i |x_i|
+             = \lambda \sum_i |x_i|,
     $$
 
     when ``lambd`` is a scalar, or more generally
 
     $$
-        f(x) = \sum_i \lambda_i |x_i|
+        f(x) = \sum_i \lambda_i |x_i|,
     $$
 
     when ``lambd`` is an array of non-negative weights.
@@ -38,7 +38,7 @@ class NormL1(ProxableFunction):
 
     def eval(self, x: np.ndarray) -> float:
         r"""
-        Evaluate the weighted $l_1$  norm $f(x)$.
+        Evaluate the weighted $\ell_1$  norm $f(x)$.
 
         Parameters
         ----------
@@ -54,7 +54,7 @@ class NormL1(ProxableFunction):
 
     def prox(self, x: np.ndarray, gamma=1):
         r"""
-        Compute the proximal objective value of the $l_1$ norm at ``x``.
+        Compute the proximal objective value of the $\ell_1$ norm at ``x``.
 
         This method computes the proximal point
 
@@ -67,10 +67,10 @@ class NormL1(ProxableFunction):
 
         $$
             \operatorname{prox}_{\gamma f}(x) = \arg\!\min_{u} \left\{ f(u)
-            + \frac{1}{2} \sum_i \frac{(u_i - x_i)^2}{\gamma_i} \right\}
+            + \frac{1}{2} \sum_i \frac{(u_i - x_i)^2}{\gamma_i} \right\},
         $$
 
-        where: $\gamma$ can be a scalar or an array.
+        where $\gamma$ can be a scalar or an array.
 
         Parameters
         ----------
