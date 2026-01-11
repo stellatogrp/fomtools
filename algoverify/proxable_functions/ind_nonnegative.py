@@ -7,23 +7,6 @@ from algoverify.steps import Relu
 class IndNonNegative(ProxableFunction):
     r"""
     A proximal operator for the indicator function of the non-negative orthant.
-
-    This class represents the convex indicator function
-
-    $$
-        I_{\geq 0}(x) = \begin{cases}
-            0 & \text{if } x \geq 0 \\
-            +\infty & \text{otherwise}
-        \end{cases}
-    $$
-
-    where the inequality $x \geq 0$ is interpreted element-wise.
-
-    Notes
-    -----
-    The ``prox`` method returns the value $I_{\geq 0}(y)$ evaluated at the
-    proximal point $y = \operatorname{prox}_{\gamma I_{\geq 0}}(x)$, **not**
-    the proximal point itself.
     """
 
     def __init__(self):
@@ -97,7 +80,7 @@ class IndNonNegative(ProxableFunction):
 
     def prox_step(self, gamma: float = 1., **kwargs):
         r"""
-        Interface for constructing and executing proximal step of ``IndNonNegative`` 
+        Interface for constructing and executing proximal step of ``IndNonNegative``
         with step size $\gamma$ at ``rhs``. 
 
         Parameters
