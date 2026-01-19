@@ -1,6 +1,8 @@
 import numpy as np
 
+from algoverify import LinearExpression
 from algoverify.proxable_functions import ProxableFunction
+from algoverify.steps import SoftThreshold
 
 
 class NormL1(ProxableFunction):
@@ -87,7 +89,35 @@ class NormL1(ProxableFunction):
             The value $f(y)$ at the proximal point
             $y = \operatorname{prox}_{\gamma f}(x)$.
         """
-        gl = gamma * self.lambd
-        y = x + np.where(x <= -gl, gl, np.where(x >= gl, -gl, -x))
+
+        st = SoftThreshold(LinearExpression.from_int(1), gamma * self.lambd)
+        y = st.soft_threshold(x)
 
         return self.eval(y)
+
+    def __mul__(self, scalar: np.float64 | int):
+        """
+        Multiply this `NormL1` object by a scalar.
+        
+        Parameters
+        ----------
+        scalar : int or float
+            Scalar factor by which to multiply the weights represented by
+            `self.lambd`.
+
+        Returns
+        -------
+        NormL1
+            A new `NormL1` instance whose weights (`self.lambd`) have been
+            scaled by `scalar`.
+
+        Raises
+        ------
+        TypeError
+            If `scalar` is not an instance of `int` or `float`.
+        """
+        try:
+            return NormL1(lambd = float(scalar) * self.lambd)
+        except TypeError:
+            raise TypeError(f"Can only multiply by int or float, got {type(scalar)}.")
+
