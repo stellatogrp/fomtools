@@ -32,6 +32,7 @@ class Verifier(object):
         self.iterates = []
         self.params = []
         self.steps = []
+        self.residuals = []
 
         self.canonicalizer = self._get_canonicalizer(method, params, solver)
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
@@ -139,6 +140,29 @@ class Verifier(object):
         self.canonicalizer.add_var(var)
         if self.obbt_handler is not None:
             self.obbt_handler.add_var(var)
+
+    def _post_process(self, target_expr, ref_expr):
+        """
+        Apply post-processing bound tightening based on accumulated
+        residual values.
+
+        Parameters
+        ----------
+        target_expr: LinearExpression
+            The expression whose bound to update.
+
+        ref_expr: LinearExpression
+            The expression that provides the initial lower and
+            upper bounds.
+
+        Returns
+        -------
+        None
+        """
+        delta_sum = np.sum(self.residuals)
+        _lb = np.maximum(ref_expr.lb - delta_sum, ref_expr.lb)
+        _ub = np.minimum(ref_expr.ub + delta_sum, ref_expr.ub)
+        self.canonicalizer.update_bounds(target_expr, _lb, _ub)
 
     def add_iterate(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
         """
@@ -410,7 +434,7 @@ class Verifier(object):
         lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
         self.canonicalizer.set_infinity_norm_objective(expr_list, list(lb), list(ub))
 
-    def solve(self, huchette_cuts: bool = False):
+    def solve(self, huchette_cuts: bool = False, post_process: bool = True):
         """
         Solve the optimization problem.
 
@@ -429,38 +453,12 @@ class Verifier(object):
             The objective value for the current solution, if the
             model was solved to optimality.
         """
-        return self.canonicalizer.solve_model(self.steps, huchette_cuts)
+        self.residuals.append(self.canonicalizer.solve_model(self.steps, huchette_cuts))
 
-    def post_process(self, target_expr, ref_expr, residuals):
-        """
-        Apply post-processing bound tightening based on accumulated
-        residual values.
+        if post_process:
+            self._post_process(target_expr=self.iterates[-1], ref_expr=self.iterates[0])
 
-        Parameters
-        ----------
-        target_expr: LinearExpression
-            The expression whose bound to update.
-
-        ref_expr: LinearExpression
-            The expression that provides the initial lower and
-            upper bounds.
-
-        residuals: Sequence[float]
-            A sequence of residual values whose sum determines how
-            much the bounds should be relaxed.
-
-        Returns
-        -------
-        float
-            The average fractional improvement in the target expression's bound.
-
-        """
-        delta_sum = np.sum(residuals)
-        _lb = np.maximum(ref_expr.lb - delta_sum, ref_expr.lb)
-        _ub = np.minimum(ref_expr.ub + delta_sum, ref_expr.ub)
-        self.canonicalizer.update_bounds(target_expr, _lb, _ub)
-
-        return (sum(_lb > ref_expr.lb) + sum(_ub < ref_expr.ub)) / (2.0 * len(_lb))
+        return self.residuals[-1]
 
     def get_solution_value(self, iterate: LinearExpression) -> np.ndarray:
         """

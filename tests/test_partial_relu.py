@@ -43,7 +43,6 @@ def test_partial_nnqp(vp):
         vp.set_infinity_norm_objective(z[k] - z[k - 1])
         res = vp.solve(huchette_cuts=True)
         all_res.append(res)
-        vp.post_process(z[k], z[0], all_res)
 
     print(f"opt q_param at last K: {vp.get_solution_value(q_param)}")
     print(f"vp_gurobi resids: {all_res}")
