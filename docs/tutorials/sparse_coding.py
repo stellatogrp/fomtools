@@ -108,6 +108,10 @@ def _(D, np):
 
 @app.cell
 def _(D, K, Verifier, eta, lambd, n, np, p, x_lb, x_ub):
+    from algoverify.proxable_functions import NormL1
+    # regularizer = lambd * NormL1
+    regularizer = NormL1(lambd=lambd)
+
     solver_params = {
         'OutputFlag': 0,
     }
@@ -122,6 +126,7 @@ def _(D, K, Verifier, eta, lambd, n, np, p, x_lb, x_ub):
     all_residuals = []
     for k in range(1, K+1):
         s[k] = VP.step.soft_threshold(s[k-1] - eta * D.T @ (D @ s[k-1] - x_param), lambd=lambd*eta)
+        # s[k] = VP.prox(function=regularizer, rhs=s[k-1] - eta * D.T @ (D @ s[k-1] - x_param), gamma=eta)
         VP.set_infinity_norm_objective([s[k] - s[k-1]])
         res = VP.solve()
         all_residuals.append(res)
