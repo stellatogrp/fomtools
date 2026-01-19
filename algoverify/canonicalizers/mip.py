@@ -18,11 +18,6 @@ class MIP(Canonicalizer):
         A ready-to-use instance of a subclass of :class:`Solver`
         (e.g., ``gurobi.Gurobi()``).
 
-    Methods
-    -------
-    add_var(var, lb, ub)
-        ...
-
     """
 
     def __init__(self, solver_params=None, solver="gurobi"):
@@ -345,7 +340,7 @@ class MIP(Canonicalizer):
             c & a^T y > c,
             \end{cases}
             \quad \text{with } y = (v, b), \text{and }
-             b, c \in \mathbb{R}.
+             b, c \in \mathbb{R},
         $$
 
         This method derives the convex hull of the region defined by:
@@ -393,7 +388,7 @@ class MIP(Canonicalizer):
             + \frac{u_I - c}{\ell^0_o - u^0_o}(y_o - u^0_o) + c,
             \qquad \forall (I, o) \in \mathcal{I}^-
             \end{aligned}
-            \right\}.
+            \right\},
         $$
 
         where:
@@ -503,10 +498,10 @@ class MIP(Canonicalizer):
             0,& |a^\top y|\le \lambda,\\[6pt]
             a^\top y+\lambda,& a^\top y<-\lambda,
             \end{cases}
-            \quad \text{with } y=(v,x).
+            \quad \text{with } y=(v,x),
         $$
 
-        where, $\mathcal{T}_{\lambda}$ is the soft-thresholding operator with constant $\lambda>0$,
+        where $\mathcal{T}_{\lambda}$ is the soft-thresholding operator with constant $\lambda>0$,
         and $a\in\mathbf{R}^d$.
 
         This method derives the convex hull of the region defined by:
@@ -551,7 +546,7 @@ class MIP(Canonicalizer):
             \qquad \forall (I, o) \in \mathcal{I}^+, \\[6pt]
             & w \ge \sum_{i \in I} a_i (y_i - u^0_i)
             + \frac{u_I + \lambda}{u^0_o - u^0_o}(y_o - u^0_o),
-            \qquad \forall (I, o) \in \mathcal{I}^- .
+            \qquad \forall (I, o) \in \mathcal{I}^- ,
             \end{aligned}
             \right\}.
         $$

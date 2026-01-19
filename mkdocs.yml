@@ -33,9 +33,12 @@ plugins:
         python:
           options:
             docstring_style: numpy
-            docstring_section_style: spacy
+            docstring_section_style: table
+            heading_level: 1
+            show_root_heading: true
+            show_root_full_path: false
 
-            merge_init_into_class: true
+            merge_init_into_class: false
             docstring_options:
               ignore_init_summary: true
 

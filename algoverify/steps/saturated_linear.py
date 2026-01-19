@@ -15,7 +15,7 @@ class SaturatedLinear(Step):
             a^T y & x \leq a^T y \leq c, \\\\
             c & a^T y > c,
         \end{cases}
-        \quad \text{with } y = (v, x).
+        \quad \text{with } y = (v, x),
     $$
 
     where $x, c \in \mathbb{R}$.
