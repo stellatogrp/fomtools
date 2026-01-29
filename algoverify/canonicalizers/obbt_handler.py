@@ -24,14 +24,14 @@ class OBBTHandler(Canonicalizer):
                 self.solver.optimize()
 
                 if not self.solver.is_optimal():
-                    log.info(f"bound tighting failed, GRB model status: {self.solver['status']}")
+                    log.info(f"bound tighting failed, GRB model status: {self.solver['Status']}")
                     log.info(f"i = {i}, sense={sense}")
                     return
 
                 if sense == "maximize":
-                    ub_out[i] = self.solver["objVal"]
+                    ub_out[i] = self.solver["ObjVal"]
                 else:
-                    lb_out[i] = self.solver["objVal"]
+                    lb_out[i] = self.solver["ObjVal"]
 
         # reset objective
         self.solver.set_objective(0)

@@ -198,7 +198,7 @@ class MIP(Canonicalizer):
             self.solver.add_huchette_cuts(steps)
 
         self.solver.optimize()
-        return self.solver["objVal"]
+        return self.solver["ObjVal"]
 
     def get_solution_value(self, expression: LinearExpression) -> np.ndarray:
         """

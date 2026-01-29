@@ -400,4 +400,4 @@ class GurobiSolver(Solver):
         """
         Check whether the underlying Gurobi model has reached an optimal solution.
         """
-        return self["status"] == gp.GRB.OPTIMAL
+        return self["Status"] == gp.GRB.OPTIMAL
