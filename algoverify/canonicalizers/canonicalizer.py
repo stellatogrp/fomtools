@@ -15,10 +15,6 @@ class Canonicalizer:
         A ready-to-use instance of a subclass of :class:`Solver`
         (e.g., ``gurobi.Gurobi()``).
 
-    Methods
-    -------
-    ...
-
     """
 
     def __init__(self, solver_params: dict = None, solver: str = "gurobi"):
