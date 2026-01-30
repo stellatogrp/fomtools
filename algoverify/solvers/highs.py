@@ -18,12 +18,10 @@ class HiGHSSolver(Solver):
         super().__init__(solver_params)
 
     def __getitem__(self, item):
-        # Support both Gurobi-style (ObjVal, Status) and HiGHS-style (objVal, status) attribute names
         val = {
-            "objVal": self.model.getInfo().objective_function_value,
-            "ObjVal": self.model.getInfo().objective_function_value,  # Gurobi-compatible alias
+            "objval": self.model.getInfo().objective_function_value,
         }
-        return val[item]
+        return val[item.lower()]
 
     def set_param(self, param: str, val: int | float):
         """
