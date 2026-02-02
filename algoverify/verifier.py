@@ -120,7 +120,7 @@ class Verifier(object):
             lb = np.full(ndim, lb)
             ub = np.full(ndim, ub)
         except ValueError:
-            raise ValueError(""" Lower bounds and upper bounds must either be scalars or 
+            raise ValueError(""" Lower bounds and upper bounds must either be scalars or
                                 have the same length as the dimension of the expression.""")
 
         return LinearExpression.from_int(ndim, lb=lb, ub=ub)
@@ -410,7 +410,7 @@ class Verifier(object):
         lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
         self.canonicalizer.set_infinity_norm_objective(expr_list, list(lb), list(ub))
 
-    def solve(self, huchette_cuts: bool = False):
+    def solve(self, convex_hull_cuts: bool = False):
         """
         Solve the optimization problem.
 
@@ -420,7 +420,7 @@ class Verifier(object):
 
         Parameters
         ----------
-        huchette_cuts: bool
+        convex_hull_cuts: bool
             a
 
         Returns
@@ -429,7 +429,7 @@ class Verifier(object):
             The objective value for the current solution, if the
             model was solved to optimality.
         """
-        return self.canonicalizer.solve_model(self.steps, huchette_cuts)
+        return self.canonicalizer.solve_model(self.steps, convex_hull_cuts)
 
     def post_process(self, target_expr, ref_expr, residuals):
         """

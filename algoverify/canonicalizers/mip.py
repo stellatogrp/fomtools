@@ -174,19 +174,19 @@ class MIP(Canonicalizer):
         self.solver.constraints_to_solver(constraints)
         self.solver.set_objective(expression=q, sense="maximize")
 
-    def solve_model(self, steps: Step, huchette_cuts: bool = False) -> float:
+    def solve_model(self, steps: Step, convex_hull_cuts: bool = False) -> float:
         """
         Optimize the underlying MIP problem.
 
-        Optionally, add huchette cuts
+        Optionally, add convex hull cuts
 
         Parameters
         ----------
         steps: Step
 
 
-        huchette_cuts: bool
-            If ``True`` huchette cuts are added to the MIP problem.
+        convex_hull_cuts: bool
+            If ``True`` convex hull cuts are added to the MIP problem.
 
         Returns
         -------
@@ -194,8 +194,8 @@ class MIP(Canonicalizer):
             The objective value for the current solution.
 
         """
-        if huchette_cuts:
-            self.solver.add_huchette_cuts(steps)
+        if convex_hull_cuts:
+            self.solver.add_convex_hull_cuts(steps)
 
         self.solver.optimize()
         return self.solver["objVal"]

@@ -7,10 +7,10 @@ from highspy import ObjSense
 
 from algoverify import LinearExpression
 from algoverify.constraint import Constraint
-from algoverify.solvers.solver import Solver
+from algoverify.solvers.mip_solver import MIPSolver
 
 
-class HiGHSSolver(Solver):
+class HiGHSSolver(MIPSolver):
     def __init__(self, solver_params=None):
         # Variable to keep track of number of highs variable created
         self._var_counter = -1
