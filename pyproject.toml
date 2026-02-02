@@ -3,8 +3,8 @@ requires = ["setuptools>=64", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "algoverify"
-description = "AlgoVerify: A Python Toolbox for Verification of First-Order Methods"
+name = "fomtools"
+description = "FOMTools: A Python Toolbox for Verification of First-Order Methods"
 readme = "README.md"
 license = { text = "Apache 2.0" }
 dynamic = ["version"]
@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["algoverify"]
+packages = ["fomtools"]
 
 [project.optional-dependencies]
 dev = [

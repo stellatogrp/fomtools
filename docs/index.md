@@ -1,16 +1,16 @@
-# Welcome to Algo Verify's documentation!
+# Welcome to FOM Tools's documentation!
 
-AlgoVerify is a Python package that provides tools to verify the performance 
+FOMTools is a Python package that provides tools to verify the performance 
 of first-order methods in parametric quadratic optimization.
 
 ## Quick Start
 
 This example verifies the behavior of ReLU gradient iteration
-with uncertain parameters using AlgoVerify and Gurobi.
+with uncertain parameters using FOMTools and Gurobi.
 
 ```python
 import numpy as np
-from algoverify.verifier import Verifier
+from fomtools.verifier import Verifier
 
 
 K = 10          # number of iterations
@@ -52,16 +52,16 @@ print(f"vp_gurobi residuals: {results}")
 
 ```
 
-This short script is a basic example of what AlgoVerify can do. It demonstrates how to verify
+This short script is a basic example of what FOMTools can do. It demonstrates how to verify
 worst-case behavior of an iterative algorithm under parameter uncertainty using
 mixed-integer optimization.
 
-Beyond this example, AlgoVerify supports verification of a wide range of iterative methods,
+Beyond this example, FOMTools supports verification of a wide range of iterative methods,
 including projected gradient methods, proximal operators, and algorithms with nonlinearities.
-For a guided introduction, see the AlgoVerify tutorial and example gallery,
+For a guided introduction, see the FOMTools tutorial and example gallery,
 which cover applications in optimization.
 
-AlgoVerify relies on mathematical programming solvers such as Gurobi and Highs to solve the
+FOMTools relies on mathematical programming solvers such as Gurobi and Highs to solve the
 resulting verification problems.
 
 ## Development

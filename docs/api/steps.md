@@ -1,7 +1,7 @@
 ## Step Operators
 
-::: algoverify.steps.step.Step
-::: algoverify.steps.affine.Affine
-::: algoverify.steps.relu.Relu
-::: algoverify.steps.saturated_linear.SaturatedLinear
-::: algoverify.steps.soft_threshold.SoftThreshold
+::: fomtools.steps.step.Step
+::: fomtools.steps.affine.Affine
+::: fomtools.steps.relu.Relu
+::: fomtools.steps.saturated_linear.SaturatedLinear
+::: fomtools.steps.soft_threshold.SoftThreshold

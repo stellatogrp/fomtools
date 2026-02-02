@@ -1,4 +1,4 @@
-site_name: Algo Verify
+site_name: FOM Tools
 nav:
   - Home: index.md
   - Installation: installation.md

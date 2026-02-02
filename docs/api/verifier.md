@@ -1,2 +1,2 @@
 
-::: algoverify.Verifier
+::: fomtools.Verifier

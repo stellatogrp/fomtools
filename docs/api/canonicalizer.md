@@ -1,5 +1,5 @@
 ## Canonicalizers
 
-::: algoverify.canonicalizers.Canonicalizer
-::: algoverify.canonicalizers.mip
-::: algoverify.canonicalizers.obbt_handler
+::: fomtools.canonicalizers.Canonicalizer
+::: fomtools.canonicalizers.mip
+::: fomtools.canonicalizers.obbt_handler

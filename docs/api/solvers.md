@@ -1,5 +1,5 @@
 ## Solvers
 
-::: algoverify.solvers.Solver
-::: algoverify.solvers.GurobiSolver
-::: algoverify.solvers.HiGHSSolver
+::: fomtools.solvers.Solver
+::: fomtools.solvers.GurobiSolver
+::: fomtools.solvers.HiGHSSolver
