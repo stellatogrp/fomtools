@@ -1,18 +1,18 @@
 ## Installation
-Before you can use the `algo_verify` package, ensure that your system meets the following prerequisites:
+Before you can use the `fomtools` package, ensure that your system meets the following prerequisites:
 
 * Python 3.12 or later
 * Pip package manager
 
 Clone the repository and enter it:
 
-    git clone git@github.com:stellatogrp/algo_verify.git
-    cd algo_verify
+    git clone git@github.com:stellatogrp/fomtools.git
+    cd fomtools
 
 
-## Creating a algo_verify environment
-All of `algo_verify`'s dependencies are on [PyPi](https://pypi.org). We have developed and tested
-`algo_verify` on Python 3.12, but it should work on later Python versions as well. You can create a new
+## Creating a fomtools environment
+All of `fomtools`'s dependencies are on [PyPi](https://pypi.org). We have developed and tested
+`fomtools` on Python 3.12, but it should work on later Python versions as well. You can create a new
 virtual environment using `venv`, and install dependencies using `pip`.
 
 1. Verify that Python 3.12 or newer is installed on your system.
@@ -24,7 +24,7 @@ virtual environment using `venv`, and install dependencies using `pip`.
         python -m venv .venv
         source .venv/bin/activate
 
-3. In the activated environment, install the `algo_verify` package in editable mode, along with
+3. In the activated environment, install the `fomtools` package in editable mode, along with
 its dev and docs extras:
 
         pip install -e .[dev, docs]
@@ -42,9 +42,7 @@ Once `uv` is installed.
         uv venv --python 3.12
         source .venv/bin/activate
 
-2. In the activated environment, install the `algo_verify` package in editable mode, along with
+2. In the activated environment, install the `fomtools` package in editable mode, along with
    its dev and docs extras:
 
         pip install -e .[dev, docs]
-
-

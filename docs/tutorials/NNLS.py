@@ -9,7 +9,7 @@ def _():
     import matplotlib.pyplot as plt
     import numpy as np
 
-    from algoverify.verifier import Verifier
+    from fomtools.verifier import Verifier
 
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation

@@ -55,7 +55,10 @@ def test_satlin(vp_param_2):
         print(vp_param_2.get_solution_value(z[k]))
 
     z_test = np.array([-0.91651, 1, 0])
-    print("test grad step from K-1:", z_test - t * (P @ z_test + vp_param_2.get_solution_value(q_param)))
+    print(
+        "test grad step from K-1:",
+        z_test - t * (P @ z_test + vp_param_2.get_solution_value(q_param)),
+    )
     print("bounds:", vp_param_2.iterates[-1].lb, vp_param_2.iterates[-1].ub)
 
     zk = z0_init

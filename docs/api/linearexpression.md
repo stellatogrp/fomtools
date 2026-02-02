@@ -1,1 +1,1 @@
-::: algoverify.linearexpression.LinearExpression
+::: fomtools.linearexpression.LinearExpression

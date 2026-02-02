@@ -1,5 +1,5 @@
 ## Constraints
 
-::: algoverify.constraint.Constraint
-::: algoverify.constraint.EqualityConstraint
-::: algoverify.constraint.InequalityConstraint
+::: fomtools.constraint.Constraint
+::: fomtools.constraint.EqualityConstraint
+::: fomtools.constraint.InequalityConstraint
