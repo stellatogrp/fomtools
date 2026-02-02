@@ -4,7 +4,7 @@ import numpy as np
 import scipy.sparse as spa
 
 from algoverify.solvers.solver import Solver
-from algoverify.utils.huchette_cuts import create_new_constr, get_cuts
+from algoverify.utils.convex_hull_cuts import create_new_constr, get_cuts
 
 
 class MIPSolver(Solver):
@@ -27,7 +27,7 @@ class MIPSolver(Solver):
         """
         return self._relaxed_model
 
-    def add_huchette_cuts(self, steps):
+    def add_convex_hull_cuts(self, steps):
         self.relax_model()
 
         for step in steps:
