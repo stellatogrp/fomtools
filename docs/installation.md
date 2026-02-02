@@ -46,5 +46,3 @@ Once `uv` is installed.
    its dev and docs extras:
 
         pip install -e .[dev, docs]
-
-
