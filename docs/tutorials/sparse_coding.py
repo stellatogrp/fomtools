@@ -136,6 +136,7 @@ def _(D, K, Verifier, eta, lambd, n, np, p, x_lb, x_ub):
 @app.cell
 def _(K, all_residuals, plt):
     plt.plot(range(1, K+1), all_residuals, label='VP')
+    plt.suptitle('sparse coding example')
     plt.yscale('log')
     plt.ylabel('Worst-case fixed-point residual')
     plt.xlabel(r'$K$')

@@ -243,14 +243,19 @@ def _(
     v[0] = VP.add_param(n_xz, lb=np.zeros(n_xz), ub=np.ones(n_xz))
     w[0] = np.zeros(n_xz)
 
+    # Box constraint
+    from algoverify.proxable_functions import IndBox
+    indbox = IndBox(l=l_x, u=u_x)
+
     # ADMM (OSQP) iterations
     lhs_mat = P + sigma*np.eye(n_xz) + rho*(M.T@M)
     lhs_mat_factorization = spa.linalg.factorized(lhs_mat)
 
     all_residuals = []
     for k in range(K):
-        w[k+1] = VP.step.satlin(v[k], l=l_x, u=u_x)
-        # w[k+1] = VP.step.satlin(v[k], l=u_x, u=l_x)
+        # w[k+1] = VP.step.satlin(v[k], l=l_x, u=u_x)
+        w[k+1] = VP.step.satlin(v[k], l=u_x, u=l_x)
+        # w[k+1] = VP.prox(function=indbox, rhs=v[k])
         rhs = sigma*z[k] - q + rho*M.T@(2*w[k+1]-v[k])
         z[k+1] = VP.step.implicit_linear(rhs=rhs, lhs_mat=lhs_mat, lhs_mat_factorization=lhs_mat_factorization)
         v[k+1] = v[k] + M@z[k+1] - w[k+1]
