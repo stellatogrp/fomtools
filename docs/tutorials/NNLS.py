@@ -19,7 +19,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(
-    r"""
+        r"""
     In this tutorial we show how to use our package to verify projected gradient descent for the nonnegative least-squares problem:
 
     \begin{array}{ll}

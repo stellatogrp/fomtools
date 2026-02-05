@@ -15,8 +15,8 @@ def _():
     import matplotlib.pyplot as plt
     import numpy as np
 
-    from algoverify.verifier import Verifier
-    from algoverify import LinearExpression
+    from fomtools.verifier import Verifier
+    from fomtools import LinearExpression
     import scipy.sparse as spa
     from scipy.sparse import csr_matrix
 
@@ -244,8 +244,8 @@ def _(
     w[0] = np.zeros(n_xz)
 
     # Box constraint
-    from algoverify.proxable_functions import IndBox
-    indbox = IndBox(l=l_x, u=u_x)
+    # from fomtools.proxable_functions import IndBox
+    # indbox = IndBox(l=l_x, u=u_x)
 
     # ADMM (OSQP) iterations
     lhs_mat = P + sigma*np.eye(n_xz) + rho*(M.T@M)

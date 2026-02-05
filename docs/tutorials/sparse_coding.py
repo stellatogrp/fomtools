@@ -15,7 +15,7 @@ def _():
     import matplotlib.pyplot as plt
     import numpy as np
 
-    from algoverify.verifier import Verifier
+    from fomtools.verifier import Verifier
 
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
@@ -108,9 +108,9 @@ def _(D, np):
 
 @app.cell
 def _(D, K, Verifier, eta, lambd, n, np, p, x_lb, x_ub):
-    from algoverify.proxable_functions import NormL1
+    # from fomtools.proxable_functions import NormL1
     # regularizer = lambd * NormL1
-    regularizer = NormL1(lambd=lambd)
+    # regularizer = NormL1(lambd=lambd)
 
     solver_params = {
         'OutputFlag': 0,
