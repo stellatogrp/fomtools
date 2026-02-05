@@ -52,7 +52,7 @@ def test_ista(vp_theory):
         vp_theory.theory_bound(k, z[k], z[k - 1])
 
         vp_theory.set_infinity_norm_objective(z[k] - z[k - 1])
-        res = vp_theory.solve(huchette_cuts=True)
+        res = vp_theory.solve(convex_hull_cuts=True)
         all_res.append(res)
 
     print(f"opt b_param at last K: {vp_theory.get_solution_value(b_param)}")

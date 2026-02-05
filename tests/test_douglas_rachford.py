@@ -59,8 +59,9 @@ def test_dr(vp):
 
     for k in range(1, K + 1):
         print(f"-K = {k}-")
-        u[k] = vp.step.implicit_linear(z[k - 1] - q_param, lhs_mat=lhs.todense(),
-                            lhs_mat_factorization=lhs_factored)
+        u[k] = vp.step.implicit_linear(
+            z[k - 1] - q_param, lhs_mat=lhs.todense(), lhs_mat_factorization=lhs_factored
+        )
         utilde[k] = vp.step.relu(2 * u[k] - z[k - 1], proj_ranges=(n, n + m))
         z[k] = z[k - 1] + utilde[k] - u[k]
 

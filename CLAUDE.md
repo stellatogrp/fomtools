@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AlgoVerify is a Python toolbox for verification of first-order optimization methods. It provides a framework for formally verifying convergence properties of algorithms like ISTA, Douglas-Rachford, and other first-order methods using convex optimization techniques.
+FOMTools is a Python toolbox for verification of first-order optimization methods. It provides a framework for formally verifying convergence properties of algorithms like ISTA, Douglas-Rachford, and other first-order methods using convex optimization techniques.
 
 ## Development Commands
 
@@ -39,30 +39,30 @@ pip install -e .[docs]  # Install with documentation dependencies
 
 ### Core Components
 
-**Verifier** (`algoverify/verifier.py`): The main orchestrator class that:
+**Verifier** (`fomtools/verifier.py`): The main orchestrator class that:
 - Manages optimization variables and their bounds
 - Coordinates between canonicalizers and OBBT handlers
 - Implements step operations (ReLU, soft threshold, saturated linear)
 - Performs interval bound propagation
 - Interfaces with solvers through canonicalizers
 
-**LinearExpression** (`algoverify/linearexpression.py`): Represents linear combinations of function values and supports:
+**LinearExpression** (`fomtools/linearexpression.py`): Represents linear combinations of function values and supports:
 - Decomposition into coefficient matrices
 - Arithmetic operations
 - Vector-like behavior with @ operator support
 
-**Steps** (`algoverify/steps/`): Implement specific algorithm operations:
+**Steps** (`fomtools/steps/`): Implement specific algorithm operations:
 - `AffineStep`: Linear transformations
 - `ReluStep`: ReLU activation functions
 - `SaturatedLinearStep`: Saturated linear operations
 - `SoftThresholdStep`: Soft thresholding operations
 
-**Canonicalizers** (`algoverify/canonicalizers/`): Convert verification problems to solver formats:
+**Canonicalizers** (`fomtools/canonicalizers/`): Convert verification problems to solver formats:
 - `GurobiCanonicalizer`: Interfaces with Gurobi optimizer
 - `SDPCanonicalizer`: For semidefinite programming formulations
 - Support for adding constraints and objectives
 
-**OBBT Handlers** (`algoverify/canonicalizers/obbt_handlers/`): Optimization-Based Bound Tightening:
+**OBBT Handlers** (`fomtools/canonicalizers/obbt_handlers/`): Optimization-Based Bound Tightening:
 - `GurobiOBBTHandler`: Tightens variable bounds using optimization
 
 ### Key Design Patterns

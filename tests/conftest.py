@@ -1,11 +1,11 @@
-
 import numpy as np
 import pytest
 
-from algoverify.verifier import Verifier
+from fomtools.verifier import Verifier
 
 # available solvers used as parameters to initialize verifier objects in each fixture
 SOLVERS = ["gurobi", "highs"]
+
 
 @pytest.fixture(params=SOLVERS, scope="function")
 def vp(request: pytest.FixtureRequest):
@@ -45,6 +45,7 @@ def vp_theory(request: pytest.FixtureRequest):
     Pytest fixture that provides a `Verifier` object initialized with a
     custom theoretical function, `theory_func`
     """
+
     def theory_func(k):
         init_C = 0.5
         if k == 1:

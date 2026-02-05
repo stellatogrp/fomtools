@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.sparse as spa
 
-from algoverify.linearexpression import LinearExpression
+from fomtools.linearexpression import LinearExpression
 
 
 def test_LinearExpression_dense():
