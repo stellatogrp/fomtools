@@ -37,6 +37,7 @@ dev = [
 ]
 
 docs = [
+       "cvxpy",
        "marimo",
        "matplotlib",
        "mkdocs",
