@@ -218,3 +218,10 @@ def test_LinearExpression_slice():
     y1 = y[1:3]
     assert np.allclose(y1[x1], A[1:3])
     assert np.allclose(y1[x2], B[1:3])
+
+def test_LinearExpression_bound():
+    ndim = 2
+    x = LinearExpression.from_int(ndim=ndim, lb=np.zeros(ndim), ub=np.ones(ndim))
+    y = LinearExpression.from_int(ndim=ndim, lb=-np.ones(ndim), ub=np.zeros(ndim))
+    assert np.allclose((x+y).lb, -np.ones(ndim))
+    assert np.allclose((x+y).ub,  np.ones(ndim))
