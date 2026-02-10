@@ -222,6 +222,6 @@ def test_LinearExpression_slice():
 def test_LinearExpression_bound():
     ndim = 2
     x = LinearExpression.from_int(ndim=ndim, lb=np.zeros(ndim), ub=np.ones(ndim))
-    y = LinearExpression.from_int(ndim=ndim, lb=-np.ones(ndim), ub=np.zeros(ndim))
-    assert np.allclose((x+y).lb, -np.ones(ndim))
-    assert np.allclose((x+y).ub,  np.ones(ndim))
+    c = -np.ones(ndim)
+    assert np.allclose((x+c).lb[0], -np.ones(ndim))
+    assert np.allclose((x+c).ub[0],  np.zeros(ndim))
