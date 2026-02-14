@@ -78,12 +78,17 @@ def _(np):
     # Generate bipartite graph G and its incidence matrix A
     p = 0.5
 
-    import networkx as nx
-    G = nx.bipartite.random_graph(n_s, n_d, p, seed=1, directed=False)
-    A = nx.linalg.graphmatrix.incidence_matrix(G, oriented=False)
-    A = A.todense()
+    # import networkx as nx
+    # G = nx.bipartite.random_graph(n_s, n_d, p, seed=1, directed=False)
+    # A = nx.linalg.graphmatrix.incidence_matrix(G, oriented=False)
+    # A = A.todense()
+    # A[n_s:, :] *= -1
 
-    A[n_s:, :] *= -1
+    # with open("incidence_matrix.npy", "wb") as write_file:
+    #     np.save(write_file, A)
+
+    A = np.load('incidence_matrix.npy', allow_pickle=True)
+
     A_s = A[:n_s, :]
     A_d = A[n_s:, :]
     n_e = A.shape[1]
@@ -125,20 +130,19 @@ def _(A_d, A_s, c, cp, d_lb, mu, n_d, n_e, n_s, np, s_lb):
     # Initial iterate s^0 as primal-dual solution to the problem instance
     # with all demand nodes having maximum demand
     import scipy.sparse as spa
+
     A_block = spa.bmat([
             [A_s, spa.eye(n_s), None],
             [A_d, None, None],
             [spa.eye(n_e), None, spa.eye(n_e)]
         ])
     A_block = A_block.todense()
-    print(A_block)
 
     b_block = np.hstack([
                 s_lb * np.ones(n_s),
                 d_lb * np.ones(n_d),
                 c,
             ])
-    print(b_block)
 
     c_block = np.zeros(A_block.shape[1])
     c_block[:n_e] = mu
@@ -204,8 +208,8 @@ def _(
         'OutputFlag': 0,
     }
 
-    VP = Verifier(params=solver_params, solver="highs")
-    # VP = Verifier(params=solver_params, solver="gurobi")
+    # VP = Verifier(params=solver_params, solver="highs")
+    VP = Verifier(params=solver_params, solver="gurobi")
     x_param = VP.add_param(n_d, lb=x_lb, ub=x_ub)
     c_param = VP.add_param(n_e, lb=c_lb*np.ones(n_e), ub=c_ub*np.ones(n_e))
     b_s_param = VP.add_param(n_s, lb=b_s, ub=b_s)
@@ -230,15 +234,11 @@ def _(
         # z_bar = z[k-1] - eta * (mu + A_s.T @ v[k-1] - A_d.T @ w[k-1])
         z_bar = VP.add_param(n_e, lb=np.zeros(n_e), ub=np.ones(n_e))
         z[k] = VP.step.relu(c-z_bar)
-        print([np.subtract(ub, lb) for (lb, ub) in zip((c-z_bar).lb, (c-z_bar).ub)])
-        print([np.subtract(ub, lb) for (lb, ub) in zip(z[k].lb, z[k].ub)])
-        v_bar = VP.add_param(n_e, lb=-np.ones(n_e), ub=np.zeros(n_e))
-        print([np.subtract(ub, lb) for (lb, ub) in zip((z_bar+v_bar).lb, (z_bar+v_bar).ub)])
-        exit(0)
+        print(np.array([np.subtract(ub, lb) for (lb, ub) in zip(z[k].lb, z[k].ub)]))
         v[k] = VP.step.relu(v[k-1] + eta * (- b_s + A_s @ (2*z[k] - z[k-1])))
         w[k] = w[k-1] + eta * (x_param - A_d @ (2*z[k] - z[k-1]))
-        # VP.set_infinity_norm_objective([z[k] - z[k-1], v[k] - v[k-1], w[k] - w[k-1]])
-        VP.set_infinity_norm_objective([b_s - A_s @ z[k]])
+        VP.set_infinity_norm_objective([z[k] - z[k-1], v[k] - v[k-1], w[k] - w[k-1]])
+        # VP.set_infinity_norm_objective([b_s - A_s @ z[k]])
         res = VP.solve()
         all_residuals.append(res)
 
