@@ -201,15 +201,15 @@ def _(
     x_ub,
     z0_value,
 ):
-    K = 1
+    K = 15
     eta = 0.5 / np.linalg.norm(np.hstack([A_s.T, A_d.T]), 2)
 
     solver_params = {
         'OutputFlag': 0,
     }
 
-    # VP = Verifier(params=solver_params, solver="highs")
-    VP = Verifier(params=solver_params, solver="gurobi")
+    VP = Verifier(params=solver_params, solver="highs")
+    # VP = Verifier(params=solver_params, solver="gurobi")
     x_param = VP.add_param(n_d, lb=x_lb, ub=x_ub)
     c_param = VP.add_param(n_e, lb=c_lb*np.ones(n_e), ub=c_ub*np.ones(n_e))
     b_s_param = VP.add_param(n_s, lb=b_s, ub=b_s)
@@ -229,16 +229,10 @@ def _(
 
     all_residuals = []
     for k in range(1, K+1):
-        # z[k] = VP.step.satlin(z[k-1] - eta * (mu + A_s.T @ v[k-1] - A_d.T @ w[k-1]), l=np.zeros(n_e), u=c)
-        # z[k] = VP.step.satlin(z[k-1] - eta * (mu + A_s.T @ v[k-1] - A_d.T @ w[k-1]), l=c, u=np.zeros(n_e))
-        # z_bar = z[k-1] - eta * (mu + A_s.T @ v[k-1] - A_d.T @ w[k-1])
-        z_bar = VP.add_param(n_e, lb=np.zeros(n_e), ub=np.ones(n_e))
-        z[k] = VP.step.relu(c-z_bar)
-        print(np.array([np.subtract(ub, lb) for (lb, ub) in zip(z[k].lb, z[k].ub)]))
-        v[k] = VP.step.relu(v[k-1] + eta * (- b_s + A_s @ (2*z[k] - z[k-1])))
+        z[k] = VP.step.satlin(z[k-1] - eta * (mu_param + A_s.T @ v[k-1] - A_d.T @ w[k-1]), l=np.zeros(n_e), u=c)
+        v[k] = VP.step.relu(v[k-1] + eta * (- b_s_param + A_s @ (2*z[k] - z[k-1])))
         w[k] = w[k-1] + eta * (x_param - A_d @ (2*z[k] - z[k-1]))
         VP.set_infinity_norm_objective([z[k] - z[k-1], v[k] - v[k-1], w[k] - w[k-1]])
-        # VP.set_infinity_norm_objective([b_s - A_s @ z[k]])
         res = VP.solve()
         all_residuals.append(res)
 
