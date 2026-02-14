@@ -61,7 +61,7 @@ def _(np):
     x_lb, x_ub = 10, 11
     L = np.max(np.linalg.eigvals(A.T @ A))
     eta = 0.5 / L
-    K = 10
+    K = 5
     return A, K, eta, m, n, x_lb, x_ub
 
 

@@ -201,7 +201,7 @@ def _(
     x_ub,
     z0_value,
 ):
-    K = 15
+    K = 5
     eta = 0.5 / np.linalg.norm(np.hstack([A_s.T, A_d.T]), 2)
 
     solver_params = {
