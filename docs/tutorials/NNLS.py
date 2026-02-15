@@ -71,7 +71,7 @@ def _(A, K, Verifier, eta, m, n, x_lb, x_ub):
         'OutputFlag': 0,
     }
 
-    VP = Verifier(params=solver_params)
+    VP = Verifier(solver='gurobi', params=solver_params)
     x_param = VP.add_param(m, lb=x_lb, ub=x_ub)
 
     z0 = VP.add_iterate(n, lb=1, ub=1)

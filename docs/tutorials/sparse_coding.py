@@ -116,7 +116,7 @@ def _(D, K, Verifier, eta, lambd, n, np, p, x_lb, x_ub):
         'OutputFlag': 0,
     }
 
-    VP = Verifier(solver='highs', params=solver_params)
+    VP = Verifier(solver='gurobi', params=solver_params)
     x_param = VP.add_param(p, lb=x_lb, ub=x_ub)
 
     s0 = np.zeros(n) # initialized at zero

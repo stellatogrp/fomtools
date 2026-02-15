@@ -208,8 +208,7 @@ def _(
         'OutputFlag': 0,
     }
 
-    VP = Verifier(params=solver_params, solver="highs")
-    # VP = Verifier(params=solver_params, solver="gurobi")
+    VP = Verifier(params=solver_params, solver="gurobi")
     x_param = VP.add_param(n_d, lb=x_lb, ub=x_ub)
     c_param = VP.add_param(n_e, lb=c_lb*np.ones(n_e), ub=c_ub*np.ones(n_e))
     b_s_param = VP.add_param(n_s, lb=b_s, ub=b_s)

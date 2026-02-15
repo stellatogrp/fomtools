@@ -221,7 +221,7 @@ def _(
     solver_params = {
         'OutputFlag': 0,
     }
-    VP = Verifier(solver='highs', params=solver_params)
+    VP = Verifier(solver='gurobi', params=solver_params)
 
     if fix_initial_x :
         offset = 0.0
