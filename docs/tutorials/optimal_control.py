@@ -108,7 +108,7 @@ def _():
     # ADMM parameters
     sigma = 1e-4
     rho = 1.  # 0.1, 1, 10
-    K = 5
+    K = 2
     return K, rho, sigma
 
 

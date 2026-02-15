@@ -102,7 +102,7 @@ def _(mo):
 def _(D, np):
     L = np.real(np.max(np.linalg.eigvals(D.T @ D)))
     eta = 1 / L
-    K = 5
+    K = 2
     return K, eta
 
 
