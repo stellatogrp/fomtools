@@ -21,6 +21,7 @@ class MIP(Canonicalizer):
     """
 
     def __init__(self, solver_params=None, solver="gurobi"):
+        self.steps = []
         super(MIP, self).__init__(solver_params, solver)
 
     def add_var(self, var: LinearExpression) -> None:
@@ -174,15 +175,11 @@ class MIP(Canonicalizer):
         self.solver.constraints_to_solver(constraints)
         self.solver.set_objective(expression=q, sense="maximize")
 
-    def solve_model(self, steps: Step, convex_hull_cuts: bool = False) -> float:
+    def solve_model(self, convex_hull_cuts: bool = False) -> float:
         """
         Optimize the underlying MIP problem.
 
         Optionally, add convex hull cuts
-
-        Parameters
-        ----------
-        steps: Step
 
 
         convex_hull_cuts: bool
@@ -195,7 +192,7 @@ class MIP(Canonicalizer):
 
         """
         if convex_hull_cuts:
-            self.solver.add_convex_hull_cuts(steps)
+            self.solver.add_convex_hull_cuts(self.steps)
 
         self.solver.optimize()
         return self.solver["objVal"]
@@ -233,6 +230,7 @@ class MIP(Canonicalizer):
         -------
         None
         """
+        self.steps.append(step)
         self.add_constraint(step.lhs_mat @ step.lhs == step.rhs)
 
     def canonicalize_relu(self, step: Relu):
@@ -324,6 +322,7 @@ class MIP(Canonicalizer):
                         ]
                     )
         self.add_constraints(constraints)
+        self.steps.append(step)
 
     def canonicalize_saturatedlinear(self, step: SaturatedLinear):
         r"""
@@ -483,6 +482,7 @@ class MIP(Canonicalizer):
                     )
 
         self.add_constraints(constraints)
+        self.steps.append(step)
 
     def canonicalize_softthreshold(self, step: SoftThreshold):
         r"""
@@ -662,3 +662,4 @@ class MIP(Canonicalizer):
             i += 1
 
         self.add_constraints(constraints)
+        self.steps.append(step)

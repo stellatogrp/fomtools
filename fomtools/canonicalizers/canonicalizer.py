@@ -33,7 +33,8 @@ class Canonicalizer:
             - ``"gurobi"``, ``"grb"``
         """
         self.solver_params = solver_params
-        self.solver = self._get_solver(solver, solver_params)
+        if solver is not None:
+            self.solver = self._get_solver(solver, solver_params)
 
     @staticmethod
     def _get_solver(solver: str, solver_params: dict) -> Solver:
@@ -69,7 +70,7 @@ class Canonicalizer:
             case "highs":
                 return highs.HiGHSSolver(solver_params)
             case _:
-                raise ValueError(f"Solver must be 'gurobi' or 'TBD', got {solver}.")
+                raise ValueError(f"Solver must be 'gurobi' or 'HiGHS', got {solver}.")
 
     def canonicalize(self, step: Step):
         """

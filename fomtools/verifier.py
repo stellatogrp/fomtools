@@ -5,6 +5,7 @@ import numpy as np
 
 from fomtools.canonicalizers.mip import MIP
 from fomtools.canonicalizers.obbt_handler import OBBTHandler
+from fomtools.canonicalizers.simulator import Simulator
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
@@ -35,7 +36,7 @@ class Verifier(object):
 
         self.canonicalizer = self._get_canonicalizer(method, params, solver)
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
-        self.use_obbt_hander = True if obbt_handler else False
+        self.use_obbt_handler = True if obbt_handler else False
         self._step_proxy = _StepProxy(self)
 
     @staticmethod
@@ -49,6 +50,7 @@ class Verifier(object):
              Case-insensitive identifier for the solver to use. Supported values include:
              - ``"mip"``
              - ``"sdp"``
+             - ``"simulator"``
 
         solver_params: dict
              Key-value pairs with solver parameters and their corresponding
@@ -75,6 +77,8 @@ class Verifier(object):
                 return MIP(solver_params=solver_params, solver=solver)
             case "sdp":
                 raise NotImplementedError()
+            case "simulator":
+                return Simulator()
             case _:
                 raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
 
@@ -319,7 +323,7 @@ class Verifier(object):
 
         rhs_lb, rhs_ub = step.lb, step.ub
         # TODO: figure out a better way to prevent obbt call for implicit linear step
-        if self.use_obbt_hander:
+        if self.use_obbt_handler:
             rhs_lb, rhs_ub = self.obbt_handler.obbt(step.rhs, rhs_lb, rhs_ub)
 
         step.update_bounds(rhs_lb, rhs_ub)
@@ -410,7 +414,7 @@ class Verifier(object):
         lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
         self.canonicalizer.set_infinity_norm_objective(expr_list, list(lb), list(ub))
 
-    def solve(self, convex_hull_cuts: bool = False):
+    def solve(self, **kwargs) -> float:
         """
         Solve the optimization problem.
 
@@ -418,18 +422,13 @@ class Verifier(object):
         optimization problem using the recorded thresholding or
         activation steps.
 
-        Parameters
-        ----------
-        convex_hull_cuts: bool
-            a
-
         Returns
         -------
         float
             The objective value for the current solution, if the
             model was solved to optimality.
         """
-        return self.canonicalizer.solve_model(self.steps, convex_hull_cuts)
+        return self.canonicalizer.solve_model(**kwargs)
 
     def post_process(self, target_expr, ref_expr, residuals):
         """
@@ -504,6 +503,8 @@ class _StepProxy:
     this class directly.
     """
 
+    USES_OBBT = {"relu", "satlin", "soft_threshold"}
+
     def __init__(self, verifier: Verifier):
         self._verifier = verifier
 
@@ -533,8 +534,9 @@ class _StepProxy:
         """
         step_cls = self._get_step_class(name)
 
-        # TODO: create a list of steps that don't use obbt handler
-        self._verifier.use_obbt_hander = False if name == "implicit_linear" else True
+        self._verifier.use_obbt_handler = (
+            True if name in self.USES_OBBT and self._verifier.obbt_handler else False
+        )
 
         def wrapper(rhs, relax_binary_vars=False, **kwargs):
             """Execute the specified thresholding or activation step."""
