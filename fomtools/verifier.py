@@ -7,7 +7,7 @@ from fomtools.canonicalizers.mip import MIP
 from fomtools.canonicalizers.obbt_handler import OBBTHandler
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import ProxableFunction
-from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
+from fomtools.steps import Affine, HalpernStep, Relu, SaturatedLinear, SoftThreshold
 
 log = logging.getLogger(__name__)
 
@@ -332,6 +332,75 @@ class Verifier(object):
         self.steps.append(step)
 
         return lhs
+
+    def halpern_step(
+        self,
+        current_step,
+        anchor,
+        operator_func,
+        K,
+        restart=True,
+        relax_binary_vars=False,
+        big_M=None,
+    ):
+        """ Does the halpern step update and adds the constraints to the model.
+        Parameters
+        ----------
+        current_step : LinearExpression
+            Current iterate z^k.
+        anchor : LinearExpression
+            Current anchor a^k.
+        operator_func : callable
+            A function that accepts a ``LinearExpression`` and returns T(expr).
+            It is called twice internally — once for z^k and once for a^k.
+        K : int
+            Maximum number of iterations for the step-size schedule.
+        restart : bool
+            Whether to use dynamic restart logic. Default ``True``.
+        relax_binary_vars : bool
+            If ``True``, binary decision variables are relaxed to continuous.
+            Default ``False``.
+        big_M : float, optional
+            Big-M constant for the MILP formulation. Required when
+            ``restart=True``.
+
+        Returns
+        -------
+        z_kp1 : LinearExpression
+            New iterate z^{k+1}.
+        a_kp1 : LinearExpression
+            New anchor a^{k+1}.
+        """
+        t_zk_expr = operator_func(current_step)
+        t_anchor_expr = operator_func(anchor)
+
+        n = current_step.ndim
+        bounds = [e.bound_propagation() for e in [current_step, t_zk_expr, anchor, t_anchor_expr]]
+        lb_stack = np.minimum.reduce([lb for lb, _ in bounds])
+        ub_stack = np.maximum.reduce([ub for _, ub in bounds])
+
+        z_kp1 = self.add_iterate(n, lb=lb_stack, ub=ub_stack)
+        a_kp1 = self.add_iterate(n, lb=lb_stack, ub=ub_stack)
+
+        step = HalpernStep(
+            lhs=z_kp1,
+            z_k_expr=current_step,
+            t_zk_expr=t_zk_expr,
+            anchor_expr=anchor,
+            t_anchor_expr=t_anchor_expr,
+            K=K,
+            eps=np.e,
+            sequence_id="_default",
+            dynamic=restart,
+            relax_binary_vars=relax_binary_vars,
+            big_M=big_M,
+            a_next_expr=a_kp1,
+        )
+
+        self.canonicalizer.canonicalize(step)
+        self.steps.append(step)
+
+        return z_kp1, a_kp1
 
     def fixed_point(self, n_dim, operator, lb=-np.inf, ub=np.inf):
         z_star = self.add_iterate(n_dim, lb=lb, ub=ub)
