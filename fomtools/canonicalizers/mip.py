@@ -1,11 +1,12 @@
 from typing import List
 
+import gurobipy as gp
 import numpy as np
 
 from fomtools import LinearExpression
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
 from fomtools.constraint import Constraint
-from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold, Step
+from fomtools.steps import Affine, HalpernStep, Relu, SaturatedLinear, SoftThreshold, Step
 
 
 class MIP(Canonicalizer):
@@ -22,6 +23,9 @@ class MIP(Canonicalizer):
 
     def __init__(self, solver_params=None, solver="gurobi"):
         super(MIP, self).__init__(solver_params, solver)
+        # State for Halpern y-vector (one-hot iteration counter) per sequence id
+        self._halpern_sequence_state = {}
+        self._halpern_iter_count = 0
 
     def add_var(self, var: LinearExpression) -> None:
         """
@@ -662,3 +666,176 @@ class MIP(Canonicalizer):
             i += 1
 
         self.add_constraints(constraints)
+
+    def _get_or_init_halpern_y(self, sequence_id: str, K: int):
+        """
+        Initialize or retrieve the Halpern one-hot y-state vector.
+
+        The y-state vector has length K+1 and tracks the iteration counter m.
+        Initially m=0, so y[0]=1 and y[1..K]=0.
+
+        Parameters
+        ----------
+        sequence_id : str
+            Identifier for the Halpern sequence.
+        K : int
+            Maximum iteration count for the step-size schedule.
+
+        Returns
+        -------
+        gp.MVar
+            Binary MVar of length K+1 representing the current one-hot state.
+        """
+        if sequence_id not in self._halpern_sequence_state:
+            model = self.solver.model
+            y0 = model.addMVar(K + 1, vtype=gp.GRB.BINARY, name="halpern_y_0")
+            model.addConstr(y0[0] == 1)
+            for m in range(1, K + 1):
+                model.addConstr(y0[m] == 0)
+            model.addConstr(gp.quicksum(y0) == 1)
+            self._halpern_sequence_state[sequence_id] = y0
+        return self._halpern_sequence_state[sequence_id]
+
+    def canonicalize_halpernstep(self, step: HalpernStep) -> None:
+        """
+        If step.dynamic is True:
+          - Computes ρ = ||z^k - T(z^k)||_∞ and σ = ||a^k - T(a^k)||_∞.
+          - Introduces restart binary r: ρ ≤ (1/ε)σ ⟹ r=1.
+          - Updates the one-hot y-state from y_k to y_{k+1} based on r.
+          - Sets a^{k+1} = T(z^k) if r=1, else a^{k+1} = a^k.
+          - Sets z^{k+1} = Σ_m y_{k+1}[m] * [α_m T(z^k) + (1-α_m) a^{k+1}].
+
+        If its False: 
+          - Uses a fixed step size α_k = (k+1)/(k+2).
+          - Sets z^{k+1} = α_k T(z^k) + (1-α_k) a^k.
+          - Sets a^{k+1} = a^k (anchor stays constant).
+        """
+        model = self.solver.model
+        K = step.K
+        eps = step.eps
+        big_M = step.big_M if step.big_M is not None else 1e3
+
+        z_k_gp = self.solver.expression_to_solver(step.z_k_expr)
+        a_k_gp = self.solver.expression_to_solver(step.anchor_expr)
+        t_zk_gp = self.solver.expression_to_solver(step.t_zk_expr)
+        t_ak_gp = self.solver.expression_to_solver(step.t_anchor_expr)
+
+        n = step.lhs.ndim
+        lhs_gp = self.solver.expression_to_solver(step.lhs)
+        a_next_gp = self.solver.expression_to_solver(step.a_next_expr)
+
+        if step.dynamic:
+            vtype = gp.GRB.CONTINUOUS if step.relax_binary_vars else gp.GRB.BINARY
+
+            #\rho = ||z^k - T(z^k)||_inf
+            diff_z = z_k_gp - t_zk_gp
+            u = model.addMVar(n, lb=0.0, ub=big_M, name=f"u_rho_{step.sequence_id}")
+            b_rho = model.addMVar(n, vtype=vtype, name=f"b_sign_rho_{step.sequence_id}")
+            if step.relax_binary_vars:
+                b_rho.lb, b_rho.ub = 0.0, 1.0
+            for i in range(n):
+                d = diff_z[i]
+                model.addConstr(u[i] >= d)
+                model.addConstr(u[i] >= -d)
+                model.addConstr(u[i] <= d + big_M * (1 - b_rho[i]))
+                model.addConstr(u[i] <= -d + big_M * b_rho[i])
+
+            rho = model.addVar(lb=0.0, ub=big_M, name=f"rho_{step.sequence_id}")
+            s_rho = model.addMVar(n, vtype=vtype, name=f"s_argmax_rho_{step.sequence_id}")
+            if step.relax_binary_vars:
+                s_rho.lb, s_rho.ub = 0.0, 1.0
+            model.addConstr(gp.quicksum(s_rho) == 1)
+            for i in range(n):
+                model.addConstr(rho >= u[i])
+                model.addConstr(rho <= u[i] + big_M * (1 - s_rho[i]))
+
+            #\sigma = ||a^k - T(a^k)||_inf
+            diff_a = a_k_gp - t_ak_gp
+            v = model.addMVar(n, lb=0.0, ub=big_M, name=f"u_sigma_{step.sequence_id}")
+            b_sig = model.addMVar(n, vtype=vtype, name=f"b_sign_sigma_{step.sequence_id}")
+            if step.relax_binary_vars:
+                b_sig.lb, b_sig.ub = 0.0, 1.0
+            for i in range(n):
+                d = diff_a[i]
+                model.addConstr(v[i] >= d)
+                model.addConstr(v[i] >= -d)
+                model.addConstr(v[i] <= d + big_M * (1 - b_sig[i]))
+                model.addConstr(v[i] <= -d + big_M * b_sig[i])
+
+            sigma = model.addVar(lb=0.0, ub=big_M, name=f"sigma_{step.sequence_id}")
+            s_sig = model.addMVar(n, vtype=vtype, name=f"s_argmax_sigma_{step.sequence_id}")
+            if step.relax_binary_vars:
+                s_sig.lb, s_sig.ub = 0.0, 1.0
+            model.addConstr(gp.quicksum(s_sig) == 1)
+            for i in range(n):
+                model.addConstr(sigma >= v[i])
+                model.addConstr(sigma <= v[i] + big_M * (1 - s_sig[i]))
+
+            #Restart binary r: r=1 if \hro ≤ (1/\epsilon)\sigma
+            r = model.addVar(vtype=vtype, name=f"r_{step.sequence_id}")
+            if step.relax_binary_vars:
+                r.lb, r.ub = 0.0, 1.0
+            model.addConstr(rho - (1.0 / eps) * sigma <= big_M * (1 - r))
+            model.addConstr((1.0 / eps) * sigma - rho <= big_M * r)
+
+            #one hot transition
+            y_k = self._get_or_init_halpern_y(step.sequence_id, K)
+            y_kp1 = model.addMVar(K + 1, vtype=vtype, name="halpern_y_next")
+            if step.relax_binary_vars:
+                y_kp1.lb, y_kp1.ub = 0.0, 1.0
+            model.addConstr(gp.quicksum(y_kp1) == 1)
+            #y_{k+1}[0] = r  (reset on restart)
+            model.addConstr(y_kp1[0] == r)
+            #y_{k+1}[m+1] = y_k[m] and (1-r)  for m = 0..K-1
+            for m in range(K):
+                model.addConstr(y_kp1[m + 1] <= y_k[m])
+                model.addConstr(y_kp1[m + 1] <= 1 - r)
+                model.addConstr(y_kp1[m + 1] >= y_k[m] - r)
+            self._halpern_sequence_state[step.sequence_id] = y_kp1
+
+            # update anchor
+            for i in range(n):
+                model.addConstr(a_next_gp[i] - t_zk_gp[i] <= big_M * (1 - r))
+                model.addConstr(t_zk_gp[i] - a_next_gp[i] <= big_M * (1 - r))
+                model.addConstr(a_next_gp[i] - a_k_gp[i] <= big_M * r)
+                model.addConstr(a_k_gp[i] - a_next_gp[i] <= big_M * r)
+            alpha = step.alpha_array
+            tilde_t = []
+            tilde_a = []
+            for m in range(K + 1):
+                tt = model.addMVar(n, lb=-big_M, ub=big_M, name=f"tt_{step.sequence_id}_{m}")
+                ta = model.addMVar(n, lb=-big_M, ub=big_M, name=f"ta_{step.sequence_id}_{m}")
+                tilde_t.append(tt)
+                tilde_a.append(ta)
+                model.addConstr(tt <= big_M * y_kp1[m])
+                model.addConstr(tt >= -big_M * y_kp1[m])
+                model.addConstr(ta <= big_M * y_kp1[m])
+                model.addConstr(ta >= -big_M * y_kp1[m])
+                for i in range(n):
+                    model.addConstr(t_zk_gp[i] - tt[i] <= big_M * (1 - y_kp1[m]))
+                    model.addConstr(tt[i] - t_zk_gp[i] <= big_M * (1 - y_kp1[m]))
+                    model.addConstr(a_next_gp[i] - ta[i] <= big_M * (1 - y_kp1[m]))
+                    model.addConstr(ta[i] - a_next_gp[i] <= big_M * (1 - y_kp1[m]))
+
+            for i in range(n):
+                expr = gp.LinExpr()
+                for m in range(K + 1):
+                    expr += float(alpha[m]) * tilde_t[m][i]
+                    expr += float(1.0 - alpha[m]) * tilde_a[m][i]
+                model.addConstr(lhs_gp[i] == expr)
+
+        else:
+            # Non-dynamic
+            k_plus_1 = self._halpern_iter_count + 1
+            alpha_k = k_plus_1 / (k_plus_1 + 1)
+
+            for i in range(n):
+                model.addConstr(
+                    lhs_gp[i] == alpha_k * t_zk_gp[i] + (1 - alpha_k) * a_k_gp[i]
+                )
+            for i in range(n):
+                model.addConstr(a_next_gp[i] == a_k_gp[i])
+
+            self._halpern_iter_count += 1
+
+        model.update()
