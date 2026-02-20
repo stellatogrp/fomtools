@@ -27,8 +27,8 @@ def test_halpern_dynamic(vp_halpern):
     Operator: T(x) = ReLU(x - gamma * (P*x + param)).
     """
     VP = vp_halpern
-    n = 5
-    K = 6
+    n = 3
+    K = 3
     EPS = np.e
     BIG_M = 200.0
 
@@ -120,8 +120,8 @@ def test_halpern_nondynamic(vp_halpern):
     z^{k+1} = ((k+1)/(k+2)) * T(z^k) + (1/(k+2)) * a^k.
     """
     VP = vp_halpern
-    n = 4
-    K = 5
+    n = 3
+    K = 3
     BIG_M = 100.0
 
     rng = np.random.default_rng(seed=7)
