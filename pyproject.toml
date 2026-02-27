@@ -14,10 +14,11 @@ authors = [
 ]
 
 dependencies = [
-       "numpy",
        "gurobipy>=12.0.1",
+       "highspy",
+       "jax",
+       "numpy",
        "scipy",
-       "highspy"
 ]
 
 [tool.setuptools]
