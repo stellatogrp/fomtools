@@ -1,52 +1,232 @@
 import jax
 import jax.numpy as jnp
-from scipy import sparse as spa
+import numpy as np
+import scipy.sparse as spa
+import typing
 
+from fomtools import LinearExpression
 from fomtools.canonicalizers import Canonicalizer
+
+if typing.TYPE_CHECKING:
+    from fomtools import Step
 
 
 # todo: add logic to go on gpu (if available)
 # todo: compare this with the actual worst case
 # todo : after solving this, compute the bounds
 class Simulator(Canonicalizer):
+    """
+    An interface for simulating a Verification Problem using JAX.
+
+    Attributes
+    ----------
+    iterates : List[jnp.ndarray]
+        A list of iterates stored as ``jnp.ndarray`` instances that are
+        registered with the Simulator instance.
+
+    expression : jnp.ndarray
+        Current parameter array passed to the step function.
+
+    step_function: Callable
+        A function that executes the step on the underlying
+            ``step`` object.
+
+    """
+
     def __init__(self):
         super(Simulator, self).__init__(solver=None)
-        self.iterates = []
-        self.step = None
+        self.iterates = set()
+        self.params = set()
+        self.expression = None
         self.step_function = None
 
-    def _sparse_to_jax(self, matrix):
+    @staticmethod
+    def _sparse_to_jax(matrix: np.ndarray | spa.spmatrix) -> jnp.ndarray:
+        """
+        Convert a NumPy or SciPy sparse matrix to a JAX array.
+
+        Parameters
+        ----------
+        matrix : np.ndarray | scipy.sparse.spmatrix
+            The sparse matrix to be converted.
+
+        Returns
+        -------
+        jnp.ndarray
+             A JAX array containing the same data as the input matrix. Sparse
+            inputs are converted to their dense representation before being
+            returned as a JAX array.
+        """
         if spa.issparse(matrix):
             return jnp.array(matrix.toarray())
         return jnp.array(matrix)
 
-    def _linear_expr_to_jax(self, expr):
-        step_sum = jnp.array(expr.const)
+    def _linear_expr_to_jax(self, expr: LinearExpression) -> jnp.ndarray:
+        """
+        Converts a linear expression to a JAX array.
 
-        for coeff in expr.decomposition_dict.values():
-            step_sum = jnp.array([self._sparse_to_jax(coeff) + c for c in step_sum])
+        Parameters
+        ----------
+        expr : LinearExpression
+            The linear expression to be converted.
 
-        return step_sum
+        Returns
+        -------
+        jnp.ndarray
+            A JAX array containing the same information as the provided
+            LinearExpression object.
+        """
+        ndim = expr.ndim
+        z_coeff = jnp.zeros((ndim, ndim))
+        q_coeff = jnp.zeros((ndim, ndim))
 
-    def add_var(self, iterate):
-        self.iterates.append(self._linear_expr_to_jax(iterate))
+        for leaf, coeff in expr.decomposition_dict.items():
+            coeff_jax = self._sparse_to_jax(coeff)
 
-    def canonicalize_relu(self, step):
-        self.step = self._linear_expr_to_jax(step.rhs)
-        self.step_function = jax.nn.relu
+            if leaf in self.iterates:
+                z_coeff += coeff_jax
+            elif leaf in self.params:
+                q_coeff += coeff_jax
+            else:
+                raise ValueError(
+                    f"Variable {leaf} has not been registered with this "
+                    "simulator instance. Please register a variable "
+                    "before running the simulation"
+                )
 
-    def solve_model(self, K):
+        return {"z_coeff": z_coeff, "q_coeff": q_coeff, "const": jnp.array(expr.const)}
+
+    def add_var(self, var: LinearExpression, **kwargs) -> None:
+        """
+        Add a variable to the Simulator instance. This method converts the provided
+        LinearExpression object to a JAX array and registers it with the Simulator
+        instance so that it can be referenced later.
+
+        Parameters
+        ----------
+        var: LinearExpression
+            Linear expression object to add to the Simulator instance.
+
+        Returns
+        -------
+        None
+        """
+
+        def _register_var(_var: LinearExpression, var_type: str) -> None:
+            """
+            Register a variable to the Simulator instance.
+
+            This method adds the given ``LinearExpression`` object to the appropriate
+            internal collection based on its role in the simulation.
+
+            Parameters
+            ----------
+            _var: LinearExpression
+                Linear expression object to add to the Simulator instance.
+
+            var_type : str
+                The category of the variable. Must be one of:
+                    - "iterate": registers the variable as an iterate.
+                    - "param": registers the variable as a parameter.
+
+            Returns
+            -------
+            None
+            """
+            if var_type == "iterate":
+                self.iterates.add(_var)
+            elif var_type == "param":
+                self.params.add(_var)
+            else:
+                raise ValueError(f"Unknown var_type: {var_type}")
+
+        _register_var(var, **kwargs)
+
+    def canonicalize_relu(self, step: "Step") -> None:
+        """
+        Registers the provided ReLU step for JAX simulation.
+
+        This function extracts the linear expression from the step's
+        right-hand side (rhs), converts it to JAX-compatible coefficient
+        matrices, and stores the corresponding JAX numerical operation.
+
+        Parameters
+        ----------
+        step : Step
+            A step object containing the ReLU operation. The `step.rhs` attribute
+            holds the LinearExpression representing the input to the ReLU.
+
+        Returns
+        -------
+        None
+
+        """
+        expression = self._linear_expr_to_jax(step.rhs)
+        z_coeff = expression["z_coeff"]
+        q_coeff = expression["q_coeff"]
+        const = expression["const"]
+
+        def update_fn(z, q):
+            return jax.nn.relu(z_coeff @ z + q_coeff @ q + const)
+
+        self.step_function = update_fn
+
+    def solve_model(self, K, z0, q_samples):
+        """
+        Run a batched simulation of the step function over K iterations.
+
+        This method evaluates the simulator dynamics starting from an initial
+        state ``z0`` for each parameter sample in ``q_samples``. For every sample,
+        the registered ``step_function`` is applied iteratively ``K`` times.
+        At each step, the infinity norm of the state update
+        (``max(abs(z_{k+1} - z_k))``) is recorded as a residual.
+
+        Parameters
+        ----------
+        K : int
+            Number of iterations to simulate.
+
+        z0 : jnp.ndarray
+            Initial state of the system.
+
+        q_samples : jnp.ndarray
+            Batch of parameter samples. The first dimension is interpreted
+            as the batch dimension and is vectorized over.
+
+        Returns
+        -------
+        jax.numpy.ndarray
+            A 2D array of shape ``(num_samples, K)`` containing the residual
+            (infinity norm of successive state differences) at each iteration
+            for each parameter sample.
+
+        Raises
+        ------
+        ValueError
+            If no step function has been registered with the simulator.
+        """
+        if self.step_function is not None:
+            update_fn = self.step_function
+        else:
+            raise ValueError(
+                "No step function has not been registered with this "
+                "simulator instance. Please register a step function "
+                "before running the simulation"
+            )
+
+        z0_jax = z0
+        q_samples_jax = jnp.array(q_samples)
+
         @jax.jit
-        def _simulate(step):
+        def _simulate(samples):
             """Simulate K steps for a single q sample."""
-
-            z = self.iterates[0]
+            z = z0_jax
             residuals = []
             for k in range(K):
-                z_new = self.step_function(step)
+                z_new = update_fn(z, samples)
                 residuals.append(jnp.max(jnp.abs(z_new - z)))  # infinity norm
                 z = z_new
             return jnp.stack(residuals)
 
-        simulate_batch = jax.jit(jax.vmap(_simulate, in_axes=(0)))
-        return simulate_batch(self.step)
+        simulate_batch = jax.jit(jax.vmap(_simulate, in_axes=0))
+        return simulate_batch(q_samples_jax)

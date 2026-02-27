@@ -24,7 +24,7 @@ class MIP(Canonicalizer):
         self.steps = []
         super(MIP, self).__init__(solver_params, solver)
 
-    def add_var(self, var: LinearExpression) -> None:
+    def add_var(self, var: LinearExpression, **kwargs) -> None:
         """
         Add a variable to the MIP instance. This method registers
         a new variable with the MIP program and attaches it to the

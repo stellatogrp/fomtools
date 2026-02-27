@@ -129,7 +129,7 @@ class Verifier(object):
 
         return LinearExpression.from_int(ndim, lb=lb, ub=ub)
 
-    def _register_var(self, var: LinearExpression):
+    def _register_var(self, var: LinearExpression, **kwargs):
         """
         Register the given :class:`LinearExpression` variable with
         the underlying canonicalizer and OBBT Handler instance.
@@ -140,7 +140,7 @@ class Verifier(object):
             A new :class:`LinearExpression` variable to register.
 
         """
-        self.canonicalizer.add_var(var)
+        self.canonicalizer.add_var(var, **kwargs)
         if self.obbt_handler is not None:
             self.obbt_handler.add_var(var)
 
@@ -175,7 +175,7 @@ class Verifier(object):
         """
 
         self.iterates.append(iterate := self._create_var(ndim, lb, ub))
-        self._register_var(iterate)
+        self._register_var(iterate, var_type="iterate")
         return iterate
 
     def add_param(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
@@ -211,7 +211,7 @@ class Verifier(object):
             length to the dimension of the expression.
         """
         var = self._create_var(ndim, lb, ub)
-        self._register_var(var)
+        self._register_var(var, var_type="param")
         return var
 
     def add_param_stack(self, param_list: List[LinearExpression]) -> LinearExpression:
@@ -330,7 +330,7 @@ class Verifier(object):
 
         lhs = step.lhs
 
-        self._register_var(lhs)
+        self._register_var(lhs, var_type="param")
         self.iterates.append(lhs)
         self.canonicalizer.canonicalize(step)
         self.steps.append(step)

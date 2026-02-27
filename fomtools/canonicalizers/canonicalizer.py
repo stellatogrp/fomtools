@@ -110,5 +110,5 @@ class Canonicalizer:
             )
         canonicalizer(step)
 
-    def add_var(self, iterate):
+    def add_var(self, iterate, **kwargs):
         raise NotImplementedError
