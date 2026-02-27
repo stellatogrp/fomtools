@@ -1,8 +1,9 @@
+import typing
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as spa
-import typing
 
 from fomtools import LinearExpression
 from fomtools.canonicalizers import Canonicalizer

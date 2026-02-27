@@ -1,7 +1,9 @@
 import jax
-import numpy as np
 import jax.numpy as jnp
+import numpy as np
+
 from fomtools.verifier import Verifier
+
 
 def test_relu_simulator():
     """

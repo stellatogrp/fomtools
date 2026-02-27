@@ -5,7 +5,7 @@ import numpy as np
 from fomtools import LinearExpression
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
 from fomtools.constraint import Constraint
-from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold, Step
+from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 
 class MIP(Canonicalizer):
