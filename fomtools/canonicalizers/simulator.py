@@ -13,7 +13,6 @@ if typing.TYPE_CHECKING:
 
 # todo: add logic to go on gpu (if available)
 # todo: compare this with the actual worst case
-# todo : after solving this, compute the bounds
 class Simulator(Canonicalizer):
     """
     An interface for simulating a Verification Problem using JAX.
@@ -142,6 +141,121 @@ class Simulator(Canonicalizer):
 
         _register_var(var, **kwargs)
 
+    @staticmethod
+    def compute_risk_bound(residuals: jnp.ndarray, delta: float = 0.05, epsilon: float = 0.0):
+        r"""
+        Compute a high-probability bound on the risk using the KL inverse bound.
+
+        Given a tolerance $\epsilon$, a number of iterations $k$ (implicitly given by the last
+        column of ``residuals``),  and $N$ sampled problem instances,
+
+        we define the $0$–$1$ error for sample $x$ as
+
+        $$
+            e(x) = \mathbf{1}\{ \phi(z^k(x), x) > \epsilon \},
+        $$
+
+        which in this implementation corresponds to checking whether the
+        final residual exceeds $\epsilon$.
+
+        Let $N$ be the number of samples and let the empirical risk be
+
+
+        $$
+            \hat{r}_S
+            =
+            \frac{1}{N}
+            \sum_{i=1}^{N}
+            \mathbf{1}\{ r_i^{(k)} > \epsilon \},
+        $$
+
+        where $r_i^{(k)}$ is the final residual of trajectory $i$.
+
+        Then, with probability at least $1 - \delta$, the true risk $r$
+        satisfies
+
+        $$
+            r
+            \;\le\;
+            \mathrm{kl}^{-1}
+            \!\left(
+                \hat{r}_S
+                \;\middle|\;
+                \frac{\log(2/\delta)}{N}
+            \right),
+        $$
+
+        where $\mathrm{kl}^{-1}(q \mid c)$ denotes the largest $p \in [q,1]$
+        such that
+
+        $$
+            \mathrm{KL}(q \,\|\, p)
+            \le c,
+        $$
+
+        and
+
+        $$
+            \mathrm{KL}(q \,\|\, p)
+            =
+            q \log\!\frac{q}{p}
+            +
+            (1-q)\log\!\frac{1-q}{1-p}
+        $$
+
+        is the binary Kullback–Leibler divergence.
+
+        Parameters
+        ----------
+        residuals: jnp.ndarray
+            Residuals of the problem instances.
+
+        delta: float, optional
+            Confidence parameter $\delta \in (0,1)$. The bound holds with
+            probability at least $1 - \delta$.
+
+        epsilon: float, optional
+            Tolerance level $\epsilon$ defining the $0$–$1$ error.
+
+        Returns
+        -------
+        float
+            Upper bound on true risk via KL inverse.
+
+        """
+
+        def _kl_inverse(q, c):
+            """
+            Compute kl⁻¹(q | c): largest p such that KL(q || p) ≤ c.
+            """
+            if q >= 1.0:
+                return 1.0
+            if c == 0:
+                return q
+
+            low, high = q, 1.0
+            for _ in range(100):
+                mid = (low + high) / 2
+                if mid == 1.0:
+                    kl = float("inf")
+                else:
+                    kl = q * np.log(q / mid + 1e-10) + (1 - q) * np.log((1 - q) / (1 - mid) + 1e-10)
+
+                if kl < c:
+                    low = mid
+                else:
+                    high = mid
+            return high
+
+        N = residuals.shape[0]
+        final_residuals = residuals[:, -1]
+
+        errors = (final_residuals > epsilon).astype(float)
+        empirical_risk = jnp.mean(errors)
+
+        c = jnp.log(2 / delta) / N
+        return _kl_inverse(float(empirical_risk), float(c))
+
     def canonicalize_relu(self, step: "Step") -> None:
         """
         Registers the provided ReLU step for JAX simulation.
@@ -171,7 +285,8 @@ class Simulator(Canonicalizer):
 
         self.step_function = update_fn
 
-    def solve_model(self, K, z0, q_samples):
+    def solve_model(self, K, z0, q_samples, delta=0.05, epsilon=0.0):
+        # todo: need to polish docstring here
         """
         Run a batched simulation of the step function over K iterations.
 
@@ -229,4 +344,7 @@ class Simulator(Canonicalizer):
             return jnp.stack(residuals)
 
         simulate_batch = jax.jit(jax.vmap(_simulate, in_axes=0))
-        return simulate_batch(q_samples_jax)
+        residuals = simulate_batch(q_samples_jax)
+        bounds = self.compute_risk_bound(residuals, delta=delta, epsilon=epsilon)
+
+        return residuals, bounds
