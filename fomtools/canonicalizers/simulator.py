@@ -354,6 +354,50 @@ class Simulator(Canonicalizer):
             "p_slices": p_slices,
         }
 
+    def _register_statistics(
+        self, residuals: jnp.ndarray, delta: float = 0.05, epsilon: float = 1e-3
+    ):
+        """
+        Compute and register summary statistics from simulation residuals.
+
+        Parameters
+        ----------
+        residuals : jnp.ndarray
+            Shape (N, K) array of residuals at each iteration.
+
+        delta: float, optional
+            Confidence parameter $\delta \in (0,1)$. The bound holds with
+            probability at least $1 - \delta$.
+
+        epsilon: float, optional
+            Tolerance level $\epsilon$ defining the $0$–$1$ error.
+
+        """
+
+        final_residuals = residuals[:, -1]
+
+        self.summary_statistics = {
+            "n_samples": residuals.shape[0],
+            "n_iterations": residuals.shape[1],
+            "final_residuals": final_residuals,
+            "mean": float(jnp.mean(final_residuals)),
+            "std": float(jnp.std(final_residuals)),
+            "min": float(jnp.min(final_residuals)),
+            "max": float(jnp.max(final_residuals)),
+            "median": float(jnp.median(final_residuals)),
+            "quantiles": {
+                0.25: float(jnp.quantile(final_residuals, 0.25)),
+                0.75: float(jnp.quantile(final_residuals, 0.75)),
+                0.90: float(jnp.quantile(final_residuals, 0.90)),
+                0.95: float(jnp.quantile(final_residuals, 0.95)),
+                0.99: float(jnp.quantile(final_residuals, 0.99)),
+            },
+            "epsilon": epsilon,
+            "delta": delta,
+            "empirical_risk": float(jnp.mean((final_residuals > epsilon).astype(float))),
+            "risk_bound": self.compute_risk_bound(residuals, delta, epsilon),
+        }
+
     def canonicalize_relu(self, step: "Step") -> None:
         """
         Registers the provided ReLU step for JAX simulation.
@@ -492,6 +536,5 @@ class Simulator(Canonicalizer):
 
         simulate_batch = jax.jit(jax.vmap(_simulate, in_axes=0))
         residuals = simulate_batch(simulation_data["p_samples"])
-        bounds = self.compute_risk_bound(residuals, delta=delta, epsilon=epsilon)
-
-        return residuals, bounds
+        self._register_statistics(residuals, delta, epsilon)
+        return residuals

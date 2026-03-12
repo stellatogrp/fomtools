@@ -39,6 +39,47 @@ class Verifier(object):
         self.use_obbt_handler = True if obbt_handler else False
         self._step_proxy = _StepProxy(self)
 
+    def __getitem__(self, item):
+        """
+        Access summary statistics.
+
+        Parameters
+        ----------
+        item : str
+            Key for the statistic to retrieve.
+
+        Returns
+        -------
+        float or dict or jnp.ndarray
+            The requested statistic.
+
+        Raises
+        ------
+        KeyError
+            If the item is not a valid statistic key.
+
+        RuntimeError
+            If no statistic is avaiable. 
+
+        Examples
+        --------
+        >>> vp.solve_model(K=100)
+        >>> vp['mean']
+        0.00123
+        >>> vp['quantiles'][0.95]
+        0.00456
+        """
+        try:
+            summary_statistics = self.canonicalizer.summary_statistics
+        except AttributeError:
+            raise RuntimeError("No statistics available. Run solve_model() first.")
+
+        if item not in summary_statistics:
+            raise KeyError(f"'{item}' is not a valid statistic. Valid keys: "
+                           f"{list(summary_statistics.keys())}")
+
+        return summary_statistics[item]
+
     @staticmethod
     def _get_canonicalizer(method: str, solver_params: dict, solver: dict):
         """

@@ -36,4 +36,16 @@ def test_relu_simulator():
 
     vp.step.relu(z[0] - step_size * (P @ z[0] + q_param))
 
-    residuals, upper_bound = vp.solve(K=K)
+    residuals = vp.solve(K=K)
+    print(
+        f"Summary statistics:\n"
+        f"mean: {vp['mean']:.6e}\n"
+        f"std: {vp['std']:.6e}\n"
+        f"min: {vp['min']:.6e}\n"
+        f"max: {vp['max']:.6e}\n"
+        f"median: {vp['median']:.6e}\n"
+        f"empirical_risk: {vp['empirical_risk']:.4f}\n"
+        f"risk_bound: {vp['risk_bound']:.4f}\n"
+        f"n_samples: {vp['n_samples']}\n"
+        f"n_iteration: {vp['n_iterations']}"
+    )
