@@ -30,9 +30,11 @@ def test_relu_simulator():
     P = P @ P.T
 
     # q is a problem parameter
-    q_param = vp.add_param(ndim=n, lb=q_nominal - q_offset, ub=q_nominal + q_offset)
-
     key = jax.random.PRNGKey(0)
+
     q_samples = jax.random.uniform(key, shape=(10000, n), minval=-1.0, maxval=1.0)
+    q_param = vp.add_param(ndim=n, lb=q_nominal - q_offset, ub=q_nominal + q_offset, samples=q_samples)
+
     vp.step.relu(z[0] - step_size * (P @ z[0] + q_param))
-    residuals, upper_bound = vp.solve(K=K, z0=jnp.full(n, -1), q_samples=q_samples)
+
+    residuals, upper_bound = vp.solve(K=K)

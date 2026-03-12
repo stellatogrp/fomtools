@@ -144,7 +144,9 @@ class Verifier(object):
         if self.obbt_handler is not None:
             self.obbt_handler.add_var(var)
 
-    def add_iterate(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
+    def add_iterate(
+        self, ndim: int, lb: float = -np.inf, ub: float = np.inf, **kwargs
+    ) -> LinearExpression:
         """
         Create and register an iterate to the Problem instance. This
         method creates a new :class:`LinearExpression` of dimension `ndim`
@@ -175,10 +177,12 @@ class Verifier(object):
         """
 
         self.iterates.append(iterate := self._create_var(ndim, lb, ub))
-        self._register_var(iterate, var_type="iterate")
+        self._register_var(iterate, var_type="iterate", **kwargs)
         return iterate
 
-    def add_param(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
+    def add_param(
+        self, ndim: int, lb: float = -np.inf, ub: float = np.inf, **kwargs
+    ) -> LinearExpression:
         """
         Create and register a new parameter. This method creates a new
         :class:`LinearExpression` of dimension `ndim` and registers it with
@@ -211,7 +215,7 @@ class Verifier(object):
             length to the dimension of the expression.
         """
         var = self._create_var(ndim, lb, ub)
-        self._register_var(var, var_type="param")
+        self._register_var(var, var_type="param", **kwargs)
         return var
 
     def add_param_stack(self, param_list: List[LinearExpression]) -> LinearExpression:

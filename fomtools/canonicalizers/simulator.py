@@ -20,24 +20,25 @@ class Simulator(Canonicalizer):
 
     Attributes
     ----------
-    iterates : List[jnp.ndarray]
-        A list of iterates stored as ``jnp.ndarray`` instances that are
-        registered with the Simulator instance.
+    param_to_samples : dict[LinearExpression, jnp.ndarray]
+        A dictionary mapping each parameter variable (LinearExpression)
+        to its sample values. Each array should have shape (num_samples, dim),
+        where dim is the dimensionality of the parameter.
 
-    expression : jnp.ndarray
-        Current parameter array passed to the step function.
+    iterate_to_samples : dict[LinearExpression, jnp.ndarray]
+        A dictionary mapping each iterate variable (a LinearExpression) to
+        its initial values. Each array should have shape (dim,), representing
+        the initial state for that iterate.
 
     step_function: Callable
-        A function that executes the step on the underlying
-            ``step`` object.
-
+        A function that executes the step on the underlying ``step`` object.
     """
 
     def __init__(self):
         super(Simulator, self).__init__(solver=None)
-        self.iterates = set()
-        self.params = set()
-        self.expression = None
+        self.param_to_samples = {}
+        self.iterate_to_samples = {}
+
         self.step_function = None
 
     @staticmethod
@@ -47,7 +48,7 @@ class Simulator(Canonicalizer):
 
         Parameters
         ----------
-        matrix : np.ndarray | scipy.sparse.spmatrix
+        matrix: np.ndarray | scipy.sparse.spmatrix
             The sparse matrix to be converted.
 
         Returns
@@ -61,40 +62,47 @@ class Simulator(Canonicalizer):
             return jnp.array(matrix.toarray())
         return jnp.array(matrix)
 
-    def _linear_expr_to_jax(self, expr: LinearExpression) -> jnp.ndarray:
+    def _linear_expr_to_jax(
+        self, expr: LinearExpression
+    ) -> dict[str, list[tuple[LinearExpression, jnp.ndarray]]]:
         """
         Converts a linear expression to a JAX array.
 
+        This function decomposes the provided LinearExpression into its
+        constituent coefficients and converts each coefficient to a JAX
+        array. The terms of the expression are grouped according to whether
+        their corresponding leaf variable belongs to the iterate set or
+        the parameter set.
+
         Parameters
         ----------
-        expr : LinearExpression
+        expr: LinearExpression
             The linear expression to be converted.
 
         Returns
         -------
-        jnp.ndarray
-            A JAX array containing the same information as the provided
-            LinearExpression object.
+        dict[str, list[tuple[LinearExpression, jnp.ndarray]]]
+            A dictionary mapping term categories (e.g., iterate or parameter
+            terms) to lists of tuples (leaf, coeff_jax), where leaf identifies
+            the variable and coeff_jax is the corresponding coefficient
+            represented as a JAX array
         """
-        ndim = expr.ndim
-        z_coeff = jnp.zeros((ndim, ndim))
-        q_coeff = jnp.zeros((ndim, ndim))
+        iterate_coeffs = []
+        param_coeffs = []
 
         for leaf, coeff in expr.decomposition_dict.items():
             coeff_jax = self._sparse_to_jax(coeff)
 
-            if leaf in self.iterates:
-                z_coeff += coeff_jax
-            elif leaf in self.params:
-                q_coeff += coeff_jax
-            else:
-                raise ValueError(
-                    f"Variable {leaf} has not been registered with this "
-                    "simulator instance. Please register a variable "
-                    "before running the simulation"
-                )
+            if leaf in self.iterate_to_samples:
+                iterate_coeffs.append((leaf, coeff_jax))
+            elif leaf in self.param_to_samples:
+                param_coeffs.append((leaf, coeff_jax))
 
-        return {"z_coeff": z_coeff, "q_coeff": q_coeff, "const": jnp.array(expr.const)}
+        return {
+            "iterate_coeffs": iterate_coeffs,
+            "param_coeffs": param_coeffs,
+            "const": jnp.array(expr.const),
+        }
 
     def add_var(self, var: LinearExpression, **kwargs) -> None:
         """
@@ -112,7 +120,9 @@ class Simulator(Canonicalizer):
         None
         """
 
-        def _register_var(_var: LinearExpression, var_type: str) -> None:
+        def _register_var(
+            _var: LinearExpression, var_type: str, samples: jnp.ndarray = None
+        ) -> None:
             """
             Register a variable to the Simulator instance.
 
@@ -134,11 +144,14 @@ class Simulator(Canonicalizer):
             None
             """
             if var_type == "iterate":
-                self.iterates.add(_var)
+                self.iterate_to_samples[_var] = jnp.full(_var.ndim, _var.lb)
+
             elif var_type == "param":
-                self.params.add(_var)
+                # todo: if samples is not provided, then the var is most likely not a leaf
+                if samples is not None:
+                    self.param_to_samples[_var] = jnp.array(samples)
             else:
-                raise ValueError(f"Unknown var_type: {var_type}")
+                raise ValueError("Unknown variable type")
 
         _register_var(var, **kwargs)
 
@@ -257,17 +270,81 @@ class Simulator(Canonicalizer):
         c = jnp.log(2 / delta) / N
         return _kl_inverse(float(empirical_risk), float(c))
 
+    def _prepare_simulation_data(self):
+        """
+        Prepare stacked arrays and slices for simulation.
+
+        This function packs the iterate initial values and parameter sample
+        arrays into contiguous JAX arrays. It also records slice indices that
+        map each original variable (``leaf``) to its corresponding location in
+        the concatenated arrays.
+
+        Iterate initial values are concatenated into a single vector ``z0``.
+        Parameter samples are concatenated along axis 1 into ``q_samples``.
+        The returned slice dictionaries allow reconstruction or indexing of
+        the individual variables within these packed arrays.
+
+        Returns
+        -------
+        dict
+            A dictionary containing the concatenated simulation inputs and their
+            corresponding slice mappings, where:
+                - ``z0`` maps to a JAX array containing the concatenation of all
+                    iterate initial values.
+                - ``p_samples`` maps to a JAX array containing the concatenation (along axis 1)
+                    of all parameter sample arrays.
+                - ``z_slices`` maps to a dictionary mapping each iterate identifier (leaf)
+                    to a slice indicating its location within z0.
+                - ``p_slices`` maps to a dictionary mapping each parameter identifier (leaf) to a
+                    slice indicating its location within the second dimension of q_samples.”
+
+        """
+
+        def stack_with_slices(
+            data_dict: dict[LinearExpression, jnp.ndarray], axis: int = 0
+        ) -> tuple[jnp.ndarray, dict[LinearExpression, slice]]:
+            """Prepare stacked arrays and slices for simulation."""
+            slices = {}
+            offset = 0
+            for leaf, arr in data_dict.items():
+                dim = arr.shape[axis]
+                slices[leaf] = slice(offset, offset + dim)
+                offset += dim
+
+            if data_dict:
+                stacked = jnp.concatenate(list(data_dict.values()), axis=axis)
+            else:
+                stacked = jnp.array([])
+
+            return stacked, slices
+
+        z0, z_slices = stack_with_slices(self.iterate_to_samples, axis=0)
+        p_samples, p_slices = stack_with_slices(self.param_to_samples, axis=1)
+
+        return {
+            "z0": z0,
+            "p_samples": p_samples,
+            "z_slices": z_slices,
+            "p_slices": p_slices,
+        }
+
     def canonicalize_relu(self, step: "Step") -> None:
         """
         Registers the provided ReLU step for JAX simulation.
 
-        This function extracts the linear expression from the step's
-        right-hand side (rhs), converts it to JAX-compatible coefficient
-        matrices, and stores the corresponding JAX numerical operation.
+        This method converts the linear expression defining the input to the
+        ReLU operation into a JAX-evaluable form and constructs a corresponding
+        update function. The update function has signature ``f(z_stacked, p_stacked)``
+        where the iterate and parameter variables are provided as concatenated vectors.
+        Slice mappings are used internally to extract the relevant components for
+        each variable.
+
+        The constructed function is stored in ``self.step_function`` and can be
+        used during simulation to evaluate the ReLU update.
 
         Parameters
         ----------
-        step : Step
+        step: Step
             A step object containing the ReLU operation. The `step.rhs` attribute
             holds the LinearExpression representing the input to the ReLU.
 
@@ -276,45 +353,90 @@ class Simulator(Canonicalizer):
         None
 
         """
-        expression = self._linear_expr_to_jax(step.rhs)
-        z_coeff = expression["z_coeff"]
-        q_coeff = expression["q_coeff"]
-        const = expression["const"]
+        coeffs = self._linear_expr_to_jax(step.rhs)
 
-        def update_fn(z, q):
-            return jax.nn.relu(z_coeff @ z + q_coeff @ q + const)
+        iterate_coeffs = coeffs["iterate_coeffs"]
+        param_coeffs = coeffs["param_coeffs"]
+        const = coeffs["const"]
+
+        simulation_data = self._prepare_simulation_data()
+
+        def update_fn(z_stacked: jnp.ndarray, p_stacked: jnp.ndarray) -> jnp.ndarray:
+            """
+            Evaluate the linear update followed by a ReLU activation.
+
+            This function reconstructs the value of a linear expression from
+            stacked iterate and parameter vectors. The contributions of each
+            variable are computed using the precomputed coefficient matrices
+            and slice mappings. A ReLU activation is applied to the resulting
+            value.
+
+            Parameters
+            ----------
+            z_stacked: jnp.ndarray
+                Concatenation of all iterate variables, with shape. Individual iterate
+                values are retrieved using slices stored in ``simulation_data["z_slices"]``.
+
+            p_stacked: jnp.ndarray
+                Concatenation of all parameter variables. Individual parameter values
+                are retrieved using slices stored in ``simulation_data["p_slices"]``.
+
+            Returns
+            -------
+            jnp.ndarray
+                The value of the linear expression evaluated at the provided
+                iterates and parameters, after applying a ReLU activation.
+            """
+            result = const.copy()
+
+            for leaf, coeff in iterate_coeffs:
+                z_slice = z_stacked[simulation_data["z_slices"][leaf]]
+                result += coeff @ z_slice
+
+            for leaf, coeff in param_coeffs:
+                p_slice = p_stacked[simulation_data["p_slices"][leaf]]
+                result += coeff @ p_slice
+
+            return jax.nn.relu(result)
 
         self.step_function = update_fn
 
-    def solve_model(self, K, z0, q_samples, delta=0.05, epsilon=0.0):
-        # todo: need to polish docstring here
+    def solve_model(self, K: int, delta: float = 0.05, epsilon: float = 0.0):
         """
-        Run a batched simulation of the step function over K iterations.
+        Run a batched simulation of the registered step function.
 
-        This method evaluates the simulator dynamics starting from an initial
-        state ``z0`` for each parameter sample in ``q_samples``. For every sample,
-        the registered ``step_function`` is applied iteratively ``K`` times.
-        At each step, the infinity norm of the state update
+        This method simulates the iterative dynamics defined by
+        ``self.step_function`` starting from the initial iterate vector.
+        The simulation is performed for each parameter sample.
+        For every sample, the step function is applied sequentially for
+        ``K`` iterations. At each step, the infinity norm of the state update
         (``max(abs(z_{k+1} - z_k))``) is recorded as a residual.
+
+        After the simulation, a risk bound is computed from the residual
+        trajectories using :meth:`compute_risk_bound`.
 
         Parameters
         ----------
-        K : int
+        K: int
             Number of iterations to simulate.
 
-        z0 : jnp.ndarray
-            Initial state of the system.
+        delta: float, optional
+            Confidence parameter $\delta \in (0,1)$. The bound holds with
+            probability at least $1 - \delta$.
 
-        q_samples : jnp.ndarray
-            Batch of parameter samples. The first dimension is interpreted
-            as the batch dimension and is vectorized over.
+        epsilon: float, optional
+            Tolerance level $\epsilon$ defining the $0$–$1$ error.
 
         Returns
         -------
-        jax.numpy.ndarray
-            A 2D array of shape ``(num_samples, K)`` containing the residual
-            (infinity norm of successive state differences) at each iteration
-            for each parameter sample.
+        residuals: jnp.ndarray
+           A 2D array of shape ``(num_samples, K)`` containing the residual
+           (infinity norm of successive state differences) at each iteration
+           for each parameter sample.
+
+        bounds: Any
+            Risk bounds computed from the residual trajectories via
+            :meth:`compute_risk_bound`.
 
         Raises
         ------
@@ -329,14 +451,12 @@ class Simulator(Canonicalizer):
                 "simulator instance. Please register a step function "
                 "before running the simulation"
             )
-
-        z0_jax = z0
-        q_samples_jax = jnp.array(q_samples)
+        simulation_data = self._prepare_simulation_data()
 
         @jax.jit
         def _simulate(samples):
-            """Simulate K steps for a single q sample."""
-            z = z0_jax
+            """Simulate K steps for a single sample."""
+            z = simulation_data["z0"]
             residuals = []
             for k in range(K):
                 z_new = update_fn(z, samples)
@@ -345,7 +465,7 @@ class Simulator(Canonicalizer):
             return jnp.stack(residuals)
 
         simulate_batch = jax.jit(jax.vmap(_simulate, in_axes=0))
-        residuals = simulate_batch(q_samples_jax)
+        residuals = simulate_batch(simulation_data["p_samples"])
         bounds = self.compute_risk_bound(residuals, delta=delta, epsilon=epsilon)
 
         return residuals, bounds
