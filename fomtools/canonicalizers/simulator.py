@@ -13,8 +13,6 @@ if typing.TYPE_CHECKING:
     from fomtools import Step
 
 
-# todo: add logic to go on gpu (if available)
-# todo: compare this with the actual worst case
 # todo: what to do if samples is missing from a leaf expression
 class Simulator(Canonicalizer):
     """
@@ -34,6 +32,11 @@ class Simulator(Canonicalizer):
 
     step_function: Callable
         A function that executes the step on the underlying ``step`` object.
+
+    device: Desired device type. Supported values are:
+        - ``None``: Use the default list returned by ``jax.devices()``.
+        - ``"cpu"``: Restrict selection to CPU devices.
+        - ``"gpu"``: Restrict selection to GPU devices.
     """
 
     def __init__(self, random_seed=0):
@@ -43,6 +46,7 @@ class Simulator(Canonicalizer):
 
         self._seed_counter = random_seed
         self.step_function = None
+        self.device = jax.devices("cpu")[0]
 
     @staticmethod
     def _sparse_to_jax(matrix: np.ndarray | spa.spmatrix) -> jnp.ndarray:
@@ -429,6 +433,24 @@ class Simulator(Canonicalizer):
             "risk_bound": self.compute_risk_bound(residuals, delta, epsilon),
         }
 
+    def _to_device(self, arr):
+        """Move array to the configured device."""
+        return jax.device_put(jnp.array(arr), self.device)
+
+    def _configure_device(self, device: str) -> None:
+        """Configure the JAX execution device for the current instance."""
+        if device is None:
+            devices = jax.devices()
+        elif device in {"cpu", "gpu"}:
+            devices = jax.devices(device)
+        else:
+            raise ValueError(f"Unsupported device type: {device}. Expected None, 'cpu', or 'gpu'.")
+
+        if not devices:
+            raise RuntimeError(f"No available JAX devices for type: {device}")
+
+        self.device = devices[0]
+
     def canonicalize_relu(self, step: "Step") -> None:
         """
         Registers the provided ReLU step for JAX simulation.
@@ -502,7 +524,9 @@ class Simulator(Canonicalizer):
 
         self.step_function = update_fn
 
-    def solve_model(self, K: int, delta: float = 0.05, epsilon: float = 0.0):
+    def solve_model(
+        self, K: int, delta: float = 0.05, epsilon: float = 0.0, device: str = None
+    ) -> jnp.ndarray:
         """
         Run a batched simulation of the registered step function.
 
@@ -544,6 +568,7 @@ class Simulator(Canonicalizer):
         ValueError
             If no step function has been registered with the simulator.
         """
+        self._configure_device(device)
         if self.step_function is not None:
             update_fn = self.step_function
         else:
@@ -553,11 +578,13 @@ class Simulator(Canonicalizer):
                 "before running the simulation"
             )
         simulation_data = self._prepare_simulation_data()
+        z0 = self._to_device(simulation_data["z0"])
+        p_samples = self._to_device(simulation_data["p_samples"])
 
         @jax.jit
         def _simulate(samples):
             """Simulate K steps for a single sample."""
-            z = simulation_data["z0"]
+            z = z0
             _residuals = []
             for k in range(K):
                 z_new = update_fn(z, samples)
@@ -566,6 +593,6 @@ class Simulator(Canonicalizer):
             return jnp.stack(_residuals)
 
         simulate_batch = jax.jit(jax.vmap(_simulate, in_axes=0))
-        residuals = simulate_batch(simulation_data["p_samples"])
+        residuals = simulate_batch(p_samples)
         self._register_statistics(residuals, delta, epsilon)
         return residuals
