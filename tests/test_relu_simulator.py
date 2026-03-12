@@ -1,5 +1,4 @@
 import jax
-import jax.numpy as jnp
 import numpy as np
 
 from fomtools.verifier import Verifier
