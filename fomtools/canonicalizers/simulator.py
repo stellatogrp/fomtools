@@ -14,6 +14,7 @@ if typing.TYPE_CHECKING:
 
 # todo: add logic to go on gpu (if available)
 # todo: compare this with the actual worst case
+# todo: what to do if samples is missing from a leaf expression
 class Simulator(Canonicalizer):
     """
     An interface for simulating a Verification Problem using JAX.
@@ -121,7 +122,10 @@ class Simulator(Canonicalizer):
         """
 
         def _register_var(
-            _var: LinearExpression, var_type: str, samples: jnp.ndarray = None
+            _var: LinearExpression,
+            var_type: str,
+            samples: np.ndarray = None,
+            init: np.ndarray = None,
         ) -> None:
             """
             Register a variable to the Simulator instance.
@@ -139,17 +143,39 @@ class Simulator(Canonicalizer):
                     - "iterate": registers the variable as an iterate.
                     - "param": registers the variable as a parameter.
 
+            samples: np.ndarray, optional
+                For parameter variables, the sample values of the variable.
+                Should have shape (num_samples, dim). Required if the variable is
+                a leaf. Ignored for iterate variables.
+
+            init: np.ndarray
+                For iterate variables, the initial value. Should have shape (dim,).
+                Required if ``var_type`` is ``"iterate"``. Ignored for parameter variables.
+
             Returns
             -------
             None
+
+            Raises
+            ------
+            ValueError
+                If ``var_type`` is ``"iterate"`` and ``init`` is not provided.
+
+            ValueError
+                If ``var_type`` is not one of ``"iterate"`` or ``"param"``.
+
             """
             if var_type == "iterate":
-                self.iterate_to_samples[_var] = jnp.full(_var.ndim, _var.lb)
+                if init is None:
+                    raise ValueError(
+                        "An initial value must be provided when registering an iterate variable."
+                    )
+                self.iterate_to_samples[_var] = jnp.array(init)
 
             elif var_type == "param":
-                # todo: if samples is not provided, then the var is most likely not a leaf
                 if samples is not None:
                     self.param_to_samples[_var] = jnp.array(samples)
+
             else:
                 raise ValueError("Unknown variable type")
 
@@ -457,12 +483,12 @@ class Simulator(Canonicalizer):
         def _simulate(samples):
             """Simulate K steps for a single sample."""
             z = simulation_data["z0"]
-            residuals = []
+            _residuals = []
             for k in range(K):
                 z_new = update_fn(z, samples)
-                residuals.append(jnp.max(jnp.abs(z_new - z)))  # infinity norm
+                _residuals.append(jnp.max(jnp.abs(z_new - z)))  # infinity norm
                 z = z_new
-            return jnp.stack(residuals)
+            return jnp.stack(_residuals)
 
         simulate_batch = jax.jit(jax.vmap(_simulate, in_axes=0))
         residuals = simulate_batch(simulation_data["p_samples"])

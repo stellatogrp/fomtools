@@ -22,7 +22,7 @@ def test_relu_simulator():
     vp = Verifier(method="simulator", obbt_handler=None)
 
     z = [None] * (K + 1)
-    z[0] = vp.add_iterate(ndim=n, lb=-1.0, ub=1.0)
+    z[0] = vp.add_iterate(ndim=n, init=np.full(n, 1))
 
     q_nominal = np.random.normal(size=n)
     P = np.random.normal(size=(n, n))
