@@ -1,4 +1,5 @@
 import typing
+import warnings
 
 import jax
 import jax.numpy as jnp
@@ -35,11 +36,12 @@ class Simulator(Canonicalizer):
         A function that executes the step on the underlying ``step`` object.
     """
 
-    def __init__(self):
+    def __init__(self, random_seed=0):
         super(Simulator, self).__init__(solver=None)
         self.param_to_samples = {}
         self.iterate_to_samples = {}
 
+        self._seed_counter = random_seed
         self.step_function = None
 
     @staticmethod
@@ -105,6 +107,12 @@ class Simulator(Canonicalizer):
             "const": jnp.array(expr.const),
         }
 
+    def _next_seed(self) -> int:
+        """Generate next random seed for reproducible sampling."""
+        seed = self._seed_counter
+        self._seed_counter += 1
+        return seed
+
     def add_var(self, var: LinearExpression, **kwargs) -> None:
         """
         Add a variable to the Simulator instance. This method converts the provided
@@ -124,6 +132,7 @@ class Simulator(Canonicalizer):
         def _register_var(
             _var: LinearExpression,
             var_type: str,
+            random_seed: int = 0,
             samples: np.ndarray = None,
             init: np.ndarray = None,
         ) -> None:
@@ -142,6 +151,9 @@ class Simulator(Canonicalizer):
                 The category of the variable. Must be one of:
                     - "iterate": registers the variable as an iterate.
                     - "param": registers the variable as a parameter.
+
+            random_seed: int, optional
+                Random seed for reproducible sampling.
 
             samples: np.ndarray, optional
                 For parameter variables, the sample values of the variable.
@@ -164,12 +176,31 @@ class Simulator(Canonicalizer):
             ValueError
                 If ``var_type`` is not one of ``"iterate"`` or ``"param"``.
 
+            ValueError
+                If neither samples nor appropriate bounds are provided.
+
             """
+            lb, ub = _var.lb, _var.ub
+            key = jax.random.PRNGKey(random_seed)
+
+            has_bounds = any(np.any(np.isfinite(b)) for b in (lb, ub))
+            has_samples = samples is not None or init is not None
+
+            if has_bounds and has_samples:
+                warnings.warn(
+                    f"Bounds and samples both are provided for the {var_type}, bounds will be ignored."
+                )
+
             if var_type == "iterate":
                 if init is None:
-                    raise ValueError(
-                        "An initial value must be provided when registering an iterate variable."
-                    )
+                    if has_bounds:
+                        init = jax.random.uniform(
+                            key, shape=(1, _var.ndim), minval=lb, maxval=ub
+                        )  # pick random values within the bounds
+                    else:
+                        raise ValueError(
+                            "An initial value or finite bounds must be provided when registering an iterate variable."
+                        )
                 self.iterate_to_samples[_var] = jnp.array(init)
 
             elif var_type == "param":
@@ -179,7 +210,7 @@ class Simulator(Canonicalizer):
             else:
                 raise ValueError("Unknown variable type")
 
-        _register_var(var, **kwargs)
+        _register_var(var, random_seed=self._next_seed(), **kwargs)
 
     @staticmethod
     def compute_risk_bound(residuals: jnp.ndarray, delta: float = 0.05, epsilon: float = 0.0):

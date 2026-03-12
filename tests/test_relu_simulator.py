@@ -17,14 +17,12 @@ def test_relu_simulator():
     K = 10
     n = 3
     step_size = 0.01
-    q_offset = 1.0
 
     vp = Verifier(method="simulator", obbt_handler=None)
 
     z = [None] * (K + 1)
     z[0] = vp.add_iterate(ndim=n, init=np.full(n, 1))
 
-    q_nominal = np.random.normal(size=n)
     P = np.random.normal(size=(n, n))
     P = P @ P.T
 
@@ -32,7 +30,7 @@ def test_relu_simulator():
     key = jax.random.PRNGKey(0)
 
     q_samples = jax.random.uniform(key, shape=(10000, n), minval=-1.0, maxval=1.0)
-    q_param = vp.add_param(ndim=n, lb=q_nominal - q_offset, ub=q_nominal + q_offset, samples=q_samples)
+    q_param = vp.add_param(ndim=n, samples=q_samples)
 
     vp.step.relu(z[0] - step_size * (P @ z[0] + q_param))
 

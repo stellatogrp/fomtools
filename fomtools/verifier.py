@@ -75,8 +75,9 @@ class Verifier(object):
             raise RuntimeError("No statistics available. Run solve_model() first.")
 
         if item not in summary_statistics:
-            raise KeyError(f"'{item}' is not a valid statistic. Valid keys: "
-                           f"{list(summary_statistics.keys())}")
+            raise KeyError(
+                f"'{item}' is not a valid statistic. Valid keys: {list(summary_statistics.keys())}"
+            )
 
         return summary_statistics[item]
 
