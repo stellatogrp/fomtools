@@ -59,7 +59,7 @@ class Verifier(object):
             If the item is not a valid statistic key.
 
         RuntimeError
-            If no statistic is avaiable. 
+            If no statistic is avaiable.
 
         Examples
         --------
