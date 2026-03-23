@@ -5,6 +5,7 @@ import numpy as np
 
 from fomtools.canonicalizers.mip import MIP
 from fomtools.canonicalizers.obbt_handler import OBBTHandler
+from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
@@ -231,6 +232,19 @@ class Verifier(object):
             tuple(map(list.extend, bounds, (p.lb, p.ub)))
 
         return self.add_param(dim, lb=bounds[0], ub=bounds[1])
+
+    def add_constraint(self, constr: Constraint):
+        """
+        Adds an arbitrary constraint object to the Problem instance.
+
+        Parameters
+        ----------
+        constr: Constraint
+            A :class:`Constraint` object to add to the VP.
+
+        """
+        self.canonicalizer.add_constraint(constr)
+        # TODO: add the OBBT check and tighten process
 
     def prox(self, function: ProxableFunction, rhs: LinearExpression, gamma: float = 1, **kwargs):
         """
