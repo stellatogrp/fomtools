@@ -5,11 +5,54 @@ from fomtools.solvers.clarabel import ClarabelSolver
 
 
 class CuClarabelSolver(ClarabelSolver):
+    """
+    GPU-accelerated solver wrapper for Clarabel using CUDA.
+
+    This class extends ClarabelSolver to leverage GPU acceleration via CuPy and
+    Julia's CUDA-enabled Clarabel implementation. It transfers problem data to
+    GPU memory and solves the SDP using cuDSS for sparse linear algebra.
+
+    Requirements
+    ------------
+    - CuPy with CUDA support
+    - Julia with Clarabel.jl, CUDA.jl packages
+    - juliacall Python package
+
+    Notes
+    -----
+    Problem setup uses the parent class's ``setup_clarabel_data`` method.
+    Only the ``solve`` method differs, utilizing GPU kernels.
+    """
 
     def __init__(self, solver_params=None):
+        """
+        Initialize the GPU-accelerated Clarabel solver.
+
+        Parameters
+        ----------
+        solver_params : dict, optional
+            Dictionary of solver-specific parameters to configure.
+        """
         super(CuClarabelSolver, self).__init__(solver_params=solver_params)
 
     def solve(self):
+        """
+        Solve the SDP on GPU and return the objective value.
+
+        Transfers the problem data to GPU memory using CuPy and invokes
+        Julia's CUDA-enabled Clarabel solver via juliacall. Uses cuDSS
+        for the direct linear system solves.
+
+        Returns
+        -------
+        float
+            The optimal objective value of the SDP maximization problem.
+
+        Notes
+        -----
+        Requires CUDA-capable GPU and properly configured Julia environment
+        with CUDA.jl and Clarabel.jl packages.
+        """
         q = self.q
         b_psd = [n * (n + 1) // 2 for n in self.cone_dims['psd']]
         b = np.concatenate([self.beq, self.bineq, np.zeros(sum(b_psd))])

@@ -12,7 +12,54 @@ from fomtools.utils.sparse_utils import efficient_csc_pad
 
 
 class SDP(Canonicalizer):
+    """
+    Semidefinite programming canonicalizer for verification problems.
+
+    This class converts verification problems involving ReLU and other piecewise
+    linear operations into semidefinite programming (SDP) formulations. It builds
+    the SDP problem incrementally by adding variables and constraints, then solves
+    using Clarabel or CVXPY.
+
+    The SDP uses a lifted matrix variable X where X[0,0] = 1 (homogenization).
+    Variables are embedded in the diagonal blocks, and constraints are encoded
+    as linear matrix inequalities.
+
+    Attributes
+    ----------
+    solver_name : str
+        Name of the SDP solver backend ('clarabel', 'cvxpy', 'cuclarabel').
+    range_marker : int
+        Current dimension of the SDP matrix variable.
+    var_idx_map : dict
+        Mapping from LinearExpression to (start_idx, end_idx) in SDP matrix.
+    Aeq_matrices : list[scipy.sparse.csc_matrix]
+        Equality constraint matrices.
+    beq_consts : list[float]
+        Equality constraint right-hand sides.
+    Aineq_matrices : list[scipy.sparse.csc_matrix]
+        Inequality constraint matrices.
+    bineq_upperbounds : list[float]
+        Inequality constraint upper bounds.
+    psd_cone_indices : list[set]
+        Indices defining PSD cone constraints.
+    bound_constraint_indices : dict
+        Mapping from variable to its bound constraint indices.
+    C_obj : scipy.sparse.csc_matrix
+        Objective matrix for maximization.
+    """
+
     def __init__(self, solver_params=None, solver="clarabel"):
+        """
+        Initialize the SDP canonicalizer.
+
+        Parameters
+        ----------
+        solver_params : dict, optional
+            Dictionary of solver-specific parameters to pass to the backend.
+        solver : str, default='clarabel'
+            Name of the SDP solver to use. Options: 'clarabel', 'cvxpy',
+            'cvxpy_sdp', 'cuclarabel'.
+        """
         super(SDP, self).__init__(solver_params, solver)
         self.solver_name = solver.lower()  # Store for dispatch
         self.range_marker = 1
@@ -29,7 +76,12 @@ class SDP(Canonicalizer):
         self._initialize_corner_constraint()
 
     def _initialize_corner_constraint(self) -> None:
-        # adds the constraint that the upper left corner must equal 1
+        """
+        Add the homogenization constraint X[0,0] = 1.
+
+        This constraint ensures the lifted SDP formulation is properly
+        normalized. It is added automatically during initialization.
+        """
         curr_prob_dim = self.get_sdp_var_dim()
         new_A = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
         new_A[0, 0] = 1
@@ -37,6 +89,13 @@ class SDP(Canonicalizer):
         self.beq_consts.append(1)
 
     def _pad_existing_A_matrices(self) -> None:
+        """
+        Expand existing constraint matrices to accommodate new variables.
+
+        When new variables are added, the SDP matrix dimension increases.
+        This method pads all existing equality and inequality constraint
+        matrices with zeros to match the new dimension.
+        """
         new_dim = self.get_sdp_var_dim()
         new_Aeq_matrices = [
             efficient_csc_pad(A, (new_dim, new_dim)) for A in self.Aeq_matrices
@@ -48,6 +107,24 @@ class SDP(Canonicalizer):
         self.Aineq_matrices = new_Aineq_matrices
 
     def add_var(self, var: LinearExpression) -> None:
+        """
+        Add a variable to the SDP with bound constraints.
+
+        Embeds the variable in the SDP matrix diagonal and adds quadratic
+        bound constraints of the form (x - l)(x - u) <= 0 for each
+        component, which encode the box constraints l <= x <= u.
+
+        Parameters
+        ----------
+        var : LinearExpression
+            The variable to add. Must have finite bounds in ``var.lb``
+            and ``var.ub``.
+
+        Raises
+        ------
+        NotImplementedError
+            If any bound is infinite.
+        """
         lb, ub = var.lb, var.ub
         dim = var.ndim
         bounds = (self.range_marker, self.range_marker + dim)
@@ -76,12 +153,43 @@ class SDP(Canonicalizer):
         self.bound_constraint_indices[var] = (constraint_start, constraint_end)
 
     def get_sdp_var_dim(self) -> int:
+        """
+        Get the current dimension of the SDP matrix variable.
+
+        Returns
+        -------
+        int
+            The current size of the symmetric matrix variable X.
+        """
         return self.range_marker
 
     def update_bounds(
         self, expression: LinearExpression, lb: float | np.ndarray, ub: float | np.ndarray
     ) -> None:
-        """Update bounds for a variable by regenerating its constraint matrices."""
+        """
+        Update bounds for a variable by regenerating its constraint matrices.
+
+        Modifies the existing inequality constraint matrices for the given
+        variable to reflect new lower and upper bounds. This is used during
+        bound tightening procedures.
+
+        Parameters
+        ----------
+        expression : LinearExpression
+            The variable whose bounds are being updated. Must already be
+            registered via ``add_var``.
+        lb : float or np.ndarray
+            New lower bound(s).
+        ub : float or np.ndarray
+            New upper bound(s).
+
+        Raises
+        ------
+        ValueError
+            If the expression is not found in the canonicalizer.
+        NotImplementedError
+            If any new bound is infinite.
+        """
         if expression not in self.bound_constraint_indices:
             raise ValueError("Expression not found in SDP canonicalizer")
 
@@ -105,12 +213,40 @@ class SDP(Canonicalizer):
             self.bineq_upperbounds[constraint_idx] = -u * l
 
     def add_param_stack_var(self, param_stack_var, param_list):
+        """
+        Stack parameter variables (not implemented for SDP).
+
+        Raises
+        ------
+        NotImplementedError
+            This method is not supported in the SDP canonicalizer.
+        """
         raise NotImplementedError
 
     def add_equality_constraint(self, lhs_expr, rhs_expr):
+        """
+        Add a linear equality constraint (not implemented for SDP).
+
+        Raises
+        ------
+        NotImplementedError
+            This method is not supported in the SDP canonicalizer.
+        """
         raise NotImplementedError
 
     def add_psd_cone_indices(self, new_indices):
+        """
+        Register a new PSD cone constraint on a submatrix.
+
+        Adds the constraint that the submatrix of X indexed by ``new_indices``
+        (including the homogenization index 0) is positive semidefinite.
+
+        Parameters
+        ----------
+        new_indices : list[tuple[int, int]]
+            List of (start, end) index ranges defining the submatrix.
+            Index 0 is automatically included for homogenization.
+        """
         new_idx_set = range_to_indices(new_indices)
         new_idx_set.add(0)
 
@@ -119,6 +255,19 @@ class SDP(Canonicalizer):
         self.psd_cone_indices.append(new_idx_set)
 
     def canonicalize_relu(self, step: Relu) -> None:
+        """
+        Encode a ReLU step as SDP constraints.
+
+        Converts the relationship y = ReLU(Ax + b) into equality constraints
+        on the SDP matrix variable and registers the appropriate PSD cone
+        constraint for the lifted formulation.
+
+        Parameters
+        ----------
+        step : Relu
+            The ReLU step containing input expression (rhs) and output
+            variable (lhs).
+        """
         lhs, rhs = step.lhs, step.rhs
         A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(rhs)
         b_vec = rhs.const
@@ -146,8 +295,25 @@ class SDP(Canonicalizer):
         self.add_psd_cone_indices(relu_psd_cone_indices)
 
     def linexpr_to_Amat_and_bounds(self, expr: LinearExpression):
-        # turns linexpr into Ax + b into a full matrix A
-        # along with corresponding indices in the SDP matrix var
+        """
+        Extract the coefficient matrix and SDP indices from a LinearExpression.
+
+        Converts a LinearExpression of the form Ax + b into the coefficient
+        matrix A and the index ranges where the corresponding variables are
+        located in the SDP matrix.
+
+        Parameters
+        ----------
+        expr : LinearExpression
+            The expression to decompose.
+
+        Returns
+        -------
+        tuple[np.ndarray, list[tuple[int, int]]]
+            A tuple containing:
+            - The horizontally stacked coefficient matrix.
+            - List of (start, end) index bounds for each variable block.
+        """
         all_A = []
         idx_bounds = []
         for leaf_var, mat in expr.decomposition_dict.items():
@@ -157,6 +323,19 @@ class SDP(Canonicalizer):
         return np.hstack(all_A), idx_bounds
 
     def set_two_norm_objective(self, expr_list) -> None:
+        """
+        Set the objective to maximize the sum of squared two-norms.
+
+        Configures the SDP objective matrix C to compute
+        sum_i ||A_i x + b_i||_2^2 = sum_i tr(Q_i @ X) for appropriate
+        quadratic forms Q_i derived from each expression.
+
+        Parameters
+        ----------
+        expr_list : list[LinearExpression]
+            List of expressions whose squared norms are summed in the
+            objective.
+        """
         curr_prob_dim = self.get_sdp_var_dim()
         overall_C_mat = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
 
@@ -184,6 +363,23 @@ class SDP(Canonicalizer):
         self.C_obj = overall_C_mat
 
     def set_infinity_norm_objective(self, expr_list, lb, ub):
+        """
+        Set infinity-norm objective (not supported for SDP).
+
+        Parameters
+        ----------
+        expr_list : list[LinearExpression]
+            Unused.
+        lb : float
+            Unused.
+        ub : float
+            Unused.
+
+        Raises
+        ------
+        NotImplementedError
+            Infinity-norm objectives require MIP formulation.
+        """
         raise NotImplementedError(
             "Infinity-norm objective is not supported with SDP. Use set_two_norm_objective instead."
         )
@@ -214,6 +410,17 @@ class SDP(Canonicalizer):
                 raise ValueError(f"Unknown SDP solver: {self.solver_name}")
 
     def solve_via_cvxpy(self):
+        """
+        Solve the SDP using the CVXPY modeling interface.
+
+        Constructs a CVXPY problem from the stored constraint matrices
+        and solves it using the Clarabel backend via CVXPY.
+
+        Returns
+        -------
+        float
+            The optimal objective value.
+        """
         dim = self.get_sdp_var_dim()
         X = cp.Variable((dim, dim), symmetric=True)
         obj = cp.Maximize(cp.trace(self.C_obj @ X))
@@ -233,6 +440,17 @@ class SDP(Canonicalizer):
         return res
 
     def solve_via_clarabel(self):
+        """
+        Solve the SDP using the native Clarabel interface.
+
+        Directly invokes the Clarabel solver without going through CVXPY,
+        which can be more efficient for large problems.
+
+        Returns
+        -------
+        float
+            The optimal objective value.
+        """
         solver = ClarabelSolver(solver_params=self.solver_params)
         solver.setup_clarabel_data(
             self.get_sdp_var_dim(),
@@ -246,6 +464,17 @@ class SDP(Canonicalizer):
         return solver.solve()
 
     def solve_via_cuclarabel(self):
+        """
+        Solve the SDP using GPU-accelerated Clarabel.
+
+        Uses the CUDA-enabled Clarabel solver for GPU acceleration.
+        Requires CuPy and Julia with CUDA.jl and Clarabel.jl.
+
+        Returns
+        -------
+        float
+            The optimal objective value.
+        """
         solver = CuClarabelSolver(solver_params=self.solver_params)
         solver.setup_clarabel_data(
             self.get_sdp_var_dim(),
@@ -260,10 +489,36 @@ class SDP(Canonicalizer):
 
 
 def symmetrize(mat):
+    """
+    Symmetrize a sparse matrix.
+
+    Parameters
+    ----------
+    mat : scipy.sparse matrix
+        The matrix to symmetrize.
+
+    Returns
+    -------
+    scipy.sparse matrix
+        The symmetric matrix (mat + mat.T) / 2.
+    """
     return (mat + mat.T) / 2
 
 
 def range_to_indices(idx_ranges):
+    """
+    Convert a list of (start, end) range tuples to a set of indices.
+
+    Parameters
+    ----------
+    idx_ranges : list[tuple[int, int]]
+        List of (start, end) pairs defining half-open ranges.
+
+    Returns
+    -------
+    set[int]
+        The union of all indices in the specified ranges.
+    """
     out_set = set()
     for bounds in idx_ranges:
         out_set.update(range(bounds[0], bounds[1]))
