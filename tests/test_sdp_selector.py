@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from algoverify.utils.sparse_utils import get_submatrix_selection_matrix
+from fomtools.utils.sparse_utils import get_submatrix_selection_matrix
 
 # --- Helper Utilities for Testing ---
 

@@ -1,3 +1,7 @@
+import numpy as np
+
+from fomtools.constraint import Constraint
+from fomtools.linearexpression import LinearExpression
 from fomtools.solvers import gurobi, highs
 from fomtools.solvers.solver import Solver
 from fomtools.steps.step import Step
@@ -111,5 +115,60 @@ class Canonicalizer:
             )
         canonicalizer(step)
 
-    def add_var(self, iterate):
+    def add_var(self, var: LinearExpression) -> None:
+        """
+        Add a variable to the canonicalizer instance.
+
+        Parameters
+        ----------
+        var : LinearExpression
+            Linear expression object to add to the canonicalizer.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses.
+        """
+        raise NotImplementedError
+
+    def add_constraint(self, constraint: Constraint) -> None:
+        """
+        Add a constraint to the canonicalizer instance.
+
+        Parameters
+        ----------
+        constraint : Constraint
+            Constraint object to add to the canonicalizer.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses.
+        """
+        raise NotImplementedError
+
+    def update_bounds(
+        self, expression: LinearExpression, lb: float | np.ndarray, ub: float | np.ndarray
+    ) -> None:
+        """
+        Update the lower and upper bounds of the solver variables corresponding
+        to the given ``LinearExpression``.
+
+        Parameters
+        ----------
+        expression : LinearExpression
+            A ``LinearExpression`` object whose underlying variable
+            bounds are to be updated.
+
+        lb : float or np.ndarray
+            New lower bound(s).
+
+        ub : float or np.ndarray
+            New upper bound(s).
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses.
+        """
         raise NotImplementedError

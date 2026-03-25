@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.sparse as spa
 
-from algoverify.solvers.clarabel import ClarabelSolver
+from fomtools.solvers.clarabel import ClarabelSolver
 
 
 class CuClarabelSolver(ClarabelSolver):

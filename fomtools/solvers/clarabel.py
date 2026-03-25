@@ -2,7 +2,7 @@ import clarabel
 import numpy as np
 import scipy.sparse as spa
 
-from algoverify.utils.sparse_utils import get_submatrix_selection_matrix
+from fomtools.utils.sparse_utils import get_submatrix_selection_matrix
 
 
 # TODO: inherit the generic solver interface

@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import scipy.sparse as spa
 
-from algoverify.utils.sparse_utils import efficient_csc_pad
+from fomtools.utils.sparse_utils import efficient_csc_pad
 
 
 def test_sparse_manipulations():

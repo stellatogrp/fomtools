@@ -2,7 +2,7 @@ import importlib.util
 
 import numpy as np
 
-from algoverify.verifier import Verifier
+from fomtools.verifier import Verifier
 
 
 def test_nnls_sdp():

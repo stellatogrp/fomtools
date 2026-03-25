@@ -1,6 +1,6 @@
 import numpy as np
 
-from algoverify.utils.range_utils import process_1d_ranges, process_2d_ranges
+from fomtools.utils.range_utils import process_1d_ranges, process_2d_ranges
 
 
 def test_range_functions():
