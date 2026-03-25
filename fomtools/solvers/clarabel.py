@@ -2,12 +2,11 @@ import clarabel
 import numpy as np
 import scipy.sparse as spa
 
+from fomtools.solvers.sdp_solver import SDPSolver
 from fomtools.utils.sparse_utils import get_submatrix_selection_matrix
 
 
-# TODO: inherit the generic solver interface
-# probably will have to split Solver -> MIPSolver and SDPSolver
-class ClarabelSolver(object):
+class ClarabelSolver(SDPSolver):
 
     def __init__(self, solver_params=None):
         if solver_params is not None:
