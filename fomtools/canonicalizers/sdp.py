@@ -178,15 +178,16 @@ class SDP(Canonicalizer):
         expression : LinearExpression
             The variable whose bounds are being updated. Must already be
             registered via ``add_var``.
-        lb : float or np.ndarray
-            New lower bound(s).
-        ub : float or np.ndarray
-            New upper bound(s).
+        lb : np.ndarray
+            New lower bounds. Must have length equal to ``expression.ndim``.
+        ub : np.ndarray
+            New upper bounds. Must have length equal to ``expression.ndim``.
 
         Raises
         ------
         ValueError
-            If the expression is not found in the canonicalizer.
+            If the expression is not found in the canonicalizer, or if
+            the bounds do not have the expected length.
         NotImplementedError
             If any new bound is infinite.
         """
@@ -199,6 +200,12 @@ class SDP(Canonicalizer):
 
         lb = np.atleast_1d(lb)
         ub = np.atleast_1d(ub)
+
+        expected_len = sdp_end - sdp_start
+        if len(lb) != expected_len:
+            raise ValueError(f"Expected lb of length {expected_len}, got {len(lb)}")
+        if len(ub) != expected_len:
+            raise ValueError(f"Expected ub of length {expected_len}, got {len(ub)}")
 
         for j, (i, l, u) in enumerate(zip(range(sdp_start, sdp_end), lb, ub)):
             if np.isinf(l) or np.isinf(u):
