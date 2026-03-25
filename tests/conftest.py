@@ -6,6 +6,9 @@ from fomtools.verifier import Verifier
 # available solvers used as parameters to initialize verifier objects in each fixture
 SOLVERS = ["gurobi", "highs"]
 
+# Test tolerance for numerical comparisons
+TEST_EPS = 1e-6
+
 
 @pytest.fixture(params=SOLVERS, scope="function")
 def vp(request: pytest.FixtureRequest):
