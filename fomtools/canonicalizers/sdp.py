@@ -167,6 +167,7 @@ class SDP(Canonicalizer):
         prob = cp.Problem(obj, constraints)
         res = prob.solve()
         print(res)
+        return res
 
     def solve_via_clarabel(self):
         solver = ClarabelSolver(solver_params=self.solver_params)
@@ -179,7 +180,7 @@ class SDP(Canonicalizer):
             self.bineq_upperbounds,
             self.psd_cone_indices,
         )
-        solver.solve()
+        return solver.solve()
 
     def solve_via_cuclarabel(self):
         solver = CuClarabelSolver(solver_params=self.solver_params)
@@ -192,7 +193,7 @@ class SDP(Canonicalizer):
             self.bineq_upperbounds,
             self.psd_cone_indices,
         )
-        solver.solve()
+        return solver.solve()
 
 
 def symmetrize(mat):

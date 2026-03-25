@@ -92,6 +92,7 @@ class ClarabelSolver(SDPSolver):
         solver = clarabel.DefaultSolver(P, q, A, b, cones, settings)
         sol = solver.solve()
         print(-sol.obj_val)
+        return -sol.obj_val
 
 
 def sparse_symmetric_vectorize(P, scale_factor=np.sqrt(2)):
