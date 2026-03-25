@@ -175,3 +175,25 @@ class Canonicalizer:
             Must be implemented by subclasses.
         """
         raise NotImplementedError
+
+    def set_two_norm_objective(self, expr_list: list[LinearExpression]) -> None:
+        """
+        Set the objective to maximize the sum of squared two-norms.
+
+        Configures the optimization objective to compute
+        sum_i ||expr_i||_2^2 over the given list of expressions.
+
+        Parameters
+        ----------
+        expr_list : list[LinearExpression]
+            List of expressions whose squared norms are summed in the
+            objective.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses that support this objective type.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support set_two_norm_objective"
+        )
