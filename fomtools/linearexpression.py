@@ -148,11 +148,14 @@ class LinearExpression:
 
     def __hash__(self):
         """
-        The class variable `counter` is used to assign each `LinearExpression` a unique,
-        monotonically increasing ID at construction. This ID can serve as an
-        identity-based hash.
+        Return a hash based on this expression's unique counter.
+
+        Each LinearExpression is assigned a unique, monotonically increasing
+        counter at construction. Using this counter directly as the hash
+        guarantees no collisions between distinct instances, which is necessary
+        because __eq__ returns an EqualityConstraint (truthy) rather than a bool.
         """
-        return hash(str(self))
+        return self.counter
 
     def __getitem__(self, item: Self | int):
         """
