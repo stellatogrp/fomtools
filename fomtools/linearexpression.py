@@ -151,11 +151,12 @@ class LinearExpression:
         Return a hash based on this expression's unique counter.
 
         Each LinearExpression is assigned a unique, monotonically increasing
-        counter at construction. Using this counter directly as the hash
-        guarantees no collisions between distinct instances, which is necessary
-        because __eq__ returns an EqualityConstraint (truthy) rather than a bool.
+        counter at construction. We use a tuple hash to avoid collisions with
+        integers, which is necessary because __eq__ returns an EqualityConstraint
+        (truthy) rather than a bool. Without this, dict[0] could incorrectly
+        match a LinearExpression with counter=0.
         """
-        return self.counter
+        return hash(("LinearExpression", self.counter))
 
     def __getitem__(self, item: Self | int):
         """

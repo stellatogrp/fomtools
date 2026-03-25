@@ -226,7 +226,8 @@ def test_LinearExpression_hash():
 
     This is important because __eq__ returns an EqualityConstraint (truthy)
     rather than a bool, so hash collisions would cause silent key collisions.
-    Using the unique counter as the hash prevents this.
+    Using a tuple-based hash avoids collisions with integers, which prevents
+    dict[0] from incorrectly matching a LinearExpression with counter=0.
     """
     # Create two leaf variables with the same ndim
     a = LinearExpression.from_int(3)
@@ -235,10 +236,11 @@ def test_LinearExpression_hash():
     # Each instance gets a unique counter
     assert a.counter != b.counter
 
-    # Hashes are unique (based on counter)
+    # Hashes are unique (based on counter) and don't collide with integers
     assert hash(a) != hash(b)
-    assert hash(a) == a.counter
-    assert hash(b) == b.counter
+    assert hash(a) == hash(("LinearExpression", a.counter))
+    assert hash(b) == hash(("LinearExpression", b.counter))
+    assert hash(a) != a.counter  # Ensures no collision with integer keys
 
     # Dict stores them as separate entries
     d = {}
