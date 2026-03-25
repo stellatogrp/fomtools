@@ -36,7 +36,7 @@ class Verifier(object):
 
         self.canonicalizer = self._get_canonicalizer(method, params, solver)
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
-        self.use_obbt_hander = True if obbt_handler else False
+        self.use_obbt_handler = True if obbt_handler else False
         self._step_proxy = _StepProxy(self)
 
     @staticmethod
@@ -138,7 +138,7 @@ class Verifier(object):
 
         """
         self.canonicalizer.add_var(var)
-        if self.obbt_handler is not None:
+        if self.use_obbt_handler:
             self.obbt_handler.add_var(var)
 
     def add_iterate(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
@@ -253,7 +253,7 @@ class Verifier(object):
         None
         """
         self.canonicalizer.add_constraint(constr)
-        if self.use_obbt_hander:
+        if self.use_obbt_handler:
             self.obbt_handler.add_constr(constr)
             self._tighten_constraint_bounds(constr)
 
@@ -382,8 +382,10 @@ class Verifier(object):
         step = step_cls(rhs=rhs, relax_binary_vars=relax_binary_vars, **kwargs)
 
         rhs_lb, rhs_ub = step.lb, step.ub
-        if self.use_obbt_hander and not step.skip_obbt:
-            rhs_lb, rhs_ub = self.obbt_handler.obbt(step.rhs, rhs_lb, rhs_ub)
+        if self.use_obbt_handler and not step.skip_obbt:
+            result = self.obbt_handler.obbt(step.rhs, rhs_lb, rhs_ub)
+            if result is not None:
+                rhs_lb, rhs_ub = result
 
         step.update_bounds(rhs_lb, rhs_ub)
 
@@ -399,7 +401,7 @@ class Verifier(object):
     def fixed_point(self, n_dim, operator, lb=-np.inf, ub=np.inf):
         z_star = self.add_iterate(n_dim, lb=lb, ub=ub)
         s_star = operator(z_star)
-        self.canonicalizer.add_constraint(z_star == s_star)
+        self.add_constraint(z_star == s_star)
 
         return z_star
 

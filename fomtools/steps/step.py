@@ -18,7 +18,7 @@ class Step:
     lb: float
         Lower bound associated with the transformed values.
     ub: float
-        Lower bound associated with the transformed values.
+        Upper bound associated with the transformed values.
     relax_binary_vars: bool
         If true, binary decision variables associated with the operator
         are relaxed to take continuous values.
