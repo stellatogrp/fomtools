@@ -15,7 +15,7 @@ def test_portfolio():
     gamma = 3
     lambd = 1e-4
 
-    np.random.seed(3)
+    np.random.seed(4)
     F = np.random.normal(size=(n, d))
     Fmask = np.random.randint(0, high=2, size=(n, d))
     print(Fmask)
