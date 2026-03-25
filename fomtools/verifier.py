@@ -244,6 +244,8 @@ class Verifier(object):
 
         """
         self.canonicalizer.add_constraint(constr)
+        if self.use_obbt_hander:
+            self.obbt_handler.add_constr(constr)
         # TODO: add the OBBT check and tighten process
 
     def prox(self, function: ProxableFunction, rhs: LinearExpression, gamma: float = 1, **kwargs):
