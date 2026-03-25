@@ -1,5 +1,7 @@
 import numpy as np
 
+from tests.conftest import TEST_EPS
+
 
 def test_add_constraint_equality(vp):
     """
@@ -32,7 +34,7 @@ def test_add_constraint_equality(vp):
     # Verify the constraint is respected
     x_val = vp.get_solution_value(x)
     y_val = vp.get_solution_value(y)
-    assert np.abs(x_val[0] - y_val[0]) < 1e-6, "Equality constraint not satisfied"
+    assert np.abs(x_val[0] - y_val[0]) < TEST_EPS, "Equality constraint not satisfied"
 
 
 def test_add_constraint_inequality(vp):
@@ -64,7 +66,7 @@ def test_add_constraint_inequality(vp):
 
     # Verify the constraint is respected
     x_val = vp.get_solution_value(x)
-    assert x_val[0] >= 5 - 1e-6, "Inequality constraint not satisfied"
+    assert x_val[0] >= 5 - TEST_EPS, "Inequality constraint not satisfied"
 
 
 def test_add_constraint_tightens_bounds(vp):
@@ -98,7 +100,7 @@ def test_add_constraint_tightens_bounds(vp):
     # The result should be bounded by the parameter bounds
     # Since x == p and p in [0, 10], and ReLU(x) = max(x, 0),
     # the maximum should be at most 10
-    assert result <= 10 + 1e-6, "Constraint should tighten bounds"
+    assert result <= 10 + TEST_EPS, "Constraint should tighten bounds"
 
 
 def test_skip_obbt_affine_step(vp):

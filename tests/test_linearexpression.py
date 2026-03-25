@@ -2,6 +2,7 @@ import numpy as np
 import scipy.sparse as spa
 
 from fomtools.linearexpression import LinearExpression
+from tests.conftest import TEST_EPS
 
 
 def test_LinearExpression_dense():
@@ -18,16 +19,16 @@ def test_LinearExpression_dense():
     A = np.random.normal(size=(n, n))
 
     Ax = A @ x
-    assert np.linalg.norm(Ax.decomposition_dict[x] - A) <= 1e-8
+    assert np.linalg.norm(Ax.decomposition_dict[x] - A) <= TEST_EPS
 
     negAx = -Ax
-    assert np.linalg.norm(negAx.decomposition_dict[x] + A) <= 1e-8
+    assert np.linalg.norm(negAx.decomposition_dict[x] + A) <= TEST_EPS
 
     Axhalf = Ax / 2
-    assert np.linalg.norm(Axhalf.decomposition_dict[x] - A / 2) <= 1e-8
+    assert np.linalg.norm(Axhalf.decomposition_dict[x] - A / 2) <= TEST_EPS
 
     Axhalfmult = Ax * 0.5
-    assert np.linalg.norm(Axhalfmult.decomposition_dict[x] - Axhalf.decomposition_dict[x]) <= 1e-8
+    assert np.linalg.norm(Axhalfmult.decomposition_dict[x] - Axhalf.decomposition_dict[x]) <= TEST_EPS
 
     z2 = x - y
     assert x in z2.decomposition_dict

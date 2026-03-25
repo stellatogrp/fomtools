@@ -1,5 +1,6 @@
 import numpy as np
 
+from tests.conftest import TEST_EPS
 from tests.cvxpy import fixed_point
 
 np.set_printoptions(precision=5)  # Print few decimal places
@@ -86,7 +87,7 @@ def test_nnls_convergence(vp_param_1):
     print(f"objective diff: {abs(f_z_star - f_optimal):.2e}")
 
     # Assert that verification solution is close to optimal
-    assert abs(f_z_star - f_optimal) <= 1e-6, "Verification solution not close to optimal"
+    assert abs(f_z_star - f_optimal) <= TEST_EPS, "Verification solution not close to optimal"
 
     # return all_residuals, z_star, z_star_value, z_optimal_value
 
@@ -131,4 +132,4 @@ def test_nnls_convergence(vp_param_1):
     print(f"sample max resids: {sample_max}")
 
     # Assert that verification bounds are at least as good as sample max
-    assert np.all(verification_bounds >= sample_max - 1e-6), "Verification bounds not valid"
+    assert np.all(verification_bounds >= sample_max - TEST_EPS), "Verification bounds not valid"

@@ -1,5 +1,6 @@
 import numpy as np
 
+from tests.conftest import TEST_EPS
 from tests.cvxpy import portfolio_1 as portfolio_1_cvxpy
 from tests.cvxpy import portfolio_2 as portfolio_2_cvxpy
 from tests.cvxpy import portfolio_l1 as portfolio_l1_cvxpy
@@ -39,9 +40,9 @@ def test_portfolio():
         n, mu, 0.5, P, lambd, x_prev, d, F, b, A
     )
 
-    assert np.linalg.norm(x_orig - x_reformed) <= 1e-5
-    assert np.linalg.norm(x_reformed - z_triple_block) <= 1e-5
-    assert np.linalg.norm(z_triple_block - z_single_block) <= 1e-5
+    assert np.linalg.norm(x_orig - x_reformed) <= TEST_EPS
+    assert np.linalg.norm(x_reformed - z_triple_block) <= TEST_EPS
+    assert np.linalg.norm(z_triple_block - z_single_block) <= TEST_EPS
 
     # test with DR splitting
     Am, An = A.shape
@@ -93,7 +94,7 @@ def test_portfolio_l1():
     x_prev = 1 / n * np.ones(n)
 
     A, P, q, b, x_orig, z = portfolio_l1_cvxpy(n, mu, gamma, Sigma, lambd, x_prev, d, D, F, alpha)
-    assert np.linalg.norm(x_orig - z[:n]) <= 1e-5
+    assert np.linalg.norm(x_orig - z[:n]) <= TEST_EPS
 
     print("solving with DR")
 
@@ -116,7 +117,7 @@ def test_portfolio_l1():
         sk = sk + u - utilde
 
     print(sk)
-    assert np.linalg.norm(sk[:n] - x_orig) <= 1e-5
+    assert np.linalg.norm(sk[:n] - x_orig) <= TEST_EPS
 
 
 def test_sampling():

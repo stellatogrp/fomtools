@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.sparse as spa
 
+from tests.conftest import TEST_EPS
 from tests.cvxpy import pdhg as pdhg_cvxpy
 
 np.set_printoptions(precision=5)  # Print few decimal places
@@ -65,8 +66,8 @@ def test_pdhg_convergence():
         vkplus1 = vC @ vk + vD @ ukplus1 + vE @ uk + vF @ b
         # print('x:', xkplus1)
         # print('u:', ukplus1)
-        assert np.linalg.norm(xkplus1 - ukplus1) <= 1e-8
-        assert np.linalg.norm(ykplus1 - vkplus1) <= 1e-8
+        assert np.linalg.norm(xkplus1 - ukplus1) <= TEST_EPS
+        assert np.linalg.norm(ykplus1 - vkplus1) <= TEST_EPS
 
         xk = xkplus1
         yk = ykplus1
@@ -99,8 +100,8 @@ def test_pdhg_convergence():
         ukplus1 = np.maximum(xC @ uk + xD @ vk + xE @ c, 0)
         vkplus1 = vC @ vk + vD_k @ ukplus1 + vE_k @ uk + vF @ b
 
-        assert np.linalg.norm(xkplus1 - ukplus1) <= 1e-8
-        assert np.linalg.norm(ykplus1 - vkplus1) <= 1e-8
+        assert np.linalg.norm(xkplus1 - ukplus1) <= TEST_EPS
+        assert np.linalg.norm(ykplus1 - vkplus1) <= TEST_EPS
 
         xk = xkplus1
         yk = ykplus1

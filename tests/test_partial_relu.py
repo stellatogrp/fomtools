@@ -1,5 +1,6 @@
 import numpy as np
 
+from tests.conftest import TEST_EPS
 from tests.cvxpy import partial_relu as partial_relu_cvxpy
 
 np.set_printoptions(precision=5)  # Print few decimal places
@@ -25,7 +26,7 @@ def test_partial_nnqp(vp):
 
     print("solution from pgd:", zk)
     x = partial_relu_cvxpy(n, proj_ranges, P, q)
-    assert np.linalg.norm(x - zk) <= 1e-7
+    assert np.linalg.norm(x - zk) <= TEST_EPS
 
     q_offset = 1
     q_param = vp.add_param(n, lb=q - q_offset, ub=q + q_offset)
@@ -59,8 +60,8 @@ def test_partial_nnqp(vp):
 
     print(PGD_resids)
 
-    assert np.all(np.array(PGD_resids) <= np.array(all_res) + 1e-7)
-    assert np.abs(PGD_resids[-1] - all_res[-1]) <= 1e-8
+    assert np.all(np.array(PGD_resids) <= np.array(all_res) + TEST_EPS)
+    assert np.abs(PGD_resids[-1] - all_res[-1]) <= TEST_EPS
 
 
 def partial_relu(x, proj_ranges):

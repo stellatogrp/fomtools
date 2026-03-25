@@ -1,5 +1,6 @@
 import numpy as np
 
+from tests.conftest import TEST_EPS
 from tests.cvxpy import ista
 
 np.set_printoptions(precision=5)  # Print few decimal places
@@ -32,7 +33,7 @@ def test_ista(vp_theory):
         xk = soft_threshold(At @ xk + Bt @ b, t * lambd)
 
     print(xk)
-    assert np.linalg.norm(x - xk) <= 1e-7
+    assert np.linalg.norm(x - xk) <= TEST_EPS
     b_offset = 1.0
     b_param = vp_theory.add_param(m, lb=b - b_offset, ub=b + b_offset)
 
@@ -69,8 +70,8 @@ def test_ista(vp_theory):
 
     print(f"ISTA resids: {ISTA_resids}")
 
-    assert np.all(np.array(ISTA_resids) <= np.array(all_res) + 1e-7)
-    assert np.abs(ISTA_resids[-1] - all_res[-1]) <= 1e-8
+    assert np.all(np.array(ISTA_resids) <= np.array(all_res) + TEST_EPS)
+    assert np.abs(ISTA_resids[-1] - all_res[-1]) <= TEST_EPS
 
 
 def soft_threshold(x, gamma):
