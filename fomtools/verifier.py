@@ -254,7 +254,7 @@ class Verifier(object):
         """
         self.canonicalizer.add_constraint(constr)
         if self.use_obbt_handler:
-            self.obbt_handler.add_constr(constr)
+            self.obbt_handler.add_constraint(constr)
             self._tighten_constraint_bounds(constr)
 
     def _tighten_constraint_bounds(self, constr: Constraint) -> None:

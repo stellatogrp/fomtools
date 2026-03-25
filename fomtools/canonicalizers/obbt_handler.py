@@ -57,7 +57,7 @@ class OBBTHandler(Canonicalizer):
         """
         self.solver.add_var(var, var.lb, var.ub)
 
-    def add_constr(self, constr: Constraint) -> None:
+    def add_constraint(self, constraint: Constraint) -> None:
         """
         Add a constraint to the OBBT handler instance.
 
@@ -66,14 +66,14 @@ class OBBTHandler(Canonicalizer):
 
         Parameters
         ----------
-        constr : Constraint
+        constraint : Constraint
             Constraint object to add to the OBBT instance.
 
         Returns
         -------
         None
         """
-        self.solver.add_constr(constr)
+        self.solver.add_constr(constraint)
 
     def update_bounds(
         self, expression: LinearExpression, lb: float | np.ndarray, ub: float | np.ndarray
