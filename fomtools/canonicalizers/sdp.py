@@ -165,7 +165,7 @@ class SDP(Canonicalizer):
             ]
         constraints += [X >> 0]
         prob = cp.Problem(obj, constraints)
-        res = prob.solve()
+        res = prob.solve(solver=cp.CLARABEL)
         print(res)
         return res
 
