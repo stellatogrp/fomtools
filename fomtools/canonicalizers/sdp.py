@@ -23,6 +23,7 @@ class SDP(Canonicalizer):
         self.Aineq_matrices = []
         self.bineq_upperbounds = []
         self.psd_cone_indices = []
+        self.bound_constraint_indices = {}  # var -> (start_idx, end_idx)
 
         self.C_obj = None
         self._initialize_corner_constraint()
@@ -57,6 +58,8 @@ class SDP(Canonicalizer):
         self._pad_existing_A_matrices()
 
         curr_prob_dim = self.get_sdp_var_dim()
+        constraint_start = len(self.Aineq_matrices)
+
         for (i, l, u) in zip(range(bounds[0], bounds[1]), lb, ub):
             if np.isinf(l) or np.isinf(u):
                 raise NotImplementedError("Infinite bounds not yet supported in SDP canonicalizer")
@@ -69,8 +72,37 @@ class SDP(Canonicalizer):
             self.Aineq_matrices.append(new_A)
             self.bineq_upperbounds.append(- u * l)
 
+        constraint_end = len(self.Aineq_matrices)
+        self.bound_constraint_indices[var] = (constraint_start, constraint_end)
+
     def get_sdp_var_dim(self) -> int:
         return self.range_marker
+
+    def update_bounds(
+        self, expression: LinearExpression, lb: float | np.ndarray, ub: float | np.ndarray
+    ) -> None:
+        """Update bounds for a variable by regenerating its constraint matrices."""
+        if expression not in self.bound_constraint_indices:
+            raise ValueError("Expression not found in SDP canonicalizer")
+
+        constraint_start, constraint_end = self.bound_constraint_indices[expression]
+        sdp_start, sdp_end = self.var_idx_map[expression]
+        curr_prob_dim = self.get_sdp_var_dim()
+
+        lb = np.atleast_1d(lb)
+        ub = np.atleast_1d(ub)
+
+        for j, (i, l, u) in enumerate(zip(range(sdp_start, sdp_end), lb, ub)):
+            if np.isinf(l) or np.isinf(u):
+                raise NotImplementedError("Infinite bounds not yet supported in SDP canonicalizer")
+
+            new_A = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
+            new_A[i, i] = 1
+            new_A[i, 0] = -(l + u)
+
+            constraint_idx = constraint_start + j
+            self.Aineq_matrices[constraint_idx] = symmetrize(new_A.tocsc())
+            self.bineq_upperbounds[constraint_idx] = -u * l
 
     def add_param_stack_var(self, param_stack_var, param_list):
         raise NotImplementedError
