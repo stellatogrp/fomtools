@@ -1,8 +1,10 @@
 import importlib.util
 
 import numpy as np
+import pytest
 
 from fomtools.verifier import Verifier
+from tests.conftest import TEST_EPS
 
 
 def test_nnls_sdp():
@@ -24,10 +26,24 @@ def test_nnls_sdp():
 
     # Test standard API
     result = vp.solve()
-    assert result is not None
+    assert result > TEST_EPS
 
     # Also verify direct solver calls still work
-    vp.canonicalizer.solve_via_cvxpy()
-    vp.canonicalizer.solve_via_clarabel()
+    cvxpy_result = vp.canonicalizer.solve_via_cvxpy()
+    assert cvxpy_result > TEST_EPS
+
+    clarabel_result = vp.canonicalizer.solve_via_clarabel()
+    assert clarabel_result > TEST_EPS
+
     if importlib.util.find_spec('cupy') is not None:
-        vp.canonicalizer.solve_via_cuclarabel()
+        cuclarabel_result = vp.canonicalizer.solve_via_cuclarabel()
+        assert cuclarabel_result > TEST_EPS
+
+
+def test_sdp_infinity_norm_not_supported():
+    """Test that infinity-norm objective raises NotImplementedError for SDP."""
+    vp = Verifier(method='sdp', solver='clarabel', obbt_handler=None)
+    x = vp.add_param(2, lb=0, ub=1)
+
+    with pytest.raises(NotImplementedError, match="Infinity-norm objective is not supported"):
+        vp.set_infinity_norm_objective([x])

@@ -75,7 +75,10 @@ class Canonicalizer:
             case "clarabel" | "cvxpy" | "cvxpy_sdp" | "cuclarabel":
                 return None  # SDP solvers are instantiated at solve time
             case _:
-                raise ValueError(f"Solver must be 'gurobi' or 'TBD', got {solver}.")
+                raise ValueError(
+                    f"Unknown solver: {solver}. Supported solvers: "
+                    "'gurobi', 'highs', 'clarabel', 'cvxpy', 'cvxpy_sdp', 'cuclarabel'."
+                )
 
     def canonicalize(self, step: Step):
         """

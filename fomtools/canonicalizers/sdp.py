@@ -151,6 +151,11 @@ class SDP(Canonicalizer):
 
         self.C_obj = overall_C_mat
 
+    def set_infinity_norm_objective(self, expr_list, lb, ub):
+        raise NotImplementedError(
+            "Infinity-norm objective is not supported with SDP. Use set_two_norm_objective instead."
+        )
+
     def solve_model(self, steps=None, convex_hull_cuts=False):
         """Solve the SDP problem using the configured solver.
 
@@ -227,7 +232,7 @@ def symmetrize(mat):
 
 
 def range_to_indices(idx_ranges):
-    out_set = set([])
+    out_set = set()
     for bounds in idx_ranges:
         out_set.update(range(bounds[0], bounds[1]))
     return out_set

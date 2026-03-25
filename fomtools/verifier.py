@@ -468,7 +468,6 @@ class Verifier(object):
             which the infinity-norm objective will be constructed.
 
         """
-        # TODO: not compatible with SDP, need to throw an error if mixing SDP with inf norm
         try:
             len(expr_list)
         except TypeError:
