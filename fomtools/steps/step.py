@@ -18,11 +18,16 @@ class Step:
     lb: float
         Lower bound associated with the transformed values.
     ub: float
-        Lower bound associated with the transformed values.
+        Upper bound associated with the transformed values.
     relax_binary_vars: bool
         If true, binary decision variables associated with the operator
         are relaxed to take continuous values.
+    skip_obbt: bool
+        If true, OBBT bound tightening is skipped for this step type.
+        Override in subclasses that compute bounds analytically.
     """
+
+    skip_obbt: bool = False
 
     def __init__(self, rhs: LinearExpression, relax_binary_vars: bool = False):
         self.rhs = rhs

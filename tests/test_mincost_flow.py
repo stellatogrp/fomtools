@@ -2,6 +2,7 @@ import networkx as nx
 import numpy as np
 import scipy.sparse as spa
 
+from tests.conftest import TEST_EPS
 from tests.cvxpy import mincost_flow as mincost_flow_cvxpy
 
 np.set_printoptions(precision=5)  # Print few decimal places
@@ -62,7 +63,7 @@ def test_flow():
     c_tilde[:n_arcs] = c
     b_tilde = np.hstack([b_supply, b_demand, u])
     x_tilde, res2 = mincost_flow_cvxpy(n_tilde, c_tilde, A_block, b_tilde)
-    assert np.abs(res - res2) <= 1e-6
+    assert np.abs(res - res2) <= TEST_EPS
 
     print("2-norm of A:", spa.linalg.norm(A_block, ord=2))
 
@@ -85,7 +86,7 @@ def test_flow():
 
     print(xk)
     print("norm diff:", np.linalg.norm(xk - x_tilde))
-    assert np.linalg.norm(xk - x_tilde) <= 1e-6
+    assert np.linalg.norm(xk - x_tilde) <= TEST_EPS
 
     def beta_func(k):
         return k / (k + 3)
@@ -125,7 +126,7 @@ def test_flow():
         vk = vkplus1
     print(ukplus1)
 
-    assert np.linalg.norm(uk - x_tilde) <= 1e-6
+    assert np.linalg.norm(uk - x_tilde) <= TEST_EPS
 
     satlin_pdhg(c, A_supply, A_demand, b_supply, b_demand, u, cp_x)
     satlin_pdhg_momentum(c, A_supply, A_demand, b_supply, b_demand, u, cp_x)
@@ -155,7 +156,7 @@ def satlin_pdhg(c, A_supply, A_demand, b_supply, b_demand, u, cp_x):
 
     print("zK:", zk)
 
-    assert np.linalg.norm(cp_x - zk) <= 1e-6
+    assert np.linalg.norm(cp_x - zk) <= TEST_EPS
 
 
 def satlin_pdhg_momentum(c, A_supply, A_demand, b_supply, b_demand, u, cp_x):
@@ -180,7 +181,7 @@ def satlin_pdhg_momentum(c, A_supply, A_demand, b_supply, b_demand, u, cp_x):
         yk = ykplus1
 
     print("zK:", zk)
-    assert np.linalg.norm(cp_x - zk) <= 1e-6
+    assert np.linalg.norm(cp_x - zk) <= TEST_EPS
 
 
 def satlin_split_pdhg(c, A_supply, A_demand, b_supply, b_demand, u, cp_x):
@@ -203,7 +204,7 @@ def satlin_split_pdhg(c, A_supply, A_demand, b_supply, b_demand, u, cp_x):
         yk_1 = ykplus1_1
         yk_2 = ykplus1_2
     print("zK:", zk)
-    assert np.linalg.norm(cp_x - zk) <= 1e-6
+    assert np.linalg.norm(cp_x - zk) <= TEST_EPS
 
 
 def satlin_split_pdhg_momentum(c, A_supply, A_demand, b_supply, b_demand, u, cp_x):
@@ -227,7 +228,7 @@ def satlin_split_pdhg_momentum(c, A_supply, A_demand, b_supply, b_demand, u, cp_
         yk_1 = ykplus1_1
         yk_2 = ykplus1_2
     print("zK:", zk)
-    assert np.linalg.norm(cp_x - zk) <= 1e-6
+    assert np.linalg.norm(cp_x - zk) <= TEST_EPS
 
 
 def proj(v, m1):
