@@ -250,7 +250,7 @@ class SDP(Canonicalizer):
         new_idx_set = range_to_indices(new_indices)
         new_idx_set.add(0)
 
-        # TODO: in principal, there should never be set containment
+        # TODO: in principle, there should never be set containment
         # but need to investigate
         self.psd_cone_indices.append(new_idx_set)
 
@@ -424,7 +424,6 @@ class SDP(Canonicalizer):
         dim = self.get_sdp_var_dim()
         X = cp.Variable((dim, dim), symmetric=True)
         obj = cp.Maximize(cp.trace(self.C_obj @ X))
-        # constraints = [X >> 0]
         constraints = []
         for A, b in zip(self.Aeq_matrices, self.beq_consts):
             constraints += [

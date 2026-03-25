@@ -89,7 +89,6 @@ class ClarabelSolver(SDPSolver):
         vec_problem_dim = mat_problem_dim * (mat_problem_dim + 1) // 2
 
         q = -sparse_symmetric_vectorize(C, scale_factor=2)
-        # print(q.todense().getA().reshape(-1,))
         # TODO: see if this can be replaced by a sparse 1 by n vector instead
         q = q.todense().getA().reshape(-1,)
         assert q.shape[0] == vec_problem_dim
