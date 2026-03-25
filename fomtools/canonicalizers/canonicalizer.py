@@ -72,8 +72,8 @@ class Canonicalizer:
                 return gurobi.GurobiSolver(solver_params)
             case "highs":
                 return highs.HiGHSSolver(solver_params)
-            case "cvxpy_sdp":
-                return
+            case "clarabel" | "cvxpy" | "cvxpy_sdp" | "cuclarabel":
+                return None  # SDP solvers are instantiated at solve time
             case _:
                 raise ValueError(f"Solver must be 'gurobi' or 'TBD', got {solver}.")
 

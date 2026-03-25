@@ -6,7 +6,8 @@ from fomtools.verifier import Verifier
 
 
 def test_nnls_sdp():
-    vp = Verifier(method='sdp', solver='cvxpy_sdp', obbt_handler=None)
+    """Test SDP solver dispatch through Verifier.solve() API."""
+    vp = Verifier(method='sdp', solver='clarabel', obbt_handler=None)
     m, n = 3, 2
 
     np.random.seed(0)
@@ -21,14 +22,12 @@ def test_nnls_sdp():
 
     vp.set_two_norm_objective(z2 - z1)
 
-    # print(x.lb, x.ub)
-    # print(z0.lb, z0.ub)
-    # print(z1.lb, z1.ub)
+    # Test standard API
+    result = vp.solve()
+    assert result is not None
 
+    # Also verify direct solver calls still work
     vp.canonicalizer.solve_via_cvxpy()
-    # print(vp.canonicalizer.psd_cone_indices)
     vp.canonicalizer.solve_via_clarabel()
-    if importlib.util.find_spec('cupy') is None:
-        print("cupy not installed so skipping test")
-    else:
+    if importlib.util.find_spec('cupy') is not None:
         vp.canonicalizer.solve_via_cuclarabel()

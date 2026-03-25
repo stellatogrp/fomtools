@@ -1,8 +1,8 @@
 import numpy as np
 
 from fomtools.verifier import Verifier
-
 from tests.conftest import TEST_EPS
+
 
 def test_nnls_sdp_mip_comparison():
     """
@@ -20,7 +20,7 @@ def test_nnls_sdp_mip_comparison():
 
     for K in [1, 2]:
         # SDP with two-norm objective
-        vp_sdp = Verifier(method='sdp', solver='cvxpy_sdp', obbt_handler=None)
+        vp_sdp = Verifier(method='sdp', solver='clarabel', obbt_handler=None)
 
         x_sdp = vp_sdp.add_param(m, lb=0, ub=0.1)
         z_sdp = [vp_sdp.add_iterate(n, lb=5, ub=5.1)]
@@ -29,7 +29,7 @@ def test_nnls_sdp_mip_comparison():
             z_sdp.append(vp_sdp.step.relu(z_sdp[k] - t * A.T @ (A @ z_sdp[k] - x_sdp)))
 
         vp_sdp.set_two_norm_objective(z_sdp[K] - z_sdp[K - 1])
-        sdp_two_norm_sq = vp_sdp.canonicalizer.solve_via_clarabel()
+        sdp_two_norm_sq = vp_sdp.solve()
 
         # MIP with infinity-norm objective
         vp_mip = Verifier(method='mip', solver='highs', obbt_handler=None)

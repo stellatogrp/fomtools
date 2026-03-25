@@ -25,8 +25,6 @@ class CuClarabelSolver(ClarabelSolver):
         jl.seval("using Clarabel")
         jl.seval("using LinearAlgebra, SparseArrays, CUDA.CUSPARSE")
 
-        jl.seval("Pkg.status()")
-
         # 2. Move Data to GPU
         qgpu = cupy.array(q)
         Agpu = cucsr_matrix(A)
@@ -57,11 +55,12 @@ class CuClarabelSolver(ClarabelSolver):
         # 7. Solve
         # The 'MethodError' will vanish because the Extension now provides the GPU signature.
         # settings = Clarabel.Settings(direct_solve_method = :cudss, verbose = true)
-        results = jl.seval("""
+        jl.seval("""
             settings = Clarabel.Settings(direct_solve_method = :cudss, verbose = true)
             solver   = Clarabel.Solver(settings)
             Clarabel.setup!(solver, P, q, A, b, cones)
-            Clarabel.solve!(solver)
+            global sol = Clarabel.solve!(solver)
         """)
 
-        print(results)
+        obj_val = float(jl.sol.obj_val)
+        return -obj_val

@@ -14,6 +14,7 @@ from fomtools.utils.sparse_utils import efficient_csc_pad
 class SDP(Canonicalizer):
     def __init__(self, solver_params=None, solver="clarabel"):
         super(SDP, self).__init__(solver_params, solver)
+        self.solver_name = solver.lower()  # Store for dispatch
         self.range_marker = 1
         self.var_idx_map = {}
 
@@ -57,7 +58,8 @@ class SDP(Canonicalizer):
 
         curr_prob_dim = self.get_sdp_var_dim()
         for (i, l, u) in zip(range(bounds[0], bounds[1]), lb, ub):
-            # TODO: handle case where lb or ub is inf
+            if np.isinf(l) or np.isinf(u):
+                raise NotImplementedError("Infinite bounds not yet supported in SDP canonicalizer")
             new_A = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
             new_A[i, i] = 1
             new_A[i, 0] = - (l + u)
@@ -149,6 +151,31 @@ class SDP(Canonicalizer):
 
         self.C_obj = overall_C_mat
 
+    def solve_model(self, steps=None, convex_hull_cuts=False):
+        """Solve the SDP problem using the configured solver.
+
+        Parameters
+        ----------
+        steps : list, optional
+            Unused by SDP, accepted for API compatibility.
+        convex_hull_cuts : bool, optional
+            Unused by SDP, accepted for API compatibility.
+
+        Returns
+        -------
+        float
+            The objective value.
+        """
+        match self.solver_name:
+            case "clarabel":
+                return self.solve_via_clarabel()
+            case "cvxpy" | "cvxpy_sdp":
+                return self.solve_via_cvxpy()
+            case "cuclarabel":
+                return self.solve_via_cuclarabel()
+            case _:
+                raise ValueError(f"Unknown SDP solver: {self.solver_name}")
+
     def solve_via_cvxpy(self):
         dim = self.get_sdp_var_dim()
         X = cp.Variable((dim, dim), symmetric=True)
@@ -166,7 +193,6 @@ class SDP(Canonicalizer):
         constraints += [X >> 0]
         prob = cp.Problem(obj, constraints)
         res = prob.solve(solver=cp.CLARABEL)
-        print(res)
         return res
 
     def solve_via_clarabel(self):
