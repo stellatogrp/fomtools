@@ -237,16 +237,64 @@ class Verifier(object):
         """
         Adds an arbitrary constraint object to the Problem instance.
 
+        This method registers the constraint with both the main canonicalizer
+        and the OBBT handler (if enabled). When OBBT is enabled, it also
+        performs bound tightening on each leaf expression involved in the
+        constraint and propagates the tightened bounds to all relevant
+        locations.
+
         Parameters
         ----------
-        constr: Constraint
+        constr : Constraint
             A :class:`Constraint` object to add to the VP.
 
+        Returns
+        -------
+        None
         """
         self.canonicalizer.add_constraint(constr)
         if self.use_obbt_hander:
             self.obbt_handler.add_constr(constr)
-        # TODO: add the OBBT check and tighten process
+            self._tighten_constraint_bounds(constr)
+
+    def _tighten_constraint_bounds(self, constr: Constraint) -> None:
+        """
+        Tighten bounds on leaf expressions involved in a constraint using OBBT.
+
+        For each leaf expression in the constraint's decomposition, this method
+        runs optimization-based bound tightening and propagates the tightened
+        bounds to:
+        1. The ``LinearExpression`` object itself
+        2. The main canonicalizer's solver
+        3. The OBBT handler's solver
+
+        Parameters
+        ----------
+        constr : Constraint
+            The constraint whose leaf expressions should have their bounds
+            tightened.
+
+        Returns
+        -------
+        None
+        """
+        for leaf_expr in constr.lhs.decomposition_dict.keys():
+            # Get current bounds
+            lb, ub = leaf_expr.lb, leaf_expr.ub
+
+            # Run OBBT to get potentially tighter bounds
+            result = self.obbt_handler.obbt(leaf_expr, lb, ub)
+            if result is None:
+                continue
+            new_lb, new_ub = result
+
+            # Update bounds in all three locations:
+            # 1. LinearExpression object
+            leaf_expr.update_bounds(new_lb, new_ub)
+            # 2. Main canonicalizer's solver
+            self.canonicalizer.update_bounds(leaf_expr, new_lb, new_ub)
+            # 3. OBBT handler's solver
+            self.obbt_handler.update_bounds(leaf_expr, new_lb, new_ub)
 
     def prox(self, function: ProxableFunction, rhs: LinearExpression, gamma: float = 1, **kwargs):
         """
