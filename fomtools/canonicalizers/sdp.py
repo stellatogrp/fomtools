@@ -248,6 +248,10 @@ class SDP(Canonicalizer):
         Adds the constraint that the submatrix of X indexed by ``new_indices``
         (including the homogenization index 0) is positive semidefinite.
 
+        This method maintains an antichain: no stored set is a subset of another.
+        If a matrix X is PSD, any principal submatrix is also PSD, so subset
+        constraints are redundant.
+
         Parameters
         ----------
         new_indices : list[tuple[int, int]]
@@ -257,8 +261,14 @@ class SDP(Canonicalizer):
         new_idx_set = range_to_indices(new_indices)
         new_idx_set.add(0)
 
-        # TODO: in principle, there should never be set containment
-        # but need to investigate
+        # Check if new set is contained in any existing set (redundant)
+        for existing_set in self.psd_cone_indices:
+            if new_idx_set <= existing_set:
+                return
+
+        # Filter out existing sets that are strict subsets of the new set
+        self.psd_cone_indices = [s for s in self.psd_cone_indices if not s < new_idx_set]
+
         self.psd_cone_indices.append(new_idx_set)
 
     def canonicalize_relu(self, step: Relu) -> None:
