@@ -253,10 +253,10 @@ class Verifier(object):
         -------
         None
         """
-        self.canonicalizer.add_constraint(constr)
         if self.use_obbt_handler:
             self.obbt_handler.add_constraint(constr)
             self._tighten_constraint_bounds(constr)
+        self.canonicalizer.add_constraint(constr)
 
     def _tighten_constraint_bounds(self, constr: Constraint) -> None:
         """

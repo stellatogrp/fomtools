@@ -3,6 +3,7 @@ import numpy as np
 import scipy.sparse as spa
 
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
+from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
 from fomtools.solvers.clarabel import ClarabelSolver
 from fomtools.solvers.cuclarabel import CuClarabelSolver
@@ -230,14 +231,56 @@ class SDP(Canonicalizer):
         """
         raise NotImplementedError
 
-    def add_equality_constraint(self, lhs_expr, rhs_expr):
+    def add_constraint(self, constraint: Constraint) -> None:
         """
-        Add a linear equality constraint (not implemented for SDP).
+        Add a constraint to the SDP instance.
 
-        Raises
-        ------
-        NotImplementedError
-            This method is not supported in the SDP canonicalizer.
+        Dispatches to the appropriate implementation based on the constraint
+        operator type (equality or inequality).
+
+        Parameters
+        ----------
+        constraint : Constraint
+            Constraint object to add to the SDP instance.
+        """
+        match constraint.operator:
+            case "=":
+                self._add_equality_constraint_impl(constraint)
+            case "<=":
+                self._add_inequality_constraint_impl(constraint)
+            case _:
+                raise ValueError(f"Unknown constraint operator: {constraint.operator}")
+
+    def _add_equality_constraint_impl(self, constraint: Constraint) -> None:
+        """
+        Add an equality constraint and its quadratic strengthening.
+
+        For Ax + b = 0, adds:
+        1. Linear constraint in lifted form
+        2. Quadratic constraint: diag([b|A] X [b|A]^T) = 0
+
+        With the PSD constraint, the diagonal being zero implies the full
+        quadratic form is zero.
+
+        Parameters
+        ----------
+        constraint : Constraint
+            An equality constraint (operator "=").
+        """
+        raise NotImplementedError
+
+    def _add_inequality_constraint_impl(self, constraint: Constraint) -> None:
+        """
+        Add an inequality constraint.
+
+        For Ax + b <= 0, adds:
+        1. Linear constraint in lifted form
+        2. Optionally, RLT quadratic constraint (weak strengthening)
+
+        Parameters
+        ----------
+        constraint : Constraint
+            An inequality constraint (operator "<=").
         """
         raise NotImplementedError
 
