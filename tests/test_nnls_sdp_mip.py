@@ -2,6 +2,7 @@ import numpy as np
 
 from fomtools.verifier import Verifier
 
+from tests.conftest import TEST_EPS
 
 def test_nnls_sdp_mip_comparison():
     """
@@ -47,6 +48,6 @@ def test_nnls_sdp_mip_comparison():
         print(f"K={K}: MIP inf norm = {mip_inf_norm:.6f}, SDP two norm = {sdp_two_norm:.6f}")
 
         # MIP inf norm should lower bound SDP two norm
-        assert mip_inf_norm <= sdp_two_norm + 1e-6, (
+        assert mip_inf_norm <= sdp_two_norm + TEST_EPS, (
             f"K={K}: MIP inf norm ({mip_inf_norm}) should be <= SDP two norm ({sdp_two_norm})"
         )
