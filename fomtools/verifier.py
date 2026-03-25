@@ -382,8 +382,7 @@ class Verifier(object):
         step = step_cls(rhs=rhs, relax_binary_vars=relax_binary_vars, **kwargs)
 
         rhs_lb, rhs_ub = step.lb, step.ub
-        # TODO: figure out a better way to prevent obbt call for implicit linear step
-        if self.use_obbt_hander:
+        if self.use_obbt_hander and not step.skip_obbt:
             rhs_lb, rhs_ub = self.obbt_handler.obbt(step.rhs, rhs_lb, rhs_ub)
 
         step.update_bounds(rhs_lb, rhs_ub)
@@ -596,9 +595,6 @@ class _StepProxy:
             class.
         """
         step_cls = self._get_step_class(name)
-
-        # TODO: create a list of steps that don't use obbt handler
-        self._verifier.use_obbt_hander = False if name == "implicit_linear" else True
 
         def wrapper(rhs, relax_binary_vars=False, **kwargs):
             """Execute the specified thresholding or activation step."""

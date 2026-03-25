@@ -34,6 +34,8 @@ class Affine(Step):
         ...
     """
 
+    skip_obbt: bool = True  # Bounds computed analytically via matrix inverse
+
     # todo: complete the docstring
     # # TODO: Can't we retrive this from the decomposition dict of the lhs linearexpression?
     # TODO: the code for when lhs_mat_factorization is missing is not implemented yet, do it
