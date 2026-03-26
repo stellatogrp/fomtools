@@ -50,5 +50,8 @@ def test_relu_simulator():
         f"risk_bound: {vp['risk_bound']:.4f}\n"
         f"n_samples: {vp['n_samples']}\n"
         f"n_iteration: {vp['n_iterations']}"
+        f"runtime: {vp['runtime']:.4f}\n"
+        f"time_per_sample: {vp['time_per_sample']:.4f}\n"
+        f"throughput: {vp['throughput']:.4f}\n"
         f"residuals: {residuals}"
     )

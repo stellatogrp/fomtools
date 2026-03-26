@@ -1,3 +1,4 @@
+import time
 import typing
 import warnings
 
@@ -199,13 +200,13 @@ class Simulator(Canonicalizer):
                 if init is None:
                     if has_bounds:
                         init = jax.random.uniform(
-                            key, shape=(1, _var.ndim), minval=lb, maxval=ub
+                            key, shape=(_var.ndim,), minval=lb, maxval=ub
                         )  # pick random values within the bounds
                     else:
                         raise ValueError(
                             "An initial value or finite bounds must be provided when registering an iterate variable."
                         )
-                self.iterate_to_samples[_var] = jnp.array(init)
+                self.iterate_to_samples[_var] = jnp.array(init, dtype=jnp.float32)
 
             elif var_type == "param":
                 if samples is not None:
@@ -390,7 +391,7 @@ class Simulator(Canonicalizer):
         }
 
     def _register_statistics(
-        self, residuals: jnp.ndarray, delta: float = 0.05, epsilon: float = 1e-3
+        self, residuals: jnp.ndarray, delta: float, epsilon: float, total_time: float
     ):
         """
         Compute and register summary statistics from simulation residuals.
@@ -400,19 +401,23 @@ class Simulator(Canonicalizer):
         residuals : jnp.ndarray
             Shape (N, K) array of residuals at each iteration.
 
-        delta: float, optional
+        delta: float
             Confidence parameter $\delta \in (0,1)$. The bound holds with
             probability at least $1 - \delta$.
 
-        epsilon: float, optional
+        epsilon: float
             Tolerance level $\epsilon$ defining the $0$–$1$ error.
+
+        total_time: float
+            Total time taken by the simulation.
 
         """
 
         final_residuals = residuals[:, -1]
+        n_samples = residuals.shape[0]
 
         self.summary_statistics = {
-            "n_samples": residuals.shape[0],
+            "n_samples": n_samples,
             "n_iterations": residuals.shape[1],
             "final_residuals": final_residuals,
             "mean": float(jnp.mean(final_residuals)),
@@ -431,6 +436,9 @@ class Simulator(Canonicalizer):
             "delta": delta,
             "empirical_risk": float(jnp.mean((final_residuals > epsilon).astype(float))),
             "risk_bound": self.compute_risk_bound(residuals, delta, epsilon),
+            "runtime": total_time,
+            "time_per_sample": total_time / n_samples,
+            "throughput": n_samples / total_time,
         }
 
     def _to_device(self, arr):
@@ -589,15 +597,20 @@ class Simulator(Canonicalizer):
         @jax.jit
         def _simulate(samples):
             """Simulate K steps for a single sample."""
-            z = z0
-            _residuals = []
-            for k in range(K):
+
+            def body(z, _):
                 z_new = update_fn(z, samples)
-                _residuals.append(jnp.max(jnp.abs(z_new - z)))  # infinity norm
-                z = z_new
-            return jnp.stack(_residuals)
+                residual = jnp.max(jnp.abs(z_new - z))  # infinity norm
+                return z_new, residual
+
+            _, residuals = jax.lax.scan(body, z0, None, length=K)
+            return residuals
 
         simulate_batch = jax.vmap(_simulate, in_axes=0)
+
+        start = time.perf_counter()
         residuals = simulate_batch(p_samples)
-        self._register_statistics(residuals, delta, epsilon)
+        elapsed = time.perf_counter() - start
+
+        self._register_statistics(residuals, delta, epsilon, elapsed)
         return residuals
