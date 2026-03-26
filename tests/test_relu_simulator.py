@@ -38,7 +38,8 @@ def test_relu_simulator():
     residuals = vp.solve(K=K)
     assert vp['n_samples'] == len(q_samples)
     assert vp['risk_bound'] >= vp['empirical_risk']
-
+    assert residuals[:, -1].mean() < residuals[:, 0].mean()
+    
     print(
         f"Summary statistics:\n"
         f"mean: {vp['mean']:.6e}\n"
@@ -49,7 +50,7 @@ def test_relu_simulator():
         f"empirical_risk: {vp['empirical_risk']:.4f}\n"
         f"risk_bound: {vp['risk_bound']:.4f}\n"
         f"n_samples: {vp['n_samples']}\n"
-        f"n_iteration: {vp['n_iterations']}"
+        f"n_iteration: {vp['n_iterations']}\n"
         f"runtime: {vp['runtime']:.4f}\n"
         f"time_per_sample: {vp['time_per_sample']:.4f}\n"
         f"throughput: {vp['throughput']:.4f}\n"

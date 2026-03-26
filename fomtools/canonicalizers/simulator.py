@@ -94,6 +94,15 @@ class Simulator(Canonicalizer):
             terms) to lists of tuples (leaf, coeff_jax), where leaf identifies
             the variable and coeff_jax is the corresponding coefficient
             represented as a JAX array
+
+        Note
+        ----
+            Calling `step.relu(...)` more than once on the same Simulator instance
+            will overwrite the previously stored ReLU step. Only the most recent
+            call is retained, and earlier calls are silently discarded.
+
+            This class is currently designed for workflows where each operation
+            type is invoked at most once per simulation step.
         """
         iterate_coeffs = []
         param_coeffs = []

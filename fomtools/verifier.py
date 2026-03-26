@@ -441,7 +441,7 @@ class Verifier(object):
         lhs = step.lhs
 
         self._register_var(lhs, var_type="param")
-        self.iterates.append(lhs)
+        self.params.append(lhs)
         self.canonicalizer.canonicalize(step)
         self.steps.append(step)
 
