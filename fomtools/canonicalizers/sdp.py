@@ -480,6 +480,11 @@ class SDP(Canonicalizer):
         -------
         float
             The optimal objective value.
+
+        Raises
+        ------
+        ValueError
+            If CUDA dependencies (cupy) are not available.
         """
         solver = CuClarabelSolver(solver_params=self.solver_params)
         solver.setup_clarabel_data(
