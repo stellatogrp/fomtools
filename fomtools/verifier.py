@@ -123,7 +123,7 @@ class Verifier(object):
             case "simulator":
                 return Simulator()
             case _:
-                raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
+                raise ValueError(f"Method must be 'mip', 'sdp' or 'simulator', got {method}")
 
     @staticmethod
     def _create_var(

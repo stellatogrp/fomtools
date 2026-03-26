@@ -187,7 +187,7 @@ class Simulator(Canonicalizer):
             lb, ub = _var.lb, _var.ub
             key = jax.random.PRNGKey(random_seed)
 
-            has_bounds = any(np.any(np.isfinite(b)) for b in (lb, ub))
+            has_bounds = np.all(np.isfinite(lb)) and np.all(np.isfinite(ub))
             has_samples = samples is not None or init is not None
 
             if has_bounds and has_samples:
@@ -552,16 +552,21 @@ class Simulator(Canonicalizer):
         epsilon: float, optional
             Tolerance level $\epsilon$ defining the $0$–$1$ error.
 
+        device: str, optional
+            The device to run the simulation on. If not specified, the default is `None`,
+            and the simulation will run on the host system without specific device
+            acceleration. The valid options are:
+
+            - `None`: No device (default behavior, runs on the host).
+            - `"cpu"`: Run on the CPU.
+            - `"gpu"`: Run on the GPU, if available.
+
         Returns
         -------
         residuals: jnp.ndarray
            A 2D array of shape ``(num_samples, K)`` containing the residual
            (infinity norm of successive state differences) at each iteration
            for each parameter sample.
-
-        bounds: Any
-            Risk bounds computed from the residual trajectories via
-            :meth:`compute_risk_bound`.
 
         Raises
         ------
@@ -573,7 +578,7 @@ class Simulator(Canonicalizer):
             update_fn = self.step_function
         else:
             raise ValueError(
-                "No step function has not been registered with this "
+                "No step function has been registered with this "
                 "simulator instance. Please register a step function "
                 "before running the simulation"
             )
@@ -592,7 +597,7 @@ class Simulator(Canonicalizer):
                 z = z_new
             return jnp.stack(_residuals)
 
-        simulate_batch = jax.jit(jax.vmap(_simulate, in_axes=0))
+        simulate_batch = jax.vmap(_simulate, in_axes=0)
         residuals = simulate_batch(p_samples)
         self._register_statistics(residuals, delta, epsilon)
         return residuals

@@ -6,13 +6,14 @@ from fomtools.verifier import Verifier
 
 def test_relu_simulator():
     """
-    Tests that the Simulator code executes without errors.
+    Tests that the simulator executes without errors.
 
     Note
     ----
-        This test verifies that the simulator runs as intended from an
-        execution standpoint, but it does not validate the correctness
-        or accuracy of the simulation results.
+        This test verifies that the simulator runs successfully from an execution
+        standpoint. It ensures that the length of the returned output matches the
+        input sample and that the results converge. However, it does not assess the
+        correctness or accuracy of the simulation results.
     """
     K = 10
     n = 3
@@ -35,6 +36,9 @@ def test_relu_simulator():
     vp.step.relu(z[0] - step_size * (P @ z[0] + q_param))
 
     residuals = vp.solve(K=K)
+    assert vp['n_samples'] == len(q_samples)
+    assert vp['risk_bound'] >= vp['empirical_risk']
+
     print(
         f"Summary statistics:\n"
         f"mean: {vp['mean']:.6e}\n"
