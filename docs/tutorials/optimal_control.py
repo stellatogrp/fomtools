@@ -108,7 +108,7 @@ def _():
     # ADMM parameters
     sigma = 1e-4
     rho = 1.  # 0.1, 1, 10
-    K = 2
+    K = 5
     return K, rho, sigma
 
 
@@ -215,53 +215,56 @@ def _(
     x_lb,
     x_ub,
 ):
-    # Solve VP for optimal control example
     fix_initial_x = True # True if x is fixed, False if x is in set X
 
     solver_params = {
         'OutputFlag': 0,
     }
-    VP = Verifier(solver='gurobi', params=solver_params)
+
+    # Solve VP for optimal control example
+    _VP = Verifier(solver='gurobi', params=solver_params)
 
     if fix_initial_x :
         offset = 0.0
-        x_param = VP.add_param(n_s, lb=x_init-offset, ub=x_init+offset)
+        _x_param = _VP.add_param(n_s, lb=x_init-offset, ub=x_init+offset)
     else :
-        x_param = VP.add_param(n_s, lb=x_lb, ub=x_ub)
+        _x_param = _VP.add_param(n_s, lb=x_lb, ub=x_ub)
 
     # l(x) <= M@z <= u(x)
-    l_param = VP.add_param((T-1)*n_u, lb=u_stack_min, ub=u_stack_min)
-    u_param = VP.add_param((T-1)*n_u, lb=u_stack_max, ub=u_stack_max)
-    l_x = VP.add_param_stack([x_param, l_param])
-    u_x = VP.add_param_stack([x_param, u_param])
+    _l_param = _VP.add_param((T-1)*n_u, lb=u_stack_min, ub=u_stack_min)
+    _u_param = _VP.add_param((T-1)*n_u, lb=u_stack_max, ub=u_stack_max)
+    _l_x = _VP.add_param_stack([_x_param, _l_param])
+    _u_x = _VP.add_param_stack([_x_param, _u_param])
 
-    z = [None for _ in range(K+1)]
-    v = [None for _ in range(K+1)]
-    w = [None for _ in range(K+1)]
+    _z = [None for _ in range(K+1)]
+    _v = [None for _ in range(K+1)]
+    _w = [None for _ in range(K+1)]
 
-    z[0] = np.zeros(n_xz)
-    v[0] = VP.add_param(n_xz, lb=np.zeros(n_xz), ub=np.ones(n_xz))
-    w[0] = np.zeros(n_xz)
+    _z[0] = np.zeros(n_xz)
+    _v[0] = _VP.add_param(n_xz, lb=np.zeros(n_xz), ub=np.ones(n_xz))
+    _w[0] = np.zeros(n_xz)
 
     # Box constraint
     # from fomtools.proxable_functions import IndBox
     # indbox = IndBox(l=l_x, u=u_x)
 
     # ADMM (OSQP) iterations
-    lhs_mat = P + sigma*np.eye(n_xz) + rho*(M.T@M)
-    lhs_mat_factorization = spa.linalg.factorized(lhs_mat)
+    _lhs_mat = P + sigma*np.eye(n_xz) + rho*(M.T@M)
+    _lhs_mat_factorization = spa.linalg.factorized(_lhs_mat)
 
     all_residuals = []
-    for k in range(K):
-        # w[k+1] = VP.step.satlin(v[k], l=l_x, u=u_x)
-        w[k+1] = VP.step.satlin(v[k], l=u_x, u=l_x)
-        # w[k+1] = VP.prox(function=indbox, rhs=v[k])
-        rhs = sigma*z[k] - q + rho*M.T@(2*w[k+1]-v[k])
-        z[k+1] = VP.step.implicit_linear(rhs=rhs, lhs_mat=lhs_mat, lhs_mat_factorization=lhs_mat_factorization)
-        v[k+1] = v[k] + M@z[k+1] - w[k+1]
-        VP.set_infinity_norm_objective([z[k+1] - z[k]])
-        res = VP.solve()
-        all_residuals.append(res)
+    for _k in range(K):
+        # _w[k+1] = _VP.step.satlin(_v[_k], l=_l_x, u=_u_x)
+        _w[_k+1] = _VP.step.satlin(_v[_k], l=_u_x, u=_l_x)
+        # _w[k+1] = _VP.prox(function=indbox, rhs=_v[_k])
+        _rhs = sigma * _z[_k] - q + rho * M.T @ (2*_w[_k+1] - _v[_k])
+        _z[_k+1] = _VP.step.implicit_linear(rhs=_rhs, lhs_mat=_lhs_mat, lhs_mat_factorization=_lhs_mat_factorization)
+        _v[_k+1] = _v[_k] + (M @ _z[_k+1] - _w[_k+1])
+
+        # optimize over scaled fixed-point residual (KKT residual)
+        _VP.set_infinity_norm_objective([-sigma*(_z[_k+1]-_z[_k]) - rho*M.T@(_v[_k+1]-_v[_k]), _v[_k+1]-_v[_k]])
+        _res = _VP.solve()
+        all_residuals.append(_res)
 
     print(all_residuals)
     return (all_residuals,)
@@ -269,12 +272,95 @@ def _(
 
 @app.cell
 def _(K, all_residuals, plt):
-    plt.plot(range(1, K+1), all_residuals, label='VP')
-    plt.suptitle('optimal control example')
+    plt.plot(range(1, K+1), all_residuals, label='PDHG')
+    plt.suptitle('optimal control example (VP)')
     plt.yscale('log')
     plt.xlabel(r'$K$')
     plt.ylabel('Worst-case fixed-point residual')
     plt.legend()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(
+        r"""
+    We compare our results to the worst-case performance of the algorithm returned by the performance estimation problem (PEP), using the package [`PEPit`](https://pepit.readthedocs.io/en/0.5.1/). Specifically, we measure the performance of ADMM solving
+
+    \begin{array}{ll}
+        \textnormal{minimize} & f(x) + g(x),
+    \end{array}
+
+    where $f$ is a smooth strongly-convex function and $g$ is an indicator function to a convex set.
+    """
+    )
+    return
+
+
+@app.cell
+def _(K, P, np, spa):
+    from PEPit import PEP, Point
+    from PEPit.operators import LinearOperator
+    from PEPit.functions import SmoothStronglyConvexFunction, ConvexIndicatorFunction
+    from PEPit.primitive_steps import proximal_step
+
+    P_eigs, _ = spa.linalg.eigs(P)
+    P_eigs = np.real(P_eigs)
+    mu = np.min(P_eigs)
+    L = np.max(P_eigs)
+    print(mu, L)
+
+    all_residuals_PEP = []
+    for _k_PEP in range(1, K+1):
+        _problem = PEP()
+        _f = _problem.declare_function(SmoothStronglyConvexFunction, mu=mu, L=L)
+        _g = _problem.declare_function(ConvexIndicatorFunction)
+        _F = _f + _g
+
+        # Define optimal solution xs
+        _xs = _F.stationary_point()
+
+        # Declare initial point x0
+        _u0 = _problem.set_initial_point()
+
+        _x = [None for _ in range(K+1)]
+        _y = [None for _ in range(K+1)]
+        _u = [None for _ in range(K+1)]
+        _u[0] = _u0
+        _x[0], _, _ = proximal_step(_u[0], _f, 1.)
+        _y[0], _, _ = proximal_step(2*_x[0] - _u[0], _g, 1.)
+
+        for _k in range(_k_PEP):
+            _u[_k+1] = _u[_k] + (_y[_k] - _x[_k])
+            _x[_k+1], _, _ = proximal_step(_u[_k+1], _f, 1.)
+            _y[_k+1], _, _ = proximal_step(2*_x[_k+1] - _u[_k+1], _g, 1.)
+
+        _problem.set_initial_condition((_x[0] - _xs)**2 <= 1.0)
+        _problem.set_initial_condition((_u0 - _xs)**2 <= 1.0)
+
+        _problem.set_performance_metric((_x[_k_PEP] - _x[_k_PEP-1])**2 + (_u[_k_PEP] - _u[_k_PEP-1])**2)
+        _res = _problem.solve(solver='mosek')
+        all_residuals_PEP.append(_res) # account for L-infinity norm of VP
+    return (all_residuals_PEP,)
+
+
+@app.cell
+def _(K, all_residuals_PEP, np, plt):
+    H_norm = 14.14213564
+    r = 8.31227985242667
+
+    plt.figure()
+    plt.plot(range(1, K+1), (H_norm**2 * r**2) * np.array(all_residuals_PEP), label='OSQP (ADMM)')
+    plt.yscale('log')
+    plt.xlabel(r'$K$')
+    plt.ylabel('Worst-case fixed-point residual (PEP)')
+    plt.legend()
+    plt.suptitle('PEP bound')
+    return
+
+
+@app.cell
+def _():
     return
 
 

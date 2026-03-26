@@ -201,50 +201,247 @@ def _(
     x_ub,
     z0_value,
 ):
-    K = 2
-    eta = 0.5 / np.linalg.norm(np.hstack([A_s.T, A_d.T]), 2)
+    K = 5
+    L = np.linalg.norm(np.hstack([A_s.T, A_d.T]), 2)
+    eta = 0.5 / L
 
     solver_params = {
         'OutputFlag': 0,
     }
 
-    VP = Verifier(params=solver_params, solver="gurobi")
-    x_param = VP.add_param(n_d, lb=x_lb, ub=x_ub)
-    c_param = VP.add_param(n_e, lb=c_lb*np.ones(n_e), ub=c_ub*np.ones(n_e))
-    b_s_param = VP.add_param(n_s, lb=b_s, ub=b_s)
-    mu_param = VP.add_param(n_e, lb=mu, ub=mu)
+    _VP = Verifier(params=solver_params, solver="gurobi")
+    _x_param = _VP.add_param(n_d, lb=x_lb, ub=x_ub)
+    _c_param = _VP.add_param(n_e, lb=c_lb*np.ones(n_e), ub=c_ub*np.ones(n_e))
+    _b_s_param = _VP.add_param(n_s, lb=b_s, ub=b_s)
+    _mu_param = _VP.add_param(n_e, lb=mu, ub=mu)
 
-    # z0, v0, w0 = z0_value, np.zeros(n_s), np.zeros(n_d)
-    # z0 = VP.add_iterate(n_e, lb=np.zeros(n_e), ub=np.zeros(n_e))
-    z0 = VP.add_iterate(n_e, lb=z0_value, ub=z0_value)
-    v0 = VP.add_iterate(n_s, lb=np.zeros(n_s), ub=np.zeros(n_s))
-    w0 = VP.add_iterate(n_d, lb=np.zeros(n_d), ub=np.zeros(n_d))
-    z = [None for _ in range(K+1)]
-    v = [None for _ in range(K+1)]
-    w = [None for _ in range(K+1)]
-    z[0] = z0
-    v[0] = v0
-    w[0] = w0
+    _z0 = _VP.add_iterate(n_e, lb=z0_value, ub=z0_value)
+    _v0 = _VP.add_iterate(n_s, lb=np.zeros(n_s), ub=np.zeros(n_s))
+    _w0 = _VP.add_iterate(n_d, lb=np.zeros(n_d), ub=np.zeros(n_d))
+    _z = [None for _ in range(K+1)]
+    _v = [None for _ in range(K+1)]
+    _w = [None for _ in range(K+1)]
+    _z[0] = _z0
+    _v[0] = _v0
+    _w[0] = _w0
 
     all_residuals = []
-    for k in range(1, K+1):
-        z[k] = VP.step.satlin(z[k-1] - eta * (mu_param + A_s.T @ v[k-1] - A_d.T @ w[k-1]), l=np.zeros(n_e), u=c)
-        v[k] = VP.step.relu(v[k-1] + eta * (- b_s_param + A_s @ (2*z[k] - z[k-1])))
-        w[k] = w[k-1] + eta * (x_param - A_d @ (2*z[k] - z[k-1]))
-        VP.set_infinity_norm_objective([z[k] - z[k-1], v[k] - v[k-1], w[k] - w[k-1]])
-        res = VP.solve()
-        all_residuals.append(res)
+    for _k in range(1, K+1):
+        _z[_k] = _VP.step.satlin(_z[_k-1] - eta * (_mu_param + A_s.T @ _v[_k-1] - A_d.T @ _w[_k-1]), l=np.zeros(n_e), u=c)
+        _v[_k] = _VP.step.relu(_v[_k-1] + eta * (- _b_s_param + A_s @ (2*_z[_k] - _z[_k-1])))
+        _w[_k] = _w[_k-1] + eta * (_x_param - A_d @ (2*_z[_k] - _z[_k-1]))
+        # _VP.set_infinity_norm_objective([_z[_k] - _z[_k-1], _v[_k] - _v[_k-1], _w[_k] - _w[_k-1]])
+        _VP.set_infinity_norm_objective([
+            (1/eta) * (_z[_k] - _z[_k-1]) - A_s.T@(_v[_k] - _v[_k-1]) + A_d.T@(_w[_k] - _w[_k-1]),
+            - A_s@(_z[_k] - _z[_k-1]) + (1/eta) * (_v[_k] - _v[_k-1]),
+            A_d@(_z[_k] - _z[_k-1]) + (1/eta) * (_w[_k] - _w[_k-1])
+        ])
+        _res = _VP.solve()
+        all_residuals.append(_res)
 
     print(all_residuals)
-    return K, all_residuals
+    return K, L, all_residuals, eta, solver_params
 
 
 @app.cell
-def _(K, all_residuals, plt):
-    plt.plot(range(1, K+1), all_residuals, label='VP')
+def _(
+    A_d,
+    A_s,
+    K,
+    Verifier,
+    b_s,
+    c,
+    c_lb,
+    c_ub,
+    eta,
+    mu,
+    n_d,
+    n_e,
+    n_s,
+    np,
+    solver_params,
+    x_lb,
+    x_ub,
+    z0_value,
+):
+    # Solve verification problem for momentum PDHG
+    _VP = Verifier(params=solver_params, solver="gurobi")
+    _x_param = _VP.add_param(n_d, lb=x_lb, ub=x_ub)
+    _c_param = _VP.add_param(n_e, lb=c_lb*np.ones(n_e), ub=c_ub*np.ones(n_e))
+    _b_s_param = _VP.add_param(n_s, lb=b_s, ub=b_s)
+    _mu_param = _VP.add_param(n_e, lb=mu, ub=mu)
+
+    _z0 = _VP.add_iterate(n_e, lb=z0_value, ub=z0_value)
+    _v0 = _VP.add_iterate(n_s, lb=np.zeros(n_s), ub=np.zeros(n_s))
+    _w0 = _VP.add_iterate(n_d, lb=np.zeros(n_d), ub=np.zeros(n_d))
+    _z = [None for _ in range(K+1)]
+    _ztilde = [None for _ in range(K+1)]
+    _v = [None for _ in range(K+1)]
+    _w = [None for _ in range(K+1)]
+    _z[0] = _z0
+    _v[0] = _v0
+    _w[0] = _w0
+
+    all_residuals_momentum = []
+    for _k in range(1, K+1):
+        _z[_k] = _VP.step.satlin(_z[_k-1] - eta * (_mu_param + A_s.T @ _v[_k-1] - A_d.T @ _w[_k-1]), l=np.zeros(n_e), u=c)
+        _ztilde[_k] = _z[_k] + (_k-1)/(_k+2) * (_z[_k] - _z[_k-1])
+        _v[_k] = _VP.step.relu(_v[_k-1] + eta * (- _b_s_param + A_s @ (2*_ztilde[_k] - _z[_k-1])))
+        _w[_k] = _w[_k-1] + eta * (_x_param - A_d @ (2*_ztilde[_k] - _z[_k-1]))
+        _VP.set_infinity_norm_objective([
+            (1/eta) * (_z[_k] - _z[_k-1]) - A_s.T@(_v[_k] - _v[_k-1]) + A_d.T@(_w[_k] - _w[_k-1]),
+            - (1 + 2*(_k-1)/(_k+2)) * A_s@(_z[_k] - _z[_k-1]) + (1/eta) * (_v[_k] - _v[_k-1]),
+            (1 + 2*(_k-1)/(_k+2)) * A_d@(_z[_k] - _z[_k-1]) + (1/eta) * (_w[_k] - _w[_k-1])
+        ])
+        _res = _VP.solve()
+        all_residuals_momentum.append(_res)
+
+    print(all_residuals_momentum)
+    return (all_residuals_momentum,)
+
+
+@app.cell
+def _(K, all_residuals, all_residuals_momentum, plt):
+    plt.figure()
+    plt.plot(range(1, K+1), all_residuals, label='PDHG')
+    plt.plot(range(1, K+1), all_residuals_momentum, label='momentum PDHG')
     # plt.yscale('log')
+    plt.xlabel(r'$K$')
+    plt.ylabel('Worst-case KKT residual')
+    plt.legend()
+    plt.suptitle('VP bound')
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(
+        r"""
+    We compare our results to the worst-case performance of the algorithm returned by the performance estimation problem (PEP), using the package [`PEPit`](https://pepit.readthedocs.io/en/0.5.1/). Specifically, we measure the performance of PDHG applied on
+
+    \begin{array}{ll}
+        \textnormal{minimize}_x & \textnormal{maximize}_u & \mathcal{L}(x, u) = f(x) + u^T (Ax-b) - g^*(u),
+    \end{array}
+
+    which can be written as
+
+    \begin{array}{lll}
+        x^{k+1} &=& \mathbf{prox}_{\eta f} (x^k - \eta A^T u^k) \\
+        u^{k+1} &=& \mathbf{prox}_{\eta g^*} (u^k + \eta ( A (2x^{k+1} - x^k) - b ) ).
+    \end{array}
+    """
+    )
+    return
+
+
+@app.cell
+def _(K, L, eta):
+    from PEPit import PEP, Point
+    from PEPit.operators import LinearOperator
+    from PEPit.functions import ConvexFunction
+    from PEPit.primitive_steps import proximal_step
+
+    all_residuals_PEP = []
+    for _k_PEP in range(1, K+1):
+        _problem = PEP()
+        _f = _problem.declare_function(ConvexFunction)
+        _g = _problem.declare_function(ConvexFunction)
+        _linear = _problem.declare_function(LinearOperator, L=L)
+
+        # Define optimal primal-dual pair (xs, us)
+        _xs = Point()
+        _us = Point()
+        _f.add_point((_xs, -_linear.T.gradient(_us), _f(_xs)))
+        _g.add_point((_us, _linear.gradient(_xs), _g(_us)))
+
+        # Declare initial points (x0, u0)
+        _x0 = _problem.set_initial_point()
+        _u0 = _problem.set_initial_point()
+        _problem.set_initial_condition((_x0 - _xs)**2 + (_u0 - _us)**2 <= 1.0)
+
+        _x = [None for _ in range(_k_PEP+1)]
+        _u = [None for _ in range(_k_PEP+1)]
+        _x[0] = _x0
+        _u[0] = _u0
+
+        for _k in range(1, _k_PEP+1):
+            _x[_k], _, _ = proximal_step(_x[_k-1] - eta * _linear.T.gradient(_u[_k-1]), _f, eta)
+            _u[_k], _, _ = proximal_step(_u[_k-1] + eta * _linear.gradient(2*_x[_k] - _x[_k-1]), _g, eta)
+        _problem.set_performance_metric((_x[_k_PEP] - _x[_k_PEP-1])**2 + (_u[_k_PEP] - _u[_k_PEP-1])**2)
+        _res = _problem.solve(solver='mosek')
+        all_residuals_PEP.append(_res) # account for L-infinity norm of VP
+    return (
+        ConvexFunction,
+        LinearOperator,
+        PEP,
+        Point,
+        all_residuals_PEP,
+        proximal_step,
+    )
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(
+        r"""
+    Now obtain the result for momentum PDHG:
+
+    \begin{array}{lll}
+        x^{k+1} &=& \mathbf{prox}_{\eta f} (x^k - \eta A^T u^k) \\
+        \tilde{x}^{k+1} &=& x^{k+1} + \frac{k}{k+3} (x^{k+1} - x^k) \\
+        u^{k+1} &=& \mathbf{prox}_{\eta g^*} (u^k + \eta ( A (2\tilde{x}^{k+1} - x^k) - b ) ).
+    \end{array}
+    """
+    )
+    return
+
+
+@app.cell
+def _(ConvexFunction, K, L, LinearOperator, PEP, Point, eta, proximal_step):
+    all_residuals_momentum_PEP = []
+    for _k_PEP in range(1, K+1):
+        _problem = PEP()
+        _f = _problem.declare_function(ConvexFunction)
+        _g = _problem.declare_function(ConvexFunction)
+        _linear = _problem.declare_function(LinearOperator, L=L)
+
+        # Define optimal primal-dual pair (xs, us)
+        _xs = Point()
+        _us = Point()
+        _f.add_point((_xs, -_linear.T.gradient(_us), _f(_xs)))
+        _g.add_point((_us, _linear.gradient(_xs), _g(_us)))
+
+        # Declare initial points (x0, u0)
+        _x0 = _problem.set_initial_point()
+        _u0 = _problem.set_initial_point()
+        _problem.set_initial_condition((_x0 - _xs)**2 + (_u0 - _us)**2 <= 1.0)
+
+        _x = [None for _ in range(_k_PEP+1)]
+        _xtilde = [None for _ in range(_k_PEP+1)]
+        _u = [None for _ in range(_k_PEP+1)]
+        _x[0] = _x0
+        _u[0] = _u0
+
+        for _k in range(1, _k_PEP+1):
+            _x[_k], _, _ = proximal_step(_x[_k-1] - eta * _linear.T.gradient(_u[_k-1]), _f, eta)
+            _xtilde[_k] = _x[_k] + (_k-1)/(_k+2) * (_x[_k] - _x[_k-1])
+            _u[_k], _, _ = proximal_step(_u[_k-1] + eta * _linear.gradient(2*_xtilde[_k] - _x[_k-1]), _g, eta)
+        _problem.set_performance_metric((_x[_k_PEP] - _x[_k_PEP-1])**2 + (_u[_k_PEP] - _u[_k_PEP-1])**2)
+        _res = _problem.solve(solver='mosek')
+        all_residuals_momentum_PEP.append(_res) # account for L-infinity norm of VP
+    return (all_residuals_momentum_PEP,)
+
+
+@app.cell
+def _(K, all_residuals_PEP, all_residuals_momentum_PEP, plt):
+    plt.figure()
+    plt.plot(range(1, K+1), all_residuals_PEP, label='PDHG')
+    plt.plot(range(1, K+1), all_residuals_momentum_PEP, label='momentum PDHG')
+    plt.yscale('log')
+    plt.xscale('log')
     plt.ylabel('Worst-case fixed-point residual')
     plt.xlabel(r'$K$')
+    plt.suptitle('PEP bound')
     plt.legend()
     return
 

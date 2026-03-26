@@ -102,8 +102,8 @@ def _(mo):
 def _(D, np):
     L = np.real(np.max(np.linalg.eigvals(D.T @ D)))
     eta = 1 / L
-    K = 2
-    return K, eta
+    K = 5
+    return K, L, eta
 
 
 @app.cell
@@ -141,6 +141,56 @@ def _(K, all_residuals, plt):
     plt.ylabel('Worst-case fixed-point residual')
     plt.xlabel(r'$K$')
     plt.legend()
+    return
+
+
+@app.cell
+def _(K, L, eta, n):
+    from PEPit import PEP, Point
+    from PEPit.functions import ConvexLipschitzFunction, SmoothConvexFunction, ConvexFunction
+    from PEPit.primitive_steps import proximal_step
+
+    all_residuals_PEP = []
+
+    for k_PEP in range(1, K+1):
+        problem_PEP = PEP()
+        f = problem_PEP.declare_function(SmoothConvexFunction, L=L)
+        # g = problem_PEP.declare_function(ConvexLipschitzFunction, M=lambd)
+        g = problem_PEP.declare_function(ConvexFunction)
+        F = f + g
+
+        # Define optimal solution
+        xs = F.stationary_point()
+
+        # Declare initial point s0
+        s0_PEP = problem_PEP.set_initial_point()
+        problem_PEP.set_initial_condition((s0_PEP - xs)**2 <= 1.0)
+
+        s_PEP = [None for _ in range(K+1)]
+        s_PEP[0] = s0_PEP
+        for k_PEP in range(1, k_PEP+1):
+            s_PEP[k_PEP], _, _ = proximal_step(s_PEP[k_PEP-1] - eta * f.gradient(s_PEP[k_PEP-1]), g, eta)
+        # problem_PEP.set_performance_metric(F(s_PEP[k_PEP]) - F(xs))
+        problem_PEP.set_performance_metric((s_PEP[k_PEP] - s_PEP[k_PEP-1]) ** 2)
+        res_PEP = problem_PEP.solve()
+        all_residuals_PEP.append(n * res_PEP) # account for L-infinity norm of VP
+    return (all_residuals_PEP,)
+
+
+@app.cell
+def _(K, all_residuals_PEP, plt):
+    plt.figure()
+    plt.plot(range(1, K+1), all_residuals_PEP)
+    plt.suptitle('sparse coding example (PEP)')
+    plt.yscale('log')
+    plt.ylabel('Worst-case fixed-point residual')
+    plt.xlabel(r'$K$')
+    plt.legend()
+    return
+
+
+@app.cell
+def _():
     return
 
 
