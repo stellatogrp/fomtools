@@ -617,8 +617,12 @@ class Simulator(Canonicalizer):
 
         simulate_batch = jax.vmap(_simulate, in_axes=0)
 
+        # warm-up: triggers compilation, discard result
+        simulate_batch(p_samples).block_until_ready()
+
+        # timing pure execution
         start = time.perf_counter()
-        residuals = simulate_batch(p_samples)
+        residuals = simulate_batch(p_samples).block_until_ready()
         elapsed = time.perf_counter() - start
 
         self._register_statistics(residuals, delta, epsilon, elapsed)

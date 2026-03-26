@@ -15,6 +15,7 @@ def test_relu_simulator():
         input sample and that the results converge. However, it does not assess the
         correctness or accuracy of the simulation results.
     """
+    np.random.seed(42)
     K = 10
     n = 3
     step_size = 0.01
@@ -39,7 +40,7 @@ def test_relu_simulator():
     assert vp['n_samples'] == len(q_samples)
     assert vp['risk_bound'] >= vp['empirical_risk']
     assert residuals[:, -1].mean() < residuals[:, 0].mean()
-    
+
     print(
         f"Summary statistics:\n"
         f"mean: {vp['mean']:.6e}\n"

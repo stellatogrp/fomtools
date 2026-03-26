@@ -64,7 +64,7 @@ class Verifier(object):
 
         Examples
         --------
-        >>> vp.solve_model(K=100)
+        >>> vp.solve(K=100)
         >>> vp['mean']
         0.00123
         >>> vp['quantiles'][0.95]
@@ -73,7 +73,7 @@ class Verifier(object):
         try:
             summary_statistics = self.canonicalizer.summary_statistics
         except AttributeError:
-            raise RuntimeError("No statistics available. Run solve_model() first.")
+            raise RuntimeError("No statistics available. Run solve() first.")
 
         if item not in summary_statistics:
             raise KeyError(
@@ -440,6 +440,8 @@ class Verifier(object):
 
         lhs = step.lhs
 
+        # registered as "param" for MIP/SDP compatibility; Simulator silently drops
+        # this since lhs has no samples and is not referenced in step.rhs
         self._register_var(lhs, var_type="param")
         self.params.append(lhs)
         self.canonicalizer.canonicalize(step)
