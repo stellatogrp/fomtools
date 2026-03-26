@@ -4,12 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fomtools"
-description = "FOMTools: A Python Toolbox for Verification of First-Order Methods"
+description = "FOMTools: A Python Toolbox for Analysis of First-Order Methods"
 readme = "README.md"
 license = { text = "Apache 2.0" }
 dynamic = ["version"]
 authors = [
        { name = "Vinit Ranjan", email = "vranjan@princeton.edu" },
+       { name = "Daniel Deza", email = "dd7022@princeton.edu" },
+       { name = "Anushka Acharya", email = "aa9078@princeton.edu"},
+       { name = "Jisun Park", email = "jisunpark@princeton.edu"},
        { name = "Bartolomeo Stellato", email = "bstellato@princeton.edu" },
 ]
 

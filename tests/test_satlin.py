@@ -1,5 +1,6 @@
 import numpy as np
 
+from tests.conftest import TEST_EPS
 from tests.cvxpy import satlin as satlin_cvxpy
 
 np.set_printoptions(precision=5)  # Print few decimal places
@@ -26,7 +27,7 @@ def test_satlin(vp_param_2):
     x, res = satlin_cvxpy(n, P, q, l, u)
     print("test solution from cvxpy:", x)
     print("solution from pgd:", zk)
-    assert np.linalg.norm(x - zk) <= 1e-7
+    assert np.linalg.norm(x - zk) <= TEST_EPS
 
     q_offset = 1
     q_param = vp_param_2.add_param(n, lb=q - q_offset, ub=q + q_offset)
@@ -71,8 +72,8 @@ def test_satlin(vp_param_2):
         zk = znew
 
     print("PGD resids with last K:", PGD_resids)
-    assert np.all(np.array(PGD_resids) <= np.array(all_res) + 1e-7)
-    assert np.abs(PGD_resids[-1] - all_res[-1]) <= 1e-6
+    assert np.all(np.array(PGD_resids) <= np.array(all_res) + TEST_EPS)
+    assert np.abs(PGD_resids[-1] - all_res[-1]) <= TEST_EPS
 
 
 def test_satlin_param(vp_param_2):

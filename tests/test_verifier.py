@@ -1,5 +1,6 @@
 import numpy as np
 
+from tests.conftest import TEST_EPS
 from tests.cvxpy import verifier as verifier_cvxpy
 
 
@@ -103,5 +104,5 @@ def test_verifier(vp):
 
     print(DR_resids)
 
-    assert np.all(np.array(DR_resids) <= np.array(all_res) + 1e-7)
-    assert np.abs(DR_resids[-1] - test_resid) <= 1e-7
+    assert np.all(np.array(DR_resids) <= np.array(all_res) + TEST_EPS)
+    assert np.abs(DR_resids[-1] - test_resid) <= TEST_EPS
