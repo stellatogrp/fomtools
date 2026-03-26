@@ -1,7 +1,18 @@
+import importlib.util
+
 import numpy as np
 import scipy.sparse as spa
 
 from fomtools.solvers.clarabel import ClarabelSolver
+
+
+def _check_cuda_available():
+    """Check if CUDA dependencies are available."""
+    if importlib.util.find_spec('cupy') is None:
+        raise ValueError(
+            "CuClarabelSolver requires CUDA support. "
+            "Install cupy with: pip install cupy-cuda12x (adjust for your CUDA version)"
+        )
 
 
 class CuClarabelSolver(ClarabelSolver):
@@ -32,7 +43,13 @@ class CuClarabelSolver(ClarabelSolver):
         ----------
         solver_params : dict, optional
             Dictionary of solver-specific parameters to configure.
+
+        Raises
+        ------
+        ValueError
+            If CUDA dependencies (cupy) are not available.
         """
+        _check_cuda_available()
         super(CuClarabelSolver, self).__init__(solver_params=solver_params)
 
     def solve(self):
