@@ -58,7 +58,7 @@ class SDP(Canonicalizer):
             Dictionary of solver-specific parameters to pass to the backend.
         solver : str, default='clarabel'
             Name of the SDP solver to use. Options: 'clarabel', 'cvxpy',
-            'cvxpy_sdp', 'cuclarabel'.
+            'cuclarabel'.
         """
         super(SDP, self).__init__(solver_params, solver)
         self.solver_name = solver.lower()  # Store for dispatch
@@ -409,7 +409,7 @@ class SDP(Canonicalizer):
         match self.solver_name:
             case "clarabel":
                 return self.solve_via_clarabel()
-            case "cvxpy" | "cvxpy_sdp":
+            case "cvxpy":
                 return self.solve_via_cvxpy()
             case "cuclarabel":
                 return self.solve_via_cuclarabel()
