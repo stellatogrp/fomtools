@@ -63,6 +63,10 @@ class SDPStepDecomposer(StepDecomposer):
         The saturated linear function clip(x, l, u) can be expressed as:
             satlin(x, l, u) = relu(x - l) - relu(x - u) + l
 
+        This follows from:
+            max(x, l) = relu(x - l) + l
+            satlin(x, l, u) = min(max(x, l), u)
+
         Parameters
         ----------
         step : SaturatedLinear
@@ -72,11 +76,38 @@ class SDPStepDecomposer(StepDecomposer):
         -------
         LinearExpression
             A composite expression representing the saturated linear
-            output.
-
-        Raises
-        ------
-        NotImplementedError
-            This decomposition is not yet implemented.
+            output as relu(x - l) - relu(x - u) + l.
         """
-        raise NotImplementedError("SDP decomposition of SaturatedLinear not yet implemented")
+        x_lb, x_ub = step.lb, step.ub
+
+        # Get saturation bounds (may be arrays or LinearExpressions)
+        # For LinearExpression bounds, use their lb/ub attributes
+        try:
+            l_vec = step.l.lb
+            u_vec = step.u.ub
+        except AttributeError:
+            l_vec = np.atleast_1d(step.l)
+            u_vec = np.atleast_1d(step.u)
+
+        # Broadcast to match input dimension if needed
+        if np.isscalar(l_vec) or len(l_vec) == 1:
+            l_vec = np.full(step.rhs.ndim, l_vec.item() if hasattr(l_vec, "item") else l_vec)
+        if np.isscalar(u_vec) or len(u_vec) == 1:
+            u_vec = np.full(step.rhs.ndim, u_vec.item() if hasattr(u_vec, "item") else u_vec)
+
+        # Create ReLU steps for decomposition:
+        # relu_lower computes relu(x - l)
+        # relu_upper computes relu(x - u)
+        relu_lower = Relu(rhs=step.rhs - l_vec)
+        relu_upper = Relu(rhs=step.rhs - u_vec)
+
+        # Update bounds on ReLU inputs, then propagate to outputs
+        relu_lower.update_bounds(x_lb - l_vec, x_ub - l_vec)
+        relu_upper.update_bounds(x_lb - u_vec, x_ub - u_vec)
+
+        # Recursively process
+        lhs_lower = self.process_step(relu_lower)
+        lhs_upper = self.process_step(relu_upper)
+
+        # satlin(x) = relu(x - l) - relu(x - u) + l
+        return lhs_lower - lhs_upper + l_vec

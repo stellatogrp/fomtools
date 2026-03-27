@@ -45,7 +45,7 @@ def test_ista_sdp_mip_comparison(vp, vp_sdp):
         vp_sdp_local = Verifier(
             method="sdp",
             solver=sdp_solver_name,
-            obbt_handler=None,
+            obbt_handler='highs',
         )
 
         b_sdp = vp_sdp_local.add_param(m, lb=b - 0.1, ub=b + 0.1)
@@ -63,7 +63,7 @@ def test_ista_sdp_mip_comparison(vp, vp_sdp):
         vp_mip = Verifier(
             method="mip",
             solver=mip_solver_name,
-            obbt_handler=None,
+            obbt_handler='highs',
         )
 
         b_mip = vp_mip.add_param(m, lb=b - 0.1, ub=b + 0.1)
@@ -113,7 +113,7 @@ def test_ista_sdp_softthresh_vs_relus(vp_sdp):
     vp_manual = Verifier(
         method="sdp",
         solver=sdp_solver_name,
-        obbt_handler=None,
+        obbt_handler='highs',
     )
 
     b_manual = vp_manual.add_param(m, lb=b - 0.1, ub=b + 0.1)
