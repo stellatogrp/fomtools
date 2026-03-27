@@ -6,6 +6,9 @@ from fomtools.verifier import Verifier
 # available solvers used as parameters to initialize verifier objects in each fixture
 SOLVERS = ["gurobi", "highs"]
 
+# SDP solvers for parameterized testing
+SDP_SOLVERS = ["clarabel", "cvxpy"]
+
 # Test tolerance for numerical comparisons
 TEST_EPS = 1e-6
 
@@ -56,3 +59,12 @@ def vp_theory(request: pytest.FixtureRequest):
         return 2 * init_C / np.sqrt((k - 1) * (k + 2))
 
     return Verifier(solver=request.param, obbt_handler=request.param, theory_func=theory_func)
+
+
+@pytest.fixture(params=SDP_SOLVERS, scope="function")
+def vp_sdp(request: pytest.FixtureRequest):
+    """
+    Pytest fixture that provides an SDP Verifier instance.
+    Parameterized to run tests with different SDP solver backends.
+    """
+    return Verifier(method='sdp', solver=request.param, obbt_handler=None)

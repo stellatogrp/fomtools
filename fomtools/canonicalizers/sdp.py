@@ -267,7 +267,35 @@ class SDP(Canonicalizer):
         constraint : Constraint
             An equality constraint (operator "=").
         """
-        raise NotImplementedError
+        A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(constraint.lhs)
+        b_vec = constraint.lhs.const
+
+        m, n = A_mat.shape
+        curr_prob_dim = self.get_sdp_var_dim()
+
+        # Linear: X[0, x_indices] (row=True, then symmetrize handles X[x, 0])
+        x_idx_ranges_1d = process_1d_ranges(x_idx_bounds, row=True)
+
+        # Quadratic: X[[0, x], [0, x]] for the outer product
+        all_idx_bounds = [(0, 1)] + x_idx_bounds
+        all_idx_ranges_2d = process_2d_ranges(all_idx_bounds, all_idx_bounds)
+
+        for i in range(m):
+            # Linear: A_mat[i, :] @ X[x, 0] = -b[i]
+            M_lin = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
+            M_lin[x_idx_ranges_1d] = A_mat[i, :]
+            self.Aeq_matrices.append(symmetrize(M_lin.tocsc()))
+            self.beq_consts.append(-b_vec[i])
+
+            # Quadratic: c_i^T X c_i = 0 where c_i = [b_i, A_i]
+            c_i = np.concatenate([[b_vec[i]], np.asarray(A_mat[i, :]).flatten()])
+            M_quad = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
+            M_quad[all_idx_ranges_2d] = np.outer(c_i, c_i)
+            self.Aeq_matrices.append(symmetrize(M_quad.tocsc()))
+            self.beq_consts.append(0)
+
+        # PSD cone for {0} ∪ x_indices
+        self.add_psd_cone_indices(x_idx_bounds)
 
     def _add_inequality_constraint_impl(self, constraint: Constraint) -> None:
         """
