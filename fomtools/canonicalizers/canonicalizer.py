@@ -73,8 +73,13 @@ class Canonicalizer:
                 return gurobi.GurobiSolver(solver_params)
             case "highs":
                 return highs.HiGHSSolver(solver_params)
+            case "clarabel" | "cvxpy" | "cvxpy_sdp" | "cuclarabel":
+                return None  # SDP solvers are instantiated at solve time
             case _:
-                raise ValueError(f"Solver must be 'gurobi' or 'HiGHS', got {solver}.")
+                raise ValueError(
+                    f"Unknown solver: {solver}. Supported solvers: "
+                    "'gurobi', 'highs', 'clarabel', 'cvxpy', 'cvxpy_sdp', 'cuclarabel'."
+                )
 
     def canonicalize(self, step: Step):
         """
@@ -171,3 +176,25 @@ class Canonicalizer:
             Must be implemented by subclasses.
         """
         raise NotImplementedError
+
+    def set_two_norm_objective(self, expr_list: list[LinearExpression]) -> None:
+        """
+        Set the objective to maximize the sum of squared two-norms.
+
+        Configures the optimization objective to compute
+        sum_i ||expr_i||_2^2 over the given list of expressions.
+
+        Parameters
+        ----------
+        expr_list : list[LinearExpression]
+            List of expressions whose squared norms are summed in the
+            objective.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses that support this objective type.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support set_two_norm_objective"
+        )

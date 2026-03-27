@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 class GurobiSolver(MIPSolver):
     """
     A wrapper around the Gurobi ``Model`` that bridges ``LinearExpression``
-    and ``Constrain`` objects to solver-ready variables, expressions, and
+    and ``Constraint`` objects to solver-ready variables, expressions, and
     constraints.
 
     Attributes
