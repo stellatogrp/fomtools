@@ -52,15 +52,15 @@ class ClarabelSolver(SDPSolver):
             self.set_solver_params(solver_params)
 
     def setup_clarabel_data(
-            self,
-            mat_problem_dim,
-            C,
-            Aeq_mats,
-            beq_consts,
-            Aineq_mats,
-            bineq_consts,
-            psd_cone_indices,
-        ):
+        self,
+        mat_problem_dim,
+        C,
+        Aeq_mats,
+        beq_consts,
+        Aineq_mats,
+        bineq_consts,
+        psd_cone_indices,
+    ):
         """
         Convert SDP problem data to Clarabel's native format.
 
@@ -90,20 +90,22 @@ class ClarabelSolver(SDPSolver):
 
         q = -sparse_symmetric_vectorize(C, scale_factor=2)
         # TODO: see if this can be replaced by a sparse 1 by n vector instead
-        q = q.todense().getA().reshape(-1,)
+        q = (
+            q.todense()
+            .getA()
+            .reshape(
+                -1,
+            )
+        )
         assert q.shape[0] == vec_problem_dim
 
-        symmetrized_Aeq_mats = [
-            sparse_symmetric_vectorize(A, scale_factor=2) for A in Aeq_mats
-        ]
+        symmetrized_Aeq_mats = [sparse_symmetric_vectorize(A, scale_factor=2) for A in Aeq_mats]
         Aeq = spa.vstack(symmetrized_Aeq_mats)
         beq = np.array(beq_consts)
 
         assert Aeq.shape == (beq.shape[0], vec_problem_dim)
 
-        symmetrized_Aineq_mats = [
-            sparse_symmetric_vectorize(A, scale_factor=2) for A in Aineq_mats
-        ]
+        symmetrized_Aineq_mats = [sparse_symmetric_vectorize(A, scale_factor=2) for A in Aineq_mats]
         Aineq = spa.vstack(symmetrized_Aineq_mats)
         bineq = np.array(bineq_consts)
 
@@ -121,9 +123,9 @@ class ClarabelSolver(SDPSolver):
         M = spa.vstack(psd_cone_selectors)
 
         cone_dims = {
-            'zero': Aeq.shape[0],
-            'nonneg': Aineq.shape[0],
-            'psd': psd_cone_sizes,
+            "zero": Aeq.shape[0],
+            "nonneg": Aineq.shape[0],
+            "psd": psd_cone_sizes,
         }
 
         self.q = q
@@ -149,16 +151,17 @@ class ClarabelSolver(SDPSolver):
             The optimal objective value of the SDP maximization problem.
         """
         q = self.q
-        b_psd = [n * (n + 1) // 2 for n in self.cone_dims['psd']]
+        b_psd = [n * (n + 1) // 2 for n in self.cone_dims["psd"]]
         b = np.concatenate([self.beq, self.bineq, np.zeros(sum(b_psd))])
         A = spa.vstack([self.Aeq, self.Aineq, self.M])
         assert A.shape[0] == b.shape[0]
         assert A.shape[1] == q.shape[0]
 
-        cones = [clarabel.ZeroConeT(self.beq.shape[0]), clarabel.NonnegativeConeT(self.bineq.shape[0])]
-        cones += [
-            clarabel.PSDTriangleConeT(n) for n in self.cone_dims['psd']
+        cones = [
+            clarabel.ZeroConeT(self.beq.shape[0]),
+            clarabel.NonnegativeConeT(self.bineq.shape[0]),
         ]
+        cones += [clarabel.PSDTriangleConeT(n) for n in self.cone_dims["psd"]]
 
         xdim = q.shape[0]
         P = spa.csc_matrix((xdim, xdim))
@@ -198,7 +201,7 @@ def sparse_symmetric_vectorize(P, scale_factor=np.sqrt(2)):
     """
     # 1. Extract only the upper triangle
     #    We guarantee rows <= cols because we take the upper triangle.
-    P_upper = spa.triu(P, format='coo')
+    P_upper = spa.triu(P, format="coo")
 
     # 2. Extract coordinates and data
     rows = P_upper.row
@@ -220,8 +223,7 @@ def sparse_symmetric_vectorize(P, scale_factor=np.sqrt(2)):
 
     # Create the vector.
     result = spa.coo_matrix(
-        (data, (np.zeros_like(k_indices), k_indices)),
-        shape=(1, total_elements)
+        (data, (np.zeros_like(k_indices), k_indices)), shape=(1, total_elements)
     )
 
     return result.tocsc()

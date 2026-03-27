@@ -12,8 +12,9 @@ def efficient_csc_pad(matrix, new_shape):
     M_old, N_old = matrix.shape
     M_new, N_new = new_shape
 
-    assert M_new >= M_old and N_new >= N_old, \
+    assert M_new >= M_old and N_new >= N_old, (
         f"New shape {(M_new, N_new)} must be >= old shape {(M_old, N_old)}"
+    )
 
     if M_new == M_old and N_new == N_old:
         return matrix
@@ -24,8 +25,7 @@ def efficient_csc_pad(matrix, new_shape):
     new_indptr_tail = np.full(num_new_cols, nnz, dtype=matrix.indptr.dtype)
     new_indptr = np.concatenate((matrix.indptr, new_indptr_tail))
 
-    return spa.csc_matrix((matrix.data, matrix.indices, new_indptr),
-                           shape=new_shape)
+    return spa.csc_matrix((matrix.data, matrix.indices, new_indptr), shape=new_shape)
 
 
 def get_submatrix_selection_matrix(n, indices, scale=np.sqrt(2)):
@@ -67,9 +67,8 @@ def get_submatrix_selection_matrix(n, indices, scale=np.sqrt(2)):
 
     # 7. Construct Sparse Matrix
     dim_full = n * (n + 1) // 2
-    dim_sub  = r * (r + 1) // 2
+    dim_sub = r * (r + 1) // 2
 
-    A_sel = spa.coo_matrix((data, (row_indices_in_A, col_indices_in_A)),
-                           shape=(dim_sub, dim_full))
+    A_sel = spa.coo_matrix((data, (row_indices_in_A, col_indices_in_A)), shape=(dim_sub, dim_full))
 
     return A_sel.tocsc()

@@ -9,6 +9,7 @@ from fomtools.canonicalizers.sdp import SDP
 from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import ProxableFunction
+from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 log = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ class Verifier(object):
         self.steps = []
 
         self.canonicalizer = self._get_canonicalizer(method, params, solver)
+        self.step_decomposer = self._get_step_decomposer(method)
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
         self.use_obbt_handler = True if obbt_handler else False
         self._step_proxy = _StepProxy(self)
@@ -77,6 +79,36 @@ class Verifier(object):
                 return MIP(solver_params=solver_params, solver=solver)
             case "sdp":
                 return SDP(solver_params=solver_params, solver=solver)
+            case _:
+                raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
+
+    @staticmethod
+    def _get_step_decomposer(method: str):
+        """
+        Return the step decomposer class for the specified method.
+
+        Parameters
+        ----------
+        method : str
+            Case-insensitive identifier for the method. Supported values:
+            - ``"mip"``
+            - ``"sdp"``
+
+        Returns
+        -------
+        type
+            The step decomposer class (MIPStepDecomposer or SDPStepDecomposer).
+
+        Raises
+        ------
+        ValueError
+            If the method is not one of the supported options.
+        """
+        match method.lower():
+            case "mip":
+                return MIPStepDecomposer
+            case "sdp":
+                return SDPStepDecomposer
             case _:
                 raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
 
@@ -390,12 +422,16 @@ class Verifier(object):
 
         step.update_bounds(rhs_lb, rhs_ub)
 
-        lhs = step.lhs
+        # Use decomposer to process the step
+        # This may decompose composite steps into primitives or handle directly
+        decomposer = self.step_decomposer(self.canonicalizer, self._register_var)
+        lhs = decomposer.process_step(step)
 
-        self._register_var(lhs)
-        self.iterates.append(lhs)
-        self.canonicalizer.canonicalize(step)
         self.steps.append(step)
+
+        # Track lhs as iterate only if it's a leaf variable
+        if lhs.is_leaf:
+            self.iterates.append(lhs)
 
         return lhs
 

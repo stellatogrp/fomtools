@@ -98,12 +98,8 @@ class SDP(Canonicalizer):
         matrices with zeros to match the new dimension.
         """
         new_dim = self.get_sdp_var_dim()
-        new_Aeq_matrices = [
-            efficient_csc_pad(A, (new_dim, new_dim)) for A in self.Aeq_matrices
-        ]
-        new_Aineq_matrices = [
-            efficient_csc_pad(A, (new_dim, new_dim)) for A in self.Aineq_matrices
-        ]
+        new_Aeq_matrices = [efficient_csc_pad(A, (new_dim, new_dim)) for A in self.Aeq_matrices]
+        new_Aineq_matrices = [efficient_csc_pad(A, (new_dim, new_dim)) for A in self.Aineq_matrices]
         self.Aeq_matrices = new_Aeq_matrices
         self.Aineq_matrices = new_Aineq_matrices
 
@@ -138,17 +134,17 @@ class SDP(Canonicalizer):
         curr_prob_dim = self.get_sdp_var_dim()
         constraint_start = len(self.Aineq_matrices)
 
-        for (i, l, u) in zip(range(bounds[0], bounds[1]), lb, ub):
+        for i, l, u in zip(range(bounds[0], bounds[1]), lb, ub):
             if np.isinf(l) or np.isinf(u):
                 raise NotImplementedError("Infinite bounds not yet supported in SDP canonicalizer")
             new_A = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
             new_A[i, i] = 1
-            new_A[i, 0] = - (l + u)
+            new_A[i, 0] = -(l + u)
 
             new_A = new_A.tocsc()
             new_A = symmetrize(new_A)
             self.Aineq_matrices.append(new_A)
-            self.bineq_upperbounds.append(- u * l)
+            self.bineq_upperbounds.append(-u * l)
 
         constraint_end = len(self.Aineq_matrices)
         self.bound_constraint_indices[var] = (constraint_start, constraint_end)
@@ -418,6 +414,9 @@ class SDP(Canonicalizer):
         sum_i ||A_i x + b_i||_2^2 = sum_i tr(Q_i @ X) for appropriate
         quadratic forms Q_i derived from each expression.
 
+        Also adds a PSD cone constraint covering all variables involved
+        in the objective to ensure cross-terms are properly constrained.
+
         Parameters
         ----------
         expr_list : list[LinearExpression]
@@ -426,11 +425,15 @@ class SDP(Canonicalizer):
         """
         curr_prob_dim = self.get_sdp_var_dim()
         overall_C_mat = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
+        all_idx_bounds = []
 
         for expr in expr_list:
             C_mat = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
             A_mat, idx_bounds = self.linexpr_to_Amat_and_bounds(expr)
             b_vec = expr.const.reshape((-1, 1))
+
+            # Collect all index bounds for the combined PSD cone
+            all_idx_bounds.extend(idx_bounds)
 
             ATA = A_mat.T @ A_mat
             bTA = b_vec.T @ A_mat
@@ -447,6 +450,10 @@ class SDP(Canonicalizer):
             C_mat[0, 0] = np.trace(bbT)
 
             overall_C_mat += symmetrize(C_mat)
+
+        # Add PSD cone covering all variables in the objective
+        # This ensures cross-terms between different variables are constrained
+        self.add_psd_cone_indices(all_idx_bounds)
 
         self.C_obj = overall_C_mat
 

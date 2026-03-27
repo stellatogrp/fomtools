@@ -100,7 +100,7 @@ class Relu(Step):
 
     def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
         """
-        Update the bounds of the left-land side after applying
+        Update the bounds of the left-hand side after applying
         ReLU activation.
 
         Parameters
