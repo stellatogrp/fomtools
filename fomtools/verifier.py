@@ -5,6 +5,7 @@ import numpy as np
 
 from fomtools.canonicalizers.mip import MIP
 from fomtools.canonicalizers.obbt_handler import OBBTHandler
+from fomtools.canonicalizers.sdp import SDP
 from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import ProxableFunction
@@ -75,7 +76,7 @@ class Verifier(object):
             case "mip":
                 return MIP(solver_params=solver_params, solver=solver)
             case "sdp":
-                raise NotImplementedError()
+                return SDP(solver_params=solver_params, solver=solver)
             case _:
                 raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
 
@@ -474,6 +475,25 @@ class Verifier(object):
 
         lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
         self.canonicalizer.set_infinity_norm_objective(expr_list, list(lb), list(ub))
+
+    def set_two_norm_objective(self, expr_list: Sequence[LinearExpression] | LinearExpression):
+        """
+        Create a 2-norm objective over the set of ``LinearExpression``
+        objects.
+
+        Parameters
+        ----------
+        expr_list: Sequence[LinearExpression] | LinearExpression
+            A single LinearExpression or a list of LinearExpression objects for
+            which the 2-norm objective will be constructed.
+
+        """
+        try:
+            len(expr_list)
+        except TypeError:
+            expr_list = [expr_list]
+
+        self.canonicalizer.set_two_norm_objective(expr_list)
 
     def solve(self, convex_hull_cuts: bool = False):
         """

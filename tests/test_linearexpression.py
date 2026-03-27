@@ -219,3 +219,55 @@ def test_LinearExpression_slice():
     y1 = y[1:3]
     assert np.allclose(y1[x1], A[1:3])
     assert np.allclose(y1[x2], B[1:3])
+
+
+def test_LinearExpression_hash():
+    """Test that LinearExpression hashing works correctly for dict operations.
+
+    This is important because __eq__ returns an EqualityConstraint (truthy)
+    rather than a bool, so hash collisions would cause silent key collisions.
+    Using a tuple-based hash avoids collisions with integers, which prevents
+    dict[0] from incorrectly matching a LinearExpression with counter=0.
+    """
+    # Create two leaf variables with the same ndim
+    a = LinearExpression.from_int(3)
+    b = LinearExpression.from_int(3)
+
+    # Each instance gets a unique counter
+    assert a.counter != b.counter
+
+    # Hashes are unique (based on counter) and don't collide with integers
+    assert hash(a) != hash(b)
+    assert hash(a) == hash(("LinearExpression", a.counter))
+    assert hash(b) == hash(("LinearExpression", b.counter))
+    assert hash(a) != a.counter  # Ensures no collision with integer keys
+
+    # Dict stores them as separate entries
+    d = {}
+    d[a] = "value_a"
+    d[b] = "value_b"
+    assert len(d) == 2
+
+    # Dict lookup returns correct values
+    assert d[a] == "value_a"
+    assert d[b] == "value_b"
+
+    # Membership tests work correctly
+    assert a in d
+    assert b in d
+
+    # New variable with same ndim is not in dict
+    c = LinearExpression.from_int(3)
+    assert c not in d
+
+    # Composite expressions also get unique hashes
+    expr1 = a + b
+    expr2 = a - b
+    assert hash(expr1) != hash(expr2)
+    assert expr1.counter != expr2.counter
+
+    d[expr1] = "expr1"
+    d[expr2] = "expr2"
+    assert len(d) == 4
+    assert d[expr1] == "expr1"
+    assert d[expr2] == "expr2"
