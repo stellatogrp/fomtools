@@ -13,6 +13,8 @@ from fomtools.canonicalizers import Canonicalizer
 if typing.TYPE_CHECKING:
     from fomtools import Step
 
+import jax.experimental.sparse as jsparse
+
 
 # todo: what to do if samples is missing from a leaf expression
 class Simulator(Canonicalizer):
@@ -67,7 +69,7 @@ class Simulator(Canonicalizer):
             returned as a JAX array.
         """
         if spa.issparse(matrix):
-            return jnp.array(matrix.toarray())
+            return jsparse.BCOO.from_scipy_sparse(matrix)
         return jnp.array(matrix)
 
     def _linear_expr_to_jax(
