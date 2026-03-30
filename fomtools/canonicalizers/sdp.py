@@ -528,7 +528,10 @@ class SDP(Canonicalizer):
             constraints += [
                 cp.trace(A @ X) <= b,
             ]
-        constraints += [X >> 0]
+        # Add PSD constraints for each structured cone (matching Clarabel path)
+        for cone_indices in self.psd_cone_indices:
+            idx = sorted(cone_indices)
+            constraints += [X[np.ix_(idx, idx)] >> 0]
         prob = cp.Problem(obj, constraints)
         res = prob.solve(solver=cp.CLARABEL)
         return res

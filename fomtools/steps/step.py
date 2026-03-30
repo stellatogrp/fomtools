@@ -56,7 +56,7 @@ class Step:
         return LinearExpression.from_int(self.rhs.ndim)
 
     def update_bounds(self, lb, ub):
-        pass
+        raise NotImplementedError
 
     # TODO: figure out a better way to hash these objects
     def __hash__(self):
