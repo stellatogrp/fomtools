@@ -46,34 +46,35 @@ def test_add_constraint_equality(vp):
 
 def test_add_constraint_inequality(vp):
     """
-    Test that add_constraint works with inequality constraints.
+    Test that inequality constraints restrict the optimal solution.
 
-    This test verifies that:
-    1. Adding an inequality constraint doesn't break the solver
-    2. The constraint is respected in the solution
+    Maximizes inf_norm(relu(x - 3)) with x in [0, 10].
+    Without constraint: optimal is 7 (x=10 gives relu(7)=7).
+    With x <= 5: optimal is 2 (x=5 gives relu(2)=2).
     """
     n = 3
+    mip_solver_name = MIP_SOLVER_NAMES[type(vp.canonicalizer.solver).__name__]
 
-    # Create an iterate
-    x = vp.add_iterate(n, lb=0, ub=10)
+    # Unconstrained baseline
+    vp_unc = Verifier(method='mip', solver=mip_solver_name, obbt_handler=None)
+    x_unc = vp_unc.add_iterate(n, lb=0, ub=10)
+    z_unc = vp_unc.step.relu(x_unc - 3)
+    vp_unc.set_infinity_norm_objective([z_unc])
+    result_unc = vp_unc.solve()
 
-    # Add inequality constraint: x[0] >= 5
-    vp.add_constraint(x[0] >= 5)
+    # Constrained: x[i] <= 5 for all i
+    vp_con = Verifier(method='mip', solver=mip_solver_name, obbt_handler=None)
+    x_con = vp_con.add_iterate(n, lb=0, ub=10)
+    for i in range(n):
+        vp_con.add_constraint(x_con[i] <= 5)
+    z_con = vp_con.step.relu(x_con - 3)
+    vp_con.set_infinity_norm_objective([z_con])
+    result_con = vp_con.solve()
 
-    # Add a ReLU step
-    z = vp.step.relu(x - 3)
-
-    # Set objective and solve
-    vp.set_infinity_norm_objective([z])
-    result = vp.solve()
-
-    # Verify the problem is solvable
-    assert result is not None
-    assert np.isfinite(result)
-
-    # Verify the constraint is respected
-    x_val = vp.get_solution_value(x)
-    assert x_val[0] >= 5 - TEST_EPS, "Inequality constraint not satisfied"
+    assert np.isfinite(result_unc)
+    assert np.isfinite(result_con)
+    assert result_con < result_unc, "Constraint should reduce objective"
+    assert abs(result_con - 2.0) < TEST_EPS, f"Expected 2.0, got {result_con}"
 
 
 def test_add_constraint_tightens_bounds(vp):

@@ -479,6 +479,73 @@ class SDP(Canonicalizer):
             "Infinity-norm objective is not supported with SDP. Use set_two_norm_objective instead."
         )
 
+    def set_zero_objective(self):
+        """
+        Set objective to zero (not yet implemented for SDP).
+
+        Raises
+        ------
+        NotImplementedError
+            This method is not yet implemented for the SDP canonicalizer.
+        """
+        raise NotImplementedError(
+            "set_zero_objective is not yet implemented for the SDP canonicalizer."
+        )
+
+    def get_solution_value(self, expression: LinearExpression) -> np.ndarray:
+        """
+        Get the solution value for an expression (not yet implemented for SDP).
+
+        Parameters
+        ----------
+        expression : LinearExpression
+            The expression to evaluate.
+
+        Returns
+        -------
+        np.ndarray
+            The solution values.
+
+        Raises
+        ------
+        NotImplementedError
+            This method is not yet implemented for the SDP canonicalizer.
+        """
+        raise NotImplementedError(
+            "get_solution_value is not yet implemented for the SDP canonicalizer. "
+            "SDP solves a relaxation and does not provide primal variable values."
+        )
+
+    def add_theory_cut(
+        self,
+        margin: float,
+        target_expr: LinearExpression,
+        lb: float | np.ndarray,
+        ub: float | np.ndarray,
+    ):
+        """
+        Add theory cut constraints (not yet implemented for SDP).
+
+        Parameters
+        ----------
+        margin : float
+            Relaxation margin for the bounds.
+        target_expr : LinearExpression
+            The expression whose bounds are to be relaxed.
+        lb : float | np.ndarray
+            Lower bound(s) for target_expr.
+        ub : float | np.ndarray
+            Upper bound(s) for target_expr.
+
+        Raises
+        ------
+        NotImplementedError
+            This method is not yet implemented for the SDP canonicalizer.
+        """
+        raise NotImplementedError(
+            "add_theory_cut is not yet implemented for the SDP canonicalizer."
+        )
+
     def solve_model(self, steps=None, convex_hull_cuts=False):
         """Solve the SDP problem using the configured solver.
 

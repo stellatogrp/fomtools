@@ -37,9 +37,10 @@ class Verifier(object):
         self.steps = []
 
         self.canonicalizer = self._get_canonicalizer(method, params, solver)
-        self.step_decomposer = self._get_step_decomposer(method)
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
         self.use_obbt_handler = True if obbt_handler else False
+        decomposer_cls = self._get_step_decomposer(method)
+        self.step_decomposer = decomposer_cls(self.canonicalizer, self._register_var)
         self._step_proxy = _StepProxy(self)
 
     @staticmethod
@@ -422,10 +423,7 @@ class Verifier(object):
 
         step.update_bounds(rhs_lb, rhs_ub)
 
-        # Use decomposer to process the step
-        # This may decompose composite steps into primitives or handle directly
-        decomposer = self.step_decomposer(self.canonicalizer, self._register_var)
-        lhs = decomposer.process_step(step)
+        lhs = self.step_decomposer.process_step(step)
 
         self.steps.append(step)
 
