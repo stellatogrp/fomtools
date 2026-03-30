@@ -33,7 +33,7 @@ def test_nnls_sdp_mip_comparison(vp, vp_sdp):
         vp_sdp_local = Verifier(
             method='sdp',
             solver=sdp_solver_name,
-            obbt_handler=None
+            obbt_handler='highs',
         )
 
         x_sdp = vp_sdp_local.add_param(m, lb=0, ub=0.1)
@@ -49,7 +49,7 @@ def test_nnls_sdp_mip_comparison(vp, vp_sdp):
         vp_mip = Verifier(
             method='mip',
             solver=mip_solver_name,
-            obbt_handler=None
+            obbt_handler='highs',
         )
 
         x_mip = vp_mip.add_param(m, lb=0, ub=0.1)

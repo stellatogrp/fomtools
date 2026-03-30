@@ -113,7 +113,7 @@ def test_ista_sdp_softthresh_vs_relus(vp_sdp):
     vp_manual = Verifier(
         method="sdp",
         solver=sdp_solver_name,
-        obbt_handler='highs',
+        obbt_handler=None,
     )
 
     b_manual = vp_manual.add_param(m, lb=b - 0.1, ub=b + 0.1)
@@ -140,7 +140,7 @@ def test_ista_sdp_softthresh_vs_relus(vp_sdp):
     vp_auto = Verifier(
         method="sdp",
         solver=sdp_solver_name,
-        obbt_handler='highs',
+        obbt_handler=None,
     )
 
     b_auto = vp_auto.add_param(m, lb=b - 0.1, ub=b + 0.1)

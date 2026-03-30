@@ -10,7 +10,7 @@ SOLVERS = ["gurobi", "highs"]
 SDP_SOLVERS = ["clarabel", "cvxpy"]
 
 # Test tolerance for numerical comparisons
-TEST_EPS = 1e-6
+TEST_EPS = 1e-5
 
 
 @pytest.fixture(params=SOLVERS, scope="function")

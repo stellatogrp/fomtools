@@ -15,7 +15,7 @@ class SDPStepDecomposer(StepDecomposer):
 
     Decompositions:
     - SoftThreshold: softthresh_lambda(x) = relu(x - lambda) - relu(-x - lambda)
-    - SaturatedLinear: Not yet implemented
+    - SaturatedLinear: satlin(x, l, u) = relu(x - l) - relu(x - u) + l
     """
 
     def decompose_softthreshold(self, step: SoftThreshold) -> LinearExpression:
