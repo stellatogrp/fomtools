@@ -535,20 +535,18 @@ class Verifier(object):
         """
         Create a 1-norm objective over the set of ``LinearExpression`` objects.
 
-        Not yet implemented.
-
         Parameters
         ----------
         expr_list : Sequence[LinearExpression] | LinearExpression
             A single LinearExpression or a list of LinearExpression objects for
             which the 1-norm objective will be constructed.
-
-        Raises
-        ------
-        NotImplementedError
-            One-norm objective is not yet implemented.
         """
-        raise NotImplementedError("One-norm objective is not yet implemented.")
+        try:
+            len(expr_list)
+        except TypeError:
+            expr_list = [expr_list]
+
+        self.canonicalizer.set_one_norm_objective(expr_list)
 
     def set_objective_norm(
         self,

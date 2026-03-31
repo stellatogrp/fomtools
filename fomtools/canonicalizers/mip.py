@@ -278,21 +278,38 @@ class MIP(Canonicalizer):
         """
         Build and apply one-norm objective to solver.
 
+        Uses the identity: ||x||_1 = 1^T @ (relu(x) + relu(-x))
+
         Parameters
         ----------
         solver : Solver
             The solver instance to apply the objective to.
         expr_list : list[LinearExpression]
             List of expressions for the one-norm objective.
-
-        Raises
-        ------
-        NotImplementedError
-            One-norm objective is not yet implemented for MIP canonicalizer.
         """
-        raise NotImplementedError(
-            "One-norm objective is not yet implemented for MIP canonicalizer."
-        )
+        constraints = []
+        q = 0
+
+        for expr in expr_list:
+            n = expr.ndim
+
+            # Create relu(expr) step
+            step_pos = Relu(rhs=expr)
+            step_pos.update_bounds(*expr.bound_propagation())
+            constraints.extend(self._build_relu_constraints(step_pos))
+
+            # Create relu(-expr) step
+            neg_expr = -expr
+            step_neg = Relu(rhs=neg_expr)
+            step_neg.update_bounds(*neg_expr.bound_propagation())
+            constraints.extend(self._build_relu_constraints(step_neg))
+
+            # Accumulate: 1^T @ (relu(expr) + relu(-expr))
+            ones = np.ones((1, n))
+            q = q + ones @ step_pos.lhs + ones @ step_neg.lhs
+
+        solver.constraints_to_solver(constraints)
+        solver.set_objective(expression=q, sense="maximize")
 
     def solve_model(self, steps: Step, convex_hull_cuts: bool = False) -> float:
         """
@@ -432,9 +449,24 @@ class MIP(Canonicalizer):
 
         Returns
         -------
+        None
+        """
+        constraints = self._build_relu_constraints(step)
+        self.add_constraints(constraints)
+
+    def _build_relu_constraints(self, step: Relu) -> List[Constraint]:
+        """
+        Build MIP formulation constraints for a ReLU step.
+
+        Parameters
+        ----------
+        step : Relu
+            An instance of the `Relu` step.
+
+        Returns
+        -------
         List[Constraint]
-            A list of constraint objects describing the convex hull of the feasible region
-            defined by the ReLU activation.
+            MIP constraints for the ReLU activation.
         """
         constraints = []
         for i, (_lhs, _rhs) in enumerate(zip(step.lhs, step.rhs)):
@@ -457,7 +489,7 @@ class MIP(Canonicalizer):
                             _lhs <= _rhs - step.lb[i] * (1 - new_var),
                         ]
                     )
-        self.add_constraints(constraints)
+        return constraints
 
     def canonicalize_saturatedlinear(self, step: SaturatedLinear):
         r"""
