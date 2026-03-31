@@ -533,19 +533,71 @@ class SDP(Canonicalizer):
 
     def set_one_norm_objective(self, expr_list) -> None:
         """
-        Set one-norm objective (not supported for SDP).
+        Store one-norm objective specification for deferred application.
+
+        The objective will be applied to a copy of the canonicalizer at
+        solve time using the identity: ||x||_1 = 1^T @ (relu(x) + relu(-x)).
 
         Parameters
         ----------
         expr_list : list[LinearExpression]
-            Unused.
-
-        Raises
-        ------
-        NotImplementedError
-            One-norm objectives are not supported with SDP.
+            List of expressions whose one-norms are summed in the objective.
         """
-        raise NotImplementedError("One-norm objective is not supported with SDP.")
+        self._objective_spec = ("one_norm", expr_list)
+
+    def _apply_one_norm_objective(self, canon_copy, expr_list) -> None:
+        """
+        Apply one-norm objective to a canonicalizer copy.
+
+        Uses the identity: ||x||_1 = 1^T @ (relu(x) + relu(-x))
+
+        Creates auxiliary ReLU variables, adds their constraints, and sets
+        up a linear objective to sum the ReLU outputs.
+
+        Parameters
+        ----------
+        canon_copy : SDP
+            The canonicalizer copy to apply the objective to.
+        expr_list : list[LinearExpression]
+            List of expressions whose one-norms are summed in the objective.
+        """
+        relu_lhs_vars = []
+
+        for expr in expr_list:
+            # Create relu(expr) step
+            step_pos = Relu(rhs=expr)
+            step_pos.update_bounds(*expr.bound_propagation())
+            canon_copy.add_var(step_pos.lhs)
+            canon_copy.canonicalize_relu(step_pos)
+            relu_lhs_vars.append(step_pos.lhs)
+
+            # Create relu(-expr) step
+            neg_expr = -expr
+            step_neg = Relu(rhs=neg_expr)
+            step_neg.update_bounds(*neg_expr.bound_propagation())
+            canon_copy.add_var(step_neg.lhs)
+            canon_copy.canonicalize_relu(step_neg)
+            relu_lhs_vars.append(step_neg.lhs)
+
+        # Build linear objective: maximize sum of all relu outputs
+        # For lifted SDP with X = [1, x]^T @ [1, x], linear term c^T x
+        # is encoded as C[0, idx] = c/2, C[idx, 0] = c/2
+        curr_prob_dim = canon_copy.get_sdp_var_dim()
+        C_mat = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
+
+        all_idx_bounds = []
+        for lhs_var in relu_lhs_vars:
+            idx_bounds = canon_copy.var_idx_map[lhs_var]
+            all_idx_bounds.append(idx_bounds)
+            start, end = idx_bounds
+            # Coefficient 1 for each component, divided by 2 for symmetry
+            C_mat[0, start:end] = 0.5
+            C_mat[start:end, 0] = 0.5
+
+        # Add PSD cone covering all relu output variables
+        canon_copy.add_psd_cone_indices(all_idx_bounds)
+
+        canon_copy.C_obj = C_mat.tocsc()
 
     def set_zero_objective(self):
         """
@@ -638,10 +690,12 @@ class SDP(Canonicalizer):
 
         # Apply objective to the copy
         if self._objective_spec is not None:
-            obj_type = self._objective_spec[0]
-            if obj_type == "two_norm":
-                _, expr_list = self._objective_spec
-                self._apply_two_norm_objective(self._solved_copy, expr_list)
+            obj_type, expr_list = self._objective_spec
+            match obj_type:
+                case "two_norm":
+                    self._apply_two_norm_objective(self._solved_copy, expr_list)
+                case "one_norm":
+                    self._apply_one_norm_objective(self._solved_copy, expr_list)
 
         # Solve using the copy's data
         return self._solved_copy._solve_internal()
@@ -677,10 +731,12 @@ class SDP(Canonicalizer):
         direct solver calls.
         """
         if self._objective_spec is not None and self.C_obj is None:
-            obj_type = self._objective_spec[0]
-            if obj_type == "two_norm":
-                _, expr_list = self._objective_spec
-                self._apply_two_norm_objective(self, expr_list)
+            obj_type, expr_list = self._objective_spec
+            match obj_type:
+                case "two_norm":
+                    self._apply_two_norm_objective(self, expr_list)
+                case "one_norm":
+                    self._apply_one_norm_objective(self, expr_list)
 
     def solve_via_cvxpy(self):
         """
