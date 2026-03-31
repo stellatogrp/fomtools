@@ -3,6 +3,7 @@ import numpy as np
 import scipy.sparse as spa
 
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
+from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
 from fomtools.solvers.clarabel import ClarabelSolver
 from fomtools.solvers.cuclarabel import CuClarabelSolver
@@ -97,12 +98,8 @@ class SDP(Canonicalizer):
         matrices with zeros to match the new dimension.
         """
         new_dim = self.get_sdp_var_dim()
-        new_Aeq_matrices = [
-            efficient_csc_pad(A, (new_dim, new_dim)) for A in self.Aeq_matrices
-        ]
-        new_Aineq_matrices = [
-            efficient_csc_pad(A, (new_dim, new_dim)) for A in self.Aineq_matrices
-        ]
+        new_Aeq_matrices = [efficient_csc_pad(A, (new_dim, new_dim)) for A in self.Aeq_matrices]
+        new_Aineq_matrices = [efficient_csc_pad(A, (new_dim, new_dim)) for A in self.Aineq_matrices]
         self.Aeq_matrices = new_Aeq_matrices
         self.Aineq_matrices = new_Aineq_matrices
 
@@ -137,17 +134,17 @@ class SDP(Canonicalizer):
         curr_prob_dim = self.get_sdp_var_dim()
         constraint_start = len(self.Aineq_matrices)
 
-        for (i, l, u) in zip(range(bounds[0], bounds[1]), lb, ub):
+        for i, l, u in zip(range(bounds[0], bounds[1]), lb, ub):
             if np.isinf(l) or np.isinf(u):
                 raise NotImplementedError("Infinite bounds not yet supported in SDP canonicalizer")
             new_A = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
             new_A[i, i] = 1
-            new_A[i, 0] = - (l + u)
+            new_A[i, 0] = -(l + u)
 
             new_A = new_A.tocsc()
             new_A = symmetrize(new_A)
             self.Aineq_matrices.append(new_A)
-            self.bineq_upperbounds.append(- u * l)
+            self.bineq_upperbounds.append(-u * l)
 
         constraint_end = len(self.Aineq_matrices)
         self.bound_constraint_indices[var] = (constraint_start, constraint_end)
@@ -230,14 +227,84 @@ class SDP(Canonicalizer):
         """
         raise NotImplementedError
 
-    def add_equality_constraint(self, lhs_expr, rhs_expr):
+    def add_constraint(self, constraint: Constraint) -> None:
         """
-        Add a linear equality constraint (not implemented for SDP).
+        Add a constraint to the SDP instance.
 
-        Raises
-        ------
-        NotImplementedError
-            This method is not supported in the SDP canonicalizer.
+        Dispatches to the appropriate implementation based on the constraint
+        operator type (equality or inequality).
+
+        Parameters
+        ----------
+        constraint : Constraint
+            Constraint object to add to the SDP instance.
+        """
+        match constraint.operator:
+            case "=":
+                self._add_equality_constraint_impl(constraint)
+            case "<=":
+                self._add_inequality_constraint_impl(constraint)
+            case _:
+                raise ValueError(f"Unknown constraint operator: {constraint.operator}")
+
+    def _add_equality_constraint_impl(self, constraint: Constraint) -> None:
+        """
+        Add an equality constraint and its quadratic strengthening.
+
+        For Ax + b = 0, adds:
+        1. Linear constraint in lifted form
+        2. Quadratic constraint: diag([b|A] X [b|A]^T) = 0
+
+        With the PSD constraint, the diagonal being zero implies the full
+        quadratic form is zero.
+
+        Parameters
+        ----------
+        constraint : Constraint
+            An equality constraint (operator "=").
+        """
+        A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(constraint.lhs)
+        b_vec = constraint.lhs.const
+
+        m, n = A_mat.shape
+        curr_prob_dim = self.get_sdp_var_dim()
+
+        # Linear: X[0, x_indices] (row=True, then symmetrize handles X[x, 0])
+        x_idx_ranges_1d = process_1d_ranges(x_idx_bounds, row=True)
+
+        # Quadratic: X[[0, x], [0, x]] for the outer product
+        all_idx_bounds = [(0, 1)] + x_idx_bounds
+        all_idx_ranges_2d = process_2d_ranges(all_idx_bounds, all_idx_bounds)
+
+        for i in range(m):
+            # Linear: A_mat[i, :] @ X[x, 0] = -b[i]
+            M_lin = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
+            M_lin[x_idx_ranges_1d] = A_mat[i, :]
+            self.Aeq_matrices.append(symmetrize(M_lin.tocsc()))
+            self.beq_consts.append(-b_vec[i])
+
+            # Quadratic: c_i^T X c_i = 0 where c_i = [b_i, A_i]
+            c_i = np.concatenate([[b_vec[i]], np.asarray(A_mat[i, :]).flatten()])
+            M_quad = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
+            M_quad[all_idx_ranges_2d] = np.outer(c_i, c_i)
+            self.Aeq_matrices.append(symmetrize(M_quad.tocsc()))
+            self.beq_consts.append(0)
+
+        # PSD cone for {0} ∪ x_indices
+        self.add_psd_cone_indices(x_idx_bounds)
+
+    def _add_inequality_constraint_impl(self, constraint: Constraint) -> None:
+        """
+        Add an inequality constraint.
+
+        For Ax + b <= 0, adds:
+        1. Linear constraint in lifted form
+        2. Optionally, RLT quadratic constraint (weak strengthening)
+
+        Parameters
+        ----------
+        constraint : Constraint
+            An inequality constraint (operator "<=").
         """
         raise NotImplementedError
 
@@ -248,6 +315,10 @@ class SDP(Canonicalizer):
         Adds the constraint that the submatrix of X indexed by ``new_indices``
         (including the homogenization index 0) is positive semidefinite.
 
+        This method maintains an antichain: no stored set is a subset of another.
+        If a matrix X is PSD, any principal submatrix is also PSD, so subset
+        constraints are redundant.
+
         Parameters
         ----------
         new_indices : list[tuple[int, int]]
@@ -257,8 +328,14 @@ class SDP(Canonicalizer):
         new_idx_set = range_to_indices(new_indices)
         new_idx_set.add(0)
 
-        # TODO: in principle, there should never be set containment
-        # but need to investigate
+        # Check if new set is contained in any existing set (redundant)
+        for existing_set in self.psd_cone_indices:
+            if new_idx_set <= existing_set:
+                return
+
+        # Filter out existing sets that are strict subsets of the new set
+        self.psd_cone_indices = [s for s in self.psd_cone_indices if not s < new_idx_set]
+
         self.psd_cone_indices.append(new_idx_set)
 
     def canonicalize_relu(self, step: Relu) -> None:
@@ -337,6 +414,9 @@ class SDP(Canonicalizer):
         sum_i ||A_i x + b_i||_2^2 = sum_i tr(Q_i @ X) for appropriate
         quadratic forms Q_i derived from each expression.
 
+        Also adds a PSD cone constraint covering all variables involved
+        in the objective to ensure cross-terms are properly constrained.
+
         Parameters
         ----------
         expr_list : list[LinearExpression]
@@ -345,11 +425,15 @@ class SDP(Canonicalizer):
         """
         curr_prob_dim = self.get_sdp_var_dim()
         overall_C_mat = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
+        all_idx_bounds = []
 
         for expr in expr_list:
             C_mat = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
             A_mat, idx_bounds = self.linexpr_to_Amat_and_bounds(expr)
             b_vec = expr.const.reshape((-1, 1))
+
+            # Collect all index bounds for the combined PSD cone
+            all_idx_bounds.extend(idx_bounds)
 
             ATA = A_mat.T @ A_mat
             bTA = b_vec.T @ A_mat
@@ -366,6 +450,10 @@ class SDP(Canonicalizer):
             C_mat[0, 0] = np.trace(bbT)
 
             overall_C_mat += symmetrize(C_mat)
+
+        # Add PSD cone covering all variables in the objective
+        # This ensures cross-terms between different variables are constrained
+        self.add_psd_cone_indices(all_idx_bounds)
 
         self.C_obj = overall_C_mat
 
@@ -389,6 +477,73 @@ class SDP(Canonicalizer):
         """
         raise NotImplementedError(
             "Infinity-norm objective is not supported with SDP. Use set_two_norm_objective instead."
+        )
+
+    def set_zero_objective(self):
+        """
+        Set objective to zero (not yet implemented for SDP).
+
+        Raises
+        ------
+        NotImplementedError
+            This method is not yet implemented for the SDP canonicalizer.
+        """
+        raise NotImplementedError(
+            "set_zero_objective is not yet implemented for the SDP canonicalizer."
+        )
+
+    def get_solution_value(self, expression: LinearExpression) -> np.ndarray:
+        """
+        Get the solution value for an expression (not yet implemented for SDP).
+
+        Parameters
+        ----------
+        expression : LinearExpression
+            The expression to evaluate.
+
+        Returns
+        -------
+        np.ndarray
+            The solution values.
+
+        Raises
+        ------
+        NotImplementedError
+            This method is not yet implemented for the SDP canonicalizer.
+        """
+        raise NotImplementedError(
+            "get_solution_value is not yet implemented for the SDP canonicalizer. "
+            "SDP solves a relaxation and does not provide primal variable values."
+        )
+
+    def add_theory_cut(
+        self,
+        margin: float,
+        target_expr: LinearExpression,
+        lb: float | np.ndarray,
+        ub: float | np.ndarray,
+    ):
+        """
+        Add theory cut constraints (not yet implemented for SDP).
+
+        Parameters
+        ----------
+        margin : float
+            Relaxation margin for the bounds.
+        target_expr : LinearExpression
+            The expression whose bounds are to be relaxed.
+        lb : float | np.ndarray
+            Lower bound(s) for target_expr.
+        ub : float | np.ndarray
+            Upper bound(s) for target_expr.
+
+        Raises
+        ------
+        NotImplementedError
+            This method is not yet implemented for the SDP canonicalizer.
+        """
+        raise NotImplementedError(
+            "add_theory_cut is not yet implemented for the SDP canonicalizer."
         )
 
     def solve_model(self, steps=None, convex_hull_cuts=False):
@@ -440,7 +595,10 @@ class SDP(Canonicalizer):
             constraints += [
                 cp.trace(A @ X) <= b,
             ]
-        constraints += [X >> 0]
+        # Add PSD constraints for each structured cone (matching Clarabel path)
+        for cone_indices in self.psd_cone_indices:
+            idx = sorted(cone_indices)
+            constraints += [X[np.ix_(idx, idx)] >> 0]
         prob = cp.Problem(obj, constraints)
         res = prob.solve(solver=cp.CLARABEL)
         return res

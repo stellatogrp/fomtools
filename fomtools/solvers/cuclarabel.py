@@ -8,7 +8,7 @@ from fomtools.solvers.clarabel import ClarabelSolver
 
 def _check_cuda_available():
     """Check if CUDA dependencies are available."""
-    if importlib.util.find_spec('cupy') is None:
+    if importlib.util.find_spec("cupy") is None:
         raise ValueError(
             "CuClarabelSolver requires CUDA support. "
             "Install cupy with: pip install cupy-cuda12x (adjust for your CUDA version)"
@@ -71,7 +71,7 @@ class CuClarabelSolver(ClarabelSolver):
         with CUDA.jl and Clarabel.jl packages.
         """
         q = self.q
-        b_psd = [n * (n + 1) // 2 for n in self.cone_dims['psd']]
+        b_psd = [n * (n + 1) // 2 for n in self.cone_dims["psd"]]
         b = np.concatenate([self.beq, self.bineq, np.zeros(sum(b_psd))])
         A = spa.vstack([self.Aeq, self.Aineq, self.M])
 
@@ -101,15 +101,20 @@ class CuClarabelSolver(ClarabelSolver):
         jl.q = jl.Clarabel.cupy_to_cuvector(jl.Float64, int(qgpu.data.ptr), qgpu.size)
 
         jl.A = jl.Clarabel.cupy_to_cucsrmat(
-                jl.Float64, int(Agpu.data.data.ptr), int(Agpu.indices.data.ptr),
-                int(Agpu.indptr.data.ptr), *Agpu.shape, Agpu.nnz)
+            jl.Float64,
+            int(Agpu.data.data.ptr),
+            int(Agpu.indices.data.ptr),
+            int(Agpu.indptr.data.ptr),
+            *Agpu.shape,
+            Agpu.nnz,
+        )
         jl.b = jl.Clarabel.cupy_to_cuvector(jl.Float64, int(bgpu.data.ptr), bgpu.size)
 
         # 6. Setup Cones
         jl.seval("cones = Clarabel.SupportedCone[]")
         jl.push_b(jl.cones, jl.Clarabel.ZeroConeT(self.beq.shape[0]))
         jl.push_b(jl.cones, jl.Clarabel.NonnegativeConeT(self.bineq.shape[0]))
-        for n in self.cone_dims['psd']:
+        for n in self.cone_dims["psd"]:
             jl.push_b(jl.cones, jl.Clarabel.PSDTriangleConeT(n))
 
         # 7. Solve

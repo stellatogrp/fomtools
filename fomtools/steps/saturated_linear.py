@@ -22,25 +22,25 @@ class SaturatedLinear(Step):
 
     Attributes
     ----------
-    lhs: LinearExpression
-        Left-hand side linear expression in the operator definition.
-    rhs: LinearExpression
-        Right-hand side linear expression in the operator definition.
-    lb: float
-        Lower bound associated with the transformed values.
-    ub: floatg
-        Lower bound associated with the transformed values.
-    relax_binary_vars: bool
+    rhs : LinearExpression
+        Right-hand side (input) linear expression.
+    lhs : LinearExpression
+        Left-hand side (output) linear expression.
+    lb : np.ndarray
+        Lower bounds on the INPUT (rhs), before saturation is applied.
+    ub : np.ndarray
+        Upper bounds on the INPUT (rhs), before saturation is applied.
+    relax_binary_vars : bool
         If true, binary decision variables associated with the operator
         are relaxed to take continuous values.
-    l: np.ndarray[float] | LinearExpression
+    l : np.ndarray[float] | LinearExpression
         The lower saturation bound of the saturated linear operator.
         Can be either a numeric value or a LinearExpression object whose
-        lower boudnds acts as the lower saturation bound.
-    u: np.ndarray[float] | LinearExpression
+        lower bounds acts as the lower saturation bound.
+    u : np.ndarray[float] | LinearExpression
         The upper saturation bound of the saturated linear operator.
         Can be either a numeric value or a LinearExpression object whose
-        upper boudnds acts as the upper saturation bound.
+        upper bounds acts as the upper saturation bound.
     """
 
     def __init__(
@@ -80,7 +80,7 @@ class SaturatedLinear(Step):
 
     def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
         """
-        Update the bounds of the left-land side after applying
+        Update the bounds of the left-hand side after applying
         Saturated Linear Unit activation.
 
         Parameters
@@ -94,4 +94,5 @@ class SaturatedLinear(Step):
             Unit.
 
         """
+        self.lb, self.ub = lb, ub
         self.lhs.update_bounds(lb=self.satlin(lb), ub=self.satlin(ub))
