@@ -17,7 +17,7 @@ class TestMIPCopyIsolation:
         z = vp.step.relu(x)
 
         # Solve twice with same objective
-        vp.set_infinity_norm_objective([z])
+        vp.set_objective_norm([z], np.inf)
         result1 = vp.solve()
         result2 = vp.solve()
 
@@ -32,18 +32,18 @@ class TestMIPCopyIsolation:
         z = vp.step.relu(x)
 
         # Solve with first objective
-        vp.set_infinity_norm_objective([z])
+        vp.set_objective_norm([z], np.inf)
         result1 = vp.solve()
 
         # Change objective (shifted expression)
-        vp.set_infinity_norm_objective([z - 5])
+        vp.set_objective_norm([z - 5], np.inf)
         result2 = vp.solve()
 
         # Results should be different
         assert result1 != result2
 
         # Solve again with original objective to verify no corruption
-        vp.set_infinity_norm_objective([z])
+        vp.set_objective_norm([z], np.inf)
         result3 = vp.solve()
 
         # Should match first result
@@ -81,7 +81,7 @@ class TestSDPCopyIsolation:
         z = vp.step.relu(x)
 
         # Solve twice with same objective
-        vp.set_two_norm_objective(z)
+        vp.set_objective_norm(z, 2)
         result1 = vp.solve()
         result2 = vp.solve()
 
@@ -96,7 +96,7 @@ class TestSDPCopyIsolation:
         x = vp.add_iterate(3, lb=0, ub=10)
         z = vp.step.relu(x)
 
-        vp.set_two_norm_objective(z)
+        vp.set_objective_norm(z, 2)
 
         # Get initial psd cone count
         initial_psd_count = len(vp.canonicalizer.psd_cone_indices)

@@ -529,6 +529,62 @@ class Verifier(object):
 
         self.canonicalizer.set_two_norm_objective(expr_list)
 
+    def set_one_norm_objective(
+        self, expr_list: Sequence[LinearExpression] | LinearExpression
+    ) -> None:
+        """
+        Create a 1-norm objective over the set of ``LinearExpression`` objects.
+
+        Not yet implemented.
+
+        Parameters
+        ----------
+        expr_list : Sequence[LinearExpression] | LinearExpression
+            A single LinearExpression or a list of LinearExpression objects for
+            which the 1-norm objective will be constructed.
+
+        Raises
+        ------
+        NotImplementedError
+            One-norm objective is not yet implemented.
+        """
+        raise NotImplementedError("One-norm objective is not yet implemented.")
+
+    def set_objective_norm(
+        self,
+        expr: Sequence[LinearExpression] | LinearExpression,
+        ord: int | float | str,
+    ) -> None:
+        """
+        Set the optimization objective to maximize a norm of the expression(s).
+
+        Parameters
+        ----------
+        expr : LinearExpression or Sequence[LinearExpression]
+            Expression(s) whose norm will be maximized.
+        ord : {1, 2, np.inf, 'inf'}
+            The norm order:
+            - 1: One-norm (sum of absolute values)
+            - 2: Two-norm (Euclidean norm squared)
+            - np.inf or 'inf': Infinity-norm (maximum absolute value)
+
+        Raises
+        ------
+        NotImplementedError
+            If ord=1 (one-norm not yet implemented).
+        ValueError
+            If ord is not one of the supported values.
+        """
+        match ord:
+            case np.inf | "inf":
+                self.set_infinity_norm_objective(expr)
+            case 2:
+                self.set_two_norm_objective(expr)
+            case 1:
+                self.set_one_norm_objective(expr)
+            case _:
+                raise ValueError(f"Unsupported norm order: {ord}. Use 1, 2, np.inf, or 'inf'.")
+
     def solve(self, convex_hull_cuts: bool = False):
         """
         Solve the optimization problem.

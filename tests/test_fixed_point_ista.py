@@ -37,7 +37,7 @@ def test_box_constrained_ls_fixed_point(vp_param_1):
 
     for k in range(1, K + 1):
         x[k] = vp_param_1.step.satlin(x[k - 1] - t * A.T @ (A @ x[k - 1] - b_param), l=l, u=u)
-        vp_param_1.set_infinity_norm_objective([x[k] - x_star])
+        vp_param_1.set_objective_norm([x[k] - x_star], np.inf)
         _ = vp_param_1.solve()
 
     x_star_val = vp_param_1.get_solution_value(x_star)

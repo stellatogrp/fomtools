@@ -42,7 +42,7 @@ def test_nnls_sdp_mip_comparison(vp, vp_sdp):
         for k in range(K):
             z_sdp.append(vp_sdp_local.step.relu(z_sdp[k] - t * A.T @ (A @ z_sdp[k] - x_sdp)))
 
-        vp_sdp_local.set_two_norm_objective(z_sdp[K] - z_sdp[K - 1])
+        vp_sdp_local.set_objective_norm(z_sdp[K] - z_sdp[K - 1], 2)
         sdp_two_norm_sq = vp_sdp_local.solve()
 
         # MIP with infinity-norm objective
@@ -58,7 +58,7 @@ def test_nnls_sdp_mip_comparison(vp, vp_sdp):
         for k in range(K):
             z_mip.append(vp_mip.step.relu(z_mip[k] - t * A.T @ (A @ z_mip[k] - x_mip)))
 
-        vp_mip.set_infinity_norm_objective([z_mip[K] - z_mip[K - 1]])
+        vp_mip.set_objective_norm([z_mip[K] - z_mip[K - 1]], np.inf)
         mip_inf_norm = vp_mip.solve()
 
         sdp_two_norm = np.sqrt(sdp_two_norm_sq)

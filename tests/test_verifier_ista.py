@@ -52,7 +52,7 @@ def test_ista(vp_theory):
         z[k] = vp_theory.step.soft_threshold(At @ z[k - 1] + Bt @ b_param, lambd=lambda_t)
         vp_theory.theory_bound(k, z[k], z[k - 1])
 
-        vp_theory.set_infinity_norm_objective(z[k] - z[k - 1])
+        vp_theory.set_objective_norm(z[k] - z[k - 1], np.inf)
         res = vp_theory.solve(convex_hull_cuts=True)
         all_res.append(res)
 

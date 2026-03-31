@@ -531,6 +531,22 @@ class SDP(Canonicalizer):
             "Infinity-norm objective is not supported with SDP. Use set_two_norm_objective instead."
         )
 
+    def set_one_norm_objective(self, expr_list) -> None:
+        """
+        Set one-norm objective (not supported for SDP).
+
+        Parameters
+        ----------
+        expr_list : list[LinearExpression]
+            Unused.
+
+        Raises
+        ------
+        NotImplementedError
+            One-norm objectives are not supported with SDP.
+        """
+        raise NotImplementedError("One-norm objective is not supported with SDP.")
+
     def set_zero_objective(self):
         """
         Set objective to zero (not yet implemented for SDP).

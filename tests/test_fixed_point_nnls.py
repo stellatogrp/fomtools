@@ -57,7 +57,7 @@ def test_nnls_convergence(vp_param_1):
         # Perform ReLU step: z[k] = ReLU(z[k-1] - eta * A^T(Az[k-1] - x))
         z[k] = vp_param_1.step.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x_param))
         # Set objective to measure ||z[k] - z*||_inf
-        vp_param_1.set_infinity_norm_objective([z[k] - z_star])
+        vp_param_1.set_objective_norm([z[k] - z_star], np.inf)
         res = vp_param_1.solve()
         all_residuals.append(res)
 

@@ -176,6 +176,10 @@ class MIP(Canonicalizer):
         """Store two-norm objective specification for deferred application."""
         self._objective_spec = ("two_norm", expr_list)
 
+    def set_one_norm_objective(self, expr_list):
+        """Store one-norm objective specification for deferred application."""
+        self._objective_spec = ("one_norm", expr_list)
+
     def _apply_objective(self, solver):
         """
         Apply stored objective to the given solver.
@@ -196,6 +200,9 @@ class MIP(Canonicalizer):
             case "two_norm":
                 _, expr_list = self._objective_spec
                 self._apply_two_norm_objective(solver, expr_list)
+            case "one_norm":
+                _, expr_list = self._objective_spec
+                self._apply_one_norm_objective(solver, expr_list)
             case "zero":
                 solver.set_objective(expression=0)
 
@@ -265,6 +272,26 @@ class MIP(Canonicalizer):
         raise NotImplementedError(
             "MIP canonicalizer does not support two-norm objective. "
             "Use infinity-norm objective or switch to SDP."
+        )
+
+    def _apply_one_norm_objective(self, solver, expr_list):
+        """
+        Build and apply one-norm objective to solver.
+
+        Parameters
+        ----------
+        solver : Solver
+            The solver instance to apply the objective to.
+        expr_list : list[LinearExpression]
+            List of expressions for the one-norm objective.
+
+        Raises
+        ------
+        NotImplementedError
+            One-norm objective is not yet implemented for MIP canonicalizer.
+        """
+        raise NotImplementedError(
+            "One-norm objective is not yet implemented for MIP canonicalizer."
         )
 
     def solve_model(self, steps: Step, convex_hull_cuts: bool = False) -> float:

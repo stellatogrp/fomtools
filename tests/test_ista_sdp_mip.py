@@ -56,7 +56,7 @@ def test_ista_sdp_mip_comparison(vp, vp_sdp):
                 vp_sdp_local.step.soft_threshold(At @ z_sdp[k] + Bt @ b_sdp, lambd=lambda_t)
             )
 
-        vp_sdp_local.set_two_norm_objective(z_sdp[K] - z_sdp[K - 1])
+        vp_sdp_local.set_objective_norm(z_sdp[K] - z_sdp[K - 1], 2)
         sdp_two_norm_sq = vp_sdp_local.solve()
 
         # MIP with infinity-norm objective
@@ -72,7 +72,7 @@ def test_ista_sdp_mip_comparison(vp, vp_sdp):
         for k in range(K):
             z_mip.append(vp_mip.step.soft_threshold(At @ z_mip[k] + Bt @ b_mip, lambd=lambda_t))
 
-        vp_mip.set_infinity_norm_objective([z_mip[K] - z_mip[K - 1]])
+        vp_mip.set_objective_norm([z_mip[K] - z_mip[K - 1]], np.inf)
         mip_inf_norm = vp_mip.solve()
 
         sdp_two_norm = np.sqrt(sdp_two_norm_sq)
@@ -133,7 +133,7 @@ def test_ista_sdp_softthresh_vs_relus(vp_sdp):
     z1_manual = relu_pos_lhs - relu_neg_lhs
 
     # Set objective on z1 - z0
-    vp_manual.set_two_norm_objective(z1_manual - z0_manual)
+    vp_manual.set_objective_norm(z1_manual - z0_manual, 2)
     result_manual = vp_manual.solve()
 
     # --- Automatic decomposition using step.soft_threshold ---
@@ -149,7 +149,7 @@ def test_ista_sdp_softthresh_vs_relus(vp_sdp):
     # Use automatic soft threshold decomposition
     z1_auto = vp_auto.step.soft_threshold(At @ z0_auto + Bt @ b_auto, lambd=lambda_t)
 
-    vp_auto.set_two_norm_objective(z1_auto - z0_auto)
+    vp_auto.set_objective_norm(z1_auto - z0_auto, 2)
     result_auto = vp_auto.solve()
 
     print(f"Manual decomposition result: {result_manual}")

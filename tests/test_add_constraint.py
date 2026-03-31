@@ -31,7 +31,7 @@ def test_add_constraint_equality(vp):
     z = vp.step.relu(x + y)
 
     # Set objective and solve
-    vp.set_infinity_norm_objective([z])
+    vp.set_objective_norm([z], np.inf)
     result = vp.solve()
 
     # Verify the problem is solvable
@@ -59,7 +59,7 @@ def test_add_constraint_inequality(vp):
     vp_unc = Verifier(method='mip', solver=mip_solver_name, obbt_handler=None)
     x_unc = vp_unc.add_iterate(n, lb=0, ub=10)
     z_unc = vp_unc.step.relu(x_unc - 3)
-    vp_unc.set_infinity_norm_objective([z_unc])
+    vp_unc.set_objective_norm([z_unc], np.inf)
     result_unc = vp_unc.solve()
 
     # Constrained: x[i] <= 5 for all i
@@ -68,7 +68,7 @@ def test_add_constraint_inequality(vp):
     for i in range(n):
         vp_con.add_constraint(x_con[i] <= 5)
     z_con = vp_con.step.relu(x_con - 3)
-    vp_con.set_infinity_norm_objective([z_con])
+    vp_con.set_objective_norm([z_con], np.inf)
     result_con = vp_con.solve()
 
     assert np.isfinite(result_unc)
@@ -98,7 +98,7 @@ def test_add_constraint_tightens_bounds(vp):
     z = vp.step.relu(x)
 
     # Set objective and solve
-    vp.set_infinity_norm_objective([z])
+    vp.set_objective_norm([z], np.inf)
     result = vp.solve()
 
     # Verify the problem is solvable
@@ -138,7 +138,7 @@ def test_skip_obbt_affine_step(vp):
     z2 = vp.step.relu(z1)
 
     # Set objective and solve
-    vp.set_infinity_norm_objective([z2])
+    vp.set_objective_norm([z2], np.inf)
     result = vp.solve()
 
     # Verify the problem is solvable
@@ -174,7 +174,7 @@ def test_add_constraint_equality_sdp_mip_comparison(vp, vp_sdp):
     vp_mip.add_constraint(x_mip[0] == y_mip[0])
 
     z_mip = vp_mip.step.relu(x_mip + y_mip)
-    vp_mip.set_infinity_norm_objective([z_mip])
+    vp_mip.set_objective_norm([z_mip], np.inf)
     mip_inf_norm = vp_mip.solve()
 
     # SDP with two-norm objective
@@ -191,7 +191,7 @@ def test_add_constraint_equality_sdp_mip_comparison(vp, vp_sdp):
     vp_sdp_local.add_constraint(x_sdp[0] == y_sdp[0])
 
     z_sdp = vp_sdp_local.step.relu(x_sdp + y_sdp)
-    vp_sdp_local.set_two_norm_objective(z_sdp)
+    vp_sdp_local.set_objective_norm(z_sdp, 2)
     sdp_two_norm_sq = vp_sdp_local.solve()
     sdp_two_norm = np.sqrt(sdp_two_norm_sq)
 
