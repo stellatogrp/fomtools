@@ -1,3 +1,7 @@
+import numpy as np
+
+from fomtools.constraint import Constraint
+from fomtools.linearexpression import LinearExpression
 from fomtools.solvers import gurobi, highs
 from fomtools.solvers.solver import Solver
 from fomtools.steps.step import Step
@@ -68,8 +72,13 @@ class Canonicalizer:
                 return gurobi.GurobiSolver(solver_params)
             case "highs":
                 return highs.HiGHSSolver(solver_params)
+            case "clarabel" | "cvxpy" | "cvxpy_sdp" | "cuclarabel":
+                return None  # SDP solvers are instantiated at solve time
             case _:
-                raise ValueError(f"Solver must be 'gurobi' or 'TBD', got {solver}.")
+                raise ValueError(
+                    f"Unknown solver: {solver}. Supported solvers: "
+                    "'gurobi', 'highs', 'clarabel', 'cvxpy', 'cvxpy_sdp', 'cuclarabel'."
+                )
 
     def canonicalize(self, step: Step):
         """
@@ -109,5 +118,82 @@ class Canonicalizer:
             )
         canonicalizer(step)
 
-    def add_var(self, iterate):
+    def add_var(self, var: LinearExpression) -> None:
+        """
+        Add a variable to the canonicalizer instance.
+
+        Parameters
+        ----------
+        var : LinearExpression
+            Linear expression object to add to the canonicalizer.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses.
+        """
         raise NotImplementedError
+
+    def add_constraint(self, constraint: Constraint) -> None:
+        """
+        Add a constraint to the canonicalizer instance.
+
+        Parameters
+        ----------
+        constraint : Constraint
+            Constraint object to add to the canonicalizer.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses.
+        """
+        raise NotImplementedError
+
+    def update_bounds(
+        self, expression: LinearExpression, lb: float | np.ndarray, ub: float | np.ndarray
+    ) -> None:
+        """
+        Update the lower and upper bounds of the solver variables corresponding
+        to the given ``LinearExpression``.
+
+        Parameters
+        ----------
+        expression : LinearExpression
+            A ``LinearExpression`` object whose underlying variable
+            bounds are to be updated.
+
+        lb : float or np.ndarray
+            New lower bound(s).
+
+        ub : float or np.ndarray
+            New upper bound(s).
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses.
+        """
+        raise NotImplementedError
+
+    def set_two_norm_objective(self, expr_list: list[LinearExpression]) -> None:
+        """
+        Set the objective to maximize the sum of squared two-norms.
+
+        Configures the optimization objective to compute
+        sum_i ||expr_i||_2^2 over the given list of expressions.
+
+        Parameters
+        ----------
+        expr_list : list[LinearExpression]
+            List of expressions whose squared norms are summed in the
+            objective.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses that support this objective type.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support set_two_norm_objective"
+        )

@@ -5,6 +5,8 @@ import numpy as np
 
 from fomtools.canonicalizers.mip import MIP
 from fomtools.canonicalizers.obbt_handler import OBBTHandler
+from fomtools.canonicalizers.sdp import SDP
+from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
@@ -35,7 +37,7 @@ class Verifier(object):
 
         self.canonicalizer = self._get_canonicalizer(method, params, solver)
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
-        self.use_obbt_hander = True if obbt_handler else False
+        self.use_obbt_handler = True if obbt_handler else False
         self._step_proxy = _StepProxy(self)
 
     @staticmethod
@@ -74,7 +76,7 @@ class Verifier(object):
             case "mip":
                 return MIP(solver_params=solver_params, solver=solver)
             case "sdp":
-                raise NotImplementedError()
+                return SDP(solver_params=solver_params, solver=solver)
             case _:
                 raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
 
@@ -137,7 +139,7 @@ class Verifier(object):
 
         """
         self.canonicalizer.add_var(var)
-        if self.obbt_handler is not None:
+        if self.use_obbt_handler:
             self.obbt_handler.add_var(var)
 
     def add_iterate(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
@@ -232,6 +234,69 @@ class Verifier(object):
 
         return self.add_param(dim, lb=bounds[0], ub=bounds[1])
 
+    def add_constraint(self, constr: Constraint):
+        """
+        Adds an arbitrary constraint object to the Problem instance.
+
+        This method registers the constraint with both the main canonicalizer
+        and the OBBT handler (if enabled). When OBBT is enabled, it also
+        performs bound tightening on each leaf expression involved in the
+        constraint and propagates the tightened bounds to all relevant
+        locations.
+
+        Parameters
+        ----------
+        constr : Constraint
+            A :class:`Constraint` object to add to the VP.
+
+        Returns
+        -------
+        None
+        """
+        self.canonicalizer.add_constraint(constr)
+        if self.use_obbt_handler:
+            self.obbt_handler.add_constraint(constr)
+            self._tighten_constraint_bounds(constr)
+
+    def _tighten_constraint_bounds(self, constr: Constraint) -> None:
+        """
+        Tighten bounds on leaf expressions involved in a constraint using OBBT.
+
+        For each leaf expression in the constraint's decomposition, this method
+        runs optimization-based bound tightening and propagates the tightened
+        bounds to:
+        1. The ``LinearExpression`` object itself
+        2. The main canonicalizer's solver
+        3. The OBBT handler's solver
+
+        Parameters
+        ----------
+        constr : Constraint
+            The constraint whose leaf expressions should have their bounds
+            tightened.
+
+        Returns
+        -------
+        None
+        """
+        for leaf_expr in constr.lhs.decomposition_dict.keys():
+            # Get current bounds
+            lb, ub = leaf_expr.lb, leaf_expr.ub
+
+            # Run OBBT to get potentially tighter bounds
+            result = self.obbt_handler.obbt(leaf_expr, lb, ub)
+            if result is None:
+                continue
+            new_lb, new_ub = result
+
+            # Update bounds in all three locations:
+            # 1. LinearExpression object
+            leaf_expr.update_bounds(new_lb, new_ub)
+            # 2. Main canonicalizer's solver
+            self.canonicalizer.update_bounds(leaf_expr, new_lb, new_ub)
+            # 3. OBBT handler's solver
+            self.obbt_handler.update_bounds(leaf_expr, new_lb, new_ub)
+
     def prox(self, function: ProxableFunction, rhs: LinearExpression, gamma: float = 1, **kwargs):
         """
         Interface for constructing and executing proxable functions.
@@ -318,9 +383,10 @@ class Verifier(object):
         step = step_cls(rhs=rhs, relax_binary_vars=relax_binary_vars, **kwargs)
 
         rhs_lb, rhs_ub = step.lb, step.ub
-        # TODO: figure out a better way to prevent obbt call for implicit linear step
-        if self.use_obbt_hander:
-            rhs_lb, rhs_ub = self.obbt_handler.obbt(step.rhs, rhs_lb, rhs_ub)
+        if self.use_obbt_handler and not step.skip_obbt:
+            result = self.obbt_handler.obbt(step.rhs, rhs_lb, rhs_ub)
+            if result is not None:
+                rhs_lb, rhs_ub = result
 
         step.update_bounds(rhs_lb, rhs_ub)
 
@@ -336,7 +402,7 @@ class Verifier(object):
     def fixed_point(self, n_dim, operator, lb=-np.inf, ub=np.inf):
         z_star = self.add_iterate(n_dim, lb=lb, ub=ub)
         s_star = operator(z_star)
-        self.canonicalizer.add_constraint(z_star == s_star)
+        self.add_constraint(z_star == s_star)
 
         return z_star
 
@@ -409,6 +475,25 @@ class Verifier(object):
 
         lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
         self.canonicalizer.set_infinity_norm_objective(expr_list, list(lb), list(ub))
+
+    def set_two_norm_objective(self, expr_list: Sequence[LinearExpression] | LinearExpression):
+        """
+        Create a 2-norm objective over the set of ``LinearExpression``
+        objects.
+
+        Parameters
+        ----------
+        expr_list: Sequence[LinearExpression] | LinearExpression
+            A single LinearExpression or a list of LinearExpression objects for
+            which the 2-norm objective will be constructed.
+
+        """
+        try:
+            len(expr_list)
+        except TypeError:
+            expr_list = [expr_list]
+
+        self.canonicalizer.set_two_norm_objective(expr_list)
 
     def solve(self, convex_hull_cuts: bool = False):
         """
@@ -532,9 +617,6 @@ class _StepProxy:
             class.
         """
         step_cls = self._get_step_class(name)
-
-        # TODO: create a list of steps that don't use obbt handler
-        self._verifier.use_obbt_hander = False if name == "implicit_linear" else True
 
         def wrapper(rhs, relax_binary_vars=False, **kwargs):
             """Execute the specified thresholding or activation step."""

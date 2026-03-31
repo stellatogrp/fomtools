@@ -1,5 +1,6 @@
 import numpy as np
 
+from tests.conftest import TEST_EPS
 from tests.cvxpy import ista as ista_cvxpy
 
 np.set_printoptions(precision=5)  # Print few decimal places
@@ -38,7 +39,7 @@ def test_convergence():
         xk = soft_threshold(At @ xk + Bt @ b, lambda_t)
 
     print(xk)
-    assert np.linalg.norm(xk - cvxpy) <= 1e-7
+    assert np.linalg.norm(xk - cvxpy) <= TEST_EPS
 
     print("--testing fista--")
 
@@ -54,4 +55,4 @@ def test_convergence():
         betak = beta_new
 
     print(xk)
-    assert np.linalg.norm(xk - cvxpy) <= 1e-7
+    assert np.linalg.norm(xk - cvxpy) <= TEST_EPS

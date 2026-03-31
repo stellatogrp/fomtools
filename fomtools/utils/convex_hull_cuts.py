@@ -4,6 +4,40 @@ import numpy as np
 
 
 def add_conv_cuts(wi, ai, y, lambd, y_l, y_u):
+    """
+    Generate convex hull cuts for MIP bound tightening.
+
+    Implements the Huchette-Vielma algorithm to find violated convex hull
+    inequalities for piecewise linear functions. Returns cut data if a
+    violated inequality is found.
+
+    Parameters
+    ----------
+    wi : np.ndarray
+        Current objective coefficient values.
+    ai : np.ndarray
+        Constraint coefficients.
+    y : np.ndarray
+        Current variable values.
+    lambd : float
+        Threshold parameter for the cut.
+    y_l : np.ndarray
+        Lower bounds on variables.
+    y_u : np.ndarray
+        Upper bounds on variables.
+
+    Returns
+    -------
+    tuple
+        A tuple (Iint, lI, h, L_hat, U_hat) where:
+        - Iint : np.ndarray or None - Indices for the cut
+        - lI : float or None - Cut coefficient
+        - h : int or None - Pivot index
+        - L_hat : np.ndarray or None - Adjusted lower bounds
+        - U_hat : np.ndarray or None - Adjusted upper bounds
+
+        Returns (None, None, None, None, None) if no violated cut is found.
+    """
     L_hat = np.zeros(y_l.shape)
     U_hat = np.zeros(y_u.shape)
 
@@ -24,6 +58,36 @@ def add_conv_cuts(wi, ai, y, lambd, y_l, y_u):
 
 
 def compute_v(wi, xi, lambd, Lhat, Uhat):
+    """
+    Compute a violated inequality using the Huchette-Vielma algorithm.
+
+    Searches for a violated convex hull inequality by iteratively building
+    an index set that separates the current point from the convex hull.
+
+    Parameters
+    ----------
+    wi : np.ndarray
+        Objective coefficient values.
+    xi : np.ndarray
+        Current variable values.
+    lambd : float
+        Threshold parameter.
+    Lhat : np.ndarray
+        Adjusted lower bounds (accounting for coefficient signs).
+    Uhat : np.ndarray
+        Adjusted upper bounds (accounting for coefficient signs).
+
+    Returns
+    -------
+    tuple
+        A tuple (Iint, rhs, lI, h) where:
+        - Iint : np.ndarray or None - Index set for the cut
+        - rhs : float or None - Right-hand side value
+        - lI : float or None - Cut function value
+        - h : int or None - Pivot index
+
+        Returns (None, None, None, None) if no violated inequality exists.
+    """
     idx = np.arange(len(wi))
 
     filtered_idx = np.array([j for j in idx if wi[j] != 0 and np.abs(Uhat[j] - Lhat[j]) > 1e-7])
@@ -68,6 +132,33 @@ def compute_v(wi, xi, lambd, Lhat, Uhat):
 
 
 def compute_I(w, lambd, Lhat, Uhat, I, Icomp):
+    """
+    Evaluate the cut function value for a given index partition.
+
+    Computes the value of the piecewise linear function at the boundary
+    defined by the index set I (using lower bounds) and its complement
+    Icomp (using upper bounds), minus the threshold lambda.
+
+    Parameters
+    ----------
+    w : np.ndarray
+        Coefficient vector.
+    lambd : float
+        Threshold parameter to subtract.
+    Lhat : np.ndarray
+        Adjusted lower bounds.
+    Uhat : np.ndarray
+        Adjusted upper bounds.
+    I : np.ndarray
+        Indices using lower bounds.
+    Icomp : np.ndarray
+        Indices using upper bounds (complement of I).
+
+    Returns
+    -------
+    float
+        The cut function value: sum(w[I] * Lhat[I]) + sum(w[Icomp] * Uhat[Icomp]) - lambd.
+    """
     if I.shape[0] == 0:
         return np.sum(np.multiply(w, Uhat)) - lambd
     if Icomp.shape[0] == 0:
@@ -77,6 +168,36 @@ def compute_I(w, lambd, Lhat, Uhat, I, Icomp):
 
 
 def create_new_constr(w, a, y, Iint, lI, h, Lhat, Uhat):
+    """
+    Build a constraint from the cut data.
+
+    Constructs the actual constraint expression from the cut information
+    returned by ``compute_v``.
+
+    Parameters
+    ----------
+    w : variable
+        The variable to constrain (left-hand side).
+    a : np.ndarray
+        Coefficient vector.
+    y : np.ndarray
+        Variable vector for the right-hand side.
+    Iint : np.ndarray
+        Index set for the cut.
+    lI : float
+        Cut function value at the pivot.
+    h : int
+        Pivot index.
+    Lhat : np.ndarray
+        Adjusted lower bounds.
+    Uhat : np.ndarray
+        Adjusted upper bounds.
+
+    Returns
+    -------
+    Constraint
+        The constraint w <= (cut expression).
+    """
     new_constr = 0
     for idx in Iint:
         new_constr += a[idx] * (y[idx] - Lhat[idx])
@@ -87,6 +208,35 @@ def create_new_constr(w, a, y, Iint, lI, h, Lhat, Uhat):
 
 
 def get_cuts(step, i, _w, _A, _y, l, u):
+    """
+    Dispatch cut generation based on step type.
+
+    Determines which cut generation strategy to use based on the step
+    type (ReLU or soft threshold) and the index configuration.
+
+    Parameters
+    ----------
+    step : Step
+        The optimization step (ReLU or SoftThreshold).
+    i : int
+        The component index to generate cuts for.
+    _w : np.ndarray
+        Objective coefficient values.
+    _A : np.ndarray
+        Constraint coefficient matrix row.
+    _y : np.ndarray
+        Current variable values.
+    l : np.ndarray
+        Lower bounds.
+    u : np.ndarray
+        Upper bounds.
+
+    Returns
+    -------
+    tuple
+        Cut data (Iint, lI, h, L_hat, U_hat) or (None, None, None, None, None)
+        if no cut applies.
+    """
     try:
         if i in step.proj_indices and i in step.idx_with_binary_vars:
             return add_conv_cuts(_w, _A, _y, 0, l, u)
