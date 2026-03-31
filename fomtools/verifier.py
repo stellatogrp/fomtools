@@ -39,6 +39,8 @@ class Verifier(object):
         self.canonicalizer = self._get_canonicalizer(method, params, solver)
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
         self.use_obbt_handler = True if obbt_handler else False
+        if self.obbt_handler is not None:
+            self.canonicalizer.obbt_handler = self.obbt_handler
         decomposer_cls = self._get_step_decomposer(method)
         self.step_decomposer = decomposer_cls(self.canonicalizer, self._register_var)
         self._step_proxy = _StepProxy(self)

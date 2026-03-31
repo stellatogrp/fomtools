@@ -257,6 +257,7 @@ class SDP(Canonicalizer):
         new_canon.psd_cone_indices = [s.copy() for s in self.psd_cone_indices]
         new_canon.bound_constraint_indices = self.bound_constraint_indices.copy()
         new_canon.C_obj = self.C_obj.copy() if self.C_obj is not None else None
+        new_canon.obbt_handler = self.obbt_handler
         new_canon._objective_spec = self._objective_spec
         new_canon._solved_copy = None
 
@@ -570,7 +571,7 @@ class SDP(Canonicalizer):
         for expr in expr_list:
             # Create relu(expr) step
             step_pos = Relu(rhs=expr)
-            step_pos.update_bounds(*expr.bound_propagation())
+            step_pos.update_bounds(*canon_copy.get_expression_bounds(expr))
             canon_copy.add_var(step_pos.lhs)
             canon_copy.canonicalize_relu(step_pos)
             relu_lhs_vars.append(step_pos.lhs)
@@ -578,7 +579,7 @@ class SDP(Canonicalizer):
             # Create relu(-expr) step
             neg_expr = -expr
             step_neg = Relu(rhs=neg_expr)
-            step_neg.update_bounds(*neg_expr.bound_propagation())
+            step_neg.update_bounds(*canon_copy.get_expression_bounds(neg_expr))
             canon_copy.add_var(step_neg.lhs)
             canon_copy.canonicalize_relu(step_neg)
             relu_lhs_vars.append(step_neg.lhs)

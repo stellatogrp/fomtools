@@ -161,6 +161,7 @@ class MIP(Canonicalizer):
         new_canon.solver_params = self.solver_params
         new_canon.solver_name = self.solver_name
         new_canon.solver = self.solver.copy()
+        new_canon.obbt_handler = self.obbt_handler
         new_canon._objective_spec = self._objective_spec
         new_canon._solved_copy = None
         return new_canon
@@ -307,13 +308,13 @@ class MIP(Canonicalizer):
 
             # Create relu(expr) step
             step_pos = Relu(rhs=expr)
-            step_pos.update_bounds(*expr.bound_propagation())
+            step_pos.update_bounds(*self.get_expression_bounds(expr))
             constraints.extend(self._build_relu_constraints(step_pos))
 
             # Create relu(-expr) step
             neg_expr = -expr
             step_neg = Relu(rhs=neg_expr)
-            step_neg.update_bounds(*neg_expr.bound_propagation())
+            step_neg.update_bounds(*self.get_expression_bounds(neg_expr))
             constraints.extend(self._build_relu_constraints(step_neg))
 
             # Accumulate: 1^T @ (relu(expr) + relu(-expr))

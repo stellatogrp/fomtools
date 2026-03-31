@@ -226,6 +226,34 @@ class Canonicalizer:
             f"{self.__class__.__name__} does not support set_one_norm_objective"
         )
 
+    def get_expression_bounds(
+        self, expr: LinearExpression
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Compute bounds for a linear expression.
+
+        Uses OBBT if available for tighter bounds, otherwise falls back
+        to interval bound propagation.
+
+        Parameters
+        ----------
+        expr : LinearExpression
+            The expression whose bounds are to be computed.
+
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray]
+            A tuple (lb, ub) of lower and upper bounds.
+        """
+        lb, ub = expr.bound_propagation()
+
+        if self.obbt_handler is not None:
+            result = self.obbt_handler.obbt(expr, lb, ub)
+            if result is not None:
+                lb, ub = result
+
+        return lb, ub
+
     @abstractmethod
     def copy(self) -> "Canonicalizer":
         """
