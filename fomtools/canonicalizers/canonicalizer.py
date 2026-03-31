@@ -39,7 +39,9 @@ class Canonicalizer:
             - ``"gurobi"``, ``"grb"``
         """
         self.solver_params = solver_params
+        self.solver_name = solver.lower()
         self.solver = self._get_solver(solver, solver_params)
+        self.obbt_handler = None
 
     @staticmethod
     def _get_solver(solver: str, solver_params: dict) -> Solver:
@@ -178,7 +180,9 @@ class Canonicalizer:
         """
         raise NotImplementedError
 
-    def set_two_norm_objective(self, expr_list: list[LinearExpression]) -> None:
+    def set_two_norm_objective(
+        self, expr_list: list[LinearExpression], lb_list=None, ub_list=None
+    ) -> None:
         """
         Set the objective to maximize the sum of squared two-norms.
 
@@ -190,6 +194,10 @@ class Canonicalizer:
         expr_list : list[LinearExpression]
             List of expressions whose squared norms are summed in the
             objective.
+        lb_list : list[np.ndarray], optional
+            Lower bounds for each expression (may be used by some backends).
+        ub_list : list[np.ndarray], optional
+            Upper bounds for each expression (may be used by some backends).
 
         Raises
         ------

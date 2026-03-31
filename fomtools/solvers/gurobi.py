@@ -325,6 +325,33 @@ class GurobiSolver(MIPSolver):
             self.model.setObjective(self.expression_to_solver(expression), sense=sense)
         self.model.update()
 
+    def set_two_norm_objective(self, expr_list, lb_list, ub_list) -> None:
+        """
+        Set a quadratic two-norm objective for the underlying Gurobi model.
+
+        The objective is to maximize sum_i ||expr_i||_2^2 = sum_i (expr_i @ expr_i).
+
+        Parameters
+        ----------
+        expr_list : list[LinearExpression]
+            List of expressions whose squared norms are summed in the objective.
+        lb_list : list[np.ndarray]
+            Lower bounds for each expression (currently unused but passed for interface consistency).
+        ub_list : list[np.ndarray]
+            Upper bounds for each expression (currently unused but passed for interface consistency).
+
+        Returns
+        -------
+        None
+        """
+        quadratic_obj = 0
+        for expr in expr_list:
+            gp_expr = self.expression_to_solver(expr)
+            quadratic_obj = quadratic_obj + gp_expr @ gp_expr
+
+        self.model.setObjective(quadratic_obj, sense=gp.GRB.MAXIMIZE)
+        self.model.update()
+
     def optimize(self):
         """
         Optimize the underlying Gurobi model.

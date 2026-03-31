@@ -441,7 +441,7 @@ class SDP(Canonicalizer):
 
         return np.hstack(all_A), idx_bounds
 
-    def set_two_norm_objective(self, expr_list) -> None:
+    def set_two_norm_objective(self, expr_list, lb_list=None, ub_list=None) -> None:
         """
         Store two-norm objective specification for deferred application.
 
@@ -453,6 +453,10 @@ class SDP(Canonicalizer):
         expr_list : list[LinearExpression]
             List of expressions whose squared norms are summed in the
             objective.
+        lb_list : list[np.ndarray], optional
+            Lower bounds for each expression (unused in SDP, for interface consistency).
+        ub_list : list[np.ndarray], optional
+            Upper bounds for each expression (unused in SDP, for interface consistency).
         """
         self._objective_spec = ("two_norm", expr_list)
 

@@ -527,7 +527,8 @@ class Verifier(object):
         except TypeError:
             expr_list = [expr_list]
 
-        self.canonicalizer.set_two_norm_objective(expr_list)
+        lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
+        self.canonicalizer.set_two_norm_objective(expr_list, list(lb), list(ub))
 
     def set_one_norm_objective(
         self, expr_list: Sequence[LinearExpression] | LinearExpression

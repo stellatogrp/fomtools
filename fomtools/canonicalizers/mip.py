@@ -159,6 +159,7 @@ class MIP(Canonicalizer):
         """
         new_canon = MIP.__new__(MIP)
         new_canon.solver_params = self.solver_params
+        new_canon.solver_name = self.solver_name
         new_canon.solver = self.solver.copy()
         new_canon._objective_spec = self._objective_spec
         new_canon._solved_copy = None
@@ -172,9 +173,9 @@ class MIP(Canonicalizer):
         """Store infinity-norm objective specification for deferred application."""
         self._objective_spec = ("infinity_norm", expr_list, lb_list, ub_list)
 
-    def set_two_norm_objective(self, expr_list):
+    def set_two_norm_objective(self, expr_list, lb_list, ub_list):
         """Store two-norm objective specification for deferred application."""
-        self._objective_spec = ("two_norm", expr_list)
+        self._objective_spec = ("two_norm", expr_list, lb_list, ub_list)
 
     def set_one_norm_objective(self, expr_list):
         """Store one-norm objective specification for deferred application."""
@@ -198,8 +199,8 @@ class MIP(Canonicalizer):
                 _, expr_list, lb_list, ub_list = self._objective_spec
                 self._apply_infinity_norm_objective(solver, expr_list, lb_list, ub_list)
             case "two_norm":
-                _, expr_list = self._objective_spec
-                self._apply_two_norm_objective(solver, expr_list)
+                _, expr_list, lb_list, ub_list = self._objective_spec
+                self._apply_two_norm_objective(solver, expr_list, lb_list, ub_list)
             case "one_norm":
                 _, expr_list = self._objective_spec
                 self._apply_one_norm_objective(solver, expr_list)
@@ -253,9 +254,12 @@ class MIP(Canonicalizer):
         solver.constraints_to_solver(constraints)
         solver.set_objective(expression=q, sense="maximize")
 
-    def _apply_two_norm_objective(self, solver, expr_list):
+    def _apply_two_norm_objective(self, solver, expr_list, lb_list, ub_list):
         """
         Build and apply two-norm objective to solver.
+
+        The two-norm objective requires a quadratic program (MIQP). This is
+        supported by Gurobi but not by HiGHS.
 
         Parameters
         ----------
@@ -263,16 +267,24 @@ class MIP(Canonicalizer):
             The solver instance to apply the objective to.
         expr_list : list[LinearExpression]
             List of expressions for the two-norm objective.
+        lb_list : list[np.ndarray]
+            Lower bounds for each expression.
+        ub_list : list[np.ndarray]
+            Upper bounds for each expression.
 
         Raises
         ------
-        NotImplementedError
-            MIP does not support two-norm objective natively.
+        ValueError
+            If the solver does not support quadratic objectives (e.g., HiGHS).
         """
-        raise NotImplementedError(
-            "MIP canonicalizer does not support two-norm objective. "
-            "Use infinity-norm objective or switch to SDP."
-        )
+        if self.solver_name not in ("gurobi", "grb"):
+            raise ValueError(
+                "Two-norm objective requires a solver that supports quadratic "
+                "programming (MIQP). HiGHS does not support MIQP. Use Gurobi or "
+                "switch to infinity-norm/one-norm objective."
+            )
+
+        solver.set_two_norm_objective(expr_list, lb_list, ub_list)
 
     def _apply_one_norm_objective(self, solver, expr_list):
         """
