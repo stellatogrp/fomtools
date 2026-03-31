@@ -48,7 +48,8 @@ docs = [
        "mkdocstrings-python",
        "mkdocs-marimo",
        "mkdocs-material",
-       "pymdown-extensions"
+       "pymdown-extensions",
+       "pepit"
 ]
 
 [tool.mypy]
