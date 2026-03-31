@@ -1,3 +1,5 @@
+from abc import abstractmethod
+
 import numpy as np
 
 from fomtools.constraint import Constraint
@@ -197,3 +199,23 @@ class Canonicalizer:
         raise NotImplementedError(
             f"{self.__class__.__name__} does not support set_two_norm_objective"
         )
+
+    @abstractmethod
+    def copy(self) -> "Canonicalizer":
+        """
+        Create an independent copy of this canonicalizer.
+
+        The copy shares no mutable state with the original and can be
+        modified (e.g., adding objectives) without affecting the original.
+
+        Returns
+        -------
+        Canonicalizer
+            A new canonicalizer instance with copied state.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses.
+        """
+        raise NotImplementedError

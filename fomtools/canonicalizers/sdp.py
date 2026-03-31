@@ -74,6 +74,8 @@ class SDP(Canonicalizer):
         self.bound_constraint_indices = {}  # var -> (start_idx, end_idx)
 
         self.C_obj = None
+        self._objective_spec = None
+        self._solved_copy = None
         self._initialize_corner_constraint()
 
     def _initialize_corner_constraint(self) -> None:
@@ -226,6 +228,39 @@ class SDP(Canonicalizer):
             This method is not supported in the SDP canonicalizer.
         """
         raise NotImplementedError
+
+    def copy(self) -> "SDP":
+        """
+        Create an independent copy of this SDP canonicalizer.
+
+        Returns a new SDP canonicalizer with deep copies of all mutable
+        state (constraint matrices, cone indices, etc.). The copy can be
+        modified without affecting the original.
+
+        Returns
+        -------
+        SDP
+            A new canonicalizer instance with copied state.
+        """
+        new_canon = SDP.__new__(SDP)
+        new_canon.solver_params = self.solver_params
+        new_canon.solver_name = self.solver_name
+        new_canon.solver = None  # SDP solver is instantiated at solve time
+        new_canon.range_marker = self.range_marker
+        new_canon.var_idx_map = self.var_idx_map.copy()  # shallow copy ok (immutable values)
+
+        # Deep copy mutable arrays/lists
+        new_canon.Aeq_matrices = [m.copy() for m in self.Aeq_matrices]
+        new_canon.beq_consts = self.beq_consts.copy()
+        new_canon.Aineq_matrices = [m.copy() for m in self.Aineq_matrices]
+        new_canon.bineq_upperbounds = self.bineq_upperbounds.copy()
+        new_canon.psd_cone_indices = [s.copy() for s in self.psd_cone_indices]
+        new_canon.bound_constraint_indices = self.bound_constraint_indices.copy()
+        new_canon.C_obj = self.C_obj.copy() if self.C_obj is not None else None
+        new_canon._objective_spec = self._objective_spec
+        new_canon._solved_copy = None
+
+        return new_canon
 
     def add_constraint(self, constraint: Constraint) -> None:
         """
@@ -408,7 +443,22 @@ class SDP(Canonicalizer):
 
     def set_two_norm_objective(self, expr_list) -> None:
         """
-        Set the objective to maximize the sum of squared two-norms.
+        Store two-norm objective specification for deferred application.
+
+        The objective will be applied to a copy of the canonicalizer at
+        solve time.
+
+        Parameters
+        ----------
+        expr_list : list[LinearExpression]
+            List of expressions whose squared norms are summed in the
+            objective.
+        """
+        self._objective_spec = ("two_norm", expr_list)
+
+    def _apply_two_norm_objective(self, canon_copy, expr_list) -> None:
+        """
+        Apply two-norm objective to a canonicalizer copy.
 
         Configures the SDP objective matrix C to compute
         sum_i ||A_i x + b_i||_2^2 = sum_i tr(Q_i @ X) for appropriate
@@ -419,17 +469,19 @@ class SDP(Canonicalizer):
 
         Parameters
         ----------
+        canon_copy : SDP
+            The canonicalizer copy to apply the objective to.
         expr_list : list[LinearExpression]
             List of expressions whose squared norms are summed in the
             objective.
         """
-        curr_prob_dim = self.get_sdp_var_dim()
+        curr_prob_dim = canon_copy.get_sdp_var_dim()
         overall_C_mat = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
         all_idx_bounds = []
 
         for expr in expr_list:
             C_mat = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
-            A_mat, idx_bounds = self.linexpr_to_Amat_and_bounds(expr)
+            A_mat, idx_bounds = canon_copy.linexpr_to_Amat_and_bounds(expr)
             b_vec = expr.const.reshape((-1, 1))
 
             # Collect all index bounds for the combined PSD cone
@@ -453,9 +505,9 @@ class SDP(Canonicalizer):
 
         # Add PSD cone covering all variables in the objective
         # This ensures cross-terms between different variables are constrained
-        self.add_psd_cone_indices(all_idx_bounds)
+        canon_copy.add_psd_cone_indices(all_idx_bounds)
 
-        self.C_obj = overall_C_mat
+        canon_copy.C_obj = overall_C_mat
 
     def set_infinity_norm_objective(self, expr_list, lb, ub):
         """
@@ -549,6 +601,10 @@ class SDP(Canonicalizer):
     def solve_model(self, steps=None, convex_hull_cuts=False):
         """Solve the SDP problem using the configured solver.
 
+        Creates a copy of the canonicalizer, applies the objective to the copy,
+        solves it, and keeps a reference for future use. This prevents objective
+        constraints from accumulating across multiple solve calls.
+
         Parameters
         ----------
         steps : list, optional
@@ -561,15 +617,54 @@ class SDP(Canonicalizer):
         float
             The objective value.
         """
+        # Create copy to apply objective without modifying original
+        self._solved_copy = self.copy()
+
+        # Apply objective to the copy
+        if self._objective_spec is not None:
+            obj_type = self._objective_spec[0]
+            if obj_type == "two_norm":
+                _, expr_list = self._objective_spec
+                self._apply_two_norm_objective(self._solved_copy, expr_list)
+
+        # Solve using the copy's data
+        return self._solved_copy._solve_internal()
+
+    def _solve_internal(self):
+        """
+        Actually solve using this canonicalizer's data.
+
+        This is the internal solve method called on the copy after
+        the objective has been applied.
+
+        Returns
+        -------
+        float
+            The objective value.
+        """
         match self.solver_name:
             case "clarabel":
-                return self.solve_via_clarabel()
+                return self._solve_via_clarabel_internal()
             case "cvxpy":
-                return self.solve_via_cvxpy()
+                return self._solve_via_cvxpy_internal()
             case "cuclarabel":
-                return self.solve_via_cuclarabel()
+                return self._solve_via_cuclarabel_internal()
             case _:
                 raise ValueError(f"Unknown SDP solver: {self.solver_name}")
+
+    def _ensure_objective_applied(self):
+        """
+        Ensure the objective has been applied to this canonicalizer.
+
+        If the objective specification is stored but not yet applied,
+        apply it now. This is used for backward compatibility with
+        direct solver calls.
+        """
+        if self._objective_spec is not None and self.C_obj is None:
+            obj_type = self._objective_spec[0]
+            if obj_type == "two_norm":
+                _, expr_list = self._objective_spec
+                self._apply_two_norm_objective(self, expr_list)
 
     def solve_via_cvxpy(self):
         """
@@ -583,6 +678,11 @@ class SDP(Canonicalizer):
         float
             The optimal objective value.
         """
+        self._ensure_objective_applied()
+        return self._solve_via_cvxpy_internal()
+
+    def _solve_via_cvxpy_internal(self):
+        """Internal CVXPY solve without checking objective."""
         dim = self.get_sdp_var_dim()
         X = cp.Variable((dim, dim), symmetric=True)
         obj = cp.Maximize(cp.trace(self.C_obj @ X))
@@ -615,6 +715,11 @@ class SDP(Canonicalizer):
         float
             The optimal objective value.
         """
+        self._ensure_objective_applied()
+        return self._solve_via_clarabel_internal()
+
+    def _solve_via_clarabel_internal(self):
+        """Internal Clarabel solve without checking objective."""
         solver = ClarabelSolver(solver_params=self.solver_params)
         solver.setup_clarabel_data(
             self.get_sdp_var_dim(),
@@ -644,6 +749,11 @@ class SDP(Canonicalizer):
         ValueError
             If CUDA dependencies (cupy) are not available.
         """
+        self._ensure_objective_applied()
+        return self._solve_via_cuclarabel_internal()
+
+    def _solve_via_cuclarabel_internal(self):
+        """Internal CuClarabel solve without checking objective."""
         solver = CuClarabelSolver(solver_params=self.solver_params)
         solver.setup_clarabel_data(
             self.get_sdp_var_dim(),

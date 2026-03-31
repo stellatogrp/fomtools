@@ -401,3 +401,29 @@ class GurobiSolver(MIPSolver):
         Check whether the underlying Gurobi model has reached an optimal solution.
         """
         return self["status"] == gp.GRB.OPTIMAL
+
+    def copy(self) -> "GurobiSolver":
+        """
+        Create an independent copy of this Gurobi solver.
+
+        Returns a new GurobiSolver with a copied model and rebuilt
+        vector_var_map pointing to variables in the copied model.
+
+        Returns
+        -------
+        GurobiSolver
+            A new solver instance with copied state.
+        """
+        new_solver = GurobiSolver.__new__(GurobiSolver)
+        new_solver._relaxed_model = None
+        new_solver.model = self.model.copy()
+
+        # Rebuild vector_var_map with variables from the copied model
+        new_solver.vector_var_map = {}
+        for k, v in self.vector_var_map.items():
+            # v is a gp.MVar - reconstruct it from variable names
+            new_solver.vector_var_map[k] = gp.MVar.fromlist(
+                [new_solver.model.getVarByName(name) for name in v.VarName]
+            )
+
+        return new_solver
