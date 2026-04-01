@@ -260,6 +260,22 @@ class HiGHSSolver(MIPSolver):
         except TypeError:
             self.model.setObjective(self.expression_to_solver(expression)[0], sense=sense)
 
+    def set_two_norm_objective(self, expr_list, lb_list, ub_list) -> None:
+        """
+        Set two-norm objective (not supported for HiGHS).
+
+        HiGHS does not support quadratic objectives (MIQP).
+
+        Raises
+        ------
+        NotImplementedError
+            Always raised since HiGHS does not support quadratic objectives.
+        """
+        raise NotImplementedError(
+            "HiGHS does not support quadratic objectives (MIQP). "
+            "Use Gurobi for two-norm objectives, or switch to one-norm/infinity-norm."
+        )
+
     def optimize(self):
         """
         Optimize the underlying HiGHS model.

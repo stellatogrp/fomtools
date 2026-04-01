@@ -226,6 +226,30 @@ class Canonicalizer:
             f"{self.__class__.__name__} does not support set_one_norm_objective"
         )
 
+    def set_infinity_norm_objective(
+        self, expr_list: list[LinearExpression], lb=None, ub=None
+    ) -> None:
+        """
+        Set the objective to maximize the infinity-norm (maximum absolute value).
+
+        Parameters
+        ----------
+        expr_list : list[LinearExpression]
+            List of expressions whose infinity-norm maximum is the objective.
+        lb : np.ndarray, optional
+            Lower bounds for the expressions (may be used by some backends).
+        ub : np.ndarray, optional
+            Upper bounds for the expressions (may be used by some backends).
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses that support this objective type.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support set_infinity_norm_objective"
+        )
+
     def get_expression_bounds(
         self, expr: LinearExpression
     ) -> tuple[np.ndarray, np.ndarray]:

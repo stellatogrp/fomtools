@@ -309,12 +309,14 @@ class MIP(Canonicalizer):
             # Create relu(expr) step
             step_pos = Relu(rhs=expr)
             step_pos.update_bounds(*self.get_expression_bounds(expr))
+            solver.add_var(step_pos.lhs)
             constraints.extend(self._build_relu_constraints(step_pos))
 
             # Create relu(-expr) step
             neg_expr = -expr
             step_neg = Relu(rhs=neg_expr)
             step_neg.update_bounds(*self.get_expression_bounds(neg_expr))
+            solver.add_var(step_neg.lhs)
             constraints.extend(self._build_relu_constraints(step_neg))
 
             # Accumulate: 1^T @ (relu(expr) + relu(-expr))

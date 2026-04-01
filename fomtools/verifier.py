@@ -571,8 +571,6 @@ class Verifier(object):
 
         Raises
         ------
-        NotImplementedError
-            If ord=1 (one-norm not yet implemented).
         ValueError
             If ord is not one of the supported values.
         """

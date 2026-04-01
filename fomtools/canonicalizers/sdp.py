@@ -759,13 +759,16 @@ class SDP(Canonicalizer):
 
         # Apply objective to the copy
         if self._objective_spec is not None:
-            obj_type, expr_list = self._objective_spec
+            obj_type = self._objective_spec[0]
             match obj_type:
                 case "two_norm":
+                    _, expr_list = self._objective_spec
                     self._apply_two_norm_objective(self._solved_copy, expr_list)
                 case "one_norm":
+                    _, expr_list = self._objective_spec
                     self._apply_one_norm_objective(self._solved_copy, expr_list)
                 case "infinity_norm":
+                    _, expr_list = self._objective_spec
                     self._apply_infinity_norm_objective(self._solved_copy, expr_list)
 
         # Solve using the copy's data
@@ -802,13 +805,16 @@ class SDP(Canonicalizer):
         direct solver calls.
         """
         if self._objective_spec is not None and self.C_obj is None:
-            obj_type, expr_list = self._objective_spec
+            obj_type = self._objective_spec[0]
             match obj_type:
                 case "two_norm":
+                    _, expr_list = self._objective_spec
                     self._apply_two_norm_objective(self, expr_list)
                 case "one_norm":
+                    _, expr_list = self._objective_spec
                     self._apply_one_norm_objective(self, expr_list)
                 case "infinity_norm":
+                    _, expr_list = self._objective_spec
                     self._apply_infinity_norm_objective(self, expr_list)
 
     def solve_via_cvxpy(self):
