@@ -514,27 +514,22 @@ class SDP(Canonicalizer):
 
         canon_copy.C_obj = overall_C_mat
 
-    def set_infinity_norm_objective(self, expr_list, lb, ub):
+    def set_infinity_norm_objective(self, expr_list, lb=None, ub=None) -> None:
         """
-        Set infinity-norm objective (not supported for SDP).
+        Store infinity-norm objective specification for deferred application.
+
+        Uses the identities:
+        - abs(x) = relu(x) + relu(-x)
+        - max(a, b) = a + relu(b - a)
 
         Parameters
         ----------
         expr_list : list[LinearExpression]
-            Unused.
-        lb : float
-            Unused.
-        ub : float
-            Unused.
-
-        Raises
-        ------
-        NotImplementedError
-            Infinity-norm objectives require MIP formulation.
+            List of expressions whose infinity-norm maximum is the objective.
+        lb, ub : optional
+            Unused (kept for interface compatibility with MIP).
         """
-        raise NotImplementedError(
-            "Infinity-norm objective is not supported with SDP. Use set_two_norm_objective instead."
-        )
+        self._objective_spec = ("infinity_norm", expr_list)
 
     def set_one_norm_objective(self, expr_list) -> None:
         """
@@ -569,20 +564,8 @@ class SDP(Canonicalizer):
         relu_lhs_vars = []
 
         for expr in expr_list:
-            # Create relu(expr) step
-            step_pos = Relu(rhs=expr)
-            step_pos.update_bounds(*canon_copy.get_expression_bounds(expr))
-            canon_copy.add_var(step_pos.lhs)
-            canon_copy.canonicalize_relu(step_pos)
-            relu_lhs_vars.append(step_pos.lhs)
-
-            # Create relu(-expr) step
-            neg_expr = -expr
-            step_neg = Relu(rhs=neg_expr)
-            step_neg.update_bounds(*canon_copy.get_expression_bounds(neg_expr))
-            canon_copy.add_var(step_neg.lhs)
-            canon_copy.canonicalize_relu(step_neg)
-            relu_lhs_vars.append(step_neg.lhs)
+            relu_lhs_vars.append(self._create_relu_step(canon_copy, expr))
+            relu_lhs_vars.append(self._create_relu_step(canon_copy, -expr))
 
         # Build linear objective: maximize sum of all relu outputs
         # For lifted SDP with X = [1, x]^T @ [1, x], linear term c^T x
@@ -603,6 +586,87 @@ class SDP(Canonicalizer):
         canon_copy.add_psd_cone_indices(all_idx_bounds)
 
         canon_copy.C_obj = C_mat.tocsc()
+
+    def _apply_infinity_norm_objective(self, canon_copy, expr_list) -> None:
+        """
+        Apply infinity-norm objective using ReLU decomposition.
+
+        Computes ||x||_∞ = max_i |x_i| via:
+        - abs(x_i) = relu(x_i) + relu(-x_i)
+        - max(M, abs_i) = M + relu(abs_i - M)
+
+        Total ReLUs: 3n - 1 (2n for absolute values, n-1 for max operations)
+
+        Parameters
+        ----------
+        canon_copy : SDP
+            The canonicalizer copy to apply the objective to.
+        expr_list : list[LinearExpression]
+            List of expressions whose infinity-norm maximum is the objective.
+        """
+        all_idx_bounds = []
+        M_current = None  # Running maximum (scalar LinearExpression)
+
+        for expr in expr_list:
+            for i in range(expr.ndim):
+                x_i = expr[i]  # Scalar slice
+
+                # abs(x_i) = relu(x_i) + relu(-x_i)
+                relu_pos = self._create_relu_step(canon_copy, x_i)
+                relu_neg = self._create_relu_step(canon_copy, -x_i)
+                abs_i = relu_pos + relu_neg
+
+                all_idx_bounds.append(canon_copy.var_idx_map[relu_pos])
+                all_idx_bounds.append(canon_copy.var_idx_map[relu_neg])
+
+                if M_current is None:
+                    M_current = abs_i
+                else:
+                    # max(M, abs_i) = M + relu(abs_i - M)
+                    diff = abs_i - M_current
+                    relu_max = self._create_relu_step(canon_copy, diff)
+                    all_idx_bounds.append(canon_copy.var_idx_map[relu_max])
+                    M_current = M_current + relu_max
+
+        # Build objective matrix for M_current (scalar linear expression)
+        curr_prob_dim = canon_copy.get_sdp_var_dim()
+        C_mat = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
+
+        A_mat, idx_bounds = canon_copy.linexpr_to_Amat_and_bounds(M_current)
+        b_vec = M_current.const
+
+        # Linear c^T x encoded as C[0, idx] = c/2, C[idx, 0] = c/2
+        idx_ranges_1d_row = process_1d_ranges(idx_bounds, row=True)
+        idx_ranges_1d_col = process_1d_ranges(idx_bounds, row=False)
+
+        C_mat[idx_ranges_1d_row] = 0.5 * A_mat
+        C_mat[idx_ranges_1d_col] = 0.5 * A_mat.T
+        C_mat[0, 0] = float(b_vec.sum())
+
+        canon_copy.add_psd_cone_indices(all_idx_bounds)
+        canon_copy.C_obj = C_mat.tocsc()
+
+    def _create_relu_step(self, canon_copy: "SDP", expr: LinearExpression) -> LinearExpression:
+        """
+        Create a ReLU step and register it with the canonicalizer.
+
+        Parameters
+        ----------
+        canon_copy : SDP
+            The canonicalizer copy to register the ReLU with.
+        expr : LinearExpression
+            The input expression for the ReLU.
+
+        Returns
+        -------
+        LinearExpression
+            The output (lhs) of the ReLU step.
+        """
+        step = Relu(rhs=expr)
+        step.update_bounds(*canon_copy.get_expression_bounds(expr))
+        canon_copy.add_var(step.lhs)
+        canon_copy.canonicalize_relu(step)
+        return step.lhs
 
     def set_zero_objective(self):
         """
@@ -701,6 +765,8 @@ class SDP(Canonicalizer):
                     self._apply_two_norm_objective(self._solved_copy, expr_list)
                 case "one_norm":
                     self._apply_one_norm_objective(self._solved_copy, expr_list)
+                case "infinity_norm":
+                    self._apply_infinity_norm_objective(self._solved_copy, expr_list)
 
         # Solve using the copy's data
         return self._solved_copy._solve_internal()
@@ -742,6 +808,8 @@ class SDP(Canonicalizer):
                     self._apply_two_norm_objective(self, expr_list)
                 case "one_norm":
                     self._apply_one_norm_objective(self, expr_list)
+                case "infinity_norm":
+                    self._apply_infinity_norm_objective(self, expr_list)
 
     def solve_via_cvxpy(self):
         """

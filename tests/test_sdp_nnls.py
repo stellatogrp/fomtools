@@ -58,12 +58,16 @@ def test_sdp_direct_solver_calls():
         raise
 
 
-def test_sdp_infinity_norm_not_supported(vp_sdp):
-    """Test that infinity-norm objective raises NotImplementedError for SDP."""
+def test_sdp_infinity_norm_supported(vp_sdp):
+    """Test that infinity-norm objective is now supported for SDP."""
     x = vp_sdp.add_param(2, lb=0, ub=1)
 
-    with pytest.raises(NotImplementedError, match="Infinity-norm objective is not supported"):
-        vp_sdp.set_objective_norm([x], np.inf)
+    # Should not raise - infinity-norm is now implemented
+    vp_sdp.set_objective_norm([x], np.inf)
+    result = vp_sdp.solve()
+
+    # SDP provides an upper bound, should be >= 1 (the max abs bound)
+    assert result >= 1.0 - TEST_EPS, f"Expected >= 1.0, got {result}"
 
 
 def test_sdp_update_bounds(vp_sdp):
