@@ -114,6 +114,7 @@ class TestSDPCopyIsolation:
         """Verify that SDP canonicalizer copy is independent from original."""
         vp = Verifier(method='sdp', solver=solver, obbt_handler=None)
         x = vp.add_iterate(3, lb=0, ub=10)
+        _ = vp.step.relu(x)
 
         original_canon = vp.canonicalizer
         copy_canon = original_canon.copy()
