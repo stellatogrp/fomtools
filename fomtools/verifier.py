@@ -575,12 +575,12 @@ class Verifier(object):
             If ord is not one of the supported values.
         """
         match ord:
-            case np.inf | "inf":
-                self.set_infinity_norm_objective(expr)
-            case 2:
-                self.set_two_norm_objective(expr)
             case 1:
                 self.set_one_norm_objective(expr)
+            case 2:
+                self.set_two_norm_objective(expr)
+            case _ if ord == np.inf or ord == "inf":
+                self.set_infinity_norm_objective(expr)
             case _:
                 raise ValueError(f"Unsupported norm order: {ord}. Use 1, 2, np.inf, or 'inf'.")
 
