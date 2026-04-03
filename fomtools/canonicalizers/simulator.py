@@ -2,8 +2,21 @@ import time
 import typing
 import warnings
 
-import jax
-import jax.numpy as jnp
+try:
+    import cupy as cp
+    import cupyx.scipy.sparse as csp
+
+    # Force CUDA initialization to happen NOW so we catch the error here
+    cp.cuda.runtime.getDeviceCount()
+
+    CUDA_AVAILABLE = True
+except ImportError:
+    import numpy as cp  # fallback to numpy
+    import scipy.sparse as csp
+
+    CUDA_AVAILABLE = False
+
+
 import numpy as np
 import scipy.sparse as spa
 
@@ -13,22 +26,22 @@ from fomtools.canonicalizers import Canonicalizer
 if typing.TYPE_CHECKING:
     from fomtools import Step
 
-import jax.experimental.sparse as jsparse
+from contextlib import nullcontext
 
 
 # todo: what to do if samples is missing from a leaf expression
 class Simulator(Canonicalizer):
     """
-    An interface for simulating a Verification Problem using JAX.
+    An interface for simulating a Verification Problem using CuPy.
 
     Attributes
     ----------
-    param_to_samples : dict[LinearExpression, jnp.ndarray]
+    param_to_samples : dict[LinearExpression, cp.ndarray]
         A dictionary mapping each parameter variable (LinearExpression)
         to its sample values. Each array should have shape (num_samples, dim),
         where dim is the dimensionality of the parameter.
 
-    iterate_to_samples : dict[LinearExpression, jnp.ndarray]
+    iterate_to_samples : dict[LinearExpression, cp.ndarray]
         A dictionary mapping each iterate variable (a LinearExpression) to
         its initial values. Each array should have shape (dim,), representing
         the initial state for that iterate.
@@ -57,12 +70,24 @@ class Simulator(Canonicalizer):
 
         self._seed_counter = random_seed
         self.step_function = None
-        self.device = jax.devices("cpu")[0]
+        self.device = 0  # GPU device ID
 
     @staticmethod
-    def _sparse_to_jax(matrix: np.ndarray | spa.spmatrix) -> jnp.ndarray:
+    def _sync():
+        """Synchronize the CUDA stream if running on GPU, otherwise no-op."""
+        if CUDA_AVAILABLE:
+            cp.cuda.Stream.null.synchronize()
+
+    @staticmethod
+    def _get_device_context(device):
+        """Return the active CUDA device context, or a no-op context on CPU."""
+        return cp.cuda.Device(device) if CUDA_AVAILABLE else nullcontext()  # no-op on CPU
+
+    @staticmethod
+    def _sparse_to_cp(matrix: np.ndarray | spa.spmatrix) -> cp.ndarray | csp.csr_matrix:
         """
-        Convert a NumPy or SciPy sparse matrix to a JAX array.
+        Convert a NumPy or SciPy sparse matrix to a CuPY array
+        or cupyx CSR sparse matrix, respectively.
 
         Parameters
         ----------
@@ -71,26 +96,25 @@ class Simulator(Canonicalizer):
 
         Returns
         -------
-        jnp.ndarray
-             A JAX array containing the same data as the input matrix. Sparse
-            inputs are converted to their dense representation before being
-            returned as a JAX array.
+        cp.ndarray | cupyx.scipy.sparse.csr_matrix
+             A CuPy array containing the same data as the input matrix.
         """
         if spa.issparse(matrix):
-            return jsparse.BCOO.from_scipy_sparse(matrix)
-        return jnp.array(matrix)
+            return csp.csr_matrix(matrix)
+        return cp.array(matrix)
 
-    def _linear_expr_to_jax(
+    def _linear_expr_to_cupy(
         self, expr: LinearExpression
-    ) -> dict[str, list[tuple[LinearExpression, jnp.ndarray]]]:
+    ) -> dict[str, list[tuple[LinearExpression, cp.ndarray | csp.csr_matrix]]]:
         """
-        Converts a linear expression to a JAX array.
+        Converts a linear expression to CuPy arrays (dense) or cupyx CSR
+        matrices (sparse).
 
         This function decomposes the provided LinearExpression into its
-        constituent coefficients and converts each coefficient to a JAX
-        array. The terms of the expression are grouped according to whether
-        their corresponding leaf variable belongs to the iterate set or
-        the parameter set.
+        constituent coefficients and converts each coefficient to CuPy arrays
+        or cupyx CSR matrices. The terms of the expression are grouped
+        according to whether their corresponding leaf variable belongs
+        to the iterate set or the parameter set.
 
         Parameters
         ----------
@@ -99,28 +123,28 @@ class Simulator(Canonicalizer):
 
         Returns
         -------
-        dict[str, list[tuple[LinearExpression, jnp.ndarray]]]
+        dict[str, list[tuple[LinearExpression, cp.ndarray | csp.csr_matrix]]]
             A dictionary mapping term categories (e.g., iterate or parameter
             terms) to lists of tuples (leaf, coeff_jax), where leaf identifies
-            the variable and coeff_jax is the corresponding coefficient
-            represented as a JAX array
+            the variable and coeff_cp is the corresponding coefficient
+            represented as CuPy arrays or cupyx CSR matrices.
 
         """
         iterate_coeffs = []
         param_coeffs = []
 
         for leaf, coeff in expr.decomposition_dict.items():
-            coeff_jax = self._sparse_to_jax(coeff)
+            coeff_cp = self._sparse_to_cp(coeff)
 
             if leaf in self.iterate_to_samples:
-                iterate_coeffs.append((leaf, coeff_jax))
+                iterate_coeffs.append((leaf, coeff_cp))
             elif leaf in self.param_to_samples:
-                param_coeffs.append((leaf, coeff_jax))
+                param_coeffs.append((leaf, coeff_cp))
 
         return {
             "iterate_coeffs": iterate_coeffs,
             "param_coeffs": param_coeffs,
-            "const": jnp.array(expr.const),
+            "const": cp.array(expr.const, dtype=cp.float32),
         }
 
     def _next_seed(self) -> int:
@@ -132,7 +156,7 @@ class Simulator(Canonicalizer):
     def add_var(self, var: LinearExpression, **kwargs) -> None:
         """
         Add a variable to the Simulator instance. This method converts the provided
-        LinearExpression object to a JAX array and registers it with the Simulator
+        LinearExpression object to a CuPy array and registers it with the Simulator
         instance so that it can be referenced later.
 
         Parameters
@@ -197,7 +221,7 @@ class Simulator(Canonicalizer):
 
             """
             lb, ub = _var.lb, _var.ub
-            key = jax.random.PRNGKey(random_seed)
+            rng = np.random.default_rng(random_seed)
 
             has_bounds = np.all(np.isfinite(lb)) and np.all(np.isfinite(ub))
             has_samples = samples is not None or init is not None
@@ -210,18 +234,16 @@ class Simulator(Canonicalizer):
             if var_type == "iterate":
                 if init is None:
                     if has_bounds:
-                        init = jax.random.uniform(
-                            key, shape=(_var.ndim,), minval=lb, maxval=ub
-                        )  # pick random values within the bounds
+                        init = rng.uniform(lb, ub, size=(_var.ndim,)).astype(np.float32)
                     else:
                         raise ValueError(
                             "An initial value or finite bounds must be provided when registering an iterate variable."
                         )
-                self.iterate_to_samples[_var] = jnp.array(init, dtype=jnp.float32)
+                self.iterate_to_samples[_var] = cp.array(init, dtype=cp.float32)
 
             elif var_type == "param":
                 if samples is not None:
-                    self.param_to_samples[_var] = jnp.array(samples)
+                    self.param_to_samples[_var] = cp.array(samples, dtype=cp.float32)
 
             else:
                 raise ValueError("Unknown variable type")
@@ -229,7 +251,7 @@ class Simulator(Canonicalizer):
         _register_var(var, random_seed=self._next_seed(), **kwargs)
 
     @staticmethod
-    def compute_risk_bound(residuals: jnp.ndarray, delta: float = 0.05, epsilon: float = 0.0):
+    def compute_risk_bound(residuals: cp.ndarray, delta: float = 0.05, epsilon: float = 0.0):
         r"""
         Compute a high-probability bound on the risk using the KL inverse bound.
 
@@ -294,7 +316,7 @@ class Simulator(Canonicalizer):
 
         Parameters
         ----------
-        residuals: jnp.ndarray
+        residuals: cp.ndarray
             Residuals of the problem instances.
 
         delta: float, optional
@@ -337,10 +359,10 @@ class Simulator(Canonicalizer):
         N = residuals.shape[0]
         final_residuals = residuals[:, -1]
 
-        errors = (final_residuals > epsilon).astype(float)
-        empirical_risk = jnp.mean(errors)
+        errors = (final_residuals > epsilon).astype(cp.float32)
+        empirical_risk = cp.mean(errors)
 
-        c = jnp.log(2 / delta) / N
+        c = cp.log(2 / delta) / N
         return _kl_inverse(float(empirical_risk), float(c))
 
     def _prepare_simulation_data(self):
@@ -348,7 +370,7 @@ class Simulator(Canonicalizer):
         Prepare stacked arrays and slices for simulation.
 
         This function packs the iterate initial values and parameter sample
-        arrays into contiguous JAX arrays. It also records slice indices that
+        arrays into contiguous CuPy arrays. It also records slice indices that
         map each original variable (``leaf``) to its corresponding location in
         the concatenated arrays.
 
@@ -362,9 +384,9 @@ class Simulator(Canonicalizer):
         dict
             A dictionary containing the concatenated simulation inputs and their
             corresponding slice mappings, where:
-                - ``z0`` maps to a JAX array containing the concatenation of all
+                - ``z0`` maps to a CuPy array containing the concatenation of all
                     iterate initial values.
-                - ``p_samples`` maps to a JAX array containing the concatenation (along axis 1)
+                - ``p_samples`` maps to a CuPy array containing the concatenation (along axis 1)
                     of all parameter sample arrays.
                 - ``z_slices`` maps to a dictionary mapping each iterate identifier (leaf)
                     to a slice indicating its location within z0.
@@ -374,8 +396,8 @@ class Simulator(Canonicalizer):
         """
 
         def stack_with_slices(
-            data_dict: dict[LinearExpression, jnp.ndarray], axis: int = 0
-        ) -> tuple[jnp.ndarray, dict[LinearExpression, slice]]:
+            data_dict: dict[LinearExpression, cp.ndarray], axis: int = 0
+        ) -> tuple[cp.ndarray, dict[LinearExpression, slice]]:
             """Prepare stacked arrays and slices for simulation."""
             slices = {}
             offset = 0
@@ -385,9 +407,9 @@ class Simulator(Canonicalizer):
                 offset += dim
 
             if data_dict:
-                stacked = jnp.concatenate(list(data_dict.values()), axis=axis)
+                stacked = cp.concatenate(list(data_dict.values()), axis=axis)
             else:
-                stacked = jnp.array([])
+                stacked = cp.array([])
 
             return stacked, slices
 
@@ -402,14 +424,14 @@ class Simulator(Canonicalizer):
         }
 
     def _register_statistics(
-        self, residuals: jnp.ndarray, delta: float, epsilon: float, total_time: float
+        self, residuals: cp.ndarray, delta: float, epsilon: float, total_time: float
     ):
         """
         Compute and register summary statistics from simulation residuals.
 
         Parameters
         ----------
-        residuals : jnp.ndarray
+        residuals : cp.ndarray
             Shape (N, K) array of residuals at each iteration.
 
         delta: float
@@ -431,51 +453,71 @@ class Simulator(Canonicalizer):
             "n_samples": n_samples,
             "n_iterations": residuals.shape[1],
             "final_residuals": final_residuals,
-            "mean": float(jnp.mean(final_residuals)),
-            "std": float(jnp.std(final_residuals)),
-            "min": float(jnp.min(final_residuals)),
-            "max": float(jnp.max(final_residuals)),
-            "median": float(jnp.median(final_residuals)),
+            "mean": float(cp.mean(final_residuals)),
+            "std": float(cp.std(final_residuals)),
+            "min": float(cp.min(final_residuals)),
+            "max": float(cp.max(final_residuals)),
+            "median": float(cp.median(final_residuals)),
             "quantiles": {
-                0.25: float(jnp.quantile(final_residuals, 0.25)),
-                0.75: float(jnp.quantile(final_residuals, 0.75)),
-                0.90: float(jnp.quantile(final_residuals, 0.90)),
-                0.95: float(jnp.quantile(final_residuals, 0.95)),
-                0.99: float(jnp.quantile(final_residuals, 0.99)),
+                0.25: float(cp.quantile(final_residuals, 0.25)),
+                0.75: float(cp.quantile(final_residuals, 0.75)),
+                0.90: float(cp.quantile(final_residuals, 0.90)),
+                0.95: float(cp.quantile(final_residuals, 0.95)),
+                0.99: float(cp.quantile(final_residuals, 0.99)),
             },
             "epsilon": epsilon,
             "delta": delta,
-            "empirical_risk": float(jnp.mean((final_residuals > epsilon).astype(float))),
+            "empirical_risk": float(cp.mean((final_residuals > epsilon).astype(cp.float32))),
             "risk_bound": self.compute_risk_bound(residuals, delta, epsilon),
             "runtime": total_time,
             "time_per_sample": total_time / n_samples,
             "throughput": n_samples / total_time,
         }
 
-    def _to_device(self, arr):
+    def _to_device(self, arr: np.ndarray | cp.ndarray) -> cp.ndarray | np.ndarray:
         """Move array to the configured device."""
-        return jax.device_put(jnp.array(arr), self.device)
+        if CUDA_AVAILABLE:
+            with self._get_device_context(self.device):
+                return cp.asarray(arr)
+        return arr
 
     def _configure_device(self, device: str) -> None:
-        """Configure the JAX execution device for the current instance."""
-        if device is None:
-            devices = jax.devices()
-        elif device in {"cpu", "gpu"}:
-            devices = jax.devices(device)
+        """Configure the CuPy GPU device ID for this instance."""
+        if device is None or device == "gpu":
+            self.device = 0
+        elif device == "cpu":
+            warnings.warn(
+                "CuPy only supports GPU execution. Defaulting to GPU device 0. "
+                "Use NumPy/SciPy directly for CPU-only simulation."
+            )
+            self.device = 0
         else:
             raise ValueError(f"Unsupported device type: {device}. Expected None, 'cpu', or 'gpu'.")
 
-        if not devices:
-            raise RuntimeError(f"No available JAX devices for type: {device}")
+    @staticmethod
+    def _matvec_batch(coeff: cp.ndarray | csp.csr_matrix, x_batch: cp.ndarray) -> cp.ndarray:
+        """
+        Apply coefficient matrix to a batch of vectors.
 
-        self.device = devices[0]
+        Parameters
+        ----------
+        coeff: (out_dim, d) # sparse or dense
+        x_batch: (N, d) # dense CuPy array
+
+        Returns
+        -------
+        (N, out_dim) dense CuPy array.
+        """
+        if csp.issparse(coeff):
+            return (coeff @ x_batch.T).T
+        return x_batch @ coeff.T
 
     def canonicalize_relu(self, step: "Step") -> None:
         """
-        Registers the provided ReLU step for JAX simulation.
+        Registers the provided ReLU step for CuPy simulation.
 
         This method converts the linear expression defining the input to the
-        ReLU operation into a JAX-evaluable form and constructs a corresponding
+        ReLU operation into a CuPy-evaluable form and constructs a corresponding
         update function. The update function has signature ``f(z_stacked, p_stacked)``
         where the iterate and parameter variables are provided as concatenated vectors.
         Slice mappings are used internally to extract the relevant components for
@@ -495,7 +537,7 @@ class Simulator(Canonicalizer):
         None
 
         """
-        coeffs = self._linear_expr_to_jax(step.rhs)
+        coeffs = self._linear_expr_to_cupy(step.rhs)
 
         iterate_coeffs = coeffs["iterate_coeffs"]
         param_coeffs = coeffs["param_coeffs"]
@@ -503,7 +545,7 @@ class Simulator(Canonicalizer):
 
         simulation_data = self._prepare_simulation_data()
 
-        def update_fn(z_stacked: jnp.ndarray, p_stacked: jnp.ndarray) -> jnp.ndarray:
+        def update_fn(z_stacked: cp.ndarray, p_stacked: cp.ndarray) -> cp.ndarray:
             """
             Evaluate the linear update followed by a ReLU activation.
 
@@ -515,37 +557,38 @@ class Simulator(Canonicalizer):
 
             Parameters
             ----------
-            z_stacked: jnp.ndarray
+            z_stacked: cp.ndarray
                 Concatenation of all iterate variables, with shape. Individual iterate
                 values are retrieved using slices stored in ``simulation_data["z_slices"]``.
 
-            p_stacked: jnp.ndarray
+            p_stacked: cp.ndarray
                 Concatenation of all parameter variables. Individual parameter values
                 are retrieved using slices stored in ``simulation_data["p_slices"]``.
 
             Returns
             -------
-            jnp.ndarray
+            cp.ndarray
                 The value of the linear expression evaluated at the provided
                 iterates and parameters, after applying a ReLU activation.
             """
-            result = const.copy()
+            N = z_stacked.shape[0]
+            result = cp.tile(const, (N, 1))
 
             for leaf, coeff in iterate_coeffs:
-                z_slice = z_stacked[simulation_data["z_slices"][leaf]]
-                result += coeff @ z_slice
+                z_slice = z_stacked[:, simulation_data["z_slices"][leaf]]
+                result += self._matvec_batch(coeff, z_slice)
 
             for leaf, coeff in param_coeffs:
-                p_slice = p_stacked[simulation_data["p_slices"][leaf]]
-                result += coeff @ p_slice
+                p_slice = p_stacked[:, simulation_data["p_slices"][leaf]]
+                result += self._matvec_batch(coeff, p_slice)
 
-            return jax.nn.relu(result)
+            return cp.maximum(result, 0)
 
         self.step_function = update_fn
 
     def solve_model(
         self, K: int, delta: float = 0.05, epsilon: float = 0.0, device: str = None
-    ) -> jnp.ndarray:
+    ) -> cp.ndarray:
         """
         Run a batched simulation of the registered step function.
 
@@ -582,7 +625,7 @@ class Simulator(Canonicalizer):
 
         Returns
         -------
-        residuals: jnp.ndarray
+        residuals: cp.ndarray
            A 2D array of shape ``(num_samples, K)`` containing the residual
            (infinity norm of successive state differences) at each iteration
            for each parameter sample.
@@ -602,30 +645,35 @@ class Simulator(Canonicalizer):
                 "before running the simulation"
             )
         simulation_data = self._prepare_simulation_data()
-        z0 = self._to_device(simulation_data["z0"])
-        p_samples = self._to_device(simulation_data["p_samples"])
 
-        @jax.jit
-        def _simulate(samples):
-            """Simulate K steps for a single sample."""
+        with self._get_device_context(self.device):
+            z0 = self._to_device(simulation_data["z0"])
+            p_samples = self._to_device(simulation_data["p_samples"])
 
-            def body(z, _):
-                z_new = update_fn(z, samples)
-                residual = jnp.max(jnp.abs(z_new - z))  # infinity norm
-                return z_new, residual
+            N = p_samples.shape[0]
+            update_fn = self.step_function
 
-            _, residuals = jax.lax.scan(body, z0, None, length=K)
-            return residuals
+            def _simulate_batch(z0: cp.ndarray, p_samples: cp.ndarray) -> cp.ndarray:
+                """Simulate K steps for all N samples in parallel."""
+                z_batch = cp.tile(z0, (N, 1))
+                residuals = cp.empty((N, K), dtype=cp.float32)
 
-        simulate_batch = jax.vmap(_simulate, in_axes=0)
+                for k in range(K):
+                    z_new = update_fn(z_batch, p_samples)
+                    residuals[:, k] = cp.max(cp.abs(z_new - z_batch), axis=1)
+                    z_batch = z_new
 
-        # warm-up: triggers compilation, discard result
-        simulate_batch(p_samples).block_until_ready()
+                return residuals
 
-        # timing pure execution
-        start = time.perf_counter()
-        residuals = simulate_batch(p_samples).block_until_ready()
-        elapsed = time.perf_counter() - start
+            # warm-up: triggers any lazy GPU compilation
+            _simulate_batch(z0, p_samples)
+            self._sync()
+
+            # timed execution
+            start = time.perf_counter()
+            residuals = _simulate_batch(z0, p_samples)
+            self._sync()
+            elapsed = time.perf_counter() - start
 
         self._register_statistics(residuals, delta, epsilon, elapsed)
         return residuals
