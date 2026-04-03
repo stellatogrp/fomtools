@@ -646,6 +646,10 @@ class LinearExpression:
             out_lb += _lb
             out_ub += _ub
 
+        # Add constant term to bounds
+        out_lb += self.const
+        out_ub += self.const
+
         return out_lb, out_ub
 
     def eval(self):

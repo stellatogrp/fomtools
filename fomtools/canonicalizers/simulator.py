@@ -226,7 +226,10 @@ class Simulator(Canonicalizer):
             else:
                 raise ValueError("Unknown variable type")
 
-        _register_var(var, random_seed=self._next_seed(), **kwargs)
+        try:
+            _register_var(var, random_seed=self._next_seed(), **kwargs)
+        except:
+            pass
 
     @staticmethod
     def compute_risk_bound(residuals: jnp.ndarray, delta: float = 0.05, epsilon: float = 0.0):

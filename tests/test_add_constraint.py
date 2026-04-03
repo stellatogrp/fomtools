@@ -1,6 +1,13 @@
 import numpy as np
 
+from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
+
+# Map MIP solver class names to solver identifier strings
+MIP_SOLVER_NAMES = {
+    "GurobiSolver": "gurobi",
+    "HiGHSSolver": "highs",
+}
 
 
 def test_add_constraint_equality(vp):
@@ -39,34 +46,35 @@ def test_add_constraint_equality(vp):
 
 def test_add_constraint_inequality(vp):
     """
-    Test that add_constraint works with inequality constraints.
+    Test that inequality constraints restrict the optimal solution.
 
-    This test verifies that:
-    1. Adding an inequality constraint doesn't break the solver
-    2. The constraint is respected in the solution
+    Maximizes inf_norm(relu(x - 3)) with x in [0, 10].
+    Without constraint: optimal is 7 (x=10 gives relu(7)=7).
+    With x <= 5: optimal is 2 (x=5 gives relu(2)=2).
     """
     n = 3
+    mip_solver_name = MIP_SOLVER_NAMES[type(vp.canonicalizer.solver).__name__]
 
-    # Create an iterate
-    x = vp.add_iterate(n, lb=0, ub=10)
+    # Unconstrained baseline
+    vp_unc = Verifier(method='mip', solver=mip_solver_name, obbt_handler=None)
+    x_unc = vp_unc.add_iterate(n, lb=0, ub=10)
+    z_unc = vp_unc.step.relu(x_unc - 3)
+    vp_unc.set_infinity_norm_objective([z_unc])
+    result_unc = vp_unc.solve()
 
-    # Add inequality constraint: x[0] >= 5
-    vp.add_constraint(x[0] >= 5)
+    # Constrained: x[i] <= 5 for all i
+    vp_con = Verifier(method='mip', solver=mip_solver_name, obbt_handler=None)
+    x_con = vp_con.add_iterate(n, lb=0, ub=10)
+    for i in range(n):
+        vp_con.add_constraint(x_con[i] <= 5)
+    z_con = vp_con.step.relu(x_con - 3)
+    vp_con.set_infinity_norm_objective([z_con])
+    result_con = vp_con.solve()
 
-    # Add a ReLU step
-    z = vp.step.relu(x - 3)
-
-    # Set objective and solve
-    vp.set_infinity_norm_objective([z])
-    result = vp.solve()
-
-    # Verify the problem is solvable
-    assert result is not None
-    assert np.isfinite(result)
-
-    # Verify the constraint is respected
-    x_val = vp.get_solution_value(x)
-    assert x_val[0] >= 5 - TEST_EPS, "Inequality constraint not satisfied"
+    assert np.isfinite(result_unc)
+    assert np.isfinite(result_con)
+    assert result_con < result_unc, "Constraint should reduce objective"
+    assert abs(result_con - 2.0) < TEST_EPS, f"Expected 2.0, got {result_con}"
 
 
 def test_add_constraint_tightens_bounds(vp):
@@ -136,3 +144,58 @@ def test_skip_obbt_affine_step(vp):
     # Verify the problem is solvable
     assert result is not None
     assert np.isfinite(result)
+
+
+def test_add_constraint_equality_sdp_mip_comparison(vp, vp_sdp):
+    """
+    Test that SDP relaxation provides valid upper bound on MIP.
+
+    Uses infinity-norm for MIP, two-norm for SDP.
+    Since ||x||_inf <= ||x||_2, we have:
+        mip_inf_norm <= sqrt(sdp_two_norm_squared)
+    """
+    n = 3
+
+    # Get solver names for creating fresh verifiers
+    mip_solver_name = MIP_SOLVER_NAMES[type(vp.canonicalizer.solver).__name__]
+    sdp_solver_name = vp_sdp.canonicalizer.solver_name
+
+    # MIP with infinity-norm objective
+    vp_mip = Verifier(
+        method='mip',
+        solver=mip_solver_name,
+        obbt_handler=None
+    )
+
+    x_mip = vp_mip.add_iterate(n, lb=0, ub=10)
+    y_mip = vp_mip.add_iterate(n, lb=0, ub=10)
+
+    # Add equality constraint: x[0] == y[0]
+    vp_mip.add_constraint(x_mip[0] == y_mip[0])
+
+    z_mip = vp_mip.step.relu(x_mip + y_mip)
+    vp_mip.set_infinity_norm_objective([z_mip])
+    mip_inf_norm = vp_mip.solve()
+
+    # SDP with two-norm objective
+    vp_sdp_local = Verifier(
+        method='sdp',
+        solver=sdp_solver_name,
+        obbt_handler=None
+    )
+
+    x_sdp = vp_sdp_local.add_iterate(n, lb=0, ub=10)
+    y_sdp = vp_sdp_local.add_iterate(n, lb=0, ub=10)
+
+    # Add equality constraint: x[0] == y[0]
+    vp_sdp_local.add_constraint(x_sdp[0] == y_sdp[0])
+
+    z_sdp = vp_sdp_local.step.relu(x_sdp + y_sdp)
+    vp_sdp_local.set_two_norm_objective(z_sdp)
+    sdp_two_norm_sq = vp_sdp_local.solve()
+    sdp_two_norm = np.sqrt(sdp_two_norm_sq)
+
+    # MIP inf norm should be <= SDP two norm
+    assert mip_inf_norm <= sdp_two_norm + TEST_EPS, (
+        f"MIP inf norm ({mip_inf_norm}) should be <= SDP two norm ({sdp_two_norm})"
+    )
