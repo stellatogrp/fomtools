@@ -27,7 +27,7 @@ dependencies = [
 packages = ["fomtools"]
 
 [project.optional-dependencies]
-gpu = ["cupy-cuda12x>=13.0"]
+gpu = ["cupy-cuda11x"]
 
 dev = [
        "cvxpy",
