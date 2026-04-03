@@ -6,6 +6,9 @@ try:
     import cupy as cp
     import cupyx.scipy.sparse as csp
 
+    # Force CUDA initialization to happen NOW so we catch the error here
+    cp.cuda.runtime.getDeviceCount()
+
     CUDA_AVAILABLE = True
 except ImportError:
     import numpy as cp  # fallback to numpy

@@ -47,7 +47,7 @@ jobs:
           echo "grb_license_file=$PWD/gurobi.lic" >> $GITHUB_OUTPUT
 
       - name: Install the project
-        run: uv sync --all-extras --dev
+        run: uv sync --dev --docs
 
       - name: Run tests
         # For example, using `pytest`
