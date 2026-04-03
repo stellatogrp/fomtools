@@ -1,4 +1,3 @@
-import jax
 import numpy as np
 
 from fomtools.verifier import Verifier
@@ -29,9 +28,9 @@ def test_relu_simulator():
     P = P @ P.T
 
     # q is a problem parameter
-    key = jax.random.PRNGKey(0)
+    rng = np.random.default_rng(0)
 
-    q_samples = jax.random.uniform(key, shape=(10000, n), minval=-1.0, maxval=1.0)
+    q_samples =  rng.uniform(low=-1.0, high=1.0, size=(10000, n))
     q_param = vp.add_param(ndim=n, samples=q_samples)
 
     vp.step.relu(z[0] - step_size * (P @ z[0] + q_param))
