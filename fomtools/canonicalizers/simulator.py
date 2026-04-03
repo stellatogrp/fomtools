@@ -4,8 +4,6 @@ import warnings
 
 import cupy as cp
 import cupyx.scipy.sparse as csp
-
-import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as spa
@@ -15,8 +13,6 @@ from fomtools.canonicalizers import Canonicalizer
 
 if typing.TYPE_CHECKING:
     from fomtools import Step
-
-import jax.experimental.sparse as jsparse
 
 
 # todo: what to do if samples is missing from a leaf expression
@@ -82,7 +78,7 @@ class Simulator(Canonicalizer):
             return csp.csr_matrix(matrix)
         return cp.array(matrix)
 
-    def _linear_expr_to_jax(
+    def _linear_expr_to_cupy(
         self, expr: LinearExpression
     ) -> dict[str, list[tuple[LinearExpression, cp.ndarray | csp.csr_matrix]]]:
         """
@@ -200,7 +196,7 @@ class Simulator(Canonicalizer):
 
             """
             lb, ub = _var.lb, _var.ub
-            key = jax.random.PRNGKey(random_seed)
+            rng = np.random.default_rng(random_seed)
 
             has_bounds = np.all(np.isfinite(lb)) and np.all(np.isfinite(ub))
             has_samples = samples is not None or init is not None
@@ -213,7 +209,6 @@ class Simulator(Canonicalizer):
             if var_type == "iterate":
                 if init is None:
                     if has_bounds:
-                        rng = np.random.default_rng(random_seed)
                         init = rng.uniform(lb, ub, size=(_var.ndim,)).astype(np.float32)
                     else:
                         raise ValueError(
@@ -462,7 +457,7 @@ class Simulator(Canonicalizer):
     def _configure_device(self, device: str) -> None:
         """Configure the CuPy GPU device ID for this instance."""
         if device is None or device == "gpu":
-            devices = 0
+            self.device = 0
         elif device == "cpu":
             warnings.warn(
                 "CuPy only supports GPU execution. Defaulting to GPU device 0. "
@@ -472,6 +467,7 @@ class Simulator(Canonicalizer):
         else:
             raise ValueError(f"Unsupported device type: {device}. Expected None, 'cpu', or 'gpu'.")
 
+    @staticmethod
     def _matvec_batch(coeff: cp.ndarray | csp.csr_matrix, x_batch: cp.ndarray) -> cp.ndarray:
         """
         Apply coefficient matrix to a batch of vectors.
@@ -548,15 +544,16 @@ class Simulator(Canonicalizer):
                 The value of the linear expression evaluated at the provided
                 iterates and parameters, after applying a ReLU activation.
             """
-            result = const.copy()
+            N = z_stacked.shape[0]
+            result = cp.tile(const, (N, 1))
 
             for leaf, coeff in iterate_coeffs:
-                z_slice = z_stacked[simulation_data["z_slices"][leaf]]
+                z_slice = z_stacked[:, simulation_data["z_slices"][leaf]]
                 result += self._matvec_batch(coeff, z_slice)
 
             for leaf, coeff in param_coeffs:
-                p_slice = p_stacked[simulation_data["p_slices"][leaf]]
-                result += self._matvec_batch(coeff, z_slice)
+                p_slice = p_stacked[:, simulation_data["p_slices"][leaf]]
+                result += self._matvec_batch(coeff, p_slice)
 
             return cp.maximum(result, 0)
 
