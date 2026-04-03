@@ -2,9 +2,18 @@ import time
 import typing
 import warnings
 
-import cupy as cp
-import cupyx.scipy.sparse as csp
-import jax.numpy as jnp
+try:
+    import cupy as cp
+    import cupyx.scipy.sparse as csp
+
+    CUDA_AVAILABLE = True
+except ImportError:
+    import numpy as cp  # fallback to numpy
+    import scipy.sparse as csp
+
+    CUDA_AVAILABLE = False
+
+
 import numpy as np
 import scipy.sparse as spa
 
@@ -14,6 +23,8 @@ from fomtools.canonicalizers import Canonicalizer
 if typing.TYPE_CHECKING:
     from fomtools import Step
 
+from contextlib import nullcontext
+
 
 # todo: what to do if samples is missing from a leaf expression
 class Simulator(Canonicalizer):
@@ -22,12 +33,12 @@ class Simulator(Canonicalizer):
 
     Attributes
     ----------
-    param_to_samples : dict[LinearExpression, jnp.ndarray]
+    param_to_samples : dict[LinearExpression, cp.ndarray]
         A dictionary mapping each parameter variable (LinearExpression)
         to its sample values. Each array should have shape (num_samples, dim),
         where dim is the dimensionality of the parameter.
 
-    iterate_to_samples : dict[LinearExpression, jnp.ndarray]
+    iterate_to_samples : dict[LinearExpression, cp.ndarray]
         A dictionary mapping each iterate variable (a LinearExpression) to
         its initial values. Each array should have shape (dim,), representing
         the initial state for that iterate.
@@ -57,6 +68,17 @@ class Simulator(Canonicalizer):
         self._seed_counter = random_seed
         self.step_function = None
         self.device = 0  # GPU device ID
+
+    @staticmethod
+    def _sync():
+        """Synchronize the CUDA stream if running on GPU, otherwise no-op."""
+        if CUDA_AVAILABLE:
+            cp.cuda.Stream.null.synchronize()
+
+    @staticmethod
+    def _get_device_context(device):
+        """Return the active CUDA device context, or a no-op context on CPU."""
+        return cp.cuda.Device(device) if CUDA_AVAILABLE else nullcontext()  # no-op on CPU
 
     @staticmethod
     def _sparse_to_cp(matrix: np.ndarray | spa.spmatrix) -> cp.ndarray | csp.csr_matrix:
@@ -337,7 +359,7 @@ class Simulator(Canonicalizer):
         errors = (final_residuals > epsilon).astype(cp.float32)
         empirical_risk = cp.mean(errors)
 
-        c = jnp.log(2 / delta) / N
+        c = cp.log(2 / delta) / N
         return _kl_inverse(float(empirical_risk), float(c))
 
     def _prepare_simulation_data(self):
@@ -399,14 +421,14 @@ class Simulator(Canonicalizer):
         }
 
     def _register_statistics(
-        self, residuals: jnp.ndarray, delta: float, epsilon: float, total_time: float
+        self, residuals: cp.ndarray, delta: float, epsilon: float, total_time: float
     ):
         """
         Compute and register summary statistics from simulation residuals.
 
         Parameters
         ----------
-        residuals : jnp.ndarray
+        residuals : cp.ndarray
             Shape (N, K) array of residuals at each iteration.
 
         delta: float
@@ -449,10 +471,12 @@ class Simulator(Canonicalizer):
             "throughput": n_samples / total_time,
         }
 
-    def _to_device(self, arr: np.ndarray | cp.ndarray) -> cp.ndarray:
+    def _to_device(self, arr: np.ndarray | cp.ndarray) -> cp.ndarray | np.ndarray:
         """Move array to the configured device."""
-        with cp.cuda.Device(self.device):
-            return cp.asarray(arr)
+        if CUDA_AVAILABLE:
+            with self._get_device_context(self.device):
+                return cp.asarray(arr)
+        return arr
 
     def _configure_device(self, device: str) -> None:
         """Configure the CuPy GPU device ID for this instance."""
@@ -619,7 +643,7 @@ class Simulator(Canonicalizer):
             )
         simulation_data = self._prepare_simulation_data()
 
-        with cp.cuda.Device(self.device):
+        with self._get_device_context(self.device):
             z0 = self._to_device(simulation_data["z0"])
             p_samples = self._to_device(simulation_data["p_samples"])
 
@@ -640,12 +664,12 @@ class Simulator(Canonicalizer):
 
             # warm-up: triggers any lazy GPU compilation
             _simulate_batch(z0, p_samples)
-            cp.cuda.Stream.null.synchronize()
+            self._sync()
 
             # timed execution
             start = time.perf_counter()
             residuals = _simulate_batch(z0, p_samples)
-            cp.cuda.Stream.null.synchronize()
+            self._sync()
             elapsed = time.perf_counter() - start
 
         self._register_statistics(residuals, delta, epsilon, elapsed)
