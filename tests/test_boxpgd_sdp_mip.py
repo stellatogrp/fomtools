@@ -55,7 +55,7 @@ def test_boxpgd_sdp_mip_comparison(vp, vp_sdp):
             grad_step = z_sdp[k] - t * (P @ z_sdp[k] + q_sdp)
             z_sdp.append(vp_sdp_local.step.satlin(grad_step, l=l, u=u))
 
-        vp_sdp_local.set_two_norm_objective(z_sdp[K] - z_sdp[K - 1])
+        vp_sdp_local.set_objective_norm(z_sdp[K] - z_sdp[K - 1], 2)
         sdp_two_norm_sq = vp_sdp_local.solve()
 
         # MIP with infinity-norm objective
@@ -72,7 +72,7 @@ def test_boxpgd_sdp_mip_comparison(vp, vp_sdp):
             grad_step = z_mip[k] - t * (P @ z_mip[k] + q_mip)
             z_mip.append(vp_mip.step.satlin(grad_step, l=l, u=u))
 
-        vp_mip.set_infinity_norm_objective([z_mip[K] - z_mip[K - 1]])
+        vp_mip.set_objective_norm([z_mip[K] - z_mip[K - 1]], np.inf)
         mip_inf_norm = vp_mip.solve()
 
         sdp_two_norm = np.sqrt(sdp_two_norm_sq)
@@ -127,7 +127,7 @@ def test_boxpgd_sdp_satlin_vs_relus(vp_sdp):
     z1_manual = relu_lower_lhs - relu_upper_lhs + l
 
     # Set objective on z1 - z0
-    vp_manual.set_two_norm_objective(z1_manual - z0_manual)
+    vp_manual.set_objective_norm(z1_manual - z0_manual, 2)
     result_manual = vp_manual.solve()
 
     # --- Automatic decomposition using step.satlin ---
@@ -144,7 +144,7 @@ def test_boxpgd_sdp_satlin_vs_relus(vp_sdp):
     rhs_auto = z0_auto - t * (P @ z0_auto + q_auto)
     z1_auto = vp_auto.step.satlin(rhs_auto, l=l, u=u)
 
-    vp_auto.set_two_norm_objective(z1_auto - z0_auto)
+    vp_auto.set_objective_norm(z1_auto - z0_auto, 2)
     result_auto = vp_auto.solve()
 
     print(f"Manual decomposition result: {result_manual}")

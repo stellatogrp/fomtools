@@ -260,6 +260,22 @@ class HiGHSSolver(MIPSolver):
         except TypeError:
             self.model.setObjective(self.expression_to_solver(expression)[0], sense=sense)
 
+    def set_two_norm_objective(self, expr_list, lb_list, ub_list) -> None:
+        """
+        Set two-norm objective (not supported for HiGHS).
+
+        HiGHS does not support quadratic objectives (MIQP).
+
+        Raises
+        ------
+        NotImplementedError
+            Always raised since HiGHS does not support quadratic objectives.
+        """
+        raise NotImplementedError(
+            "HiGHS does not support quadratic objectives (MIQP). "
+            "Use Gurobi for two-norm objectives, or switch to one-norm/infinity-norm."
+        )
+
     def optimize(self):
         """
         Optimize the underlying HiGHS model.
@@ -337,3 +353,35 @@ class HiGHSSolver(MIPSolver):
         Check whether the underlying HiGHS model has reached an optimal solution.
         """
         return self.model.getModelStatus() == hp.HighsModelStatus.kOptimal
+
+    def copy(self) -> "HiGHSSolver":
+        """
+        Create an independent copy of this HiGHS solver.
+
+        Returns a new HiGHSSolver with a copied model and rebuilt
+        vector_var_map pointing to variables in the copied model.
+
+        Returns
+        -------
+        HiGHSSolver
+            A new solver instance with copied state.
+        """
+        new_solver = HiGHSSolver.__new__(HiGHSSolver)
+        new_solver._relaxed_model = None
+        new_solver.model = hp.Highs()
+        new_solver._var_counter = self._var_counter
+
+        # Copy the model data
+        model_data = self.model.getModel()
+        new_solver.model.passModel(model_data)
+
+        # Build a name-to-variable map for the new model
+        new_vars = new_solver.model.getVariables()
+        name_to_var = {v.name: v for v in new_vars}
+
+        # Rebuild vector_var_map using variable names
+        new_solver.vector_var_map = {}
+        for k, var_list in self.vector_var_map.items():
+            new_solver.vector_var_map[k] = [name_to_var[v.name] for v in var_list]
+
+        return new_solver

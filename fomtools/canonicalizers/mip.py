@@ -17,12 +17,20 @@ class MIP(Canonicalizer):
     solver: Solver
         A ready-to-use instance of a subclass of :class:`Solver`
         (e.g., ``gurobi.Gurobi()``).
+    _objective_spec: tuple or None
+        Stored objective specification for deferred application.
+        Applied to a copy of the solver at solve time.
+    _solved_copy: Solver or None
+        Reference to the solved copy of the solver, used for
+        extracting solution values after solve.
 
     """
 
     def __init__(self, solver_params=None, solver="gurobi"):
         self.steps = []
         super(MIP, self).__init__(solver_params, solver)
+        self._objective_spec = None
+        self._solved_copy = None
 
     def add_var(self, var: LinearExpression, **kwargs) -> None:
         """
@@ -138,11 +146,84 @@ class MIP(Canonicalizer):
         """
         self.solver.update_bounds(expression, lb, ub)
 
+    def copy(self) -> "MIP":
+        """
+        Create an independent copy of this MIP canonicalizer.
+
+        Returns a new MIP canonicalizer with a copied solver. The copy
+        can be modified without affecting the original.
+
+        Returns
+        -------
+        MIP
+            A new canonicalizer instance with copied state.
+        """
+        new_canon = MIP.__new__(MIP)
+        new_canon.solver_params = self.solver_params
+        new_canon.solver_name = self.solver_name
+        new_canon.solver = self.solver.copy()
+        new_canon.obbt_handler = self.obbt_handler
+        new_canon._objective_spec = self._objective_spec
+        new_canon._solved_copy = None
+        return new_canon
+
     def set_zero_objective(self):
-        # this function is mostly just for debugging the constraints
-        self.solver.set_objective(expression=0)
+        """Store zero objective specification for deferred application."""
+        self._objective_spec = ("zero",)
 
     def set_infinity_norm_objective(self, expr_list, lb_list, ub_list):
+        """Store infinity-norm objective specification for deferred application."""
+        self._objective_spec = ("infinity_norm", expr_list, lb_list, ub_list)
+
+    def set_two_norm_objective(self, expr_list, lb_list, ub_list):
+        """Store two-norm objective specification for deferred application."""
+        self._objective_spec = ("two_norm", expr_list, lb_list, ub_list)
+
+    def set_one_norm_objective(self, expr_list):
+        """Store one-norm objective specification for deferred application."""
+        self._objective_spec = ("one_norm", expr_list)
+
+    def _apply_objective(self, solver):
+        """
+        Apply stored objective to the given solver.
+
+        Parameters
+        ----------
+        solver : Solver
+            The solver instance to apply the objective to.
+        """
+        if self._objective_spec is None:
+            return
+
+        obj_type = self._objective_spec[0]
+        match obj_type:
+            case "infinity_norm":
+                _, expr_list, lb_list, ub_list = self._objective_spec
+                self._apply_infinity_norm_objective(solver, expr_list, lb_list, ub_list)
+            case "two_norm":
+                _, expr_list, lb_list, ub_list = self._objective_spec
+                self._apply_two_norm_objective(solver, expr_list, lb_list, ub_list)
+            case "one_norm":
+                _, expr_list = self._objective_spec
+                self._apply_one_norm_objective(solver, expr_list)
+            case "zero":
+                solver.set_objective(expression=0)
+
+    def _apply_infinity_norm_objective(self, solver, expr_list, lb_list, ub_list):
+        """
+        Build and apply infinity-norm objective constraints to solver.
+
+        Parameters
+        ----------
+        solver : Solver
+            The solver instance to apply the objective to.
+        expr_list : list[LinearExpression]
+            List of expressions for the infinity norm.
+        lb_list : list[np.ndarray]
+            Lower bounds for each expression.
+        ub_list : list[np.ndarray]
+            Upper bounds for each expression.
+        """
         constraints = []
         M = np.max(np.abs(np.hstack([np.hstack(lb_list), np.hstack(ub_list)])))
         q = LinearExpression.from_int(ndim=1, ub=M)
@@ -172,15 +253,93 @@ class MIP(Canonicalizer):
         # need 1 gamma across all vectors in the list
         constraints.append(sum([sum(gamma) for gamma in all_gammas]) == 1)
 
-        self.solver.constraints_to_solver(constraints)
-        self.solver.set_objective(expression=q, sense="maximize")
+        solver.constraints_to_solver(constraints)
+        solver.set_objective(expression=q, sense="maximize")
+
+    def _apply_two_norm_objective(self, solver, expr_list, lb_list, ub_list):
+        """
+        Build and apply two-norm objective to solver.
+
+        The two-norm objective requires a quadratic program (MIQP). This is
+        supported by Gurobi but not by HiGHS.
+
+        Parameters
+        ----------
+        solver : Solver
+            The solver instance to apply the objective to.
+        expr_list : list[LinearExpression]
+            List of expressions for the two-norm objective.
+        lb_list : list[np.ndarray]
+            Lower bounds for each expression.
+        ub_list : list[np.ndarray]
+            Upper bounds for each expression.
+
+        Raises
+        ------
+        ValueError
+            If the solver does not support quadratic objectives (e.g., HiGHS).
+        """
+        if self.solver_name not in ("gurobi", "grb"):
+            raise ValueError(
+                "Two-norm objective requires a solver that supports quadratic "
+                "programming (MIQP). HiGHS does not support MIQP. Use Gurobi or "
+                "switch to infinity-norm/one-norm objective."
+            )
+
+        solver.set_two_norm_objective(expr_list, lb_list, ub_list)
+
+    def _apply_one_norm_objective(self, solver, expr_list):
+        """
+        Build and apply one-norm objective to solver.
+
+        Uses the identity: ||x||_1 = 1^T @ (relu(x) + relu(-x))
+
+        Parameters
+        ----------
+        solver : Solver
+            The solver instance to apply the objective to.
+        expr_list : list[LinearExpression]
+            List of expressions for the one-norm objective.
+        """
+        constraints = []
+        q = 0
+
+        for expr in expr_list:
+            n = expr.ndim
+
+            # Create relu(expr) step
+            step_pos = Relu(rhs=expr)
+            step_pos.update_bounds(*self.get_expression_bounds(expr))
+            solver.add_var(step_pos.lhs)
+            constraints.extend(self._build_relu_constraints(step_pos))
+
+            # Create relu(-expr) step
+            neg_expr = -expr
+            step_neg = Relu(rhs=neg_expr)
+            step_neg.update_bounds(*self.get_expression_bounds(neg_expr))
+            solver.add_var(step_neg.lhs)
+            constraints.extend(self._build_relu_constraints(step_neg))
+
+            # Accumulate: 1^T @ (relu(expr) + relu(-expr))
+            ones = np.ones((1, n))
+            q = q + ones @ step_pos.lhs + ones @ step_neg.lhs
+
+        solver.constraints_to_solver(constraints)
+        solver.set_objective(expression=q, sense="maximize")
 
     def solve_model(self, convex_hull_cuts: bool = False) -> float:
         """
         Optimize the underlying MIP problem.
 
-        Optionally, add convex hull cuts
+        Creates a copy of the solver, applies the objective to the copy,
+        solves it, and keeps a reference for solution extraction.
+        This prevents objective constraints from accumulating across
+        multiple solve calls.
 
+        Parameters
+        ----------
+        steps: Step
+            The step objects for convex hull cut generation.
 
         convex_hull_cuts: bool
             If ``True`` convex hull cuts are added to the MIP problem.
@@ -191,11 +350,15 @@ class MIP(Canonicalizer):
             The objective value for the current solution.
 
         """
-        if convex_hull_cuts:
-            self.solver.add_convex_hull_cuts(self.steps)
+        # Create copy to apply objective without modifying original
+        self._solved_copy = self.solver.copy()
 
-        self.solver.optimize()
-        return self.solver["objVal"]
+        if convex_hull_cuts:
+            self._solved_copy.add_convex_hull_cuts(self.steps)
+
+        self._apply_objective(self._solved_copy)
+        self._solved_copy.optimize()
+        return self._solved_copy["objVal"]
 
     def get_solution_value(self, expression: LinearExpression) -> np.ndarray:
         """
@@ -212,8 +375,15 @@ class MIP(Canonicalizer):
         np.ndarray[float]
             A 1-D array of shape ``(expression.ndim,)`` containing the
             evaluated values at the current model solution.
+
+        Raises
+        ------
+        RuntimeError
+            If no solution is available (solve_model() not called).
         """
-        return self.solver.get_solution_value(expression)
+        if self._solved_copy is None:
+            raise RuntimeError("No solution available. Call solve_model() first.")
+        return self._solved_copy.get_solution_value(expression)
 
     def canonicalize_affine(self, step: Affine) -> None:
         """
@@ -296,9 +466,25 @@ class MIP(Canonicalizer):
 
         Returns
         -------
+        None
+        """
+        constraints = self._build_relu_constraints(step)
+        self.add_constraints(constraints)
+        self.steps.append(step)
+
+    def _build_relu_constraints(self, step: Relu) -> List[Constraint]:
+        """
+        Build MIP formulation constraints for a ReLU step.
+
+        Parameters
+        ----------
+        step : Relu
+            An instance of the `Relu` step.
+
+        Returns
+        -------
         List[Constraint]
-            A list of constraint objects describing the convex hull of the feasible region
-            defined by the ReLU activation.
+            MIP constraints for the ReLU activation.
         """
         constraints = []
         for i, (_lhs, _rhs) in enumerate(zip(step.lhs, step.rhs)):
@@ -321,8 +507,7 @@ class MIP(Canonicalizer):
                             _lhs <= _rhs - step.lb[i] * (1 - new_var),
                         ]
                     )
-        self.add_constraints(constraints)
-        self.steps.append(step)
+        return constraints
 
     def canonicalize_saturatedlinear(self, step: SaturatedLinear):
         r"""

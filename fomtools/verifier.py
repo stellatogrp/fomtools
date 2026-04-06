@@ -41,6 +41,8 @@ class Verifier(object):
         self.canonicalizer = self._get_canonicalizer(method, params, solver)
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
         self.use_obbt_handler = True if obbt_handler else False
+        if self.obbt_handler is not None:
+            self.canonicalizer.obbt_handler = self.obbt_handler
         decomposer_cls = self._get_step_decomposer(method)
         self.step_decomposer = decomposer_cls(self.canonicalizer, self._register_var)
         self._step_proxy = _StepProxy(self)
@@ -578,7 +580,60 @@ class Verifier(object):
         except TypeError:
             expr_list = [expr_list]
 
-        self.canonicalizer.set_two_norm_objective(expr_list)
+        lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
+        self.canonicalizer.set_two_norm_objective(expr_list, list(lb), list(ub))
+
+    def set_one_norm_objective(
+        self, expr_list: Sequence[LinearExpression] | LinearExpression
+    ) -> None:
+        """
+        Create a 1-norm objective over the set of ``LinearExpression`` objects.
+
+        Parameters
+        ----------
+        expr_list : Sequence[LinearExpression] | LinearExpression
+            A single LinearExpression or a list of LinearExpression objects for
+            which the 1-norm objective will be constructed.
+        """
+        try:
+            len(expr_list)
+        except TypeError:
+            expr_list = [expr_list]
+
+        self.canonicalizer.set_one_norm_objective(expr_list)
+
+    def set_objective_norm(
+        self,
+        expr: Sequence[LinearExpression] | LinearExpression,
+        ord: int | float | str,
+    ) -> None:
+        """
+        Set the optimization objective to maximize a norm of the expression(s).
+
+        Parameters
+        ----------
+        expr : LinearExpression or Sequence[LinearExpression]
+            Expression(s) whose norm will be maximized.
+        ord : {1, 2, np.inf, 'inf'}
+            The norm order:
+            - 1: One-norm (sum of absolute values)
+            - 2: Two-norm (Euclidean norm squared)
+            - np.inf or 'inf': Infinity-norm (maximum absolute value)
+
+        Raises
+        ------
+        ValueError
+            If ord is not one of the supported values.
+        """
+        match ord:
+            case 1:
+                self.set_one_norm_objective(expr)
+            case 2:
+                self.set_two_norm_objective(expr)
+            case _ if ord == np.inf or ord == "inf":
+                self.set_infinity_norm_objective(expr)
+            case _:
+                raise ValueError(f"Unsupported norm order: {ord}. Use 1, 2, np.inf, or 'inf'.")
 
     def solve(self, **kwargs) -> float:
         """

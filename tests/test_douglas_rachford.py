@@ -65,7 +65,7 @@ def test_dr(vp):
         utilde[k] = vp.step.relu(2 * u[k] - z[k - 1], proj_ranges=(n, n + m))
         z[k] = z[k - 1] + utilde[k] - u[k]
 
-        vp.set_infinity_norm_objective(z[k] - z[k - 1])
+        vp.set_objective_norm(z[k] - z[k - 1], np.inf)
         res = vp.solve()
         all_res.append(res)
 
