@@ -22,7 +22,7 @@ def test_relu_simulator():
     vp = Verifier(method="simulator", obbt_handler=None)
 
     z = [None] * (K + 1)
-    z[0] = vp.add_iterate(ndim=n, init=np.full(n, 1))
+    z[0] = vp.add_iterate(ndim=n, lb=-10, ub=10, init=np.full(n, 1))
 
     P = np.random.normal(size=(n, n))
     P = P @ P.T
@@ -30,8 +30,8 @@ def test_relu_simulator():
     # q is a problem parameter
     rng = np.random.default_rng(0)
 
-    q_samples =  rng.uniform(low=-1.0, high=1.0, size=(10000, n))
-    q_param = vp.add_param(ndim=n, samples=q_samples)
+    q_samples = rng.uniform(low=-1.0, high=1.0, size=(10000, n))
+    q_param = vp.add_param(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
 
     vp.step.relu(z[0] - step_size * (P @ z[0] + q_param))
 

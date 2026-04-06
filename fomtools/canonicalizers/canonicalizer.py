@@ -39,9 +39,13 @@ class Canonicalizer:
             - ``"gurobi"``, ``"grb"``
         """
         self.solver_params = solver_params
-        self.solver_name = solver.lower()
-        self.solver = self._get_solver(solver, solver_params)
         self.obbt_handler = None
+        if solver is not None:
+            self.solver_name = solver.lower()
+            self.solver = self._get_solver(solver, solver_params)
+        else:
+            self.solver_name = None
+            self.solver = None
 
     @staticmethod
     def _get_solver(solver: str, solver_params: dict) -> Solver:
