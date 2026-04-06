@@ -6,10 +6,12 @@ import numpy as np
 from fomtools.canonicalizers.mip import MIP
 from fomtools.canonicalizers.obbt_handler import OBBTHandler
 from fomtools.canonicalizers.sdp import SDP
+from fomtools.canonicalizers.simulator import Simulator
 from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
+from fomtools.stepdecomposers.simulator_step_decomposer import SimulatorStepDecomposer
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 log = logging.getLogger(__name__)
@@ -45,6 +47,48 @@ class Verifier(object):
         self.step_decomposer = decomposer_cls(self.canonicalizer, self._register_var)
         self._step_proxy = _StepProxy(self)
 
+    def __getitem__(self, item):
+        """
+        Access summary statistics.
+
+        Parameters
+        ----------
+        item : str
+            Key for the statistic to retrieve.
+
+        Returns
+        -------
+        float or dict or jnp.ndarray
+            The requested statistic.
+
+        Raises
+        ------
+        KeyError
+            If the item is not a valid statistic key.
+
+        RuntimeError
+            If no statistic is avaiable.
+
+        Examples
+        --------
+        >>> vp.solve(K=100)
+        >>> vp['mean']
+        0.00123
+        >>> vp['quantiles'][0.95]
+        0.00456
+        """
+        try:
+            summary_statistics = self.canonicalizer.summary_statistics
+        except AttributeError:
+            raise RuntimeError("No statistics available. Run solve() first.")
+
+        if item not in summary_statistics:
+            raise KeyError(
+                f"'{item}' is not a valid statistic. Valid keys: {list(summary_statistics.keys())}"
+            )
+
+        return summary_statistics[item]
+
     @staticmethod
     def _get_canonicalizer(method: str, solver_params: dict, solver: dict):
         """
@@ -56,6 +100,7 @@ class Verifier(object):
              Case-insensitive identifier for the solver to use. Supported values include:
              - ``"mip"``
              - ``"sdp"``
+             - ``"simulator"``
 
         solver_params: dict
              Key-value pairs with solver parameters and their corresponding
@@ -82,8 +127,10 @@ class Verifier(object):
                 return MIP(solver_params=solver_params, solver=solver)
             case "sdp":
                 return SDP(solver_params=solver_params, solver=solver)
+            case "simulator":
+                return Simulator()
             case _:
-                raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
+                raise ValueError(f"Method must be 'mip', 'sdp' or 'simulator', got {method}")
 
     @staticmethod
     def _get_step_decomposer(method: str):
@@ -112,6 +159,8 @@ class Verifier(object):
                 return MIPStepDecomposer
             case "sdp":
                 return SDPStepDecomposer
+            case "simulator":
+                return SimulatorStepDecomposer
             case _:
                 raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
 
@@ -162,7 +211,7 @@ class Verifier(object):
 
         return LinearExpression.from_int(ndim, lb=lb, ub=ub)
 
-    def _register_var(self, var: LinearExpression):
+    def _register_var(self, var: LinearExpression, **kwargs):
         """
         Register the given :class:`LinearExpression` variable with
         the underlying canonicalizer and OBBT Handler instance.
@@ -173,11 +222,13 @@ class Verifier(object):
             A new :class:`LinearExpression` variable to register.
 
         """
-        self.canonicalizer.add_var(var)
+        self.canonicalizer.add_var(var, **kwargs)
         if self.use_obbt_handler:
             self.obbt_handler.add_var(var)
 
-    def add_iterate(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
+    def add_iterate(
+        self, ndim: int, lb: float = -np.inf, ub: float = np.inf, **kwargs
+    ) -> LinearExpression:
         """
         Create and register an iterate to the Problem instance. This
         method creates a new :class:`LinearExpression` of dimension `ndim`
@@ -208,10 +259,12 @@ class Verifier(object):
         """
 
         self.iterates.append(iterate := self._create_var(ndim, lb, ub))
-        self._register_var(iterate)
+        self._register_var(iterate, var_type="iterate", **kwargs)
         return iterate
 
-    def add_param(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
+    def add_param(
+        self, ndim: int, lb: float = -np.inf, ub: float = np.inf, **kwargs
+    ) -> LinearExpression:
         """
         Create and register a new parameter. This method creates a new
         :class:`LinearExpression` of dimension `ndim` and registers it with
@@ -244,7 +297,7 @@ class Verifier(object):
             length to the dimension of the expression.
         """
         var = self._create_var(ndim, lb, ub)
-        self._register_var(var)
+        self._register_var(var, var_type="param", **kwargs)
         return var
 
     def add_param_stack(self, param_list: List[LinearExpression]) -> LinearExpression:
@@ -422,11 +475,9 @@ class Verifier(object):
             result = self.obbt_handler.obbt(step.rhs, rhs_lb, rhs_ub)
             if result is not None:
                 rhs_lb, rhs_ub = result
-
         step.update_bounds(rhs_lb, rhs_ub)
 
         lhs = self.step_decomposer.process_step(step)
-
         self.steps.append(step)
 
         # Track lhs as iterate only if it's a leaf variable
@@ -584,7 +635,7 @@ class Verifier(object):
             case _:
                 raise ValueError(f"Unsupported norm order: {ord}. Use 1, 2, np.inf, or 'inf'.")
 
-    def solve(self, convex_hull_cuts: bool = False):
+    def solve(self, **kwargs) -> float:
         """
         Solve the optimization problem.
 
@@ -592,18 +643,13 @@ class Verifier(object):
         optimization problem using the recorded thresholding or
         activation steps.
 
-        Parameters
-        ----------
-        convex_hull_cuts: bool
-            a
-
         Returns
         -------
         float
             The objective value for the current solution, if the
             model was solved to optimality.
         """
-        return self.canonicalizer.solve_model(self.steps, convex_hull_cuts)
+        return self.canonicalizer.solve_model(**kwargs)
 
     def post_process(self, target_expr, ref_expr, residuals):
         """
@@ -677,6 +723,8 @@ class _StepProxy:
     the ``Verifier`` class. Users should not construct
     this class directly.
     """
+
+    USES_OBBT = {"relu", "satlin", "soft_threshold"}
 
     def __init__(self, verifier: Verifier):
         self._verifier = verifier

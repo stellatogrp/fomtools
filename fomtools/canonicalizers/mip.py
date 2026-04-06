@@ -5,7 +5,7 @@ import numpy as np
 from fomtools import LinearExpression
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
 from fomtools.constraint import Constraint
-from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold, Step
+from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 
 class MIP(Canonicalizer):
@@ -27,11 +27,12 @@ class MIP(Canonicalizer):
     """
 
     def __init__(self, solver_params=None, solver="gurobi"):
+        self.steps = []
         super(MIP, self).__init__(solver_params, solver)
         self._objective_spec = None
         self._solved_copy = None
 
-    def add_var(self, var: LinearExpression) -> None:
+    def add_var(self, var: LinearExpression, **kwargs) -> None:
         """
         Add a variable to the MIP instance. This method registers
         a new variable with the MIP program and attaches it to the
@@ -326,7 +327,7 @@ class MIP(Canonicalizer):
         solver.constraints_to_solver(constraints)
         solver.set_objective(expression=q, sense="maximize")
 
-    def solve_model(self, steps: Step, convex_hull_cuts: bool = False) -> float:
+    def solve_model(self, convex_hull_cuts: bool = False) -> float:
         """
         Optimize the underlying MIP problem.
 
@@ -353,7 +354,7 @@ class MIP(Canonicalizer):
         self._solved_copy = self.solver.copy()
 
         if convex_hull_cuts:
-            self._solved_copy.add_convex_hull_cuts(steps)
+            self._solved_copy.add_convex_hull_cuts(self.steps)
 
         self._apply_objective(self._solved_copy)
         self._solved_copy.optimize()
@@ -399,6 +400,7 @@ class MIP(Canonicalizer):
         -------
         None
         """
+        self.steps.append(step)
         self.add_constraint(step.lhs_mat @ step.lhs == step.rhs)
 
     def canonicalize_relu(self, step: Relu):
@@ -468,6 +470,7 @@ class MIP(Canonicalizer):
         """
         constraints = self._build_relu_constraints(step)
         self.add_constraints(constraints)
+        self.steps.append(step)
 
     def _build_relu_constraints(self, step: Relu) -> List[Constraint]:
         """
@@ -664,6 +667,7 @@ class MIP(Canonicalizer):
                     )
 
         self.add_constraints(constraints)
+        self.steps.append(step)
 
     def canonicalize_softthreshold(self, step: SoftThreshold):
         r"""
@@ -843,3 +847,4 @@ class MIP(Canonicalizer):
             i += 1
 
         self.add_constraints(constraints)
+        self.steps.append(step)

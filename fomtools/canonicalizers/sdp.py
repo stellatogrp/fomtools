@@ -105,7 +105,7 @@ class SDP(Canonicalizer):
         self.Aeq_matrices = new_Aeq_matrices
         self.Aineq_matrices = new_Aineq_matrices
 
-    def add_var(self, var: LinearExpression) -> None:
+    def add_var(self, var: LinearExpression, **kwargs) -> None:
         """
         Add a variable to the SDP with bound constraints.
 

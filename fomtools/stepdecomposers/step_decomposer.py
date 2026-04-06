@@ -84,6 +84,9 @@ class StepDecomposer:
         LinearExpression
             The step's left-hand side (output) variable.
         """
-        self.register_var(step.lhs)
+        # registered as "param" for MIP/SDP compatibility; Simulator silently drops
+        # this since lhs has no samples and is not referenced in step.rhs
+        self.register_var(step.lhs, var_type="param")
+
         self.canonicalizer.canonicalize(step)
         return step.lhs
