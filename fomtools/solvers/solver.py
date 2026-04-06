@@ -141,3 +141,21 @@ class Solver(object):
             Must be implemented by subclasses.
         """
         raise NotImplementedError
+
+    def copy(self) -> "Solver":
+        """
+        Create an independent copy of this solver.
+
+        The copy can be modified without affecting the original.
+
+        Returns
+        -------
+        Solver
+            A new solver instance with copied state.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses.
+        """
+        raise NotImplementedError

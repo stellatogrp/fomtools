@@ -1,3 +1,5 @@
+from abc import abstractmethod
+
 import numpy as np
 
 from fomtools.constraint import Constraint
@@ -37,7 +39,9 @@ class Canonicalizer:
             - ``"gurobi"``, ``"grb"``
         """
         self.solver_params = solver_params
+        self.solver_name = solver.lower()
         self.solver = self._get_solver(solver, solver_params)
+        self.obbt_handler = None
 
     @staticmethod
     def _get_solver(solver: str, solver_params: dict) -> Solver:
@@ -176,7 +180,9 @@ class Canonicalizer:
         """
         raise NotImplementedError
 
-    def set_two_norm_objective(self, expr_list: list[LinearExpression]) -> None:
+    def set_two_norm_objective(
+        self, expr_list: list[LinearExpression], lb_list=None, ub_list=None
+    ) -> None:
         """
         Set the objective to maximize the sum of squared two-norms.
 
@@ -188,6 +194,10 @@ class Canonicalizer:
         expr_list : list[LinearExpression]
             List of expressions whose squared norms are summed in the
             objective.
+        lb_list : list[np.ndarray], optional
+            Lower bounds for each expression (may be used by some backends).
+        ub_list : list[np.ndarray], optional
+            Upper bounds for each expression (may be used by some backends).
 
         Raises
         ------
@@ -197,3 +207,93 @@ class Canonicalizer:
         raise NotImplementedError(
             f"{self.__class__.__name__} does not support set_two_norm_objective"
         )
+
+    def set_one_norm_objective(self, expr_list: list[LinearExpression]) -> None:
+        """
+        Set the objective to maximize the one-norm (sum of absolute values).
+
+        Parameters
+        ----------
+        expr_list : list[LinearExpression]
+            List of expressions whose one-norms are summed in the objective.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses that support this objective type.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support set_one_norm_objective"
+        )
+
+    def set_infinity_norm_objective(
+        self, expr_list: list[LinearExpression], lb=None, ub=None
+    ) -> None:
+        """
+        Set the objective to maximize the infinity-norm (maximum absolute value).
+
+        Parameters
+        ----------
+        expr_list : list[LinearExpression]
+            List of expressions whose infinity-norm maximum is the objective.
+        lb : np.ndarray, optional
+            Lower bounds for the expressions (may be used by some backends).
+        ub : np.ndarray, optional
+            Upper bounds for the expressions (may be used by some backends).
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses that support this objective type.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support set_infinity_norm_objective"
+        )
+
+    def get_expression_bounds(
+        self, expr: LinearExpression
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Compute bounds for a linear expression.
+
+        Uses OBBT if available for tighter bounds, otherwise falls back
+        to interval bound propagation.
+
+        Parameters
+        ----------
+        expr : LinearExpression
+            The expression whose bounds are to be computed.
+
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray]
+            A tuple (lb, ub) of lower and upper bounds.
+        """
+        lb, ub = expr.bound_propagation()
+
+        if self.obbt_handler is not None:
+            result = self.obbt_handler.obbt(expr, lb, ub)
+            if result is not None:
+                lb, ub = result
+
+        return lb, ub
+
+    @abstractmethod
+    def copy(self) -> "Canonicalizer":
+        """
+        Create an independent copy of this canonicalizer.
+
+        The copy shares no mutable state with the original and can be
+        modified (e.g., adding objectives) without affecting the original.
+
+        Returns
+        -------
+        Canonicalizer
+            A new canonicalizer instance with copied state.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by subclasses.
+        """
+        raise NotImplementedError

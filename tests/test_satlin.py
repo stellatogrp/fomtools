@@ -43,7 +43,7 @@ def test_satlin(vp_param_2):
         print(k)
         z[k] = vp_param_2.step.satlin(z[k - 1] - t * (P @ z[k - 1] + q_param), l=l, u=u)
 
-        vp_param_2.set_infinity_norm_objective(z[k] - z[k - 1])
+        vp_param_2.set_objective_norm(z[k] - z[k - 1], np.inf)
         res = vp_param_2.solve()
         all_res.append(res)
 
@@ -111,7 +111,7 @@ def test_satlin_param(vp_param_2):
     for k in range(1, K + 1):
         print(k)
         z[k] = vp_param_2.step.satlin(z[k - 1] - t * (P @ z[k - 1] + q_param), l=l_param, u=u_param)
-        vp_param_2.set_infinity_norm_objective(z[k] - z[k - 1])
+        vp_param_2.set_objective_norm(z[k] - z[k - 1], np.inf)
         res = vp_param_2.solve()
         all_res.append(res)
 

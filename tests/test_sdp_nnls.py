@@ -19,7 +19,7 @@ def test_nnls_sdp(vp_sdp):
     z1 = vp_sdp.step.relu(z0 - t * A.T @ (A @ z0 - x))
     z2 = vp_sdp.step.relu(z1 - t * A.T @ (A @ z1 - x))
 
-    vp_sdp.set_two_norm_objective(z2 - z1)
+    vp_sdp.set_objective_norm(z2 - z1, 2)
 
     result = vp_sdp.solve()
     assert result > TEST_EPS
@@ -40,7 +40,7 @@ def test_sdp_direct_solver_calls():
     z1 = vp.step.relu(z0 - t * A.T @ (A @ z0 - x))
     z2 = vp.step.relu(z1 - t * A.T @ (A @ z1 - x))
 
-    vp.set_two_norm_objective(z2 - z1)
+    vp.set_objective_norm(z2 - z1, 2)
 
     # Verify direct solver calls still work
     cvxpy_result = vp.canonicalizer.solve_via_cvxpy()
@@ -58,12 +58,16 @@ def test_sdp_direct_solver_calls():
         raise
 
 
-def test_sdp_infinity_norm_not_supported(vp_sdp):
-    """Test that infinity-norm objective raises NotImplementedError for SDP."""
+def test_sdp_infinity_norm_supported(vp_sdp):
+    """Test that infinity-norm objective is now supported for SDP."""
     x = vp_sdp.add_param(2, lb=0, ub=1)
 
-    with pytest.raises(NotImplementedError, match="Infinity-norm objective is not supported"):
-        vp_sdp.set_infinity_norm_objective([x])
+    # Should not raise - infinity-norm is now implemented
+    vp_sdp.set_objective_norm([x], np.inf)
+    result = vp_sdp.solve()
+
+    # SDP provides an upper bound, should be >= 1 (the max abs bound)
+    assert result >= 1.0 - TEST_EPS, f"Expected >= 1.0, got {result}"
 
 
 def test_sdp_update_bounds(vp_sdp):
