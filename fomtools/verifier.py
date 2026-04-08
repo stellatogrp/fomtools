@@ -2,6 +2,7 @@ import logging
 from typing import List, Sequence
 
 import numpy as np
+import scipy.sparse as spa
 
 from fomtools.canonicalizers.mip import MIP
 from fomtools.canonicalizers.obbt_handler import OBBTHandler
@@ -302,25 +303,55 @@ class Verifier(object):
 
     def add_param_stack(self, param_list: List[LinearExpression]) -> LinearExpression:
         """
-        Add a stack of parameters to the Problem instance.
+        Stack multiple parameters into a single composite LinearExpression.
+
+        Unlike ``add_param``, this does not create a new leaf variable. Instead,
+        it builds a composite expression that references the original parameters
+        via sparse block-selection matrices. This preserves shared identity: if
+        the same parameter appears in multiple stacks, the solver sees one
+        variable, not independent copies.
+
+        The constituent parameters must already be registered (via ``add_param``).
 
         Parameters
         ----------
         param_list: list[LinearExpression]
-            List of :class:`LinearExpression` parameters.
+            List of :class:`LinearExpression` parameters to stack.
 
         Returns
         -------
-
+        LinearExpression
+            A composite expression of dimension ``sum(p.ndim for p in param_list)``
+            whose decomposition references the leaves of the input parameters.
         """
-        dim = 0
-        bounds = [[], []]
+        total_dim = sum(p.ndim for p in param_list)
+        decomposition_dict = {}
+        const = np.zeros(total_dim)
+        offset = 0
 
         for p in param_list:
-            dim += p.ndim
-            tuple(map(list.extend, bounds, (p.lb, p.ub)))
+            # Sparse selection matrix: total_dim x p.ndim
+            # Identity block at rows [offset : offset + p.ndim]
+            rows = np.arange(offset, offset + p.ndim)
+            cols = np.arange(p.ndim)
+            data = np.ones(p.ndim)
+            sel = spa.csc_matrix((data, (rows, cols)), shape=(total_dim, p.ndim))
 
-        return self.add_param(dim, lb=bounds[0], ub=bounds[1])
+            # Compose selection with p's decomposition dict
+            for leaf, coeff in p.decomposition_dict.items():
+                composed = sel @ coeff
+                if leaf in decomposition_dict:
+                    decomposition_dict[leaf] = decomposition_dict[leaf] + composed
+                else:
+                    decomposition_dict[leaf] = composed
+
+            const[offset:offset + p.ndim] = p.const
+            offset += p.ndim
+
+        result = LinearExpression(decomposition_dict=decomposition_dict, const=const)
+        # Override __init__'s list-based lb/ub with proper numpy arrays
+        result.lb, result.ub = result.bound_propagation()
+        return result
 
     def add_constraint(self, constr: Constraint):
         """

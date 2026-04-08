@@ -601,16 +601,6 @@ class MIP(Canonicalizer):
         constraints = []
 
         for l, u, lb, ub, lhs, rhs in zip(step.l, step.u, step.lb, step.ub, step.lhs, step.rhs):
-            # If the lower and upper saturation bounds are LinearExpression objects,
-            # then the lower and upper bounds of the LinearExpression will define
-            # the respective lower and upper saturation bounds
-            # These objects have already been registered with the solver
-            # so no further action is needed
-            try:
-                float(l), float(u)
-            except TypeError:
-                return
-
             if lb >= u:
                 constraints.append(lhs == u)
             elif ub <= l:
