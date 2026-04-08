@@ -80,9 +80,12 @@ class SaturatedLinear(Step):
         """
         try:
             l_bound = self.l.lb if bound == "lb" else self.l.ub
-            u_bound = self.u.lb if bound == "lb" else self.u.ub
         except AttributeError:
             l_bound = self.l
+
+        try:
+            u_bound = self.u.lb if bound == "lb" else self.u.ub
+        except AttributeError:
             u_bound = self.u
         return np.minimum(np.maximum(x, l_bound), u_bound)
 

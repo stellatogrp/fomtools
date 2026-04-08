@@ -1,3 +1,4 @@
+from fomtools.linearexpression import LinearExpression
 from fomtools.stepdecomposers.step_decomposer import StepDecomposer
 from fomtools.steps import SaturatedLinear
 
@@ -19,7 +20,7 @@ class MIPStepDecomposer(StepDecomposer):
         satlin(x, l, u) = relu(x - l) - relu(x - u) + l
     """
 
-    def decompose_saturatedlinear(self, step: SaturatedLinear):
+    def decompose_saturatedlinear(self, step: SaturatedLinear) -> LinearExpression:
         """
         Decompose saturated linear, or fall through to the MIP canonicalizer.
 
@@ -37,14 +38,7 @@ class MIPStepDecomposer(StepDecomposer):
         LinearExpression
             The output expression.
         """
-        has_param = False
-        for bound in (step.l, step.u):
-            try:
-                bound.lb
-                has_param = True
-                break
-            except AttributeError:
-                continue
+        has_param = hasattr(step.l, "lb") or hasattr(step.u, "lb")
 
         if not has_param:
             return self._process_primitive(step)
