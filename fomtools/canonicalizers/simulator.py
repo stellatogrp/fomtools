@@ -27,6 +27,7 @@ if typing.TYPE_CHECKING:
     from fomtools import Step
 
 from contextlib import nullcontext
+from typing import Any
 
 
 # todo: what to do if samples is missing from a leaf expression
@@ -512,6 +513,64 @@ class Simulator(Canonicalizer):
             return (coeff @ x_batch.T).T
         return x_batch @ coeff.T
 
+    def _assemble_linear_combination(
+        self,
+        z_stacked: cp.ndarray,
+        p_stacked: cp.ndarray,
+        coeffs: dict[str, list[tuple[LinearExpression, cp.ndarray | csp.csr_matrix]]],
+        simulation_data: dict[str, Any],
+    ) -> cp.ndarray:
+        """
+        Assemble a batched linear combination of state and parameter slices
+        using precomputed coefficients.
+
+        Parameters
+        ----------
+        z_stacked: cp.ndarray
+            Concatenation of all iterate variables, with shape. Individual iterate
+            values are retrieved using slices stored in ``simulation_data["z_slices"]``.
+
+        p_stacked: cp.ndarray
+            Concatenation of all parameter variables. Individual parameter values
+            are retrieved using slices stored in ``simulation_data["p_slices"]``.
+
+        coeffs: dict[str, list[tuple[LinearExpression, cp.ndarray | csp.csr_matrix]]]
+            A dictionary mapping term categories (e.g., iterate or parameter
+            terms) to lists of tuples (leaf, coeff_jax), where leaf identifies
+            the variable and coeff_cp is the corresponding coefficient
+            represented as CuPy arrays or cupyx CSR matrices.
+
+        simulation_data: dict[str, Any]
+             A dictionary containing the concatenated simulation inputs and their
+            corresponding slice mappings, where:
+                - ``z0`` maps to a CuPy array containing the concatenation of all
+                    iterate initial values.
+                - ``p_samples`` maps to a CuPy array containing the concatenation (along axis 1)
+                    of all parameter sample arrays.
+                - ``z_slices`` maps to a dictionary mapping each iterate identifier (leaf)
+                    to a slice indicating its location within z0.
+                - ``p_slices`` maps to a dictionary mapping each parameter identifier (leaf) to a
+                    slice indicating its location within the second dimension of q_samples.”
+        Returns
+        -------
+        cp.ndarray
+            The value of the linear expression evaluated at the provided
+            iterates and parameters, after applying a ReLU activation.
+
+        """
+        N = z_stacked.shape[0]
+        result = cp.tile(coeffs["const"], (N, 1))
+
+        for leaf, coeff in coeffs["iterate_coeffs"]:
+            z_slice = z_stacked[:, simulation_data["z_slices"][leaf]]
+            result += self._matvec_batch(coeff, z_slice)
+
+        for leaf, coeff in coeffs["param_coeffs"]:
+            p_slice = p_stacked[:, simulation_data["p_slices"][leaf]]
+            result += self._matvec_batch(coeff, p_slice)
+
+        return result
+
     def canonicalize_relu(self, step: "Step") -> None:
         """
         Registers the provided ReLU step for CuPy simulation.
@@ -538,11 +597,6 @@ class Simulator(Canonicalizer):
 
         """
         coeffs = self._linear_expr_to_cupy(step.rhs)
-
-        iterate_coeffs = coeffs["iterate_coeffs"]
-        param_coeffs = coeffs["param_coeffs"]
-        const = coeffs["const"]
-
         simulation_data = self._prepare_simulation_data()
 
         def update_fn(z_stacked: cp.ndarray, p_stacked: cp.ndarray) -> cp.ndarray:
@@ -571,17 +625,9 @@ class Simulator(Canonicalizer):
                 The value of the linear expression evaluated at the provided
                 iterates and parameters, after applying a ReLU activation.
             """
-            N = z_stacked.shape[0]
-            result = cp.tile(const, (N, 1))
-
-            for leaf, coeff in iterate_coeffs:
-                z_slice = z_stacked[:, simulation_data["z_slices"][leaf]]
-                result += self._matvec_batch(coeff, z_slice)
-
-            for leaf, coeff in param_coeffs:
-                p_slice = p_stacked[:, simulation_data["p_slices"][leaf]]
-                result += self._matvec_batch(coeff, p_slice)
-
+            result = self._assemble_linear_combination(
+                z_stacked, p_stacked, coeffs, simulation_data
+            )
             return cp.maximum(result, 0)
 
         self.step_function = update_fn
