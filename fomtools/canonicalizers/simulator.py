@@ -5,6 +5,7 @@ import warnings
 try:
     import cupy as cp
     import cupyx.scipy.sparse as csp
+    import cupyx.scipy.sparse.linalg as cpspla
 
     # Force CUDA initialization to happen NOW so we catch the error here
     cp.cuda.runtime.getDeviceCount()
@@ -13,6 +14,7 @@ try:
 except ImportError:
     import numpy as cp  # fallback to numpy
     import scipy.sparse as csp
+    import scipy.sparse.linalg as cpspla
 
     CUDA_AVAILABLE = False
 
@@ -551,11 +553,12 @@ class Simulator(Canonicalizer):
                     to a slice indicating its location within z0.
                 - ``p_slices`` maps to a dictionary mapping each parameter identifier (leaf) to a
                     slice indicating its location within the second dimension of q_samples.”
+
         Returns
         -------
         cp.ndarray
             The value of the linear expression evaluated at the provided
-            iterates and parameters, after applying a ReLU activation.
+            iterates and parameters.
 
         """
         N = z_stacked.shape[0]
@@ -706,9 +709,9 @@ class Simulator(Canonicalizer):
         Parameters
         ----------
         step: Step
-            A step object containing the soft-threshold operation. The
-            ``step.rhs`` attribute holds the LinearExpression representing
-            the input, and ``step.lambd`` holds the regularization strength.
+            A step object that represents a saturated linear operation.
+            The ``step.l`` attribute stores the lower saturation bound, while
+            ``step.u`` stores the upper saturation bound.
 
         Returns
         -------
@@ -716,8 +719,8 @@ class Simulator(Canonicalizer):
         """
         coeffs = self._linear_expr_to_cupy(step.rhs)
         simulation_data = self._prepare_simulation_data()
-        l = step.l
-        u = step.u
+        l = step.l.lb if hasattr(step.l, "lb") else step.l
+        u = step.u.ub if hasattr(step.u, "ub") else step.u
 
         def update_fn(z_stacked: cp.ndarray, p_stacked: cp.ndarray) -> cp.ndarray:
             """
@@ -758,7 +761,7 @@ class Simulator(Canonicalizer):
         are provided as concatenated vectors. Slice mappings are used internally
         to extract the relevant components for each variable.
 
-        The constructed function is stored in ``self.step_functions`` and can be
+        The constructed function is stored in ``self.step_function`` and can be
         used during simulation to evaluate the affine step.
 
         Parameters
@@ -777,8 +780,12 @@ class Simulator(Canonicalizer):
         coeffs = self._linear_expr_to_cupy(step.rhs)
         simulation_data = self._prepare_simulation_data()
 
-        # precompute inverse to avoid a solve at every iteration
-        lhs_inv = cp.linalg.solve(lhs, cp.eye(lhs.shape[0]))
+        if csp.issparse(lhs):
+            lu = cpspla.splu(lhs)
+            solve = lambda rhs: cp.array([lu.solve(r) for r in rhs])
+        else:
+            L_inv = cp.linalg.solve(lhs, cp.eye(lhs.shape[0]))
+            solve = lambda rhs: self._matvec_batch(L_inv, rhs)
 
         def update_fn(z_stacked: cp.ndarray, p_stacked: cp.ndarray) -> cp.ndarray:
             """
@@ -803,7 +810,7 @@ class Simulator(Canonicalizer):
             result = self._assemble_linear_combination(
                 z_stacked, p_stacked, coeffs, simulation_data
             )
-            return self._matvec_batch(lhs_inv, result)
+            return solve(result)
 
         self.step_function = update_fn
 

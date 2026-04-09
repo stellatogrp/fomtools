@@ -3,7 +3,7 @@ import numpy as np
 from fomtools.verifier import Verifier
 
 
-def test_sdp_simulator():
+def test_soft_threshold_simulator():
     """
     Tests that the simulator executes soft-threshold steps without errors.
 

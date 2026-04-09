@@ -1,4 +1,5 @@
 from functools import cached_property
+from typing import Callable
 
 import numpy as np
 import scipy.sparse as spa
@@ -67,6 +68,6 @@ class Affine(Step):
         )
 
     @cached_property
-    def lhs_mat_factorization(self) -> np.matrix:
+    def lhs_mat_factorization(self) -> Callable:
         """Return a matrix factorization of self.lhs_mat."""
         return spa.linalg.factorized(self.lhs_mat)
