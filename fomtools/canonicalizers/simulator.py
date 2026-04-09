@@ -782,10 +782,10 @@ class Simulator(Canonicalizer):
 
         if csp.issparse(lhs):
             lu = cpspla.splu(lhs)
-            solve = lambda rhs: cp.array([lu.solve(r) for r in rhs])
+            def solve(rhs): return cp.array([lu.solve(r) for r in rhs])
         else:
             L_inv = cp.linalg.solve(lhs, cp.eye(lhs.shape[0]))
-            solve = lambda rhs: self._matvec_batch(L_inv, rhs)
+            def solve(rhs): return self._matvec_batch(L_inv, rhs)
 
         def update_fn(z_stacked: cp.ndarray, p_stacked: cp.ndarray) -> cp.ndarray:
             """
