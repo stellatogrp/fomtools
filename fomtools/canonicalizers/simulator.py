@@ -552,7 +552,7 @@ class Simulator(Canonicalizer):
                 - ``z_slices`` maps to a dictionary mapping each iterate identifier (leaf)
                     to a slice indicating its location within z0.
                 - ``p_slices`` maps to a dictionary mapping each parameter identifier (leaf) to a
-                    slice indicating its location within the second dimension of q_samples.”
+                    slice indicating its location within the second dimension of q_samples.
 
         Returns
         -------
@@ -694,7 +694,7 @@ class Simulator(Canonicalizer):
 
     def canonicalize_saturatedlinear(self, step: "Step") -> None:
         """
-        Registers the provided soft-threshold step for CuPy simulation.
+        Registers the provided saturated linear step for CuPy simulation.
 
         This method converts the linear expression defining the input to the
         saturated linear operation into a CuPy-evaluable form and constructs a
@@ -704,7 +704,7 @@ class Simulator(Canonicalizer):
         to extract the relevant components for each variable.
 
         The constructed function is stored in ``self.step_function`` and can be
-        used during simulation to evaluate the soft-threshold update.
+        used during simulation to evaluate the saturated linear update.
 
         Parameters
         ----------
