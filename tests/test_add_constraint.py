@@ -125,14 +125,13 @@ def test_skip_obbt_affine_step(vp):
     # Create a simple invertible matrix
     M = np.eye(n) + 0.1 * np.ones((n, n))
     lhs = spa.csc_matrix(M)
-    lhs_factored = spa.linalg.factorized(lhs)
 
     # Create parameter and iterate
     p = vp.add_param(n, lb=1, ub=2)
     z0 = vp.add_iterate(n, lb=0, ub=0)
 
     # Apply implicit_linear (Affine) step - this should skip OBBT
-    z1 = vp.step.implicit_linear(z0 + p, lhs_mat=lhs.todense(), lhs_mat_factorization=lhs_factored)
+    z1 = vp.step.implicit_linear(z0 + p, lhs_mat=lhs.todense())
 
     # Add another step
     z2 = vp.step.relu(z1)

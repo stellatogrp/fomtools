@@ -1,4 +1,7 @@
+from functools import cached_property
+
 import numpy as np
+import scipy.sparse as spa
 
 from fomtools.linearexpression import LinearExpression
 from fomtools.steps.step import Step
@@ -30,27 +33,19 @@ class Affine(Step):
         are relaxed to take continuous values.
     lhs_mat: np.matrix
         Coefficient matrix on the left-hand side of the operator equation.
-    lhs_mat_factorization: np.matrix
-        ...
     """
 
     skip_obbt: bool = True  # Bounds computed analytically via linear solve
 
-    # todo: complete the docstring
-    # # TODO: Can't we retrive this from the decomposition dict of the lhs linearexpression?
-    # TODO: the code for when lhs_mat_factorization is missing is not implemented yet, do it
-
     def __init__(
         self,
         rhs: LinearExpression,
-        lhs_mat,
-        lhs_mat_factorization: np.matrix,
+        lhs_mat: np.matrix,
         relax_binary_vars: bool = False,
     ):
         super().__init__(rhs, relax_binary_vars)
         self.lhs_mat = lhs_mat
-        self.lhs_mat_factorization = lhs_mat_factorization
-        self.lb, self.ub = self.lhs_mat_inverse().bound_propagation()
+        self.lb, self.ub = self.lhs_mat_inverse.bound_propagation()
 
     def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
         """
@@ -59,6 +54,7 @@ class Affine(Step):
         """
         self.lhs.update_bounds(lb=lb, ub=ub)
 
+    @cached_property
     def lhs_mat_inverse(self) -> LinearExpression:
         """
         Return a `LinearExpression` formed by applying $A^{-1}$ (with $A=$ `self.lhs_mat`) to each
@@ -69,3 +65,8 @@ class Affine(Step):
                 for k, v in self.rhs.decomposition_dict.items()
             },
         )
+
+    @cached_property
+    def lhs_mat_factorization(self) -> np.matrix:
+        """Return a matrix factorization of self.lhs_mat."""
+        return spa.linalg.factorized(self.lhs_mat)
