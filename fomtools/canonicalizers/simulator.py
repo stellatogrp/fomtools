@@ -747,6 +747,66 @@ class Simulator(Canonicalizer):
 
         self.step_function = update_fn
 
+    def canonicalize_affine(self, step: "Step") -> None:
+        """
+        Registers the provided affine step for CuPy simulation.
+
+        This method converts the linear expression defining the input to the
+        affine operation into a CuPy-evaluable form and constructs a
+        corresponding update function. The update function has signature
+        ``f(z_stacked, p_stacked)`` where the iterate and parameter variables
+        are provided as concatenated vectors. Slice mappings are used internally
+        to extract the relevant components for each variable.
+
+        The constructed function is stored in ``self.step_functions`` and can be
+        used during simulation to evaluate the affine step.
+
+        Parameters
+        ----------
+        step: Step
+            A step object that represents the affine transformation. The `step.rhs`
+            attribute contains the `LinearExpression` defining the input, while
+            `step.lhs_mat` stores the matrix on the left-hand side of the
+            linear operation.
+
+        Returns
+        -------
+        None
+        """
+        lhs = self._sparse_to_cp(step.lhs_mat)
+        coeffs = self._linear_expr_to_cupy(step.rhs)
+        simulation_data = self._prepare_simulation_data()
+
+        # precompute inverse to avoid a solve at every iteration
+        lhs_inv = cp.linalg.solve(lhs, cp.eye(lhs.shape[0]))
+
+        def update_fn(z_stacked: cp.ndarray, p_stacked: cp.ndarray) -> cp.ndarray:
+            """
+            Evaluate the affine update w = L_z @ v + L_p @ x.
+
+            Parameters
+            ----------
+            z_stacked: cp.ndarray
+                Concatenation of all iterate variables. Individual iterate values
+                are retrieved using slices stored in ``simulation_data["z_slices"]``.
+
+            p_stacked: cp.ndarray
+                Concatenation of all parameter variables. Individual parameter values
+                are retrieved using slices stored in ``simulation_data["p_slices"]``.
+
+            Returns
+            -------
+            cp.ndarray
+                The value of the linear expression evaluated at the provided iterates
+                and parameters.
+            """
+            result = self._assemble_linear_combination(
+                z_stacked, p_stacked, coeffs, simulation_data
+            )
+            return self._matvec_batch(lhs_inv, result)
+
+        self.step_function = update_fn
+
     def solve_model(
         self, K: int, delta: float = 0.05, epsilon: float = 0.0, device: str = None
     ) -> cp.ndarray:
