@@ -19,12 +19,6 @@ class Step:
     lhs : LinearExpression
         Left-hand side (output) linear expression. Bounds on the output
         are stored in ``lhs.lb`` and ``lhs.ub``.
-    lb : np.ndarray
-        Lower bounds on the INPUT (rhs). These are the bounds before
-        the step function is applied.
-    ub : np.ndarray
-        Upper bounds on the INPUT (rhs). These are the bounds before
-        the step function is applied.
     relax_binary_vars : bool
         If true, binary decision variables associated with the operator
         are relaxed to take continuous values.
@@ -47,7 +41,6 @@ class Step:
 
     def __init__(self, rhs: LinearExpression, relax_binary_vars: bool = False):
         self.rhs = rhs
-        self.lb, self.ub = self.rhs.bound_propagation()
         self.relax_binary_vars = relax_binary_vars
 
     @cached_property

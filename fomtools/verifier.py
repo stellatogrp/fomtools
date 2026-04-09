@@ -470,12 +470,10 @@ class Verifier(object):
         """
         step = step_cls(rhs=rhs, relax_binary_vars=relax_binary_vars, **kwargs)
 
-        rhs_lb, rhs_ub = step.lb, step.ub
         if self.use_obbt_handler and not step.skip_obbt:
-            result = self.obbt_handler.obbt(step.rhs, rhs_lb, rhs_ub)
+            result = self.obbt_handler.obbt(step.rhs, step.lb, step.ub)
             if result is not None:
-                rhs_lb, rhs_ub = result
-        step.update_bounds(rhs_lb, rhs_ub)
+                step.update_bounds(*result)
 
         lhs = self.step_decomposer.process_step(step)
         self.steps.append(step)

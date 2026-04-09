@@ -46,7 +46,10 @@ class Affine(Step):
     ):
         super().__init__(rhs, relax_binary_vars)
         self.lhs_mat = lhs_mat
-        self.lb, self.ub = self.lhs_mat_inverse.bound_propagation()
+        if not spa.issparse(self.lhs_mat):
+            self.update_bounds(
+                self.lb, self.ub
+            )  # if its the lhs matrix is sparse, defer this to canonicalizer
 
     def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
         """
@@ -66,6 +69,21 @@ class Affine(Step):
                 for k, v in self.rhs.decomposition_dict.items()
             },
         )
+
+    @cached_property
+    def lb(self):
+        """Lower bound associated with the transformed values."""
+        return self.bounds[0]
+
+    @cached_property
+    def ub(self):
+        """Upper bound associated with the transformed values."""
+        return self.bounds[1]
+
+    @cached_property
+    def bounds(self):
+        """Tuple of lower and upper bounds associated with the transformed values."""
+        return self.lhs_mat_inverse.bound_propagation()
 
     @cached_property
     def lhs_mat_factorization(self) -> Callable:
