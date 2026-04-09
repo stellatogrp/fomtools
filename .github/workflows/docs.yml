@@ -39,7 +39,22 @@ jobs:
       - name: List dependencies
         run: pip freeze
 
+      - shell: bash
+        id: write-license
+        name: Write License
+        env:
+          LICENSE: ${{ secrets.GUROBI_LICENSE }}
+        run: |
+          echo "$LICENSE" > $PWD/gurobi.lic
+
+      - name: Check Gurobi License
+        env:
+          GRB_LICENSE_FILE: ${{ github.workspace }}/gurobi.lic
+        run: python -c "import gurobipy; gurobipy.Model()"
+
       - name: Export marimo notebooks
+        env:
+          GRB_LICENSE_FILE: ${{ github.workspace }}/gurobi.lic
         run: |
           for file in docs/tutorials/*.py; do
             marimo export html "$file" -o "${file%.py}.html"
