@@ -1,6 +1,9 @@
 from typing import Callable
 
+import numpy as np
+
 from fomtools.linearexpression import LinearExpression
+from fomtools.steps import Relu, SaturatedLinear
 from fomtools.steps.step import Step
 
 
@@ -65,6 +68,61 @@ class StepDecomposer:
             return self._process_primitive(step)
 
         return decomposer(step)
+
+    def _decompose_saturatedlinear_to_relus(
+        self, step: SaturatedLinear
+    ) -> LinearExpression:
+        """
+        Decompose saturated linear into ReLU operations.
+
+        Uses the identity:
+            satlin(x, l, u) = relu(x - l) - relu(x - u) + l
+
+        This works regardless of whether l and u are constant arrays or
+        LinearExpression parameters — the LinearExpression arithmetic
+        handles both types transparently. The only type-dependent part
+        is extracting bounds for ReLU input interval propagation.
+
+        Parameters
+        ----------
+        step : SaturatedLinear
+            The saturated linear step to decompose.
+
+        Returns
+        -------
+        LinearExpression
+            A composite expression representing the saturated linear
+            output as relu(x - l) - relu(x - u) + l.
+        """
+        x_lb, x_ub = step.lb, step.ub
+
+        # Extract bounds for l and u. bound_propagation() returns numpy arrays
+        # for any LinearExpression (leaf or composite). Constants don't have
+        # this method, so we fall back to using the value directly.
+        try:
+            l_lb, l_ub = step.l.bound_propagation()
+        except AttributeError:
+            l_lb = l_ub = np.atleast_1d(step.l)
+
+        try:
+            u_lb, u_ub = step.u.bound_propagation()
+        except AttributeError:
+            u_lb = u_ub = np.atleast_1d(step.u)
+
+        # Create ReLU steps using step.l/step.u directly (type-agnostic arithmetic)
+        relu_lower = Relu(rhs=step.rhs - step.l)
+        relu_upper = Relu(rhs=step.rhs - step.u)
+
+        # Bounds on (rhs - l): [x_lb - l_ub, x_ub - l_lb]
+        relu_lower.update_bounds(x_lb - l_ub, x_ub - l_lb)
+        # Bounds on (rhs - u): [x_lb - u_ub, x_ub - u_lb]
+        relu_upper.update_bounds(x_lb - u_ub, x_ub - u_lb)
+
+        lhs_lower = self.process_step(relu_lower)
+        lhs_upper = self.process_step(relu_upper)
+
+        # satlin(x, l, u) = relu(x - l) - relu(x - u) + l
+        return lhs_lower - lhs_upper + step.l
 
     def _process_primitive(self, step: Step) -> LinearExpression:
         """
