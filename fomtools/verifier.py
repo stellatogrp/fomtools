@@ -246,9 +246,9 @@ class Verifier(object):
         -------
         None
         """
-        # When delta_sum > 0 (residuals are positive / solver did not maximise), both
-        # np.maximum / np.minimum collapse to the original bounds, so this becomes a
-        # deliberate no-op — bound tightening is skipped rather than bounds being loosened.
+        # When delta_sum >= 0, np.maximum / np.minimum collapse back to the original
+        # bounds — a deliberate no-op to avoid loosening. Bounds only tighten when
+        # delta_sum < 0, i.e., solve_model returns a negative residual (maximisation).
         delta_sum = np.sum(self.residuals)
         _lb = np.maximum(ref_expr.lb - delta_sum, ref_expr.lb)
         _ub = np.minimum(ref_expr.ub + delta_sum, ref_expr.ub)
