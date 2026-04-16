@@ -40,21 +40,15 @@ jobs:
 
       - shell: bash
         id: write-license
-        name: Write License
         env:
-          LICENSE: ${{ secrets.GUROBI_LICENSE }}
+          LICENSE: ${{ secrets.GUROBI_LICENSE   }}
         run: |
           echo "$LICENSE" > $PWD/gurobi.lic
+          echo "grb_license_file=$PWD/gurobi.lic" >> $GITHUB_OUTPUT
 
       - name: Install the project
         run: uv sync --extra dev --extra docs
 
-      - name: Check Gurobi License
-        env:
-          GRB_LICENSE_FILE: ${{ github.workspace }}/gurobi.lic
-        run: uv run python -c "import gurobipy; gurobipy.Model()"
-
       - name: Run tests
-        env:
-          GRB_LICENSE_FILE: ${{ github.workspace }}/gurobi.lic
+        # For example, using `pytest`
         run: uv run pytest tests
