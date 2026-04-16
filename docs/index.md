@@ -41,11 +41,8 @@ for k in range(1, K + 1):
     vp.set_infinity_norm_objective(z[k] - z[k - 1])
 
     # solve the resulting verification problem
-    res = vp.solve(huchette_cuts=True)
+    res = vp.solve(huchette_cuts=True, post_process=True)
     results.append(res)
-
-    # post-process results (e.g., tightening bounds, logging)
-    vp.post_process(z[k], z[0], results)
 
 print(f"opt q_param at last K: {vp.get_solution_value(q_param)}")
 print(f"vp_gurobi residuals: {results}")

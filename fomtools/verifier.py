@@ -246,6 +246,9 @@ class Verifier(object):
         -------
         None
         """
+        # When delta_sum > 0 (residuals are positive / solver did not maximise), both
+        # np.maximum / np.minimum collapse to the original bounds, so this becomes a
+        # deliberate no-op — bound tightening is skipped rather than bounds being loosened.
         delta_sum = np.sum(self.residuals)
         _lb = np.maximum(ref_expr.lb - delta_sum, ref_expr.lb)
         _ub = np.minimum(ref_expr.ub + delta_sum, ref_expr.ub)
@@ -707,8 +710,19 @@ class Verifier(object):
         float
             The objective value for the current solution, if the
             model was solved to optimality.
-        """
 
+        Note
+        -----
+            When `post_process=True`, this function assumes a standard setup in which
+            the target expression is derived from the last iterate (``iterates[-1]``)
+            and the reference expression is derived from the first iterate (``iterates[0]``).
+            These values are hardcoded and cannot be overridden. Callers with a
+            non-standard setup (e.g., comparing two intermediate iterates, or supplying
+            externally computed expressions) should set `post_process=False` and perform
+            post-processing manually.
+        """
+        # reset residual values
+        self.residuals = []
         self.residuals.append(self.canonicalizer.solve_model(**kwargs))
         if post_process:
             self._post_process(target_expr=self.iterates[-1], ref_expr=self.iterates[0])
