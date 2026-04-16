@@ -70,9 +70,13 @@ class Affine(Step):
         """
         if spa.issparse(self.lhs_mat):
             lu = spa.linalg.splu(self.lhs_mat.tocsc())
-            solve = lambda b: lu.solve(np.asarray(b.todense()))
+
+            def solve(b):
+                return lu.solve(np.asarray(b.todense()))
         else:
-            solve = lambda b: np.asarray(np.linalg.solve(self.lhs_mat, b.todense()))
+
+            def solve(b):
+                return np.asarray(np.linalg.solve(self.lhs_mat, b.todense()))
 
         return LinearExpression(
             decomposition_dict={
