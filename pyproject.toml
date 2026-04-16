@@ -51,6 +51,7 @@ docs = [
        "mkdocs-marimo",
        "mkdocs-material",
        "pymdown-extensions",
+       "networkx",
        "pepit",
 ]
 
