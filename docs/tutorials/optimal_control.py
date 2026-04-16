@@ -77,7 +77,7 @@ def _(np, spa):
             ]) # B_dym.shape = (n_s, n_u)
     (n_s, n_u) = B_dym.shape
 
-    T = 5        # finite horizon t=1,2,...,T
+    T = 3        # finite horizon t=1,2,...,T
 
     Q = spa.diags([0., 0., 10., 10., 10., 10., 0., 0., 0., 5., 5., 5.]) # state cost matrix Q_t = Q_T = Q
     R = 0.1*spa.eye(n_u) # input cost matrix
@@ -107,7 +107,7 @@ def _():
     # ADMM parameters
     sigma = 1e-4
     rho = 1.  # 0.1, 1, 10
-    K = 5
+    K = 3
     return K, rho, sigma
 
 
@@ -405,7 +405,7 @@ def _(K, P, np, spa):
         _problem.set_initial_condition((_u0 - _xs)**2 <= 1.0)
 
         _problem.set_performance_metric((_x[_k_PEP] - _x[_k_PEP-1])**2 + (_u[_k_PEP] - _u[_k_PEP-1])**2)
-        _res = _problem.solve(solver='mosek')
+        _res = _problem.solve(solver='SCS')
         all_residuals_PEP.append(_res) # account for L-infinity norm of VP
     return (all_residuals_PEP,)
 

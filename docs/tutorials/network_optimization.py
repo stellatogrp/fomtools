@@ -503,7 +503,7 @@ def _(K, L, eta):
             _x[_k], _, _ = proximal_step(_x[_k-1] - eta * _linear.T.gradient(_u[_k-1]), _f, eta)
             _u[_k], _, _ = proximal_step(_u[_k-1] + eta * _linear.gradient(2*_x[_k] - _x[_k-1]), _g, eta)
         _problem.set_performance_metric((_x[_k_PEP] - _x[_k_PEP-1])**2 + (_u[_k_PEP] - _u[_k_PEP-1])**2)
-        _res = _problem.solve(solver='mosek')
+        _res = _problem.solve(solver='SCS')
         all_residuals_PEP.append(_res) # account for L-infinity norm of VP
     return (
         ConvexFunction,
