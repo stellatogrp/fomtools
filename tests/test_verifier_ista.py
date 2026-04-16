@@ -1,5 +1,6 @@
 import numpy as np
 
+from tests.conftest import TEST_EPS
 from tests.cvxpy import ista
 
 np.set_printoptions(precision=5)  # Print few decimal places
@@ -32,7 +33,7 @@ def test_ista(vp_theory):
         xk = soft_threshold(At @ xk + Bt @ b, t * lambd)
 
     print(xk)
-    assert np.linalg.norm(x - xk) <= 1e-7
+    assert np.linalg.norm(x - xk) <= TEST_EPS
     b_offset = 1.0
     b_param = vp_theory.add_param(m, lb=b - b_offset, ub=b + b_offset)
 
@@ -51,8 +52,8 @@ def test_ista(vp_theory):
         z[k] = vp_theory.step.soft_threshold(At @ z[k - 1] + Bt @ b_param, lambd=lambda_t)
         vp_theory.theory_bound(k, z[k], z[k - 1])
 
-        vp_theory.set_infinity_norm_objective(z[k] - z[k - 1])
-        res = vp_theory.solve(huchette_cuts=True)
+        vp_theory.set_objective_norm(z[k] - z[k - 1], np.inf)
+        res = vp_theory.solve(convex_hull_cuts=True)
         all_res.append(res)
 
     print(f"opt b_param at last K: {vp_theory.get_solution_value(b_param)}")
@@ -69,8 +70,8 @@ def test_ista(vp_theory):
 
     print(f"ISTA resids: {ISTA_resids}")
 
-    assert np.all(np.array(ISTA_resids) <= np.array(all_res) + 1e-7)
-    assert np.abs(ISTA_resids[-1] - all_res[-1]) <= 1e-8
+    assert np.all(np.array(ISTA_resids) <= np.array(all_res) + TEST_EPS)
+    assert np.abs(ISTA_resids[-1] - all_res[-1]) <= TEST_EPS
 
 
 def soft_threshold(x, gamma):

@@ -3,27 +3,32 @@ requires = ["setuptools>=64", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "algoverify"
-description = "AlgoVerify: A Python Toolbox for Verification of First-Order Methods"
+name = "fomtools"
+description = "FOMTools: A Python Toolbox for Analysis of First-Order Methods"
 readme = "README.md"
 license = { text = "Apache 2.0" }
 dynamic = ["version"]
 authors = [
        { name = "Vinit Ranjan", email = "vranjan@princeton.edu" },
+       { name = "Daniel Deza", email = "dd7022@princeton.edu" },
+       { name = "Anushka Acharya", email = "aa9078@princeton.edu"},
+       { name = "Jisun Park", email = "jisunpark@princeton.edu"},
        { name = "Bartolomeo Stellato", email = "bstellato@princeton.edu" },
 ]
 
 dependencies = [
-       "numpy",
        "gurobipy>=12.0.1",
+       "highspy",
+       "numpy",
        "scipy",
-       "highspy"
 ]
 
 [tool.setuptools]
-packages = ["algoverify"]
+packages = ["fomtools"]
 
 [project.optional-dependencies]
+gpu = ["cupy-cuda12x"]
+
 dev = [
        "cvxpy",
        "pytest",
@@ -37,6 +42,7 @@ dev = [
 ]
 
 docs = [
+       "cvxpy",
        "marimo",
        "matplotlib",
        "mkdocs",

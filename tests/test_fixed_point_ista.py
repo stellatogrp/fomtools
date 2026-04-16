@@ -1,5 +1,6 @@
 import numpy as np
 
+from tests.conftest import TEST_EPS
 from tests.cvxpy import fixed_point as fixed_point_cvxpy
 
 
@@ -36,7 +37,7 @@ def test_box_constrained_ls_fixed_point(vp_param_1):
 
     for k in range(1, K + 1):
         x[k] = vp_param_1.step.satlin(x[k - 1] - t * A.T @ (A @ x[k - 1] - b_param), l=l, u=u)
-        vp_param_1.set_infinity_norm_objective([x[k] - x_star])
+        vp_param_1.set_objective_norm([x[k] - x_star], np.inf)
         _ = vp_param_1.solve()
 
     x_star_val = vp_param_1.get_solution_value(x_star)
@@ -46,6 +47,6 @@ def test_box_constrained_ls_fixed_point(vp_param_1):
 
     f_star = 0.5 * np.sum((A @ x_star_val - b_wc) ** 2)
     f_opt = 0.5 * np.sum((A @ x_opt_val - b_wc) ** 2)
-    assert abs(f_star - f_opt) <= 1e-6
+    assert abs(f_star - f_opt) <= TEST_EPS
     # Also verify the actual optimizer vectors coincide
-    assert np.max(np.abs(x_star_val - x_opt_val)) <= 1e-6
+    assert np.max(np.abs(x_star_val - x_opt_val)) <= TEST_EPS
