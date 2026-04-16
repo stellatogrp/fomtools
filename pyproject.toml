@@ -39,6 +39,7 @@ dev = [
        "hydra-core",
        "pandas",
        "networkx",
+       "pepit",
 ]
 
 docs = [
@@ -49,7 +50,8 @@ docs = [
        "mkdocstrings-python",
        "mkdocs-marimo",
        "mkdocs-material",
-       "pymdown-extensions"
+       "pymdown-extensions",
+       "pepit",
 ]
 
 [tool.mypy]
