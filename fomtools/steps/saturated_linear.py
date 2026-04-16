@@ -53,6 +53,7 @@ class SaturatedLinear(Step):
         super().__init__(rhs, relax_binary_vars)
         self.l = l
         self.u = u
+        self.update_bounds(*self.rhs.bound_propagation())
 
     def __hash__(self):
         return hash((self.rhs, self.lhs))

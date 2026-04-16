@@ -44,6 +44,7 @@ class Relu(Step):
             set(range(0, self.rhs.ndim)) if proj_ranges is None else self._get_ranges(proj_ranges)
         )
         self.idx_with_binary_vars = set()
+        self.update_bounds(*self.rhs.bound_propagation())
 
     def __hash__(self):
         return hash((self.rhs, self.lhs))

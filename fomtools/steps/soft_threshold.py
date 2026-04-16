@@ -47,6 +47,7 @@ class SoftThreshold(Step):
         self.lambd = lambd
         self.idx_with_right_binary_vars = set()
         self.idx_with_left_binary_vars = set()
+        self.update_bounds(*self.rhs.bound_propagation())
 
     def __hash__(self):
         return hash((self.rhs, self.lhs))

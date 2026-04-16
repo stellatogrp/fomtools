@@ -5,6 +5,7 @@ import warnings
 try:
     import cupy as cp
     import cupyx.scipy.sparse as csp
+    import cupyx.scipy.sparse.linalg as cpspla
 
     # Force CUDA initialization to happen NOW so we catch the error here
     cp.cuda.runtime.getDeviceCount()
@@ -13,6 +14,7 @@ try:
 except ImportError:
     import numpy as cp  # fallback to numpy
     import scipy.sparse as csp
+    import scipy.sparse.linalg as cpspla
 
     CUDA_AVAILABLE = False
 
@@ -27,6 +29,7 @@ if typing.TYPE_CHECKING:
     from fomtools import Step
 
 from contextlib import nullcontext
+from typing import Any
 
 
 # todo: what to do if samples is missing from a leaf expression
@@ -512,6 +515,65 @@ class Simulator(Canonicalizer):
             return (coeff @ x_batch.T).T
         return x_batch @ coeff.T
 
+    def _assemble_linear_combination(
+        self,
+        z_stacked: cp.ndarray,
+        p_stacked: cp.ndarray,
+        coeffs: dict[str, list[tuple[LinearExpression, cp.ndarray | csp.csr_matrix]]],
+        simulation_data: dict[str, Any],
+    ) -> cp.ndarray:
+        """
+        Assemble a batched linear combination of state and parameter slices
+        using precomputed coefficients.
+
+        Parameters
+        ----------
+        z_stacked: cp.ndarray
+            Concatenation of all iterate variables, with shape. Individual iterate
+            values are retrieved using slices stored in ``simulation_data["z_slices"]``.
+
+        p_stacked: cp.ndarray
+            Concatenation of all parameter variables. Individual parameter values
+            are retrieved using slices stored in ``simulation_data["p_slices"]``.
+
+        coeffs: dict[str, list[tuple[LinearExpression, cp.ndarray | csp.csr_matrix]]]
+            A dictionary mapping term categories (e.g., iterate or parameter
+            terms) to lists of tuples (leaf, coeff_jax), where leaf identifies
+            the variable and coeff_cp is the corresponding coefficient
+            represented as CuPy arrays or cupyx CSR matrices.
+
+        simulation_data: dict[str, Any]
+             A dictionary containing the concatenated simulation inputs and their
+            corresponding slice mappings, where:
+                - ``z0`` maps to a CuPy array containing the concatenation of all
+                    iterate initial values.
+                - ``p_samples`` maps to a CuPy array containing the concatenation (along axis 1)
+                    of all parameter sample arrays.
+                - ``z_slices`` maps to a dictionary mapping each iterate identifier (leaf)
+                    to a slice indicating its location within z0.
+                - ``p_slices`` maps to a dictionary mapping each parameter identifier (leaf) to a
+                    slice indicating its location within the second dimension of q_samples.
+
+        Returns
+        -------
+        cp.ndarray
+            The value of the linear expression evaluated at the provided
+            iterates and parameters.
+
+        """
+        N = z_stacked.shape[0]
+        result = cp.tile(coeffs["const"], (N, 1))
+
+        for leaf, coeff in coeffs["iterate_coeffs"]:
+            z_slice = z_stacked[:, simulation_data["z_slices"][leaf]]
+            result += self._matvec_batch(coeff, z_slice)
+
+        for leaf, coeff in coeffs["param_coeffs"]:
+            p_slice = p_stacked[:, simulation_data["p_slices"][leaf]]
+            result += self._matvec_batch(coeff, p_slice)
+
+        return result
+
     def canonicalize_relu(self, step: "Step") -> None:
         """
         Registers the provided ReLU step for CuPy simulation.
@@ -538,11 +600,6 @@ class Simulator(Canonicalizer):
 
         """
         coeffs = self._linear_expr_to_cupy(step.rhs)
-
-        iterate_coeffs = coeffs["iterate_coeffs"]
-        param_coeffs = coeffs["param_coeffs"]
-        const = coeffs["const"]
-
         simulation_data = self._prepare_simulation_data()
 
         def update_fn(z_stacked: cp.ndarray, p_stacked: cp.ndarray) -> cp.ndarray:
@@ -571,18 +628,192 @@ class Simulator(Canonicalizer):
                 The value of the linear expression evaluated at the provided
                 iterates and parameters, after applying a ReLU activation.
             """
-            N = z_stacked.shape[0]
-            result = cp.tile(const, (N, 1))
-
-            for leaf, coeff in iterate_coeffs:
-                z_slice = z_stacked[:, simulation_data["z_slices"][leaf]]
-                result += self._matvec_batch(coeff, z_slice)
-
-            for leaf, coeff in param_coeffs:
-                p_slice = p_stacked[:, simulation_data["p_slices"][leaf]]
-                result += self._matvec_batch(coeff, p_slice)
-
+            result = self._assemble_linear_combination(
+                z_stacked, p_stacked, coeffs, simulation_data
+            )
             return cp.maximum(result, 0)
+
+        self.step_function = update_fn
+
+    def canonicalize_softthreshold(self, step: "Step") -> None:
+        """
+        Registers the provided soft-threshold step for CuPy simulation.
+
+        This method converts the linear expression defining the input to the
+        soft-threshold operation into a CuPy-evaluable form and constructs a
+        corresponding update function. The update function has signature
+        ``f(z_stacked, p_stacked)`` where the iterate and parameter variables
+        are provided as concatenated vectors. Slice mappings are used internally
+        to extract the relevant components for each variable.
+
+        The constructed function is stored in ``self.step_function`` and can be
+        used during simulation to evaluate the soft-threshold update.
+
+        Parameters
+        ----------
+        step: Step
+            A step object containing the soft-threshold operation. The
+            ``step.rhs`` attribute holds the LinearExpression representing
+            the input, and ``step.lambd`` holds the regularization strength.
+
+        Returns
+        -------
+        None
+        """
+        coeffs = self._linear_expr_to_cupy(step.rhs)
+        simulation_data = self._prepare_simulation_data()
+        lambd = step.lambd
+
+        def update_fn(z_stacked: cp.ndarray, p_stacked: cp.ndarray) -> cp.ndarray:
+            """
+            Evaluate the linear update followed by a soft-threshold activation.
+
+            Parameters
+            ----------
+            z_stacked: cp.ndarray
+                Concatenation of all iterate variables. Individual iterate values
+                are retrieved using slices stored in ``simulation_data["z_slices"]``.
+
+            p_stacked: cp.ndarray
+                Concatenation of all parameter variables. Individual parameter values
+                are retrieved using slices stored in ``simulation_data["p_slices"]``.
+
+            Returns
+            -------
+            cp.ndarray
+                The value of the linear expression evaluated at the provided iterates
+                and parameters, after applying a soft-threshold activation.
+
+            """
+            result = self._assemble_linear_combination(
+                z_stacked, p_stacked, coeffs, simulation_data
+            )
+            return cp.sign(result) * cp.maximum(cp.abs(result) - lambd, 0)
+
+        self.step_function = update_fn
+
+    def canonicalize_saturatedlinear(self, step: "Step") -> None:
+        """
+        Registers the provided saturated linear step for CuPy simulation.
+
+        This method converts the linear expression defining the input to the
+        saturated linear operation into a CuPy-evaluable form and constructs a
+        corresponding update function. The update function has signature
+        ``f(z_stacked, p_stacked)`` where the iterate and parameter variables
+        are provided as concatenated vectors. Slice mappings are used internally
+        to extract the relevant components for each variable.
+
+        The constructed function is stored in ``self.step_function`` and can be
+        used during simulation to evaluate the saturated linear update.
+
+        Parameters
+        ----------
+        step: Step
+            A step object that represents a saturated linear operation.
+            The ``step.l`` attribute stores the lower saturation bound, while
+            ``step.u`` stores the upper saturation bound.
+
+        Returns
+        -------
+        None
+        """
+        coeffs = self._linear_expr_to_cupy(step.rhs)
+        simulation_data = self._prepare_simulation_data()
+        l = step.l.lb if hasattr(step.l, "lb") else step.l
+        u = step.u.ub if hasattr(step.u, "ub") else step.u
+
+        def update_fn(z_stacked: cp.ndarray, p_stacked: cp.ndarray) -> cp.ndarray:
+            """
+            Evaluate the linear update followed by a saturated linear activation.
+
+            Parameters
+            ----------
+            z_stacked: cp.ndarray
+                Concatenation of all iterate variables. Individual iterate values
+                are retrieved using slices stored in ``simulation_data["z_slices"]``.
+
+            p_stacked: cp.ndarray
+                Concatenation of all parameter variables. Individual parameter values
+                are retrieved using slices stored in ``simulation_data["p_slices"]``.
+
+            Returns
+            -------
+            cp.ndarray
+                The value of the linear expression evaluated at the provided iterates
+                and parameters, after applying a saturated linear activation.
+
+            """
+            result = self._assemble_linear_combination(
+                z_stacked, p_stacked, coeffs, simulation_data
+            )
+            return cp.clip(result, l, u)
+
+        self.step_function = update_fn
+
+    def canonicalize_affine(self, step: "Step") -> None:
+        """
+        Registers the provided affine step for CuPy simulation.
+
+        This method converts the linear expression defining the input to the
+        affine operation into a CuPy-evaluable form and constructs a
+        corresponding update function. The update function has signature
+        ``f(z_stacked, p_stacked)`` where the iterate and parameter variables
+        are provided as concatenated vectors. Slice mappings are used internally
+        to extract the relevant components for each variable.
+
+        The constructed function is stored in ``self.step_function`` and can be
+        used during simulation to evaluate the affine step.
+
+        Parameters
+        ----------
+        step: Step
+            A step object that represents the affine transformation. The `step.rhs`
+            attribute contains the `LinearExpression` defining the input, while
+            `step.lhs_mat` stores the matrix on the left-hand side of the
+            linear operation.
+
+        Returns
+        -------
+        None
+        """
+        lhs = self._sparse_to_cp(step.lhs_mat)
+        coeffs = self._linear_expr_to_cupy(step.rhs)
+        simulation_data = self._prepare_simulation_data()
+
+        if csp.issparse(lhs):
+            lu = cpspla.splu(lhs)
+
+            def solve(rhs):
+                return cp.array([lu.solve(r) for r in rhs])
+        else:
+
+            def solve(rhs):
+                return cp.array([cp.linalg.solve(lhs, r) for r in rhs])
+
+        def update_fn(z_stacked: cp.ndarray, p_stacked: cp.ndarray) -> cp.ndarray:
+            """
+            Evaluate the affine update w = L_z @ v + L_p @ x.
+
+            Parameters
+            ----------
+            z_stacked: cp.ndarray
+                Concatenation of all iterate variables. Individual iterate values
+                are retrieved using slices stored in ``simulation_data["z_slices"]``.
+
+            p_stacked: cp.ndarray
+                Concatenation of all parameter variables. Individual parameter values
+                are retrieved using slices stored in ``simulation_data["p_slices"]``.
+
+            Returns
+            -------
+            cp.ndarray
+                The value of the linear expression evaluated at the provided iterates
+                and parameters.
+            """
+            result = self._assemble_linear_combination(
+                z_stacked, p_stacked, coeffs, simulation_data
+            )
+            return solve(result)
 
         self.step_function = update_fn
 
