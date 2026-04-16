@@ -22,25 +22,25 @@ class SaturatedLinear(Step):
 
     Attributes
     ----------
-    lhs: LinearExpression
-        Left-hand side linear expression in the operator definition.
-    rhs: LinearExpression
-        Right-hand side linear expression in the operator definition.
-    lb: float
-        Lower bound associated with the transformed values.
-    ub: floatg
-        Lower bound associated with the transformed values.
-    relax_binary_vars: bool
+    rhs : LinearExpression
+        Right-hand side (input) linear expression.
+    lhs : LinearExpression
+        Left-hand side (output) linear expression.
+    lb : np.ndarray
+        Lower bounds on the INPUT (rhs), before saturation is applied.
+    ub : np.ndarray
+        Upper bounds on the INPUT (rhs), before saturation is applied.
+    relax_binary_vars : bool
         If true, binary decision variables associated with the operator
         are relaxed to take continuous values.
-    l: np.ndarray[float] | LinearExpression
+    l : np.ndarray[float] | LinearExpression
         The lower saturation bound of the saturated linear operator.
         Can be either a numeric value or a LinearExpression object whose
-        lower boudnds acts as the lower saturation bound.
-    u: np.ndarray[float] | LinearExpression
+        lower bounds acts as the lower saturation bound.
+    u : np.ndarray[float] | LinearExpression
         The upper saturation bound of the saturated linear operator.
         Can be either a numeric value or a LinearExpression object whose
-        upper boudnds acts as the upper saturation bound.
+        upper bounds acts as the upper saturation bound.
     """
 
     def __init__(
@@ -53,34 +53,46 @@ class SaturatedLinear(Step):
         super().__init__(rhs, relax_binary_vars)
         self.l = l
         self.u = u
+        self.update_bounds(*self.rhs.bound_propagation())
 
     def __hash__(self):
         return hash((self.rhs, self.lhs))
 
-    def satlin(self, x: np.ndarray) -> np.ndarray:
+    def satlin_prop(self, x: np.ndarray, bound: str) -> np.ndarray:
         """
-        Apply Saturated Linear Unit operator to the input
-        arrray.
+        Propagate a bound through the saturated linear operator.
+
+        Since clip(x, l, u) is monotonically non-decreasing in all three
+        arguments, the correct output bounds are:
+            lower: clip(x_lb, l_lb, u_lb)
+            upper: clip(x_ub, l_ub, u_ub)
 
         Parameters
         ----------
         x: np.ndarray
-            A 1-D array of values on which to apply the activation.
+            A 1-D array of input bound values to propagate.
+        bound: str
+            Either "lb" or "ub", indicating which bound is being propagated.
 
         Returns
         -------
         np.ndarray
-            A new array representing saturated output, obtained by
-            clipping `x` to the range [lower bound, upper bound].
+            The propagated bound on the output of the saturated linear operator.
         """
         try:
-            return np.minimum(np.maximum(x, self.l.lb), self.u.ub)
+            l_bound = self.l.lb if bound == "lb" else self.l.ub
         except AttributeError:
-            return np.minimum(np.maximum(x, self.l), self.u)
+            l_bound = self.l
+
+        try:
+            u_bound = self.u.lb if bound == "lb" else self.u.ub
+        except AttributeError:
+            u_bound = self.u
+        return np.minimum(np.maximum(x, l_bound), u_bound)
 
     def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
         """
-        Update the bounds of the left-land side after applying
+        Update the bounds of the left-hand side after applying
         Saturated Linear Unit activation.
 
         Parameters
@@ -94,4 +106,8 @@ class SaturatedLinear(Step):
             Unit.
 
         """
-        self.lhs.update_bounds(lb=self.satlin(lb), ub=self.satlin(ub))
+        self.lb, self.ub = lb, ub
+        self.lhs.update_bounds(
+            lb=self.satlin_prop(lb, "lb"),
+            ub=self.satlin_prop(ub, "ub"),
+        )

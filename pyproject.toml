@@ -17,16 +17,18 @@ authors = [
 ]
 
 dependencies = [
-       "numpy",
        "gurobipy>=12.0.1",
+       "highspy",
+       "numpy",
        "scipy",
-       "highspy"
 ]
 
 [tool.setuptools]
 packages = ["fomtools"]
 
 [project.optional-dependencies]
+gpu = ["cupy-cuda12x"]
+
 dev = [
        "cvxpy",
        "pytest",

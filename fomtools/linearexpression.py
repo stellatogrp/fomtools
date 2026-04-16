@@ -86,15 +86,15 @@ class LinearExpression:
 
         self.ndim = shapes.pop() if len(shapes) == 1 else 0
         if const is not None:
-            if const.ndim != 1:
-                raise ValueError("Matrix for a constant must be 1-dimensional.")
-            if 0 < self.ndim != const.shape[0]:
+            if self.ndim == 0:
+                self.ndim = const.shape[0]
+
+            try:
+                np.broadcast_shapes(const.shape, (1, self.ndim))
+            except ValueError:
                 raise ValueError(
                     "Matrix for a constant must have same number of rows as decomposition dict."
                 )
-            # in case the only remaining term in an expression is a constant
-            elif self.ndim == 0:
-                self.ndim = const.shape[0]
 
         self.const = np.zeros(self.ndim) if const is None else const
         self.decomposition_dict = decomposition_dict
@@ -218,7 +218,7 @@ class LinearExpression:
         try:
             return LinearExpression(
                 decomposition_dict=self.decomposition_dict,
-                const=self.const + np.full(self.ndim, np.array(other).astype(float)),
+                const=self.const + np.array(other).astype(float),
             )
         except ValueError:
             try:
@@ -645,6 +645,10 @@ class LinearExpression:
 
             out_lb += _lb
             out_ub += _ub
+
+        # Add constant term to bounds
+        out_lb += self.const
+        out_ub += self.const
 
         return out_lb, out_ub
 

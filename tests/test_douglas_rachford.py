@@ -28,7 +28,6 @@ def test_dr(vp):
     print("testing with DR splitting:")
     M = np.block([[P, A.T], [-A, np.zeros((m, m))]])
     lhs = spa.csc_matrix(M) + spa.eye(m + n)
-    lhs_factored = spa.linalg.factorized(lhs)
     q = np.hstack([c, b])
 
     zk = np.zeros(m + n)
@@ -59,13 +58,11 @@ def test_dr(vp):
 
     for k in range(1, K + 1):
         print(f"-K = {k}-")
-        u[k] = vp.step.implicit_linear(
-            z[k - 1] - q_param, lhs_mat=lhs.todense(), lhs_mat_factorization=lhs_factored
-        )
+        u[k] = vp.step.implicit_linear(z[k - 1] - q_param, lhs_mat=lhs.todense())
         utilde[k] = vp.step.relu(2 * u[k] - z[k - 1], proj_ranges=(n, n + m))
         z[k] = z[k - 1] + utilde[k] - u[k]
 
-        vp.set_infinity_norm_objective(z[k] - z[k - 1])
+        vp.set_objective_norm(z[k] - z[k - 1], np.inf)
         res = vp.solve()
         all_res.append(res)
 

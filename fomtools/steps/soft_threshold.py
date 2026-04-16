@@ -23,23 +23,23 @@ class SoftThreshold(Step):
 
     Attributes
     ----------
-    lhs: LinearExpression
-        Left-hand side linear expression in the operator definition.
-    rhs: LinearExpression
-        Right-hand side linear expression in the operator definition.
-    lb: float
-        Lower bound associated with the transformed values.
-    ub: float
-        Lower bound associated with the transformed values.
-    relax_binary_vars: bool
+    rhs : LinearExpression
+        Right-hand side (input) linear expression.
+    lhs : LinearExpression
+        Left-hand side (output) linear expression.
+    lb : np.ndarray
+        Lower bounds on the INPUT (rhs), before soft-thresholding is applied.
+    ub : np.ndarray
+        Upper bounds on the INPUT (rhs), before soft-thresholding is applied.
+    relax_binary_vars : bool
         If true, binary decision variables associated with the operator
         are relaxed to take continuous values.
     lambd : float
         The threshold ($\lambda$) controlling shrinkage. Must be non-negative.
     idx_with_right_binary_vars : set[int]
-        Indices tied to “right-branch” indicators in a MILP reformulation (e.g., $t>\lambda$).
+        Indices tied to "right-branch" indicators in a MILP reformulation (e.g., $t>\lambda$).
     idx_with_left_binary_vars : set[int]
-        Indices tied to “left-branch” indicators (e.g., $t<-\lambda$).
+        Indices tied to "left-branch" indicators (e.g., $t<-\lambda$).
     """
 
     def __init__(self, rhs: LinearExpression, lambd: float, relax_binary_vars: bool = False):
@@ -47,6 +47,7 @@ class SoftThreshold(Step):
         self.lambd = lambd
         self.idx_with_right_binary_vars = set()
         self.idx_with_left_binary_vars = set()
+        self.update_bounds(*self.rhs.bound_propagation())
 
     def __hash__(self):
         return hash((self.rhs, self.lhs))
@@ -73,7 +74,7 @@ class SoftThreshold(Step):
 
     def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
         """
-        Update the bounds of the left-land side after applying
+        Update the bounds of the left-hand side after applying
         soft-thresholding operator.
 
         Parameters
@@ -84,4 +85,5 @@ class SoftThreshold(Step):
         ub: float or np.ndarray
             The new upper bound(s) before applying soft-thresholding.
         """
+        self.lb, self.ub = lb, ub
         self.lhs.update_bounds(lb=self.soft_threshold(lb), ub=self.soft_threshold(ub))

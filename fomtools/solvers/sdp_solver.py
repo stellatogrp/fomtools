@@ -29,3 +29,21 @@ class SDPSolver(Solver):
 
     def __init__(self, solver_params=None):
         super(SDPSolver, self).__init__(solver_params=solver_params)
+
+    def copy(self) -> "SDPSolver":
+        """
+        SDP solvers are stateless - copy not needed.
+
+        SDP solver state is managed at the canonicalizer level. The actual
+        solver (Clarabel, CVXPY) is instantiated fresh at solve time.
+
+        Raises
+        ------
+        NotImplementedError
+            SDPSolver does not support copy(). SDP state is managed at the
+            canonicalizer level.
+        """
+        raise NotImplementedError(
+            "SDPSolver does not support copy(). "
+            "SDP state is managed at the canonicalizer level."
+        )

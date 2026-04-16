@@ -41,7 +41,7 @@ def test_partial_nnqp(vp):
         print(k)
         z[k] = vp.step.relu(z[k - 1] - t * (P @ z[k - 1] + q_param), proj_ranges=proj_ranges)
 
-        vp.set_infinity_norm_objective(z[k] - z[k - 1])
+        vp.set_objective_norm(z[k] - z[k - 1], np.inf)
         res = vp.solve(convex_hull_cuts=True)
         all_res.append(res)
         vp.post_process(z[k], z[0], all_res)

@@ -2,13 +2,17 @@ import logging
 from typing import List, Sequence
 
 import numpy as np
+import scipy.sparse as spa
 
 from fomtools.canonicalizers.mip import MIP
 from fomtools.canonicalizers.obbt_handler import OBBTHandler
 from fomtools.canonicalizers.sdp import SDP
+from fomtools.canonicalizers.simulator import Simulator
 from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import ProxableFunction
+from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
+from fomtools.stepdecomposers.simulator_step_decomposer import SimulatorStepDecomposer
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 log = logging.getLogger(__name__)
@@ -38,7 +42,53 @@ class Verifier(object):
         self.canonicalizer = self._get_canonicalizer(method, params, solver)
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
         self.use_obbt_handler = True if obbt_handler else False
+        if self.obbt_handler is not None:
+            self.canonicalizer.obbt_handler = self.obbt_handler
+        decomposer_cls = self._get_step_decomposer(method)
+        self.step_decomposer = decomposer_cls(self.canonicalizer, self._register_var)
         self._step_proxy = _StepProxy(self)
+
+    def __getitem__(self, item):
+        """
+        Access summary statistics.
+
+        Parameters
+        ----------
+        item : str
+            Key for the statistic to retrieve.
+
+        Returns
+        -------
+        float or dict or jnp.ndarray
+            The requested statistic.
+
+        Raises
+        ------
+        KeyError
+            If the item is not a valid statistic key.
+
+        RuntimeError
+            If no statistic is avaiable.
+
+        Examples
+        --------
+        >>> vp.solve(K=100)
+        >>> vp['mean']
+        0.00123
+        >>> vp['quantiles'][0.95]
+        0.00456
+        """
+        try:
+            summary_statistics = self.canonicalizer.summary_statistics
+        except AttributeError:
+            raise RuntimeError("No statistics available. Run solve() first.")
+
+        if item not in summary_statistics:
+            raise KeyError(
+                f"'{item}' is not a valid statistic. Valid keys: {list(summary_statistics.keys())}"
+            )
+
+        return summary_statistics[item]
 
     @staticmethod
     def _get_canonicalizer(method: str, solver_params: dict, solver: dict):
@@ -51,6 +101,7 @@ class Verifier(object):
              Case-insensitive identifier for the solver to use. Supported values include:
              - ``"mip"``
              - ``"sdp"``
+             - ``"simulator"``
 
         solver_params: dict
              Key-value pairs with solver parameters and their corresponding
@@ -77,6 +128,40 @@ class Verifier(object):
                 return MIP(solver_params=solver_params, solver=solver)
             case "sdp":
                 return SDP(solver_params=solver_params, solver=solver)
+            case "simulator":
+                return Simulator()
+            case _:
+                raise ValueError(f"Method must be 'mip', 'sdp' or 'simulator', got {method}")
+
+    @staticmethod
+    def _get_step_decomposer(method: str):
+        """
+        Return the step decomposer class for the specified method.
+
+        Parameters
+        ----------
+        method : str
+            Case-insensitive identifier for the method. Supported values:
+            - ``"mip"``
+            - ``"sdp"``
+
+        Returns
+        -------
+        type
+            The step decomposer class (MIPStepDecomposer or SDPStepDecomposer).
+
+        Raises
+        ------
+        ValueError
+            If the method is not one of the supported options.
+        """
+        match method.lower():
+            case "mip":
+                return MIPStepDecomposer
+            case "sdp":
+                return SDPStepDecomposer
+            case "simulator":
+                return SimulatorStepDecomposer
             case _:
                 raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
 
@@ -127,7 +212,7 @@ class Verifier(object):
 
         return LinearExpression.from_int(ndim, lb=lb, ub=ub)
 
-    def _register_var(self, var: LinearExpression):
+    def _register_var(self, var: LinearExpression, **kwargs):
         """
         Register the given :class:`LinearExpression` variable with
         the underlying canonicalizer and OBBT Handler instance.
@@ -138,11 +223,13 @@ class Verifier(object):
             A new :class:`LinearExpression` variable to register.
 
         """
-        self.canonicalizer.add_var(var)
+        self.canonicalizer.add_var(var, **kwargs)
         if self.use_obbt_handler:
             self.obbt_handler.add_var(var)
 
-    def add_iterate(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
+    def add_iterate(
+        self, ndim: int, lb: float = -np.inf, ub: float = np.inf, **kwargs
+    ) -> LinearExpression:
         """
         Create and register an iterate to the Problem instance. This
         method creates a new :class:`LinearExpression` of dimension `ndim`
@@ -173,10 +260,12 @@ class Verifier(object):
         """
 
         self.iterates.append(iterate := self._create_var(ndim, lb, ub))
-        self._register_var(iterate)
+        self._register_var(iterate, var_type="iterate", **kwargs)
         return iterate
 
-    def add_param(self, ndim: int, lb: float = -np.inf, ub: float = np.inf) -> LinearExpression:
+    def add_param(
+        self, ndim: int, lb: float = -np.inf, ub: float = np.inf, **kwargs
+    ) -> LinearExpression:
         """
         Create and register a new parameter. This method creates a new
         :class:`LinearExpression` of dimension `ndim` and registers it with
@@ -209,30 +298,60 @@ class Verifier(object):
             length to the dimension of the expression.
         """
         var = self._create_var(ndim, lb, ub)
-        self._register_var(var)
+        self._register_var(var, var_type="param", **kwargs)
         return var
 
     def add_param_stack(self, param_list: List[LinearExpression]) -> LinearExpression:
         """
-        Add a stack of parameters to the Problem instance.
+        Stack multiple parameters into a single composite LinearExpression.
+
+        Unlike ``add_param``, this does not create a new leaf variable. Instead,
+        it builds a composite expression that references the original parameters
+        via sparse block-selection matrices. This preserves shared identity: if
+        the same parameter appears in multiple stacks, the solver sees one
+        variable, not independent copies.
+
+        The constituent parameters must already be registered (via ``add_param``).
 
         Parameters
         ----------
         param_list: list[LinearExpression]
-            List of :class:`LinearExpression` parameters.
+            List of :class:`LinearExpression` parameters to stack.
 
         Returns
         -------
-
+        LinearExpression
+            A composite expression of dimension ``sum(p.ndim for p in param_list)``
+            whose decomposition references the leaves of the input parameters.
         """
-        dim = 0
-        bounds = [[], []]
+        total_dim = sum(p.ndim for p in param_list)
+        decomposition_dict = {}
+        const = np.zeros(total_dim)
+        offset = 0
 
         for p in param_list:
-            dim += p.ndim
-            tuple(map(list.extend, bounds, (p.lb, p.ub)))
+            # Sparse selection matrix: total_dim x p.ndim
+            # Identity block at rows [offset : offset + p.ndim]
+            rows = np.arange(offset, offset + p.ndim)
+            cols = np.arange(p.ndim)
+            data = np.ones(p.ndim)
+            sel = spa.csc_matrix((data, (rows, cols)), shape=(total_dim, p.ndim))
 
-        return self.add_param(dim, lb=bounds[0], ub=bounds[1])
+            # Compose selection with p's decomposition dict
+            for leaf, coeff in p.decomposition_dict.items():
+                composed = sel @ coeff
+                if leaf in decomposition_dict:
+                    decomposition_dict[leaf] = decomposition_dict[leaf] + composed
+                else:
+                    decomposition_dict[leaf] = composed
+
+            const[offset:offset + p.ndim] = p.const
+            offset += p.ndim
+
+        result = LinearExpression(decomposition_dict=decomposition_dict, const=const)
+        # Override __init__'s list-based lb/ub with proper numpy arrays
+        result.lb, result.ub = result.bound_propagation()
+        return result
 
     def add_constraint(self, constr: Constraint):
         """
@@ -253,10 +372,10 @@ class Verifier(object):
         -------
         None
         """
-        self.canonicalizer.add_constraint(constr)
         if self.use_obbt_handler:
             self.obbt_handler.add_constraint(constr)
             self._tighten_constraint_bounds(constr)
+        self.canonicalizer.add_constraint(constr)
 
     def _tighten_constraint_bounds(self, constr: Constraint) -> None:
         """
@@ -382,20 +501,17 @@ class Verifier(object):
         """
         step = step_cls(rhs=rhs, relax_binary_vars=relax_binary_vars, **kwargs)
 
-        rhs_lb, rhs_ub = step.lb, step.ub
         if self.use_obbt_handler and not step.skip_obbt:
-            result = self.obbt_handler.obbt(step.rhs, rhs_lb, rhs_ub)
+            result = self.obbt_handler.obbt(step.rhs, step.lb, step.ub)
             if result is not None:
-                rhs_lb, rhs_ub = result
+                step.update_bounds(*result)
 
-        step.update_bounds(rhs_lb, rhs_ub)
-
-        lhs = step.lhs
-
-        self._register_var(lhs)
-        self.iterates.append(lhs)
-        self.canonicalizer.canonicalize(step)
+        lhs = self.step_decomposer.process_step(step)
         self.steps.append(step)
+
+        # Track lhs as iterate only if it's a leaf variable
+        if lhs.is_leaf:
+            self.iterates.append(lhs)
 
         return lhs
 
@@ -493,9 +609,62 @@ class Verifier(object):
         except TypeError:
             expr_list = [expr_list]
 
-        self.canonicalizer.set_two_norm_objective(expr_list)
+        lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
+        self.canonicalizer.set_two_norm_objective(expr_list, list(lb), list(ub))
 
-    def solve(self, convex_hull_cuts: bool = False):
+    def set_one_norm_objective(
+        self, expr_list: Sequence[LinearExpression] | LinearExpression
+    ) -> None:
+        """
+        Create a 1-norm objective over the set of ``LinearExpression`` objects.
+
+        Parameters
+        ----------
+        expr_list : Sequence[LinearExpression] | LinearExpression
+            A single LinearExpression or a list of LinearExpression objects for
+            which the 1-norm objective will be constructed.
+        """
+        try:
+            len(expr_list)
+        except TypeError:
+            expr_list = [expr_list]
+
+        self.canonicalizer.set_one_norm_objective(expr_list)
+
+    def set_objective_norm(
+        self,
+        expr: Sequence[LinearExpression] | LinearExpression,
+        ord: int | float | str,
+    ) -> None:
+        """
+        Set the optimization objective to maximize a norm of the expression(s).
+
+        Parameters
+        ----------
+        expr : LinearExpression or Sequence[LinearExpression]
+            Expression(s) whose norm will be maximized.
+        ord : {1, 2, np.inf, 'inf'}
+            The norm order:
+            - 1: One-norm (sum of absolute values)
+            - 2: Two-norm (Euclidean norm squared)
+            - np.inf or 'inf': Infinity-norm (maximum absolute value)
+
+        Raises
+        ------
+        ValueError
+            If ord is not one of the supported values.
+        """
+        match ord:
+            case 1:
+                self.set_one_norm_objective(expr)
+            case 2:
+                self.set_two_norm_objective(expr)
+            case _ if ord == np.inf or ord == "inf":
+                self.set_infinity_norm_objective(expr)
+            case _:
+                raise ValueError(f"Unsupported norm order: {ord}. Use 1, 2, np.inf, or 'inf'.")
+
+    def solve(self, **kwargs) -> float:
         """
         Solve the optimization problem.
 
@@ -503,18 +672,13 @@ class Verifier(object):
         optimization problem using the recorded thresholding or
         activation steps.
 
-        Parameters
-        ----------
-        convex_hull_cuts: bool
-            a
-
         Returns
         -------
         float
             The objective value for the current solution, if the
             model was solved to optimality.
         """
-        return self.canonicalizer.solve_model(self.steps, convex_hull_cuts)
+        return self.canonicalizer.solve_model(**kwargs)
 
     def post_process(self, target_expr, ref_expr, residuals):
         """
@@ -588,6 +752,8 @@ class _StepProxy:
     the ``Verifier`` class. Users should not construct
     this class directly.
     """
+
+    USES_OBBT = {"relu", "satlin", "soft_threshold"}
 
     def __init__(self, verifier: Verifier):
         self._verifier = verifier

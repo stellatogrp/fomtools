@@ -18,18 +18,18 @@ class Relu(Step):
 
     Attributes
     ----------
-    rhs: LinearExpression
-        Right-hand side linear expression in the operator definition.
-    lb: float
-        Lower bound associated with the transformed values.
-    ub: float
-        Lower bound associated with the transformed values.
-    relax_binary_vars: bool
+    rhs : LinearExpression
+        Right-hand side (input) linear expression.
+    lb : np.ndarray
+        Lower bounds on the INPUT (rhs), before ReLU is applied.
+    ub : np.ndarray
+        Upper bounds on the INPUT (rhs), before ReLU is applied.
+    relax_binary_vars : bool
         If true, binary decision variables associated with the operator
         are relaxed to take continuous values.
-    idx_with_binary_vars: set[int]
+    idx_with_binary_vars : set[int]
         Indices corresponding to binary decision variables.
-    proj_indices: set[int]
+    proj_indices : set[int]
         Indices of output coordinates subjected to ReLU projection.
     """
 
@@ -44,6 +44,7 @@ class Relu(Step):
             set(range(0, self.rhs.ndim)) if proj_ranges is None else self._get_ranges(proj_ranges)
         )
         self.idx_with_binary_vars = set()
+        self.update_bounds(*self.rhs.bound_propagation())
 
     def __hash__(self):
         return hash((self.rhs, self.lhs))
@@ -100,7 +101,7 @@ class Relu(Step):
 
     def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
         """
-        Update the bounds of the left-land side after applying
+        Update the bounds of the left-hand side after applying
         ReLU activation.
 
         Parameters
@@ -112,4 +113,5 @@ class Relu(Step):
             The new upper bound(s) before applying ReLU.
 
         """
+        self.lb, self.ub = lb, ub
         self.lhs.update_bounds(lb=self.relu(lb), ub=self.relu(ub))
