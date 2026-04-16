@@ -23,7 +23,7 @@ def _():
 
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
-    return Verifier, np, plt, spa
+    return Verifier, csr_matrix, np, plt, spa
 
 
 @app.cell(hide_code=True)
@@ -107,7 +107,7 @@ def _():
     # ADMM parameters
     sigma = 1e-4
     rho = 1.  # 0.1, 1, 10
-    K = 2
+    K = 5
     return K, rho, sigma
 
 
@@ -162,6 +162,78 @@ def _(A_dym, B_dym, Q, R, T, n_s, n_u, np, spa):
     return M, P, n_xz, q
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    We first simulate the ADMM algorithm on given problem instances by randomly sampling the fixed initial state parameter $x_\text{init}$ around its nominal value.
+    The output will be residuals computed for each iteration $k=1,\ldots,K$.
+    """)
+    return
+
+
+@app.cell
+def _(
+    K,
+    M,
+    P,
+    T,
+    csr_matrix,
+    n_s,
+    n_u,
+    n_xz,
+    np,
+    q,
+    rho,
+    sigma,
+    spa,
+    u_stack_max,
+    u_stack_min,
+    x_init,
+):
+    # Simulate ADMM on sampled problem instances
+    _n_samples = 100
+    _rng = np.random.default_rng(0)
+    _offset_range = 0.1
+    _x_samples = _rng.uniform(low=x_init - _offset_range, high=x_init + _offset_range, size=(_n_samples, n_s))
+
+    # Convert to xz_stack format: [x; 0_{n_z}]
+    _xz_stacks = np.hstack([_x_samples, np.zeros((_n_samples, (T-1)*n_u))])
+
+    # ADMM iteration over samples (batched)
+    _z_batch = np.zeros((_n_samples, n_xz), dtype=float)
+    _v_batch = np.zeros((_n_samples, n_xz), dtype=float)
+    _w_batch = np.zeros((_n_samples, n_xz), dtype=float)
+
+    _lhs_mat = csr_matrix(P + sigma*np.eye(n_xz) + rho*(M.T@M))
+    _lhs_mat_lu = spa.linalg.splu(_lhs_mat.tocsc())
+
+    _residuals_sim = np.empty((_n_samples, K), dtype=float)
+
+    for k in range(K):
+        # satlin: clip w to [l_x, u_x]
+        _l_x = np.hstack([_x_samples, u_stack_min[np.newaxis, :].repeat(_n_samples, axis=0)])
+        _u_x = np.hstack([_x_samples, u_stack_max[np.newaxis, :].repeat(_n_samples, axis=0)])
+        _w_batch = np.clip(_v_batch, _l_x, _u_x)
+
+        # implicit_linear: solve for z
+        _rhs_batch = sigma * _z_batch - q[np.newaxis, :] + rho * (2*_w_batch - _v_batch) @ M
+        _z_new_batch = np.array([_lhs_mat_lu.solve(_rhs_batch[i]) for i in range(_n_samples)])
+
+        # v update
+        _v_new_batch = _v_batch + _z_new_batch @ M - _w_batch
+
+        # residual: scaled fixed-point residual
+        _residual_1 = -sigma*(_z_new_batch - _z_batch) - rho*(_v_new_batch - _v_batch) @ M
+        _residual_2 = _v_new_batch - _v_batch
+        _residuals_sim[:, k] = np.max(np.abs(np.hstack([_residual_1, _residual_2])), axis=1)
+
+        _z_batch = _z_new_batch
+        _v_batch = _v_new_batch
+
+    simulation_residuals_admm = np.mean(_residuals_sim, axis=0)
+    return (simulation_residuals_admm,)
+
+
 @app.cell
 def _(P, T, n_u, np, q, u_max, u_min, x_init):
     # Define and solve this problem with CVXPY
@@ -198,6 +270,7 @@ def _(
     P,
     T,
     Verifier,
+    csr_matrix,
     n_s,
     n_u,
     n_xz,
@@ -205,7 +278,6 @@ def _(
     q,
     rho,
     sigma,
-    spa,
     u_stack_max,
     u_stack_min,
     x_init,
@@ -246,15 +318,14 @@ def _(
     # indbox = IndBox(l=l_x, u=u_x)
 
     # ADMM (OSQP) iterations
-    _lhs_mat = P + sigma*np.eye(n_xz) + rho*(M.T@M)
-    _lhs_mat_factorization = spa.linalg.factorized(_lhs_mat)
+    _lhs_mat = csr_matrix(P + sigma*np.eye(n_xz) + rho*(M.T@M))
 
     all_residuals = []
     for _k in range(K):
         _w[_k+1] = _VP.step.satlin(_v[_k], l=_l_x, u=_u_x)
         # _w[_k+1] = _VP.prox(function=indbox, rhs=_v[_k])
         _rhs = sigma * _z[_k] - q + rho * M.T @ (2*_w[_k+1] - _v[_k])
-        _z[_k+1] = _VP.step.implicit_linear(rhs=_rhs, lhs_mat=_lhs_mat, lhs_mat_factorization=_lhs_mat_factorization)
+        _z[_k+1] = _VP.step.implicit_linear(rhs=_rhs, lhs_mat=_lhs_mat)
         _v[_k+1] = _v[_k] + (M @ _z[_k+1] - _w[_k+1])
 
         # optimize over scaled fixed-point residual (KKT residual)
@@ -267,8 +338,9 @@ def _(
 
 
 @app.cell
-def _(K, all_residuals, plt):
-    plt.plot(range(1, K+1), all_residuals, label='PDHG')
+def _(K, all_residuals, plt, simulation_residuals_admm):
+    plt.plot(range(1, K+1), all_residuals, label='ADMM (MIP worst-case)')
+    plt.plot(range(1, K+1), simulation_residuals_admm, '--', label='ADMM (in-sample avg)')
     plt.suptitle('optimal control example (MIP)')
     plt.yscale('log')
     plt.xlabel(r'$K$')
@@ -350,81 +422,6 @@ def _(K, all_residuals_PEP, plt):
     plt.ylabel('Worst-case fixed-point residual')
     plt.legend()
     plt.suptitle('optimal control example (PEP)')
-    return
-
-
-@app.cell
-def _(
-    K,
-    M,
-    P,
-    T,
-    Verifier,
-    n_s,
-    n_u,
-    n_xz,
-    np,
-    q,
-    rho,
-    sigma,
-    spa,
-    u_stack_max,
-    u_stack_min,
-    x_lb,
-    x_ub,
-):
-    # Solve VP for optimal control example
-    _VP = Verifier(method='sdp', solver='clarabel')
-
-    _x_param = _VP.add_param(n_s, lb=x_lb, ub=x_ub)
-
-    # l(x) <= M@z <= u(x)
-    _l_param = _VP.add_param((T-1)*n_u, lb=u_stack_min, ub=u_stack_min)
-    _u_param = _VP.add_param((T-1)*n_u, lb=u_stack_max, ub=u_stack_max)
-    _l_x = _VP.add_param_stack([_x_param, _l_param])
-    _u_x = _VP.add_param_stack([_x_param, _u_param])
-
-    _z = [None for _ in range(K+1)]
-    _v = [None for _ in range(K+1)]
-    _w = [None for _ in range(K+1)]
-
-    _z[0] = np.zeros(n_xz)
-    _v[0] = _VP.add_param(n_xz, lb=np.zeros(n_xz), ub=np.ones(n_xz))
-    _w[0] = np.zeros(n_xz)
-
-    # Box constraint
-    # from fomtools.proxable_functions import IndBox
-    # indbox = IndBox(l=l_x, u=u_x)
-
-    # ADMM (OSQP) iterations
-    _lhs_mat = P + sigma*np.eye(n_xz) + rho*(M.T@M)
-    _lhs_mat_factorization = spa.linalg.factorized(_lhs_mat)
-
-    all_residuals_sdp = []
-    for _k in range(K):
-        _w[_k+1] = _VP.step.satlin(_v[_k], l=_l_x, u=_u_x)
-        # _w[k+1] = _VP.prox(function=indbox, rhs=_v[_k])
-        _rhs = sigma * _z[_k] - q + rho * M.T @ (2*_w[_k+1] - _v[_k])
-        _z[_k+1] = _VP.step.implicit_linear(rhs=_rhs, lhs_mat=_lhs_mat, lhs_mat_factorization=_lhs_mat_factorization)
-        # _z[_k+1] = _VP.add_iterate(n_xz, lb=-1, ub=1)
-        # _VP.add_constraint(_lhs_mat @ _z[_k+1] == _rhs)
-        _v[_k+1] = _v[_k] + (M @ _z[_k+1] - _w[_k+1])
-
-        # optimize over scaled fixed-point residual (KKT residual)
-        _VP.set_objective_norm([-sigma*(_z[_k+1]-_z[_k]) - rho*M.T@(_v[_k+1]-_v[_k]), _v[_k+1]-_v[_k]], 2)
-        _res = _VP.solve()
-        all_residuals_sdp.append(_res)
-    return (all_residuals_sdp,)
-
-
-@app.cell
-def _(K, all_residuals_sdp, plt):
-    plt.plot(range(1, K+1), all_residuals_sdp, label='PDHG')
-    plt.suptitle('optimal control example (SDP)')
-    plt.yscale('log')
-    plt.xlabel(r'$K$')
-    plt.ylabel('Worst-case fixed-point residual')
-    plt.legend()
     return
 
 

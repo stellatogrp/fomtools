@@ -224,45 +224,5 @@ def _(K, all_residuals_PEP, plt):
     return
 
 
-@app.cell
-def _(D, K, Verifier, eta, lambd, n, np, p, x_lb, x_ub):
-    # from fomtools.proxable_functions import NormL1
-    # _regularizer = lambd * NormL1
-    # _regularizer = NormL1(lambd=lambd)
-
-    _VP = Verifier(method='sdp', solver='clarabel', obbt_handler='highs')
-    _x_param = _VP.add_param(p, lb=x_lb, ub=x_ub)
-
-    _s0 = np.zeros(n) # initialized at zero
-    _s = [None for _ in range(K + 1)]
-    _s[0] = _s0
-
-    all_residuals_sdp = []
-    for _k in range(1, K+1):
-        _s[_k] = _VP.step.soft_threshold(_s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), lambd=lambd*eta)
-        # _s[_k] = _VP.prox(function=_regularizer, rhs=_s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), gamma=eta)
-        _VP.set_objective_norm([_s[_k] - _s[_k-1]], 2)
-        _res = _VP.solve()
-        all_residuals_sdp.append(_res)
-    return (all_residuals_sdp,)
-
-
-@app.cell
-def _(K, all_residuals_sdp, plt):
-    plt.figure()
-    plt.plot(range(1, K+1), all_residuals_sdp, label='SDP-VP bound')
-    plt.suptitle('sparse coding example (SDP)')
-    plt.yscale('log')
-    plt.ylabel('Worst-case fixed-point residual')
-    plt.xlabel(r'$K$')
-    plt.legend()
-    return
-
-
-@app.cell
-def _():
-    return
-
-
 if __name__ == "__main__":
     app.run()

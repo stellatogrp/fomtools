@@ -184,7 +184,7 @@ def _(A_d, A_s, b_s, c, cp, mu, n_e, x_ub):
 
 @app.cell
 def _(A_d, A_s, np):
-    K = 3
+    K = 5
     L = np.linalg.norm(np.hstack([A_s.T, A_d.T]), 2)
     eta = 0.5 / L
 
@@ -192,7 +192,128 @@ def _(A_d, A_s, np):
         'OutputFlag': 0,
         'LogToConsole': 0,
     }
-    return K, L, eta, solver_params
+
+    n_samples = 10000
+    return K, L, eta, n_samples, solver_params
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    We first simulate the PDHG algorithm on given problem instances by randomly sampling the parameter $x$ (demand vector) over the parameter set $\mathcal{X}$.
+    """)
+    return
+
+
+@app.cell
+def _(
+    A_d,
+    A_s,
+    K,
+    b_s,
+    c,
+    eta,
+    mu,
+    n_d,
+    n_s,
+    n_samples,
+    np,
+    x_lb,
+    x_ub,
+    z0_value,
+):
+    # Simulate PDHG on sampled problem instances
+    _rng = np.random.default_rng(0)
+    _x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, n_d))
+
+    # PDHG iteration over samples (batched)
+    _z_batch = np.tile(z0_value, (n_samples, 1))
+    _v_batch = np.zeros((n_samples, n_s), dtype=float)
+    _w_batch = np.zeros((n_samples, n_d), dtype=float)
+
+    _residuals_sim = np.empty((n_samples, K), dtype=float)
+
+    for _k in range(1, K + 1):
+        # satlin: z update with box constraints [0, c]
+        _z_rhs = _z_batch - eta * (mu[np.newaxis, :] + _v_batch @ A_s - _w_batch @ A_d)
+        _z_new_batch = np.clip(_z_rhs, 0, c[np.newaxis, :])
+
+        # relu: v update
+        _v_rhs = _v_batch + eta * (-b_s[np.newaxis, :] + (2*_z_new_batch - _z_batch) @ A_s.T)
+        _v_new_batch = np.maximum(_v_rhs, 0.0)
+
+        # linear: w update
+        _w_new_batch = _w_batch + eta * (_x_samples - (2*_z_new_batch - _z_batch) @ A_d.T)
+
+        # residual (scaled fixed-point residual)
+        _residual_1 = (1/eta) * (_z_new_batch - _z_batch) - (_v_new_batch - _v_batch) @ A_s + (_w_new_batch - _w_batch) @ A_d
+        _residual_2 = -(_z_new_batch - _z_batch) @ A_s.T + (1/eta) * (_v_new_batch - _v_batch)
+        _residual_3 = (_z_new_batch - _z_batch) @ A_d.T + (1/eta) * (_w_new_batch - _w_batch)
+        _residuals_sim[:, _k - 1] = np.max(np.abs(np.hstack([_residual_1, _residual_2, _residual_3])), axis=1)
+
+        _z_batch = _z_new_batch
+        _v_batch = _v_new_batch
+        _w_batch = _w_new_batch
+
+    simulation_residuals_pdhg = np.mean(_residuals_sim, axis=0)
+    return (simulation_residuals_pdhg,)
+
+
+@app.cell
+def _(
+    A_d,
+    A_s,
+    K,
+    b_s,
+    c,
+    eta,
+    mu,
+    n_d,
+    n_s,
+    n_samples,
+    np,
+    x_lb,
+    x_ub,
+    z0_value,
+):
+    # Simulate momentum PDHG on sampled problem instances
+    _rng = np.random.default_rng(0)
+    _x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, n_d))
+
+    # Momentum PDHG iteration over samples (batched)
+    _z_batch = np.tile(z0_value, (n_samples, 1))
+    _v_batch = np.zeros((n_samples, n_s), dtype=float)
+    _w_batch = np.zeros((n_samples, n_d), dtype=float)
+
+    _residuals_sim_mom = np.empty((n_samples, K), dtype=float)
+
+    for _k in range(1, K + 1):
+        # satlin: z update with box constraints [0, c]
+        _z_rhs = _z_batch - eta * (mu[np.newaxis, :] + _v_batch @ A_s - _w_batch @ A_d)
+        _z_new_batch = np.clip(_z_rhs, 0, c[np.newaxis, :])
+
+        # momentum extrapolation
+        _z_tilde_batch = _z_new_batch + (_k - 1) / (_k + 2) * (_z_new_batch - _z_batch)
+
+        # relu: v update
+        _v_rhs = _v_batch + eta * (-b_s[np.newaxis, :] + (2*_z_tilde_batch - _z_batch) @ A_s.T)
+        _v_new_batch = np.maximum(_v_rhs, 0.0)
+
+        # linear: w update
+        _w_new_batch = _w_batch + eta * (_x_samples - (2*_z_tilde_batch - _z_batch) @ A_d.T)
+
+        # residual (scaled fixed-point residual with momentum correction)
+        _residual_1 = (1/eta) * (_z_new_batch - _z_batch) - (_v_new_batch - _v_batch) @ A_s + (_w_new_batch - _w_batch) @ A_d
+        _residual_2 = -(1 + 2*(_k-1)/(_k+2)) * (_z_new_batch - _z_batch) @ A_s.T + (1/eta) * (_v_new_batch - _v_batch)
+        _residual_3 = (1 + 2*(_k-1)/(_k+2)) * (_z_new_batch - _z_batch) @ A_d.T + (1/eta) * (_w_new_batch - _w_batch)
+        _residuals_sim_mom[:, _k - 1] = np.max(np.abs(np.hstack([_residual_1, _residual_2, _residual_3])), axis=1)
+
+        _z_batch = _z_new_batch
+        _v_batch = _v_new_batch
+        _w_batch = _w_new_batch
+
+    simulation_residuals_pdhg_mom = np.mean(_residuals_sim_mom, axis=0)
+    return (simulation_residuals_pdhg_mom,)
 
 
 @app.cell
@@ -308,10 +429,19 @@ def _(
 
 
 @app.cell
-def _(K, all_residuals, all_residuals_momentum, plt):
+def _(
+    K,
+    all_residuals,
+    all_residuals_momentum,
+    plt,
+    simulation_residuals_pdhg,
+    simulation_residuals_pdhg_mom,
+):
     plt.figure()
-    plt.plot(range(1, K+1), all_residuals, label='PDHG')
-    plt.plot(range(1, K+1), all_residuals_momentum, label='momentum PDHG')
+    plt.plot(range(1, K+1), all_residuals, label='PDHG (MIP worst-case)')
+    plt.plot(range(1, K+1), simulation_residuals_pdhg, '--', label='PDHG (in-sample avg)')
+    plt.plot(range(1, K+1), all_residuals_momentum, label='momentum PDHG (MIP worst-case)')
+    plt.plot(range(1, K+1), simulation_residuals_pdhg_mom, '--', label='momentum PDHG (in-sample avg)')
     # plt.yscale('log')
     plt.xlabel(r'$K$')
     plt.ylabel('Worst-case KKT residual')
@@ -445,135 +575,6 @@ def _(K, all_residuals_PEP, all_residuals_momentum_PEP, plt):
     plt.ylabel('Worst-case fixed-point residual')
     plt.xlabel(r'$K$')
     plt.suptitle('network optimization example (PEP)')
-    plt.legend()
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    We now run SDP-relaxation of VP for the same setup, only changing the norm upon which we measure the magnitude of fixed-point residual.
-    """)
-    return
-
-
-@app.cell
-def _(
-    A_d,
-    A_s,
-    K,
-    Verifier,
-    b_s,
-    c,
-    c_lb,
-    c_ub,
-    eta,
-    mu,
-    n_d,
-    n_e,
-    n_s,
-    np,
-    x_lb,
-    x_ub,
-    z0_value,
-):
-    _VP = Verifier(method='sdp', solver='clarabel', obbt_handler='highs')
-    _x_param = _VP.add_param(n_d, lb=x_lb, ub=x_ub)
-    _c_param = _VP.add_param(n_e, lb=c_lb*np.ones(n_e), ub=c_ub*np.ones(n_e))
-    _b_s_param = _VP.add_param(n_s, lb=b_s, ub=b_s)
-    _mu_param = _VP.add_param(n_e, lb=mu, ub=mu)
-
-    _z0 = _VP.add_iterate(n_e, lb=z0_value, ub=z0_value)
-    _v0 = _VP.add_iterate(n_s, lb=np.zeros(n_s), ub=np.zeros(n_s))
-    _w0 = _VP.add_iterate(n_d, lb=np.zeros(n_d), ub=np.zeros(n_d))
-    _z = [None for _ in range(K+1)]
-    _v = [None for _ in range(K+1)]
-    _w = [None for _ in range(K+1)]
-    _z[0] = _z0
-    _v[0] = _v0
-    _w[0] = _w0
-
-    all_residuals_sdp = []
-    for _k in range(1, K+1):
-        _z[_k] = _VP.step.satlin(_z[_k-1] - eta * (_mu_param + A_s.T @ _v[_k-1] - A_d.T @ _w[_k-1]), l=np.zeros(n_e), u=c)
-        _v[_k] = _VP.step.relu(_v[_k-1] + eta * (- _b_s_param + A_s @ (2*_z[_k] - _z[_k-1])))
-        _w[_k] = _w[_k-1] + eta * (_x_param - A_d @ (2*_z[_k] - _z[_k-1]))
-        _VP.set_objective_norm([
-            (1/eta) * (_z[_k] - _z[_k-1]) - A_s.T@(_v[_k] - _v[_k-1]) + A_d.T@(_w[_k] - _w[_k-1]),
-            - A_s@(_z[_k] - _z[_k-1]) + (1/eta) * (_v[_k] - _v[_k-1]),
-            A_d@(_z[_k] - _z[_k-1]) + (1/eta) * (_w[_k] - _w[_k-1])
-        ], 2)
-        _res = _VP.solve()
-        all_residuals_sdp.append(_res)
-    return (all_residuals_sdp,)
-
-
-@app.cell
-def _(
-    A_d,
-    A_s,
-    K,
-    Verifier,
-    b_s,
-    c,
-    c_lb,
-    c_ub,
-    eta,
-    mu,
-    n_d,
-    n_e,
-    n_s,
-    np,
-    x_lb,
-    x_ub,
-    z0_value,
-):
-    # Solve verification problem for momentum PDHG
-    _VP = Verifier(method='sdp', solver='clarabel', obbt_handler='highs')
-    _x_param = _VP.add_param(n_d, lb=x_lb, ub=x_ub)
-    _c_param = _VP.add_param(n_e, lb=c_lb*np.ones(n_e), ub=c_ub*np.ones(n_e))
-    _b_s_param = _VP.add_param(n_s, lb=b_s, ub=b_s)
-    _mu_param = _VP.add_param(n_e, lb=mu, ub=mu)
-
-    _z0 = _VP.add_iterate(n_e, lb=z0_value, ub=z0_value)
-    _v0 = _VP.add_iterate(n_s, lb=np.zeros(n_s), ub=np.zeros(n_s))
-    _w0 = _VP.add_iterate(n_d, lb=np.zeros(n_d), ub=np.zeros(n_d))
-    _z = [None for _ in range(K+1)]
-    _ztilde = [None for _ in range(K+1)]
-    _v = [None for _ in range(K+1)]
-    _w = [None for _ in range(K+1)]
-    _z[0] = _z0
-    _v[0] = _v0
-    _w[0] = _w0
-
-    all_residuals_sdp_momentum = []
-    for _k in range(1, K+1):
-        _z[_k] = _VP.step.satlin(_z[_k-1] - eta * (_mu_param + A_s.T @ _v[_k-1] - A_d.T @ _w[_k-1]), l=np.zeros(n_e), u=c)
-        _ztilde[_k] = _z[_k] + (_k-1)/(_k+2) * (_z[_k] - _z[_k-1])
-        _v[_k] = _VP.step.relu(_v[_k-1] + eta * (- _b_s_param + A_s @ (2*_ztilde[_k] - _z[_k-1])))
-        _w[_k] = _w[_k-1] + eta * (_x_param - A_d @ (2*_ztilde[_k] - _z[_k-1]))
-        _VP.set_objective_norm([
-            (1/eta) * (_z[_k] - _z[_k-1]) - A_s.T@(_v[_k] - _v[_k-1]) + A_d.T@(_w[_k] - _w[_k-1]),
-            - (1 + 2*(_k-1)/(_k+2)) * A_s@(_z[_k] - _z[_k-1]) + (1/eta) * (_v[_k] - _v[_k-1]),
-            (1 + 2*(_k-1)/(_k+2)) * A_d@(_z[_k] - _z[_k-1]) + (1/eta) * (_w[_k] - _w[_k-1])
-        ], 2)
-        _res = _VP.solve()
-        all_residuals_sdp_momentum.append(_res)
-
-    print(all_residuals_sdp_momentum)
-    return (all_residuals_sdp_momentum,)
-
-
-@app.cell
-def _(K, all_residuals_sdp, all_residuals_sdp_momentum, plt):
-    plt.figure()
-    plt.plot(range(1, K+1), all_residuals_sdp, label='PDHG')
-    plt.plot(range(1, K+1), all_residuals_sdp_momentum, label='momentum PDHG')
-    plt.yscale('log')
-    plt.xscale('log')
-    plt.ylabel('Worst-case fixed-point residual')
-    plt.xlabel(r'$K$')
-    plt.suptitle('network optimization example (SDP)')
     plt.legend()
     return
 
