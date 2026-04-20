@@ -257,7 +257,7 @@ def _(P, T, n_u, np, q, u_max, u_min, x_init):
 
     # define objective and solve problem
     problem = cp.Problem(cp.Minimize((1/2)*cp.quad_form(x_u_stack, P) + q.T@x_u_stack), constraints=constraints)
-    problem.solve(verbose=True)
+    problem.solve(solver=cp.SCS, verbose=True)
 
     print(problem.status, problem.value)
     return u_stack_max, u_stack_min

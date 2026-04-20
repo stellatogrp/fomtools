@@ -241,7 +241,7 @@ def _(A_d, A_s, K_net, b_s, c, eta_net, mu, n_d, n_e, n_s, np, x_lb_net, x_ub_ne
     ]
 
     problem = cp.Problem(cp.Minimize(objective), constraints)
-    problem.solve()
+    problem.solve(solver=cp.SCS)
 
     z0_value_net = x_block.value[:n_e]
     return (z0_value_net,)

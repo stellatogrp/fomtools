@@ -353,7 +353,7 @@ def _(K, L, eta):
             _x[_k], _, _ = proximal_step(_x[_k-1] - eta * _f.gradient(_x[_k-1]), _g, eta)
         _problem.set_performance_metric(_F(_x[_k_PEP]) - _F(_xs))
         # _problem.set_performance_metric((_x[_k_PEP] - _x[_k_PEP-1]) ** 2)
-        _res = _problem.solve()
+        _res = _problem.solve(solver='SCS')
         all_residuals_PEP.append(_res) # account for L-infinity norm of VP
     return (
         ConvexIndicatorFunction,
@@ -400,7 +400,7 @@ def _(
             _x[_k] = _w[_k] + (_k-1)/(_k+2) * (_w[_k] - _w[_k-1])
         _problem.set_performance_metric(_F(_x[_k_PEP]) - _F(_xs))
         # _problem.set_performance_metric((_x[_k_PEP] - _x[_k_PEP-1]) ** 2)
-        _res = _problem.solve()
+        _res = _problem.solve(solver='SCS')
         all_residuals_momentum_PEP.append(_res) # account for L-infinity norm of VP
     return (all_residuals_momentum_PEP,)
 

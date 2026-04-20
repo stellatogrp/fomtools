@@ -157,7 +157,7 @@ def _(A_d, A_s, c, cp, d_lb, mu, n_d, n_e, n_s, np, s_lb):
     ]
 
     problem = cp.Problem(cp.Minimize(objective), constraints)
-    problem.solve()
+    problem.solve(solver=cp.SCS)
 
     print(problem.status, problem.value)
     z0_value = x_block.value[:n_e]
@@ -176,7 +176,7 @@ def _(A_d, A_s, b_s, c, cp, mu, n_e, x_ub):
     ]
 
     problem_check = cp.Problem(objective=cp.Minimize(mu.T@f), constraints=constraints_check)
-    problem_check.solve()
+    problem_check.solve(solver=cp.SCS)
 
     print(problem_check.status, problem_check.value)
     return
@@ -668,7 +668,7 @@ def _(ConvexFunction, K, L, LinearOperator, PEP, Point, eta, proximal_step):
             _xtilde[_k] = _x[_k] + (_k-1)/(_k+2) * (_x[_k] - _x[_k-1])
             _u[_k], _, _ = proximal_step(_u[_k-1] + eta * _linear.gradient(2*_xtilde[_k] - _x[_k-1]), _g, eta)
         _problem.set_performance_metric((_x[_k_PEP] - _x[_k_PEP-1])**2 + (_u[_k_PEP] - _u[_k_PEP-1])**2)
-        _res = _problem.solve(solver='mosek')
+        _res = _problem.solve(solver='SCS')
         all_residuals_momentum_PEP.append(_res) # account for L-infinity norm of VP
     return (all_residuals_momentum_PEP,)
 

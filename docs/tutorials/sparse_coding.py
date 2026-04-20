@@ -401,7 +401,7 @@ def _(ConvexFunction, K, L, PEP, SmoothConvexFunction, eta, proximal_step):
             _s[_k], _, _ = proximal_step(_s[_k-1] - eta * _f.gradient(_s[_k-1]), _g, eta)
         # _problem.set_performance_metric(_F(_s[_k]) - _F(_xs))
         _problem.set_performance_metric((_s[_k] - _s[_k-1]) ** 2)
-        _res = _problem.solve()
+        _res = _problem.solve(solver='SCS')
         all_residuals_PEP.append(_res)
     return (all_residuals_PEP,)
 
@@ -443,7 +443,7 @@ def _(ConvexFunction, K, L, PEP, SmoothConvexFunction, eta, proximal_step):
 
         # _problem.set_performance_metric(_F(_y[_k]) - _F(_xs))
         _problem.set_performance_metric((_y[_k] - _y[_k-1]) ** 2)
-        _res = _problem.solve()
+        _res = _problem.solve(solver='SCS')
         all_residuals_PEP_fista.append(_res)
     return (all_residuals_PEP_fista,)
 
