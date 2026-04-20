@@ -150,24 +150,24 @@ def _(A, K, eta, m, n, n_samples, np, x_lb, x_ub, z0_lb, z0_ub):
     # Momentum coefficients depend on k, so we simulate explicitly instead of
     # using Verifier(method='simulator'), which applies one fixed step map.
     _rng = np.random.default_rng(0)
-    x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, m))
+    _x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, m))
 
-    z = np.full((n_samples, n), (z0_lb + z0_ub) / 2.0, dtype=float)
-    w_prev = z.copy()  # w0 = z0
+    _z = np.full((n_samples, n), (z0_lb + z0_ub) / 2.0, dtype=float)
+    _w_prev = _z.copy()  # w0 = z0
 
-    residuals = np.empty((n_samples, K), dtype=float)
-    for k in range(1, K + 1):
-        grad = (z @ A.T - x_samples) @ A
-        w = np.maximum(z - eta * grad, 0.0)
+    _residuals = np.empty((n_samples, K), dtype=float)
+    for _k in range(1, K+1):
+        _grad = (_z @ A.T - _x_samples) @ A
+        _w = np.maximum(_z - eta * _grad, 0.0)
 
-        beta_k = (k - 1) / (k + 2)
-        z_new = w + beta_k * (w - w_prev)
+        _beta_k = (_k-1) / (_k+2)
+        _z_new = _w + _beta_k * (_w - _w_prev)
 
-        residuals[:, k - 1] = np.max(np.abs(z_new - z), axis=1)
-        w_prev = w
-        z = z_new
+        _residuals[:, _k-1] = np.max(np.abs(_z_new - _z), axis=1)
+        _w_prev = _w
+        _z = _z_new
 
-    simulation_residuals_momentum = np.mean(residuals, axis=0)
+    simulation_residuals_momentum = np.mean(_residuals, axis=0)
     return (simulation_residuals_momentum,)
 
 
@@ -189,12 +189,43 @@ def _(A, K, Verifier, eta, m, n, np, solver_params, x_lb, x_ub, z0_lb, z0_ub):
     _z[0] = _z0
 
     all_residuals = []
+    worst_case_x_param = []
     for _k in range(1, K+1):
         _z[_k] = _VP.step.relu(_z[_k-1] - eta * A.T @ (A @ _z[_k-1] - _x_param))
         _VP.set_objective_norm([_z[_k] - _z[_k-1]], np.inf)
         _res = _VP.solve()
         all_residuals.append(_res)
-    return (all_residuals,)
+        # Store the horizon-specific worst-case instance for this k.
+        worst_case_x_param.append(_VP.get_solution_value(_x_param))
+    return all_residuals, worst_case_x_param
+
+
+@app.cell
+def _(
+    A,
+    K,
+    Verifier,
+    eta,
+    m,
+    n,
+    np,
+    worst_case_x_param,
+    x_lb,
+    x_ub,
+    z0_lb,
+    z0_ub,
+):
+    # Simulate each horizon k with its own worst-case x from verification at that k.
+    worst_case_residuals = []
+    for _k in range(1, K + 1):
+        _VP = Verifier(method='simulator')
+        _x_param = _VP.add_param(ndim=m, lb=x_lb, ub=x_ub, samples=[worst_case_x_param[_k - 1]])
+        _z = _VP.add_iterate(ndim=n, lb=z0_lb, ub=z0_ub, init=np.full(n, (z0_lb + z0_ub) / 2))
+        _VP.step.relu(_z - eta * A.T @ (A @ _z - _x_param))
+        worst_case_residuals.append(_VP.solve(K=_k)[0][-1])
+
+    worst_case_residuals = np.array(worst_case_residuals)
+    return (worst_case_residuals,)
 
 
 @app.cell
@@ -210,13 +241,47 @@ def _(A, K, Verifier, eta, m, n, np, solver_params, x_lb, x_ub, z0_lb, z0_ub):
     _w[0] = _z0
 
     all_residuals_momentum = []
+    worst_case_x_param_momentum = []
     for _k in range(1, K+1):
         _w[_k] = _VP.step.relu(_z[_k-1] - eta * A.T @ (A @ _z[_k-1] - _x_param))
         _z[_k] = _w[_k] + (_k-1)/(_k+2) * (_w[_k] - _w[_k-1])
         _VP.set_objective_norm([_z[_k] - _z[_k-1]], np.inf)
         _res = _VP.solve()
         all_residuals_momentum.append(_res)
-    return (all_residuals_momentum,)
+    
+        # Store the horizon-specific worst-case instance for this k.
+        worst_case_x_param_momentum.append(_VP.get_solution_value(_x_param))
+    return all_residuals_momentum, worst_case_x_param_momentum
+
+
+@app.cell
+def _(A, K, eta, n, np, worst_case_x_param_momentum, z0_lb, z0_ub):
+    # Momentum has k-dependent coefficients, so simulate each horizon explicitly.
+    worst_case_residuals_momentum = []
+    _z0 = np.full(n, (z0_lb + z0_ub) / 2.0, dtype=float)
+
+    for _k in range(1, K + 1):
+        _x_k = np.array(worst_case_x_param_momentum[_k - 1], dtype=float)
+
+        _z = _z0.copy()
+        _w_prev = _z0.copy()
+        _last_residual = 0.0
+
+        for _j in range(1, _k + 1):
+            _grad = (_z @ A.T - _x_k) @ A
+            _w = np.maximum(_z - eta * _grad, 0.0)
+            _beta_j = (_j-1) / (_j+2)
+            _z_new = _w + _beta_j * (_w - _w_prev)
+
+            _last_residual = np.max(np.abs(_z_new - _z))
+            _w_prev = _w
+            _z = _z_new
+
+        worst_case_residuals_momentum.append(_last_residual)
+
+    worst_case_residuals_momentum = np.array(worst_case_residuals_momentum)
+    print(worst_case_residuals_momentum)
+    return (worst_case_residuals_momentum,)
 
 
 @app.cell(hide_code=True)
@@ -235,11 +300,15 @@ def _(
     plt,
     simulation_residuals,
     simulation_residuals_momentum,
+    worst_case_residuals,
+    worst_case_residuals_momentum,
 ):
     plt.plot(range(1, K+1), all_residuals, label='PGD (MIP worst-case)')
     plt.plot(range(1, K+1), simulation_residuals, '--', label='PGD (in-sample avg)')
+    plt.plot(range(1, K+1), worst_case_residuals, '-.', color='k', linewidth=.5, label='worst-case PGD instance')
     plt.plot(range(1, K+1), all_residuals_momentum, label='momentum PGD (MIP worst-case)')
     plt.plot(range(1, K+1), simulation_residuals_momentum, '--', label='momentum PGD (in-sample avg)')
+    plt.plot(range(1, K+1), worst_case_residuals_momentum, '-.', color='k', linewidth=.5, label='worst-case momentum PGD instance')
     plt.yscale('log')
     plt.ylabel('Worst-case fixed-point residual')
     plt.xlabel(r'$K$')
