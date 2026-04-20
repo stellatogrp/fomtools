@@ -248,7 +248,7 @@ def _(A, K, Verifier, eta, m, n, np, solver_params, x_lb, x_ub, z0_lb, z0_ub):
         _VP.set_objective_norm([_z[_k] - _z[_k-1]], np.inf)
         _res = _VP.solve()
         all_residuals_momentum.append(_res)
-    
+
         # Store the horizon-specific worst-case instance for this k.
         worst_case_x_param_momentum.append(_VP.get_solution_value(_x_param))
     return all_residuals_momentum, worst_case_x_param_momentum

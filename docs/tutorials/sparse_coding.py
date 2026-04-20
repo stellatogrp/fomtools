@@ -245,13 +245,42 @@ def _(D, K, Verifier, eta, lambd, n, np, p, solver_params, x_lb, x_ub):
     _s[0] = _s0
 
     all_residuals = []
+    worst_case_x_param_ista = []
     for _k in range(1, K+1):
         _s[_k] = _VP.step.soft_threshold(_s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), lambd=lambd*eta)
         # _s[_k] = VP.prox(function=regularizer, rhs=_s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), gamma=eta)
         _VP.set_objective_norm([_s[_k] - _s[_k-1]], np.inf)
         _res = _VP.solve()
         all_residuals.append(_res)
-    return (all_residuals,)
+        worst_case_x_param_ista.append(_VP.get_solution_value(_x_param))
+    return all_residuals, worst_case_x_param_ista
+
+
+@app.cell
+def _(
+    D,
+    K,
+    Verifier,
+    eta,
+    lambd,
+    n,
+    np,
+    p,
+    worst_case_x_param_ista,
+    x_lb,
+    x_ub,
+):
+    # Simulate each horizon with its own worst-case x from ISTA verification.
+    worst_case_residuals_ista = []
+    for _k in range(1, K + 1):
+        _VP = Verifier(method='simulator')
+        _x_param = _VP.add_param(ndim=p, lb=x_lb, ub=x_ub, samples=[worst_case_x_param_ista[_k - 1]])
+        _s = _VP.add_iterate(ndim=n, lb=0.0, ub=0.0, init=np.zeros(n))
+        _VP.step.soft_threshold(_s - eta * D.T @ (D @ _s - _x_param), lambd=lambd * eta)
+        worst_case_residuals_ista.append(_VP.solve(K=_k)[0][-1])
+
+    worst_case_residuals_ista = np.array(worst_case_residuals_ista)
+    return (worst_case_residuals_ista,)
 
 
 @app.cell
@@ -269,6 +298,7 @@ def _(D, K, Verifier, eta, lambd, n, np, p, solver_params, x_lb, x_ub):
 
     _t = [1.0]  # momentum parameter sequence
     all_residuals_fista = []
+    worst_case_x_param_fista = []
 
     for _k in range(1, K+1):
         # FISTA step: y := ST_{lambda*eta}(z - eta * D^T(D*z - x))
@@ -284,7 +314,42 @@ def _(D, K, Verifier, eta, lambd, n, np, p, solver_params, x_lb, x_ub):
         _VP_fista.set_objective_norm([_y[_k] - _y[_k-1]], np.inf)
         _res = _VP_fista.solve()
         all_residuals_fista.append(_res)
-    return (all_residuals_fista,)
+        worst_case_x_param_fista.append(_VP_fista.get_solution_value(_x_param_fista))
+    return all_residuals_fista, worst_case_x_param_fista
+
+
+@app.cell
+def _(D, K, eta, lambd, n, np, worst_case_x_param_fista):
+    # Simulate each horizon with its own worst-case x from FISTA verification.
+    worst_case_residuals_fista = []
+
+    def _soft_threshold(_v, _threshold):
+        return np.sign(_v) * np.maximum(np.abs(_v) - _threshold, 0.0)
+
+    for _k in range(1, K+1):
+        _x_k = np.array(worst_case_x_param_fista[_k-1], dtype=float)
+
+        _y = np.zeros(n, dtype=float)
+        _z = np.zeros(n, dtype=float)
+        _y_prev = _y.copy()
+        _t = 1.0
+        _last_residual = 0.0
+
+        for _j in range(1, _k + 1):
+            _y_new = _soft_threshold(_z - eta * (D @ _z - _x_k) @ D, lambd * eta)
+            _t_new = (1.0 + np.sqrt(1.0 + 4.0 * _t**2)) / 2.0
+            _z_new = _y_new + ((_t - 1.0) / _t_new) * (_y_new - _y_prev)
+
+            _last_residual = np.max(np.abs(_y_new - _y))
+            _y_prev = _y_new.copy()
+            _y = _y_new
+            _z = _z_new
+            _t = _t_new
+
+        worst_case_residuals_fista.append(_last_residual)
+
+    worst_case_residuals_fista = np.array(worst_case_residuals_fista)
+    return (worst_case_residuals_fista,)
 
 
 @app.cell
@@ -295,11 +360,15 @@ def _(
     plt,
     simulation_residuals_fista,
     simulation_residuals_ista,
+    worst_case_residuals_fista,
+    worst_case_residuals_ista,
 ):
     plt.plot(range(1, K+1), all_residuals, label='ISTA MIP bound')
     plt.plot(range(1, K+1), simulation_residuals_ista, '--', label='ISTA (sample avg)')
+    plt.plot(range(1, K+1), worst_case_residuals_ista, '-.', color='k', linewidth=.6, label='worst-case ISTA instance')
     plt.plot(range(1, K+1), all_residuals_fista, label='FISTA MIP bound')
     plt.plot(range(1, K+1), simulation_residuals_fista, '--', label='FISTA (sample avg)')
+    plt.plot(range(1, K+1), worst_case_residuals_fista, ':', color='k', linewidth=.8, label='worst-case FISTA instance')
     plt.suptitle('sparse coding example (MIP)')
     plt.yscale('log')
     plt.ylabel('Worst-case fixed-point residual')

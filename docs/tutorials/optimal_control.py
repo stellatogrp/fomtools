@@ -107,7 +107,7 @@ def _():
     # ADMM parameters
     sigma = 1e-4
     rho = 1.  # 0.1, 1, 10
-    K = 3
+    K = 5
     return K, rho, sigma
 
 
@@ -321,6 +321,8 @@ def _(
     _lhs_mat = csr_matrix(P + sigma*np.eye(n_xz) + rho*(M.T@M))
 
     all_residuals = []
+    worst_case_x_param_admm = []
+    worst_case_v_admm = []
     for _k in range(K):
         _w[_k+1] = _VP.step.satlin(_v[_k], l=_l_x, u=_u_x)
         # _w[_k+1] = _VP.prox(function=indbox, rhs=_v[_k])
@@ -332,15 +334,76 @@ def _(
         _VP.set_objective_norm([-sigma*(_z[_k+1]-_z[_k]) - rho*M.T@(_v[_k+1]-_v[_k]), _v[_k+1]-_v[_k]], np.inf)
         _res = _VP.solve()
         all_residuals.append(_res)
+        # Store the horizon-specific worst-case initial state for this k.
+        worst_case_x_param_admm.append(_VP.get_solution_value(_x_param))
+        worst_case_v_admm.append(_VP.get_solution_value(_v[0]))
 
     print(all_residuals)
-    return (all_residuals,)
+    return all_residuals, worst_case_v_admm, worst_case_x_param_admm
 
 
 @app.cell
-def _(K, all_residuals, plt, simulation_residuals_admm):
+def _(
+    K,
+    M,
+    P,
+    csr_matrix,
+    n_xz,
+    np,
+    q,
+    rho,
+    sigma,
+    spa,
+    u_stack_max,
+    u_stack_min,
+    worst_case_v_admm,
+    worst_case_x_param_admm,
+):
+    # Simulate each horizon with the corresponding worst-case initial state.
+    _lhs_mat = csr_matrix(P + sigma*np.eye(n_xz) + rho*(M.T@M))
+    _lhs_mat_lu = spa.linalg.splu(_lhs_mat.tocsc())
+
+    worst_case_residuals_admm = []
+    for _k in range(1, K + 1):
+        _x_k = np.array(worst_case_x_param_admm[_k-1], dtype=float)
+        _z = np.zeros(n_xz, dtype=float)
+        # _v = np.zeros(n_xz, dtype=float)
+        _v = np.array(worst_case_v_admm[_k-1], dtype=float)
+        _last_residual = 0.0
+
+        for _j in range(_k):
+            _l_x = np.hstack([_x_k, u_stack_min])
+            _u_x = np.hstack([_x_k, u_stack_max])
+            _w = np.clip(_v, _l_x, _u_x)
+
+            _rhs = sigma * _z - q + rho * (2 * _w - _v) @ M
+            _z_new = _lhs_mat_lu.solve(_rhs)
+            _v_new = _v + _z_new @ M - _w
+
+            _residual_1 = -sigma * (_z_new - _z) - rho * (_v_new - _v) @ M
+            _residual_2 = _v_new - _v
+            _last_residual = np.max(np.abs(np.hstack([_residual_1, _residual_2])))
+
+            _z = _z_new
+            _v = _v_new
+
+        worst_case_residuals_admm.append(_last_residual)
+
+    worst_case_residuals_admm = np.array(worst_case_residuals_admm)
+    return (worst_case_residuals_admm,)
+
+
+@app.cell
+def _(
+    K,
+    all_residuals,
+    plt,
+    simulation_residuals_admm,
+    worst_case_residuals_admm,
+):
     plt.plot(range(1, K+1), all_residuals, label='ADMM (MIP worst-case)')
     plt.plot(range(1, K+1), simulation_residuals_admm, '--', label='ADMM (in-sample avg)')
+    plt.plot(range(1, K+1), worst_case_residuals_admm, '-.', color='w', linewidth=.7, label='worst-case ADMM instance')
     plt.suptitle('optimal control example (MIP)')
     plt.yscale('log')
     plt.xlabel(r'$K$')

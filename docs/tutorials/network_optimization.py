@@ -354,6 +354,7 @@ def _(
     _w[0] = _w0
 
     all_residuals = []
+    worst_case_x_param_pdhg = []
     for _k in range(1, K+1):
         _z[_k] = _VP.step.satlin(_z[_k-1] - eta * (_mu_param + A_s.T @ _v[_k-1] - A_d.T @ _w[_k-1]), l=np.zeros(n_e), u=c)
         _v[_k] = _VP.step.relu(_v[_k-1] + eta * (- _b_s_param + A_s @ (2*_z[_k] - _z[_k-1])))
@@ -366,9 +367,59 @@ def _(
         ], 'inf')
         _res = _VP.solve()
         all_residuals.append(_res)
+        worst_case_x_param_pdhg.append(_VP.get_solution_value(_x_param))
 
     print(all_residuals)
-    return (all_residuals,)
+    return all_residuals, worst_case_x_param_pdhg
+
+
+@app.cell
+def _(
+    A_d,
+    A_s,
+    K,
+    b_s,
+    c,
+    eta,
+    mu,
+    n_d,
+    n_s,
+    np,
+    worst_case_x_param_pdhg,
+    z0_value,
+):
+    # Simulate each horizon with its own worst-case demand vector.
+    worst_case_residuals_pdhg = []
+    for _k in range(1, K+1):
+        _x_k = np.array(worst_case_x_param_pdhg[_k-1], dtype=float)
+
+        _z = np.array(z0_value, dtype=float)
+        _v = np.zeros(n_s, dtype=float)
+        _w = np.zeros(n_d, dtype=float)
+        _last_residual = 0.0
+
+        for _j in range(1, _k + 1):
+            _z_rhs = _z - eta * (mu + A_s.T @ _v - A_d.T @ _w)
+            _z_new = np.clip(_z_rhs, 0, c)
+
+            _v_rhs = _v + eta * (-b_s + A_s @ (2 * _z_new - _z))
+            _v_new = np.maximum(_v_rhs, 0.0)
+
+            _w_new = _w + eta * (_x_k - A_d @ (2 * _z_new - _z))
+
+            _residual_1 = (1 / eta) * (_z_new - _z) - A_s.T @ (_v_new - _v) + A_d.T @ (_w_new - _w)
+            _residual_2 = -A_s @ (_z_new - _z) + (1 / eta) * (_v_new - _v)
+            _residual_3 = A_d @ (_z_new - _z) + (1 / eta) * (_w_new - _w)
+            _last_residual = np.max(np.abs(np.hstack([_residual_1, _residual_2, _residual_3])))
+
+            _z = _z_new
+            _v = _v_new
+            _w = _w_new
+
+        worst_case_residuals_pdhg.append(_last_residual)
+
+    worst_case_residuals_pdhg = np.array(worst_case_residuals_pdhg)
+    return (worst_case_residuals_pdhg,)
 
 
 @app.cell
@@ -411,6 +462,7 @@ def _(
     _w[0] = _w0
 
     all_residuals_momentum = []
+    worst_case_x_param_pdhg_mom = []
     for _k in range(1, K+1):
         _z[_k] = _VP.step.satlin(_z[_k-1] - eta * (_mu_param + A_s.T @ _v[_k-1] - A_d.T @ _w[_k-1]), l=np.zeros(n_e), u=c)
         _ztilde[_k] = _z[_k] + (_k-1)/(_k+2) * (_z[_k] - _z[_k-1])
@@ -423,9 +475,61 @@ def _(
         ], 'inf')
         _res = _VP.solve()
         all_residuals_momentum.append(_res)
+        worst_case_x_param_pdhg_mom.append(_VP.get_solution_value(_x_param))
 
     print(all_residuals_momentum)
-    return (all_residuals_momentum,)
+    return all_residuals_momentum, worst_case_x_param_pdhg_mom
+
+
+@app.cell
+def _(
+    A_d,
+    A_s,
+    K,
+    b_s,
+    c,
+    eta,
+    mu,
+    n_d,
+    n_s,
+    np,
+    worst_case_x_param_pdhg_mom,
+    z0_value,
+):
+    # Simulate each horizon with its own worst-case demand vector for momentum PDHG.
+    worst_case_residuals_pdhg_mom = []
+    for _k in range(1, K + 1):
+        _x_k = np.array(worst_case_x_param_pdhg_mom[_k - 1], dtype=float)
+
+        _z = np.array(z0_value, dtype=float)
+        _v = np.zeros(n_s, dtype=float)
+        _w = np.zeros(n_d, dtype=float)
+        _last_residual = 0.0
+
+        for _j in range(1, _k + 1):
+            _z_rhs = _z - eta * (mu + A_s.T @ _v - A_d.T @ _w)
+            _z_new = np.clip(_z_rhs, 0, c)
+
+            _z_tilde = _z_new + (_j - 1) / (_j + 2) * (_z_new - _z)
+            _v_rhs = _v + eta * (-b_s + A_s @ (2 * _z_tilde - _z))
+            _v_new = np.maximum(_v_rhs, 0.0)
+
+            _w_new = _w + eta * (_x_k - A_d @ (2 * _z_tilde - _z))
+
+            _gamma_j = 1 + 2 * (_j - 1) / (_j + 2)
+            _residual_1 = (1 / eta) * (_z_new - _z) - A_s.T @ (_v_new - _v) + A_d.T @ (_w_new - _w)
+            _residual_2 = -_gamma_j * A_s @ (_z_new - _z) + (1 / eta) * (_v_new - _v)
+            _residual_3 = _gamma_j * A_d @ (_z_new - _z) + (1 / eta) * (_w_new - _w)
+            _last_residual = np.max(np.abs(np.hstack([_residual_1, _residual_2, _residual_3])))
+
+            _z = _z_new
+            _v = _v_new
+            _w = _w_new
+
+        worst_case_residuals_pdhg_mom.append(_last_residual)
+
+    worst_case_residuals_pdhg_mom = np.array(worst_case_residuals_pdhg_mom)
+    return (worst_case_residuals_pdhg_mom,)
 
 
 @app.cell
@@ -436,12 +540,16 @@ def _(
     plt,
     simulation_residuals_pdhg,
     simulation_residuals_pdhg_mom,
+    worst_case_residuals_pdhg,
+    worst_case_residuals_pdhg_mom,
 ):
     plt.figure()
     plt.plot(range(1, K+1), all_residuals, label='PDHG (MIP worst-case)')
     plt.plot(range(1, K+1), simulation_residuals_pdhg, '--', label='PDHG (in-sample avg)')
+    plt.plot(range(1, K+1), worst_case_residuals_pdhg, '-.', color='k', linewidth=.5, label='worst-case PDHG instance')
     plt.plot(range(1, K+1), all_residuals_momentum, label='momentum PDHG (MIP worst-case)')
     plt.plot(range(1, K+1), simulation_residuals_pdhg_mom, '--', label='momentum PDHG (in-sample avg)')
+    plt.plot(range(1, K+1), worst_case_residuals_pdhg_mom, ':', color='k', linewidth=.8, label='worst-case momentum PDHG instance')
     # plt.yscale('log')
     plt.xlabel(r'$K$')
     plt.ylabel('Worst-case KKT residual')
