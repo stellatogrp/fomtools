@@ -49,7 +49,7 @@ jobs:
       - name: Check Gurobi License
         env:
           GRB_LICENSE_FILE: ${{ github.workspace }}/gurobi.lic
-        run: uv run python -c "import gurobipy; gurobipy.Model()"
+        run: python -c "import gurobipy; gurobipy.Model()"
 
       - name: Export marimo notebooks
         env:
