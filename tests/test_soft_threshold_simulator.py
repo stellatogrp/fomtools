@@ -32,9 +32,10 @@ def test_soft_threshold_simulator():
     q_samples = rng.uniform(low=-1.0, high=1.0, size=(10000, n))
     q_param = vp.add_param(ndim=n, samples=q_samples)
 
-    vp.step.soft_threshold(z[0] - step_size * (P @ z[0] + q_param), lambd=lambd)
+    for k in range(1, K + 1):
+        z[k] = vp.step.soft_threshold(z[k - 1] - step_size * (P @ z[k - 1] + q_param), lambd=lambd)
 
-    residuals = vp.solve(K=K)
+    residuals = vp.solve()
     assert vp['n_samples'] == len(q_samples)
     assert vp['risk_bound'] >= vp['empirical_risk']
     assert residuals[:, -1].mean() < residuals[:, 0].mean()
