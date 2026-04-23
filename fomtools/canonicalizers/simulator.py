@@ -29,7 +29,7 @@ if typing.TYPE_CHECKING:
     from fomtools import Step
 
 from contextlib import nullcontext
-from typing import Any
+from typing import Any, Callable
 
 
 # todo: what to do if samples is missing from a leaf expression
@@ -818,7 +818,14 @@ class Simulator(Canonicalizer):
         self.step_function = update_fn
 
     def solve_model(
-        self, K: int, delta: float = 0.05, epsilon: float = 0.0, device: str = None
+        self,
+        K: int,
+        delta: float = 0.05,
+        epsilon: float = 0.0,
+        device: str = None,
+        step_fn: Callable = lambda x: x,
+        momentum_fn: Callable = lambda x, y, t, u: x,
+        momentum_param: float = 1,
     ) -> cp.ndarray:
         """
         Run a batched simulation of the registered step function.
@@ -854,6 +861,18 @@ class Simulator(Canonicalizer):
             - `"cpu"`: Run on the CPU.
             - `"gpu"`: Run on the GPU, if available.
 
+        step_fn: Callable, optional
+            Advances the momentum parameter from iteration k to k+1; defaults
+            to identity (no update).
+
+        momentum_fn: Callable, optional
+            Computes the next iterate from x_new, x_old, current and new
+            momentum parameter; defaults to plain iteration (no momentum).
+
+        momentum_param: float, optional
+            Initial scalar momentum parameter passed to step_fn and momentum_fn
+            at k=0; defaults to 1.
+
         Returns
         -------
         residuals: cp.ndarray
@@ -884,25 +903,31 @@ class Simulator(Canonicalizer):
             N = p_samples.shape[0]
             update_fn = self.step_function
 
-            def _simulate_batch(z0: cp.ndarray, p_samples: cp.ndarray) -> cp.ndarray:
+
+            def _simulate_batch(_z0: cp.ndarray, _p_samples: cp.ndarray, _momentum_param:float) -> cp.ndarray:
                 """Simulate K steps for all N samples in parallel."""
-                z_batch = cp.tile(z0, (N, 1))
-                residuals = cp.empty((N, K), dtype=cp.float32)
+                x_batch = cp.tile(_z0, (N, 1))
+                y_batch = cp.tile(_z0, (N, 1))
+                _residuals = cp.empty((N, K), dtype=cp.float32)
 
                 for k in range(K):
-                    z_new = update_fn(z_batch, p_samples)
-                    residuals[:, k] = cp.max(cp.abs(z_new - z_batch), axis=1)
-                    z_batch = z_new
+                    x_new = update_fn(y_batch, _p_samples)
+                    _residuals[:, k] = cp.max(cp.abs(x_new - x_batch), axis=1)
 
-                return residuals
+                    _momentum_param_new = step_fn(_momentum_param)
+                    y_batch = momentum_fn(x_new, x_batch, _momentum_param, _momentum_param_new)
+                    x_batch = x_new
+                    _momentum_param = _momentum_param_new
+
+                return _residuals
 
             # warm-up: triggers any lazy GPU compilation
-            _simulate_batch(z0, p_samples)
+            _simulate_batch(z0, p_samples, momentum_param)
             self._sync()
 
             # timed execution
             start = time.perf_counter()
-            residuals = _simulate_batch(z0, p_samples)
+            residuals = _simulate_batch(z0, p_samples, momentum_param)
             self._sync()
             elapsed = time.perf_counter() - start
 
