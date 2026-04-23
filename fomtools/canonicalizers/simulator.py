@@ -825,7 +825,7 @@ class Simulator(Canonicalizer):
         device: str = None,
         step_fn: Callable = lambda x: x,
         momentum_fn: Callable = lambda x, y, t, u: x,
-        momentum_param: float = 1,
+        momentum_param: float = 1.0,
     ) -> cp.ndarray:
         """
         Run a batched simulation of the registered step function.
@@ -903,8 +903,9 @@ class Simulator(Canonicalizer):
             N = p_samples.shape[0]
             update_fn = self.step_function
 
-
-            def _simulate_batch(_z0: cp.ndarray, _p_samples: cp.ndarray, _momentum_param:float) -> cp.ndarray:
+            def _simulate_batch(
+                _z0: cp.ndarray, _p_samples: cp.ndarray, _momentum_param: float
+            ) -> cp.ndarray:
                 """Simulate K steps for all N samples in parallel."""
                 x_batch = cp.tile(_z0, (N, 1))
                 y_batch = cp.tile(_z0, (N, 1))

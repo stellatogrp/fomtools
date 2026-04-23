@@ -3,9 +3,9 @@ import numpy as np
 from fomtools.verifier import Verifier
 
 
-def test_fista_simlator():
+def test_fista_simulator():
     """
-    Tests that the FISTA algorithm without errors.
+    Tests that the FISTA algorithm runs without errors.
 
     Note
     ----
@@ -21,13 +21,10 @@ def test_fista_simlator():
     D_mask = np.random.binomial(n=1, p=0.2, size=(p, n))
     D = np.multiply(D_value, D_mask)
 
-
-    L = np.real(np.max(np.linalg.eigvals(D.T @ D)))
+    L = np.max(np.linalg.eigvalsh(D.T @ D))
     eta = 1 / L
     K = 10
     n_samples = 10000
-
-
 
     num_star = 20
     z_star_value = np.random.normal(size=(n, num_star))
@@ -44,23 +41,25 @@ def test_fista_simlator():
     x_lb, x_ub = np.min(x, axis=1), np.max(x, axis=1)
 
     _rng = np.random.default_rng(0)
-    vp = Verifier(method='simulator', obbt_handler=None)
+    vp = Verifier(method="simulator", obbt_handler=None)
 
     x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, p))
     x_param = vp.add_param(ndim=p, samples=x_samples)
     s = vp.add_iterate(ndim=n, init=np.zeros(n))
-    _t = 1 #momentum parameter
+    t = 1  # momentum parameter
 
     def z_new(y_new, y_prev, t, t_new):
-        return y_new + ((t-1)/t_new) * (y_new - y_prev)
+        if t_new == 0:
+            raise ValueError("t_new must be non-zero.")
+        return y_new + ((t - 1) / t_new) * (y_new - y_prev)
 
     def t_new(t):
         return (1.0 + np.sqrt(1.0 + 4.0 * t**2)) / 2.0
 
-    vp.step.soft_threshold(s - eta * D.T @ (D @ s - x_param), lambd=lambd*eta)
-    residuals = vp.solve(K=K, momentum_fn=z_new, step_fn=t_new, momentum_param=_t)
-    assert vp['n_samples'] == len(x_samples)
-    assert vp['risk_bound'] >= vp['empirical_risk']
+    vp.step.soft_threshold(s - eta * D.T @ (D @ s - x_param), lambd=lambd * eta)
+    residuals = vp.solve(K=K, momentum_fn=z_new, step_fn=t_new, momentum_param=t)
+    assert vp["n_samples"] == len(x_samples)
+    assert vp["risk_bound"] >= vp["empirical_risk"]
     assert residuals[:, -1].mean() < residuals[:, 0].mean()
 
     print(
