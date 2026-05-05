@@ -37,9 +37,10 @@ def test_affine_simulator():
     q_samples = rng.uniform(low=-1.0, high=1.0, size=(10000, n))
     q_param = vp.add_param(ndim=n, samples=q_samples)
 
-    vp.step.implicit_linear(z[0] - q_param, lhs_mat=lhs_mat)
+    for k in range(1, K + 1):
+        z[k] = vp.step.implicit_linear(z[k - 1] - q_param, lhs_mat=lhs_mat)
 
-    residuals = vp.solve(K=K)
+    residuals = vp.solve()
 
     assert vp["n_samples"] == len(q_samples)
     assert vp["risk_bound"] >= vp["empirical_risk"]
@@ -96,9 +97,10 @@ def test_affine_sparse_simulator():
     q_samples = rng.uniform(low=-1.0, high=1.0, size=(10000, n))
     q_param = vp.add_param(ndim=n, samples=q_samples)
 
-    vp.step.implicit_linear(z[0] - step_size * q_param, lhs_mat=lhs_mat)
+    for k in range(1, K + 1):
+        z[k] = vp.step.implicit_linear(z[k - 1] - step_size * q_param, lhs_mat=lhs_mat)
 
-    residuals = vp.solve(K=K)
+    residuals = vp.solve()
 
     assert vp["n_samples"] == len(q_samples)
     assert vp["risk_bound"] >= vp["empirical_risk"]
