@@ -711,6 +711,50 @@ class Verifier(object):
 
         return (sum(_lb > ref_expr.lb) + sum(_ub < ref_expr.ub)) / (2.0 * len(_lb))
 
+    def neural_network(self, expr: LinearExpression, layers: list) -> LinearExpression:
+        """
+        Thread ``expr`` through a feedforward ReLU network inside this Verifier.
+
+        The network is unrolled into alternating affine and ReLU VP steps.
+        Affine layers are applied analytically (no new solver variable); ReLU
+        layers call ``run_step`` so the solver gets the appropriate constraints.
+
+        Parameters
+        ----------
+        expr : LinearExpression
+            Network input (e.g. a bounded iterate or parameter).
+        layers : list
+            Ordered sequence of ``LinearLayer`` / ``ReLULayer`` objects.
+        Returns
+        -------
+        LinearExpression
+            Network output, expressed in terms of the original leaf variables.
+
+        """
+        from fomtools.nn.layers import LinearLayer, ReLULayer
+        for i, layer in enumerate(layers):
+            if isinstance(layer, LinearLayer):
+                W, b = layer.weight, layer.bias
+
+                if W.shape[1] != expr.ndim:
+                    raise ValueError(
+                        f"Layer {i}: weight shape {W.shape} is incompatible with "
+                        f"input dimension {expr.ndim}."
+                    )
+
+                expr = W @ expr
+                if b is not None:
+                    expr = expr + b
+
+            elif isinstance(layer, ReLULayer):
+                expr = self.run_step(expr, Relu)
+
+            else:
+                raise ValueError(f"Layer {i}: unsupported layer type {type(layer).__name__}.")
+
+        return expr
+
+
     def get_solution_value(self, iterate: LinearExpression) -> np.ndarray:
         """
         Get the solution value for the given iterate.
