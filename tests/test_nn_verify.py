@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.optim as optim
 
 from fomtools.nn import from_torch
+from fomtools.verifier import Verifier
+
 
 class ReLUFFNet(nn.Module):
     def __init__(self, input_dim: int, hidden_dims: list, output_dim: int):
@@ -74,11 +76,32 @@ def test_nn_solve(vp, small_model):
     layers = from_torch(small_model)
 
     input_expr = vp.add_param(2, lb=-1.0, ub=1.0)
-    # todo: combine it with other steps
     output_expr = vp.neural_network(input_expr, layers)
+    final_expr  = vp.step.soft_threshold(output_expr, lambd=0.1)
 
-    vp.set_objective_norm(output_expr, np.inf)
+    vp.set_objective_norm(final_expr, np.inf)
     result = vp.solve()
 
     assert result is not None
     assert result >= 0
+
+
+def test_nn_simulator(small_model):
+    N = 1000
+    rng = np.random.default_rng(0)
+    x_samples = rng.uniform(-1.0, 1.0, size=(N, 2)).astype(np.float32)
+
+    with torch.no_grad():
+        y_torch = small_model(torch.tensor(x_samples)).numpy()
+
+    vp = Verifier(method="simulator", obbt_handler=None)
+    layers = from_torch(small_model)
+    input_param = vp.add_param(2, lb=-1.0, ub=1.0, samples=x_samples)
+    output_expr = vp.neural_network(input_param, layers)
+
+    vp.set_objective_norm(output_expr, np.inf)
+    residuals = vp.solve()
+
+    assert residuals.shape == (N, 1)
+    expected = np.max(np.abs(y_torch), axis=1)
+    np.testing.assert_allclose(np.array(residuals[:, 0]), expected, rtol=1e-4, atol=1e-4)
