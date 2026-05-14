@@ -742,9 +742,7 @@ class Verifier(object):
                         f"input dimension {expr.ndim}."
                     )
 
-                expr = W @ expr
-                if b is not None:
-                    expr = expr + b
+                expr = self.run_step(expr, Affine, weight=W, bias=b)
 
             elif isinstance(layer, ReLULayer):
                 expr = self.run_step(expr, Relu)
