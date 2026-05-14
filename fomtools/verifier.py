@@ -10,6 +10,7 @@ from fomtools.canonicalizers.sdp import SDP
 from fomtools.canonicalizers.simulator import Simulator
 from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
+from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
 from fomtools.stepdecomposers.simulator_step_decomposer import SimulatorStepDecomposer
@@ -345,7 +346,7 @@ class Verifier(object):
                 else:
                     decomposition_dict[leaf] = composed
 
-            const[offset:offset + p.ndim] = p.const
+            const[offset : offset + p.ndim] = p.const
             offset += p.ndim
 
         result = LinearExpression(decomposition_dict=decomposition_dict, const=const)
@@ -731,7 +732,7 @@ class Verifier(object):
             Network output, expressed in terms of the original leaf variables.
 
         """
-        from fomtools.nn.layers import LinearLayer, ReLULayer
+
         for i, layer in enumerate(layers):
             if isinstance(layer, LinearLayer):
                 W, b = layer.weight, layer.bias
@@ -751,7 +752,6 @@ class Verifier(object):
                 raise ValueError(f"Layer {i}: unsupported layer type {type(layer).__name__}.")
 
         return expr
-
 
     def get_solution_value(self, iterate: LinearExpression) -> np.ndarray:
         """
