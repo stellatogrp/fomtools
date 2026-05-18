@@ -23,8 +23,8 @@ dependencies = [
        "scipy",
 ]
 
-[tool.setuptools]
-packages = ["fomtools"]
+[tool.setuptools.packages.find]
+where = ["."]
 
 [project.optional-dependencies]
 gpu = ["cupy-cuda12x"]
