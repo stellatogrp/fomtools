@@ -817,9 +817,96 @@ class SDP(Canonicalizer):
         self._cuts_dirty = False
 
     def _build_rlt_cuts(self, sdp_idx_bounds: dict) -> None:
-        """Append RLT cuts for off-diagonal cone-mate pairs (Phase 2)."""
-        # Implementation lands in Phase 2.
-        return
+        """
+        Append RLT cuts for off-diagonal cone-mate pairs.
+
+        For every pair ``(p, q)`` of distinct, nonzero SDP indices that
+        co-exist in some entry of ``psd_cone_indices``, emit the 4
+        McCormick inequalities (paper §4.5 eq 18). Each pair is processed
+        at most once even if it appears in multiple cones.
+
+        Parameters
+        ----------
+        sdp_idx_bounds : dict[int, tuple[float, float]]
+            Mapping from SDP index to its current ``(lb, ub)`` pair.
+        """
+        from itertools import combinations
+
+        added_pairs = set()
+        for cone_set in self.psd_cone_indices:
+            sorted_indices = sorted(i for i in cone_set if i != 0)
+            for p, q in combinations(sorted_indices, 2):
+                if (p, q) in added_pairs:
+                    continue
+                added_pairs.add((p, q))
+                l_p, u_p = sdp_idx_bounds[p]
+                l_q, u_q = sdp_idx_bounds[q]
+                self._build_rlt_cuts_for_pair(p, q, l_p, u_p, l_q, u_q)
+
+    def _build_rlt_cuts_for_pair(
+        self,
+        p: int,
+        q: int,
+        l_p: float,
+        u_p: float,
+        l_q: float,
+        u_q: float,
+    ) -> None:
+        """
+        Append the 4 McCormick RLT inequalities for an off-diagonal pair.
+
+        Each unsymmetrized matrix ``M`` has at most 3 nonzero entries:
+        the off-diagonal ``[p, q]`` slot and the two linear slots
+        ``[0, p]`` and ``[0, q]``. After ``symmetrize`` and a trace inner
+        product against the symmetric lifted variable ``X``, the
+        coefficient on ``X[p, q]`` is whatever was written at ``[p, q]``
+        and the coefficients on ``X[0, p]`` / ``X[0, q]`` are whatever
+        was written at those slots.
+
+        Parameters
+        ----------
+        p, q : int
+            Distinct SDP indices, both ``> 0``.
+        l_p, u_p, l_q, u_q : float
+            Lower/upper bounds at indices ``p`` and ``q``.
+        """
+        n = self.get_sdp_var_dim()
+
+        # Cut 1: (X_p - l_p)(X_q - l_q) >= 0
+        #   -> -X[p,q] + l_q X[0,p] + l_p X[0,q] <= l_p l_q
+        M1 = spa.lil_matrix((n, n))
+        M1[p, q] = -1.0
+        M1[0, p] = l_q
+        M1[0, q] = l_p
+        self._cut_ineq_matrices.append(symmetrize(M1.tocsc()))
+        self._cut_bineq_upperbounds.append(l_p * l_q)
+
+        # Cut 2: (u_p - X_p)(u_q - X_q) >= 0
+        #   -> -X[p,q] + u_q X[0,p] + u_p X[0,q] <= u_p u_q
+        M2 = spa.lil_matrix((n, n))
+        M2[p, q] = -1.0
+        M2[0, p] = u_q
+        M2[0, q] = u_p
+        self._cut_ineq_matrices.append(symmetrize(M2.tocsc()))
+        self._cut_bineq_upperbounds.append(u_p * u_q)
+
+        # Cut 3: (X_p - l_p)(u_q - X_q) >= 0
+        #   -> X[p,q] - u_q X[0,p] - l_p X[0,q] <= -l_p u_q
+        M3 = spa.lil_matrix((n, n))
+        M3[p, q] = 1.0
+        M3[0, p] = -u_q
+        M3[0, q] = -l_p
+        self._cut_ineq_matrices.append(symmetrize(M3.tocsc()))
+        self._cut_bineq_upperbounds.append(-l_p * u_q)
+
+        # Cut 4: (u_p - X_p)(X_q - l_q) >= 0
+        #   -> X[p,q] - l_q X[0,p] - u_p X[0,q] <= -u_p l_q
+        M4 = spa.lil_matrix((n, n))
+        M4[p, q] = 1.0
+        M4[0, p] = -l_q
+        M4[0, q] = -u_p
+        self._cut_ineq_matrices.append(symmetrize(M4.tocsc()))
+        self._cut_bineq_upperbounds.append(-u_p * l_q)
 
     def _build_triangle_cuts(self) -> None:
         """Append lifted triangle cuts for ReLU steps (Phase 3)."""
