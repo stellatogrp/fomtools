@@ -37,6 +37,30 @@ class Verifier(object):
         use_rlt_cuts=False,
         use_triangle_cuts=False,
     ):
+        """
+        Initialize a Verifier instance.
+
+        Parameters
+        ----------
+        theory_func : callable, optional
+            Theoretical convergence function used by ``theory_bound``.
+        method : {"mip", "sdp", "simulator"}, default "mip"
+            Canonicalization method for the verification problem.
+        solver : str, default "gurobi"
+            Solver backend identifier (e.g., "gurobi", "highs", "clarabel").
+        obbt_handler : str or None, default "gurobi"
+            Solver used by the OBBT bound-tightening handler. Disable with
+            ``None``.
+        params : dict, optional
+            Solver-specific parameters forwarded to the canonicalizer.
+        use_rlt_cuts : bool, default False
+            SDP-only: when True, add RLT cuts between cone-mate index
+            pairs (paper §4.5 eq 18). No effect for ``method != "sdp"``.
+        use_triangle_cuts : bool, default False
+            SDP-only: when True, add lifted triangle cuts for mixed-bound
+            ReLU outputs (paper §4.5 eq 25/26). No effect for
+            ``method != "sdp"``.
+        """
         self.theory_func = theory_func
         self.iterates = []
         self.params = []

@@ -45,6 +45,17 @@ class SDP(Canonicalizer):
         Indices defining PSD cone constraints.
     bound_constraint_indices : dict
         Mapping from variable to its bound constraint indices.
+    use_rlt_cuts : bool
+        If True, add RLT (Reformulation-Linearization Technique) cuts
+        between off-diagonal pairs of SDP indices that co-exist in some
+        ``psd_cone_indices`` entry. Each pair yields 4 McCormick
+        inequalities. Cuts are lazily rebuilt when bounds, cones, or
+        variables change. See paper §4.5 eq 18.
+    use_triangle_cuts : bool
+        If True, add lifted triangle cuts for every ReLU step's
+        mixed-bound output rows. Each cut multiplies the per-output
+        triangle inequality by a nonneg bound multiplier, yielding a
+        quadratic-in-X inequality. See paper §4.5 eq 25/26.
     C_obj : scipy.sparse.csc_matrix
         Objective matrix for maximization.
     """

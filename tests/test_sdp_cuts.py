@@ -450,3 +450,181 @@ def test_triangle_cut_matrices_symmetric():
         diff = M - M.T
         diff.eliminate_zeros()
         assert diff.nnz == 0
+
+
+# ============================================================
+# Phase 4: Integration tests across cut combinations
+# ============================================================
+
+# Cartesian product of the two flags. (False, False) is the baseline.
+FLAG_COMBOS = [
+    (False, False),
+    (True, False),
+    (False, True),
+    (True, True),
+]
+
+
+def _build_ista_sdp(K, sdp_solver, use_rlt_cuts=False, use_triangle_cuts=False):
+    """ISTA SDP setup mirroring tests/test_ista_sdp_mip.py."""
+    m, n = 3, 2
+    np.random.seed(0)
+    A = np.random.normal(size=(m, n))
+    b = np.random.normal(size=m)
+    lambd_max = np.max(np.real(np.linalg.eigvals(A.T @ A)))
+    t = 1 / lambd_max
+    lambd = 0.5
+    At = np.eye(n) - t * A.T @ A
+    Bt = t * A.T
+    lambda_t = lambd * t
+
+    vp = Verifier(
+        method='sdp',
+        solver=sdp_solver,
+        obbt_handler='highs',
+        use_rlt_cuts=use_rlt_cuts,
+        use_triangle_cuts=use_triangle_cuts,
+    )
+    b_param = vp.add_param(m, lb=b - 0.1, ub=b + 0.1)
+    z = [vp.add_iterate(n, lb=1, ub=1.1)]
+    for k in range(K):
+        z.append(vp.step.soft_threshold(At @ z[k] + Bt @ b_param, lambd=lambda_t))
+    vp.set_objective_norm(z[K] - z[K - 1], 2)
+    return vp, vp.solve()
+
+
+def _build_boxpgd_sdp(K, sdp_solver, use_rlt_cuts=False, use_triangle_cuts=False):
+    """Box PGD SDP setup mirroring tests/test_boxpgd_sdp_mip.py."""
+    n = 2
+    np.random.seed(0)
+    P = np.eye(n)
+    q = np.random.normal(size=n)
+    l = np.array([-1.0, -0.5])
+    u = np.array([0.5, 1.0])
+    t = 0.5
+
+    vp = Verifier(
+        method='sdp',
+        solver=sdp_solver,
+        obbt_handler='highs',
+        use_rlt_cuts=use_rlt_cuts,
+        use_triangle_cuts=use_triangle_cuts,
+    )
+    q_param = vp.add_param(n, lb=q - 0.1, ub=q + 0.1)
+    z = [vp.add_iterate(n, lb=0, ub=0.1)]
+    for k in range(K):
+        grad_step = z[k] - t * (P @ z[k] + q_param)
+        z.append(vp.step.satlin(grad_step, l=l, u=u))
+    vp.set_objective_norm(z[K] - z[K - 1], 2)
+    return vp, vp.solve()
+
+
+def _mip_inf_norm_nnls(K):
+    m, n = 3, 2
+    np.random.seed(0)
+    A = np.random.normal(size=(m, n))
+    t = 0.01
+    vp = Verifier(method='mip', solver='highs', obbt_handler='highs')
+    x = vp.add_param(m, lb=0, ub=0.1)
+    z = [vp.add_iterate(n, lb=5, ub=5.1)]
+    for k in range(K):
+        z.append(vp.step.relu(z[k] - t * A.T @ (A @ z[k] - x)))
+    vp.set_objective_norm([z[K] - z[K - 1]], np.inf)
+    return vp.solve()
+
+
+def _mip_inf_norm_ista(K):
+    m, n = 3, 2
+    np.random.seed(0)
+    A = np.random.normal(size=(m, n))
+    b = np.random.normal(size=m)
+    lambd_max = np.max(np.real(np.linalg.eigvals(A.T @ A)))
+    t = 1 / lambd_max
+    lambd = 0.5
+    At = np.eye(n) - t * A.T @ A
+    Bt = t * A.T
+    lambda_t = lambd * t
+
+    vp = Verifier(method='mip', solver='highs', obbt_handler='highs')
+    b_param = vp.add_param(m, lb=b - 0.1, ub=b + 0.1)
+    z = [vp.add_iterate(n, lb=1, ub=1.1)]
+    for k in range(K):
+        z.append(vp.step.soft_threshold(At @ z[k] + Bt @ b_param, lambd=lambda_t))
+    vp.set_objective_norm([z[K] - z[K - 1]], np.inf)
+    return vp.solve()
+
+
+def _mip_inf_norm_boxpgd(K):
+    n = 2
+    np.random.seed(0)
+    P = np.eye(n)
+    q = np.random.normal(size=n)
+    l = np.array([-1.0, -0.5])
+    u = np.array([0.5, 1.0])
+    t = 0.5
+    vp = Verifier(method='mip', solver='highs', obbt_handler='highs')
+    q_param = vp.add_param(n, lb=q - 0.1, ub=q + 0.1)
+    z = [vp.add_iterate(n, lb=0, ub=0.1)]
+    for k in range(K):
+        grad_step = z[k] - t * (P @ z[k] + q_param)
+        z.append(vp.step.satlin(grad_step, l=l, u=u))
+    vp.set_objective_norm([z[K] - z[K - 1]], np.inf)
+    return vp.solve()
+
+
+@pytest.mark.parametrize("use_rlt,use_tri", FLAG_COMBOS)
+@pytest.mark.parametrize("K", [1, 2])
+def test_nnls_mip_bound_preserved_all_combos(use_rlt, use_tri, K):
+    """mip_inf_norm ≤ sqrt(sdp_two_norm_sq) for every flag combination."""
+    _, sdp_sq = _build_nnls_sdp(
+        K=K, sdp_solver='clarabel', use_rlt_cuts=use_rlt, use_triangle_cuts=use_tri
+    )
+    mip_inf = _mip_inf_norm_nnls(K)
+    assert mip_inf <= np.sqrt(sdp_sq) + TEST_EPS, (
+        f"K={K}, rlt={use_rlt}, tri={use_tri}: "
+        f"MIP inf norm ({mip_inf}) > SDP two norm ({np.sqrt(sdp_sq)})"
+    )
+
+
+@pytest.mark.parametrize("use_rlt,use_tri", FLAG_COMBOS)
+@pytest.mark.parametrize("K", [1, 2])
+def test_ista_mip_bound_preserved_all_combos(use_rlt, use_tri, K):
+    _, sdp_sq = _build_ista_sdp(
+        K=K, sdp_solver='clarabel', use_rlt_cuts=use_rlt, use_triangle_cuts=use_tri
+    )
+    mip_inf = _mip_inf_norm_ista(K)
+    assert mip_inf <= np.sqrt(sdp_sq) + TEST_EPS, (
+        f"K={K}, rlt={use_rlt}, tri={use_tri}: "
+        f"MIP inf norm ({mip_inf}) > SDP two norm ({np.sqrt(sdp_sq)})"
+    )
+
+
+@pytest.mark.parametrize("use_rlt,use_tri", FLAG_COMBOS)
+@pytest.mark.parametrize("K", [1, 2])
+def test_boxpgd_mip_bound_preserved_all_combos(use_rlt, use_tri, K):
+    _, sdp_sq = _build_boxpgd_sdp(
+        K=K, sdp_solver='clarabel', use_rlt_cuts=use_rlt, use_triangle_cuts=use_tri
+    )
+    mip_inf = _mip_inf_norm_boxpgd(K)
+    assert mip_inf <= np.sqrt(sdp_sq) + TEST_EPS, (
+        f"K={K}, rlt={use_rlt}, tri={use_tri}: "
+        f"MIP inf norm ({mip_inf}) > SDP two norm ({np.sqrt(sdp_sq)})"
+    )
+
+
+def test_both_flags_compose_no_worse_than_either():
+    """SDP with both flags on ≤ min(SDP with RLT only, SDP with triangle only).
+
+    Both cut families are valid inequalities, so adding both can only tighten
+    the relaxation further (or leave it unchanged).
+    """
+    _, baseline = _build_nnls_sdp(K=1, sdp_solver='clarabel')
+    _, with_rlt = _build_nnls_sdp(K=1, sdp_solver='clarabel', use_rlt_cuts=True)
+    _, with_tri = _build_nnls_sdp(K=1, sdp_solver='clarabel', use_triangle_cuts=True)
+    _, with_both = _build_nnls_sdp(
+        K=1, sdp_solver='clarabel', use_rlt_cuts=True, use_triangle_cuts=True
+    )
+    assert with_both <= with_rlt + TEST_EPS
+    assert with_both <= with_tri + TEST_EPS
+    # Sanity: both ≤ baseline (already implied transitively).
+    assert with_both <= baseline + TEST_EPS
