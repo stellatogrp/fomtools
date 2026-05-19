@@ -87,6 +87,10 @@ class SDP(Canonicalizer):
 
         self.use_rlt_cuts = use_rlt_cuts
         self.use_triangle_cuts = use_triangle_cuts
+        self._cuts_dirty = True
+        self._cut_ineq_matrices = []
+        self._cut_bineq_upperbounds = []
+        self._relu_steps = []  # registry for triangle cuts
 
         self.C_obj = None
         self._objective_spec = None
@@ -165,6 +169,7 @@ class SDP(Canonicalizer):
 
         constraint_end = len(self.Aineq_matrices)
         self.bound_constraint_indices[var] = (constraint_start, constraint_end)
+        self._cuts_dirty = True
 
     def get_sdp_var_dim(self) -> int:
         """
@@ -233,6 +238,8 @@ class SDP(Canonicalizer):
             self.Aineq_matrices[constraint_idx] = symmetrize(new_A.tocsc())
             self.bineq_upperbounds[constraint_idx] = -u * l
 
+        self._cuts_dirty = True
+
     def add_param_stack_var(self, param_stack_var, param_list):
         """
         Stack parameter variables (not implemented for SDP).
@@ -273,6 +280,11 @@ class SDP(Canonicalizer):
         new_canon.bound_constraint_indices = self.bound_constraint_indices.copy()
         new_canon.use_rlt_cuts = self.use_rlt_cuts
         new_canon.use_triangle_cuts = self.use_triangle_cuts
+        # Cuts get rebuilt from current state on the copy's first solve.
+        new_canon._cuts_dirty = True
+        new_canon._cut_ineq_matrices = []
+        new_canon._cut_bineq_upperbounds = []
+        new_canon._relu_steps = list(self._relu_steps)  # shallow: Relu objs are shared
         new_canon.C_obj = self.C_obj.copy() if self.C_obj is not None else None
         new_canon.obbt_handler = self.obbt_handler
         new_canon._objective_spec = self._objective_spec
@@ -345,6 +357,7 @@ class SDP(Canonicalizer):
 
         # PSD cone for {0} ∪ x_indices
         self.add_psd_cone_indices(x_idx_bounds)
+        self._cuts_dirty = True
 
     def _add_inequality_constraint_impl(self, constraint: Constraint) -> None:
         """
@@ -390,6 +403,7 @@ class SDP(Canonicalizer):
         self.psd_cone_indices = [s for s in self.psd_cone_indices if not s < new_idx_set]
 
         self.psd_cone_indices.append(new_idx_set)
+        self._cuts_dirty = True
 
     def canonicalize_relu(self, step: Relu) -> None:
         """
@@ -430,6 +444,8 @@ class SDP(Canonicalizer):
             self.beq_consts.append(0)
 
         self.add_psd_cone_indices(relu_psd_cone_indices)
+        self._relu_steps.append(step)
+        self._cuts_dirty = True
 
     def linexpr_to_Amat_and_bounds(self, expr: LinearExpression):
         """
@@ -752,6 +768,64 @@ class SDP(Canonicalizer):
             "add_theory_cut is not yet implemented for the SDP canonicalizer."
         )
 
+    def _build_sdp_idx_bounds(self) -> dict:
+        """
+        Build a reverse map ``sdp_idx -> (lb_scalar, ub_scalar)`` from the
+        current state of ``var_idx_map``. Used by RLT cut construction to
+        look up the per-index bounds without scanning leaves repeatedly.
+
+        Returns
+        -------
+        dict[int, tuple[float, float]]
+            Mapping from each SDP matrix index (excluding 0) to its current
+            (lower, upper) bound pair.
+        """
+        sdp_idx_bounds = {}
+        for leaf, (start, end) in self.var_idx_map.items():
+            for offset, sdp_idx in enumerate(range(start, end)):
+                sdp_idx_bounds[sdp_idx] = (float(leaf.lb[offset]), float(leaf.ub[offset]))
+        return sdp_idx_bounds
+
+    def _rebuild_cuts_if_dirty(self) -> None:
+        """
+        Rebuild the cut inequality block if any cut-affecting state has
+        changed since the last rebuild.
+
+        Triggered by ``add_var``, ``canonicalize_relu``, ``add_psd_cone_indices``,
+        ``_add_equality_constraint_impl``, and ``update_bounds``. Cuts live in
+        ``_cut_ineq_matrices`` / ``_cut_bineq_upperbounds``, which are
+        concatenated with the regular ineq block at solve time.
+
+        When both ``use_rlt_cuts`` and ``use_triangle_cuts`` are False this is
+        effectively a no-op (cut lists stay empty).
+        """
+        if not self._cuts_dirty:
+            return
+
+        self._cut_ineq_matrices = []
+        self._cut_bineq_upperbounds = []
+
+        if self.use_rlt_cuts or self.use_triangle_cuts:
+            sdp_idx_bounds = self._build_sdp_idx_bounds()
+
+            if self.use_rlt_cuts:
+                self._build_rlt_cuts(sdp_idx_bounds)
+
+            if self.use_triangle_cuts:
+                self._build_triangle_cuts()
+
+        self._cuts_dirty = False
+
+    def _build_rlt_cuts(self, sdp_idx_bounds: dict) -> None:
+        """Append RLT cuts for off-diagonal cone-mate pairs (Phase 2)."""
+        # Implementation lands in Phase 2.
+        return
+
+    def _build_triangle_cuts(self) -> None:
+        """Append lifted triangle cuts for ReLU steps (Phase 3)."""
+        # Implementation lands in Phase 3.
+        return
+
     def solve_model(self, steps=None, convex_hull_cuts=False):
         """Solve the SDP problem using the configured solver.
 
@@ -851,6 +925,10 @@ class SDP(Canonicalizer):
 
     def _solve_via_cvxpy_internal(self):
         """Internal CVXPY solve without checking objective."""
+        self._rebuild_cuts_if_dirty()
+        Aineq_all = self.Aineq_matrices + self._cut_ineq_matrices
+        bineq_all = self.bineq_upperbounds + self._cut_bineq_upperbounds
+
         dim = self.get_sdp_var_dim()
         X = cp.Variable((dim, dim), symmetric=True)
         obj = cp.Maximize(cp.trace(self.C_obj @ X))
@@ -859,7 +937,7 @@ class SDP(Canonicalizer):
             constraints += [
                 cp.trace(A @ X) == b,
             ]
-        for A, b in zip(self.Aineq_matrices, self.bineq_upperbounds):
+        for A, b in zip(Aineq_all, bineq_all):
             constraints += [
                 cp.trace(A @ X) <= b,
             ]
@@ -888,14 +966,18 @@ class SDP(Canonicalizer):
 
     def _solve_via_clarabel_internal(self):
         """Internal Clarabel solve without checking objective."""
+        self._rebuild_cuts_if_dirty()
+        Aineq_all = self.Aineq_matrices + self._cut_ineq_matrices
+        bineq_all = self.bineq_upperbounds + self._cut_bineq_upperbounds
+
         solver = ClarabelSolver(solver_params=self.solver_params)
         solver.setup_clarabel_data(
             self.get_sdp_var_dim(),
             self.C_obj,
             self.Aeq_matrices,
             self.beq_consts,
-            self.Aineq_matrices,
-            self.bineq_upperbounds,
+            Aineq_all,
+            bineq_all,
             self.psd_cone_indices,
         )
         return solver.solve()
@@ -922,14 +1004,18 @@ class SDP(Canonicalizer):
 
     def _solve_via_cuclarabel_internal(self):
         """Internal CuClarabel solve without checking objective."""
+        self._rebuild_cuts_if_dirty()
+        Aineq_all = self.Aineq_matrices + self._cut_ineq_matrices
+        bineq_all = self.bineq_upperbounds + self._cut_bineq_upperbounds
+
         solver = CuClarabelSolver(solver_params=self.solver_params)
         solver.setup_clarabel_data(
             self.get_sdp_var_dim(),
             self.C_obj,
             self.Aeq_matrices,
             self.beq_consts,
-            self.Aineq_matrices,
-            self.bineq_upperbounds,
+            Aineq_all,
+            bineq_all,
             self.psd_cone_indices,
         )
         return solver.solve()
