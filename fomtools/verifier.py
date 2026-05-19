@@ -1,4 +1,5 @@
 import logging
+import warnings
 from typing import List, Sequence
 
 import numpy as np
@@ -34,13 +35,45 @@ class Verifier(object):
         solver="gurobi",
         obbt_handler="gurobi",
         params=None,
+        rlt_cuts=False,
+        triangle_cuts=False,
     ):
+        """
+        Initialize a Verifier instance.
+
+        Parameters
+        ----------
+        theory_func : callable, optional
+            Theoretical convergence function used by ``theory_bound``.
+        method : {"mip", "sdp", "simulator"}, default "mip"
+            Canonicalization method for the verification problem.
+        solver : str, default "gurobi"
+            Solver backend identifier (e.g., "gurobi", "highs", "clarabel").
+        obbt_handler : str or None, default "gurobi"
+            Solver used by the OBBT bound-tightening handler. Disable with
+            ``None``.
+        params : dict, optional
+            Solver-specific parameters forwarded to the canonicalizer.
+        rlt_cuts : bool, default False
+            SDP-only: when True, add RLT cuts between cone-mate index
+            pairs (paper §4.5 eq 18). No effect for ``method != "sdp"``.
+        triangle_cuts : bool, default False
+            SDP-only: when True, add lifted triangle cuts for mixed-bound
+            ReLU outputs (paper §4.5 eq 25/26). No effect for
+            ``method != "sdp"``.
+        """
         self.theory_func = theory_func
         self.iterates = []
         self.params = []
         self.steps = []
 
-        self.canonicalizer = self._get_canonicalizer(method, params, solver)
+        self.canonicalizer = self._get_canonicalizer(
+            method,
+            params,
+            solver,
+            rlt_cuts=rlt_cuts,
+            triangle_cuts=triangle_cuts,
+        )
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
         self.use_obbt_handler = True if obbt_handler else False
         if self.obbt_handler is not None:
@@ -92,7 +125,13 @@ class Verifier(object):
         return summary_statistics[item]
 
     @staticmethod
-    def _get_canonicalizer(method: str, solver_params: dict, solver: dict):
+    def _get_canonicalizer(
+        method: str,
+        solver_params: dict,
+        solver: dict,
+        rlt_cuts: bool = False,
+        triangle_cuts: bool = False,
+    ):
         """
          Return an initialized instance for the requested method.
 
@@ -113,6 +152,12 @@ class Verifier(object):
              (and common aliases) include:
              - ``"gurobi"``, ``"grb"``
 
+         rlt_cuts: bool, default=False
+             SDP-only: enable RLT cuts between cone-mate indices.
+
+         triangle_cuts: bool, default=False
+             SDP-only: enable lifted triangle cuts for mixed-bound ReLU outputs.
+
          Returns
          -------
          Canonicalizer
@@ -122,13 +167,32 @@ class Verifier(object):
          Raises
          ------
          ValueError
-             If the requested canonicalizer is one of the supported options.
+             If the requested canonicalizer is not one of the supported options.
         """
-        match method.lower():
+        method_lower = method.lower()
+        if method_lower != "sdp" and (rlt_cuts or triangle_cuts):
+            enabled = []
+            if rlt_cuts:
+                enabled.append("rlt_cuts")
+            if triangle_cuts:
+                enabled.append("triangle_cuts")
+            warnings.warn(
+                f"{', '.join(enabled)} is SDP-only and will be ignored for "
+                f"method={method!r}.",
+                UserWarning,
+                stacklevel=3,
+            )
+
+        match method_lower:
             case "mip":
                 return MIP(solver_params=solver_params, solver=solver)
             case "sdp":
-                return SDP(solver_params=solver_params, solver=solver)
+                return SDP(
+                    solver_params=solver_params,
+                    solver=solver,
+                    rlt_cuts=rlt_cuts,
+                    triangle_cuts=triangle_cuts,
+                )
             case "simulator":
                 return Simulator()
             case _:

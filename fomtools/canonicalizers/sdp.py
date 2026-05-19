@@ -1,3 +1,5 @@
+from itertools import combinations
+
 import cvxpy as cp
 import numpy as np
 import scipy.sparse as spa
@@ -45,11 +47,28 @@ class SDP(Canonicalizer):
         Indices defining PSD cone constraints.
     bound_constraint_indices : dict
         Mapping from variable to its bound constraint indices.
+    rlt_cuts : bool
+        If True, add RLT (Reformulation-Linearization Technique) cuts
+        between off-diagonal pairs of SDP indices that co-exist in some
+        ``psd_cone_indices`` entry. Each pair yields 4 McCormick
+        inequalities. Cuts are lazily rebuilt when bounds, cones, or
+        variables change. See paper §4.5 eq 18.
+    triangle_cuts : bool
+        If True, add lifted triangle cuts for every ReLU step's
+        mixed-bound output rows. Each cut multiplies the per-output
+        triangle inequality by a nonneg bound multiplier, yielding a
+        quadratic-in-X inequality. See paper §4.5 eq 25/26.
     C_obj : scipy.sparse.csc_matrix
         Objective matrix for maximization.
     """
 
-    def __init__(self, solver_params=None, solver="clarabel"):
+    def __init__(
+        self,
+        solver_params=None,
+        solver="clarabel",
+        rlt_cuts=False,
+        triangle_cuts=False,
+    ):
         """
         Initialize the SDP canonicalizer.
 
@@ -60,6 +79,12 @@ class SDP(Canonicalizer):
         solver : str, default='clarabel'
             Name of the SDP solver to use. Options: 'clarabel', 'cvxpy',
             'cuclarabel'.
+        rlt_cuts : bool, default=False
+            If True, add RLT (Reformulation-Linearization Technique) cuts
+            between cone-mate SDP indices to tighten the relaxation.
+        triangle_cuts : bool, default=False
+            If True, add lifted triangle cuts for ReLU steps with mixed-bound
+            output dimensions to tighten the relaxation.
         """
         super(SDP, self).__init__(solver_params, solver)
         self.solver_name = solver.lower()  # Store for dispatch
@@ -72,6 +97,13 @@ class SDP(Canonicalizer):
         self.bineq_upperbounds = []
         self.psd_cone_indices = []
         self.bound_constraint_indices = {}  # var -> (start_idx, end_idx)
+
+        self.rlt_cuts = rlt_cuts
+        self.triangle_cuts = triangle_cuts
+        self._cuts_dirty = True
+        self._cut_ineq_matrices = []
+        self._cut_bineq_upperbounds = []
+        self._relu_steps = []  # registry for triangle cuts
 
         self.C_obj = None
         self._objective_spec = None
@@ -150,6 +182,7 @@ class SDP(Canonicalizer):
 
         constraint_end = len(self.Aineq_matrices)
         self.bound_constraint_indices[var] = (constraint_start, constraint_end)
+        self._cuts_dirty = True
 
     def get_sdp_var_dim(self) -> int:
         """
@@ -218,6 +251,8 @@ class SDP(Canonicalizer):
             self.Aineq_matrices[constraint_idx] = symmetrize(new_A.tocsc())
             self.bineq_upperbounds[constraint_idx] = -u * l
 
+        self._cuts_dirty = True
+
     def add_param_stack_var(self, param_stack_var, param_list):
         """
         Stack parameter variables (not implemented for SDP).
@@ -256,6 +291,13 @@ class SDP(Canonicalizer):
         new_canon.bineq_upperbounds = self.bineq_upperbounds.copy()
         new_canon.psd_cone_indices = [s.copy() for s in self.psd_cone_indices]
         new_canon.bound_constraint_indices = self.bound_constraint_indices.copy()
+        new_canon.rlt_cuts = self.rlt_cuts
+        new_canon.triangle_cuts = self.triangle_cuts
+        # Cuts get rebuilt from current state on the copy's first solve.
+        new_canon._cuts_dirty = True
+        new_canon._cut_ineq_matrices = []
+        new_canon._cut_bineq_upperbounds = []
+        new_canon._relu_steps = list(self._relu_steps)  # shallow: Relu objs are shared
         new_canon.C_obj = self.C_obj.copy() if self.C_obj is not None else None
         new_canon.obbt_handler = self.obbt_handler
         new_canon._objective_spec = self._objective_spec
@@ -326,7 +368,7 @@ class SDP(Canonicalizer):
             self.Aeq_matrices.append(symmetrize(M_quad.tocsc()))
             self.beq_consts.append(0)
 
-        # PSD cone for {0} ∪ x_indices
+        # PSD cone for {0} ∪ x_indices (also marks _cuts_dirty via add_psd_cone_indices)
         self.add_psd_cone_indices(x_idx_bounds)
 
     def _add_inequality_constraint_impl(self, constraint: Constraint) -> None:
@@ -373,6 +415,7 @@ class SDP(Canonicalizer):
         self.psd_cone_indices = [s for s in self.psd_cone_indices if not s < new_idx_set]
 
         self.psd_cone_indices.append(new_idx_set)
+        self._cuts_dirty = True
 
     def canonicalize_relu(self, step: Relu) -> None:
         """
@@ -413,6 +456,8 @@ class SDP(Canonicalizer):
             self.beq_consts.append(0)
 
         self.add_psd_cone_indices(relu_psd_cone_indices)
+        self._relu_steps.append(step)
+        self._cuts_dirty = True
 
     def linexpr_to_Amat_and_bounds(self, expr: LinearExpression):
         """
@@ -735,6 +780,264 @@ class SDP(Canonicalizer):
             "add_theory_cut is not yet implemented for the SDP canonicalizer."
         )
 
+    def _build_sdp_idx_bounds(self) -> dict:
+        """
+        Build a reverse map ``sdp_idx -> (lb_scalar, ub_scalar)`` from the
+        current state of ``var_idx_map``. Used by RLT cut construction to
+        look up the per-index bounds without scanning leaves repeatedly.
+
+        Returns
+        -------
+        dict[int, tuple[float, float]]
+            Mapping from each SDP matrix index (excluding 0) to its current
+            (lower, upper) bound pair.
+        """
+        sdp_idx_bounds = {}
+        for leaf, (start, end) in self.var_idx_map.items():
+            for offset, sdp_idx in enumerate(range(start, end)):
+                sdp_idx_bounds[sdp_idx] = (float(leaf.lb[offset]), float(leaf.ub[offset]))
+        return sdp_idx_bounds
+
+    def _rebuild_cuts_if_dirty(self) -> None:
+        """
+        Rebuild the cut inequality block if any cut-affecting state has
+        changed since the last rebuild.
+
+        Triggered by ``add_var``, ``canonicalize_relu``, ``add_psd_cone_indices``,
+        ``_add_equality_constraint_impl``, and ``update_bounds``. Cuts live in
+        ``_cut_ineq_matrices`` / ``_cut_bineq_upperbounds``, which are
+        concatenated with the regular ineq block at solve time.
+
+        When both ``rlt_cuts`` and ``triangle_cuts`` are False this is
+        effectively a no-op (cut lists stay empty).
+        """
+        if not self._cuts_dirty:
+            return
+
+        self._cut_ineq_matrices = []
+        self._cut_bineq_upperbounds = []
+
+        if self.rlt_cuts or self.triangle_cuts:
+            sdp_idx_bounds = self._build_sdp_idx_bounds()
+
+            if self.rlt_cuts:
+                self._build_rlt_cuts(sdp_idx_bounds)
+
+            if self.triangle_cuts:
+                self._build_triangle_cuts()
+
+        self._cuts_dirty = False
+
+    def _build_rlt_cuts(self, sdp_idx_bounds: dict) -> None:
+        """
+        Append RLT cuts for off-diagonal cone-mate pairs.
+
+        For every pair ``(p, q)`` of distinct, nonzero SDP indices that
+        co-exist in some entry of ``psd_cone_indices``, emit the 4
+        McCormick inequalities (paper §4.5 eq 18). Each pair is processed
+        at most once even if it appears in multiple cones.
+
+        Parameters
+        ----------
+        sdp_idx_bounds : dict[int, tuple[float, float]]
+            Mapping from SDP index to its current ``(lb, ub)`` pair.
+        """
+        added_pairs = set()
+        for cone_set in self.psd_cone_indices:
+            sorted_indices = sorted(i for i in cone_set if i != 0)
+            for p, q in combinations(sorted_indices, 2):
+                if (p, q) in added_pairs:
+                    continue
+                added_pairs.add((p, q))
+                l_p, u_p = sdp_idx_bounds[p]
+                l_q, u_q = sdp_idx_bounds[q]
+                self._build_rlt_cuts_for_pair(p, q, l_p, u_p, l_q, u_q)
+
+    def _build_rlt_cuts_for_pair(
+        self,
+        p: int,
+        q: int,
+        l_p: float,
+        u_p: float,
+        l_q: float,
+        u_q: float,
+    ) -> None:
+        """
+        Append the 4 McCormick RLT inequalities for an off-diagonal pair.
+
+        Each unsymmetrized matrix ``M`` has at most 3 nonzero entries:
+        the off-diagonal ``[p, q]`` slot and the two linear slots
+        ``[0, p]`` and ``[0, q]``. After ``symmetrize`` and a trace inner
+        product against the symmetric lifted variable ``X``, the
+        coefficient on ``X[p, q]`` is whatever was written at ``[p, q]``
+        and the coefficients on ``X[0, p]`` / ``X[0, q]`` are whatever
+        was written at those slots.
+
+        Parameters
+        ----------
+        p, q : int
+            Distinct SDP indices, both ``> 0``.
+        l_p, u_p, l_q, u_q : float
+            Lower/upper bounds at indices ``p`` and ``q``.
+        """
+        n = self.get_sdp_var_dim()
+
+        # Cut 1: (X_p - l_p)(X_q - l_q) >= 0
+        #   -> -X[p,q] + l_q X[0,p] + l_p X[0,q] <= l_p l_q
+        M1 = spa.lil_matrix((n, n))
+        M1[p, q] = -1.0
+        M1[0, p] = l_q
+        M1[0, q] = l_p
+        self._cut_ineq_matrices.append(symmetrize(M1.tocsc()))
+        self._cut_bineq_upperbounds.append(l_p * l_q)
+
+        # Cut 2: (u_p - X_p)(u_q - X_q) >= 0
+        #   -> -X[p,q] + u_q X[0,p] + u_p X[0,q] <= u_p u_q
+        M2 = spa.lil_matrix((n, n))
+        M2[p, q] = -1.0
+        M2[0, p] = u_q
+        M2[0, q] = u_p
+        self._cut_ineq_matrices.append(symmetrize(M2.tocsc()))
+        self._cut_bineq_upperbounds.append(u_p * u_q)
+
+        # Cut 3: (X_p - l_p)(u_q - X_q) >= 0
+        #   -> X[p,q] - u_q X[0,p] - l_p X[0,q] <= -l_p u_q
+        M3 = spa.lil_matrix((n, n))
+        M3[p, q] = 1.0
+        M3[0, p] = -u_q
+        M3[0, q] = -l_p
+        self._cut_ineq_matrices.append(symmetrize(M3.tocsc()))
+        self._cut_bineq_upperbounds.append(-l_p * u_q)
+
+        # Cut 4: (u_p - X_p)(X_q - l_q) >= 0
+        #   -> X[p,q] - l_q X[0,p] - u_p X[0,q] <= -u_p l_q
+        M4 = spa.lil_matrix((n, n))
+        M4[p, q] = 1.0
+        M4[0, p] = -l_q
+        M4[0, q] = -u_p
+        self._cut_ineq_matrices.append(symmetrize(M4.tocsc()))
+        self._cut_bineq_upperbounds.append(-u_p * l_q)
+
+    def _build_triangle_cuts(self) -> None:
+        """
+        Append lifted triangle cuts for every registered ReLU step.
+
+        For each step, iterate over output index pairs ``(i, j)``: emit one
+        cut whenever row ``i`` has mixed bounds (``rhs_lb[i] < 0 <
+        rhs_ub[i]``) and column ``j`` has finite upper bound. Bounds are
+        recomputed fresh from ``step.rhs.bound_propagation()`` so they
+        reflect any leaf tightening since ``canonicalize_relu`` ran. See
+        paper §4.5 eq 25/26 for the derivation.
+        """
+        for step in self._relu_steps:
+            rhs = step.rhs
+            rhs_lb, rhs_ub = rhs.bound_propagation()
+            A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(rhs)
+            b_vec = np.asarray(rhs.const)
+            y_idx_bounds = [self.var_idx_map[step.lhs]]
+
+            d = step.lhs.ndim
+            for i in range(d):
+                if rhs_lb[i] >= 0 or rhs_ub[i] <= 0:
+                    continue
+                for j in range(d):
+                    if not np.isfinite(rhs_ub[j]):
+                        continue
+                    self._build_triangle_cut_for_pair(
+                        i,
+                        j,
+                        A_mat,
+                        b_vec,
+                        x_idx_bounds,
+                        y_idx_bounds,
+                        rhs_lb,
+                        rhs_ub,
+                    )
+
+    def _build_triangle_cut_for_pair(
+        self,
+        i: int,
+        j: int,
+        A_mat: np.ndarray,
+        b_vec: np.ndarray,
+        x_idx_bounds: list,
+        y_idx_bounds: list,
+        rhs_lb: np.ndarray,
+        rhs_ub: np.ndarray,
+    ) -> None:
+        """
+        Append the lifted triangle cut for output pair ``(i, j)`` of a ReLU
+        step.
+
+        Derivation:
+        ``(E_ii (a_i^T x + b_i) + c_i − y_i)(u_j − a_j^T x − b_j) ≥ 0``
+        where ``E_ii = u_i / (u_i − l_i)``, ``c_i = −E_ii · l_i``, and
+        ``(l_i, u_i, u_j)`` are taken from the freshly propagated bounds
+        ``rhs_lb`` / ``rhs_ub`` of the ReLU's input expression. Using
+        propagated bounds (rather than the cached ``step.lb``/``step.ub``)
+        keeps the cuts in sync with leaf tightening — see ``_build_triangle_cuts``.
+
+        Expanding gives 9 product groups that land in the lifted-matrix
+        slots:
+        - xx-block: coefficient ``−E_ii · outer(a_i, a_j)``
+        - y_i ⊗ x row: coefficient ``+a_j``
+        - y_i linear (``[y_i_idx, 0]``): ``(b_j − u_j)``
+        - x linear (``[0, x]``): ``E_ii u_j a_i − E_ii b_j a_i − E_ii b_i a_j
+          − c_i a_j``
+        - constant (``[0, 0]``): ``E_ii b_i u_j − E_ii b_i b_j + c_i u_j
+          − c_i b_j``
+
+        The cut is ``tr(symmetrize(N) X) ≥ 0``, stored as
+        ``tr(−symmetrize(N) X) ≤ 0``.
+        """
+        n_dim = self.get_sdp_var_dim()
+
+        lb_i = rhs_lb[i]
+        ub_i = rhs_ub[i]
+        ub_j = rhs_ub[j]
+        E_ii = ub_i / (ub_i - lb_i)
+        c_i = -E_ii * lb_i
+
+        a_i = np.asarray(A_mat[i, :]).flatten()
+        a_j = np.asarray(A_mat[j, :]).flatten()
+        b_i = float(b_vec[i])
+        b_j = float(b_vec[j])
+
+        y_start, _y_end = y_idx_bounds[0]
+        y_i_idx = y_start + i
+
+        N = spa.lil_matrix((n_dim, n_dim))
+
+        # xx-block: -E_ii * outer(a_i, a_j) at process_2d_ranges(x, x)
+        xx_idx = process_2d_ranges(x_idx_bounds, x_idx_bounds)
+        N[xx_idx] = -E_ii * np.outer(a_i, a_j)
+
+        # y_i ⊗ x row: +a_j at row y_i_idx, cols x-concat
+        yi_x_idx = process_2d_ranges([(y_i_idx, y_i_idx + 1)], x_idx_bounds)
+        N[yi_x_idx] = a_j
+
+        # y_i linear: (b_j - ub_j) at [y_i_idx, 0]
+        N[y_i_idx, 0] = b_j - ub_j
+
+        # x linear at row 0
+        lin = (
+            E_ii * ub_j * a_i
+            - E_ii * b_j * a_i
+            - E_ii * b_i * a_j
+            - c_i * a_j
+        )
+        x_row0_idx = process_1d_ranges(x_idx_bounds, row=True)
+        N[x_row0_idx] = lin
+
+        # Constant at [0, 0]
+        const = E_ii * b_i * ub_j - E_ii * b_i * b_j + c_i * ub_j - c_i * b_j
+        N[0, 0] = const
+
+        # Cut: tr(symmetrize(N) X) >= 0  =>  push -symmetrize(N) with ub = 0
+        N_sym = symmetrize(N.tocsc())
+        self._cut_ineq_matrices.append(-N_sym)
+        self._cut_bineq_upperbounds.append(0.0)
+
     def solve_model(self, steps=None, convex_hull_cuts=False):
         """Solve the SDP problem using the configured solver.
 
@@ -834,6 +1137,10 @@ class SDP(Canonicalizer):
 
     def _solve_via_cvxpy_internal(self):
         """Internal CVXPY solve without checking objective."""
+        self._rebuild_cuts_if_dirty()
+        Aineq_all = self.Aineq_matrices + self._cut_ineq_matrices
+        bineq_all = self.bineq_upperbounds + self._cut_bineq_upperbounds
+
         dim = self.get_sdp_var_dim()
         X = cp.Variable((dim, dim), symmetric=True)
         obj = cp.Maximize(cp.trace(self.C_obj @ X))
@@ -842,7 +1149,7 @@ class SDP(Canonicalizer):
             constraints += [
                 cp.trace(A @ X) == b,
             ]
-        for A, b in zip(self.Aineq_matrices, self.bineq_upperbounds):
+        for A, b in zip(Aineq_all, bineq_all):
             constraints += [
                 cp.trace(A @ X) <= b,
             ]
@@ -871,14 +1178,18 @@ class SDP(Canonicalizer):
 
     def _solve_via_clarabel_internal(self):
         """Internal Clarabel solve without checking objective."""
+        self._rebuild_cuts_if_dirty()
+        Aineq_all = self.Aineq_matrices + self._cut_ineq_matrices
+        bineq_all = self.bineq_upperbounds + self._cut_bineq_upperbounds
+
         solver = ClarabelSolver(solver_params=self.solver_params)
         solver.setup_clarabel_data(
             self.get_sdp_var_dim(),
             self.C_obj,
             self.Aeq_matrices,
             self.beq_consts,
-            self.Aineq_matrices,
-            self.bineq_upperbounds,
+            Aineq_all,
+            bineq_all,
             self.psd_cone_indices,
         )
         return solver.solve()
@@ -905,14 +1216,18 @@ class SDP(Canonicalizer):
 
     def _solve_via_cuclarabel_internal(self):
         """Internal CuClarabel solve without checking objective."""
+        self._rebuild_cuts_if_dirty()
+        Aineq_all = self.Aineq_matrices + self._cut_ineq_matrices
+        bineq_all = self.bineq_upperbounds + self._cut_bineq_upperbounds
+
         solver = CuClarabelSolver(solver_params=self.solver_params)
         solver.setup_clarabel_data(
             self.get_sdp_var_dim(),
             self.C_obj,
             self.Aeq_matrices,
             self.beq_consts,
-            self.Aineq_matrices,
-            self.bineq_upperbounds,
+            Aineq_all,
+            bineq_all,
             self.psd_cone_indices,
         )
         return solver.solve()
