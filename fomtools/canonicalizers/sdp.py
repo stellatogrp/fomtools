@@ -49,7 +49,13 @@ class SDP(Canonicalizer):
         Objective matrix for maximization.
     """
 
-    def __init__(self, solver_params=None, solver="clarabel"):
+    def __init__(
+        self,
+        solver_params=None,
+        solver="clarabel",
+        use_rlt_cuts=False,
+        use_triangle_cuts=False,
+    ):
         """
         Initialize the SDP canonicalizer.
 
@@ -60,6 +66,12 @@ class SDP(Canonicalizer):
         solver : str, default='clarabel'
             Name of the SDP solver to use. Options: 'clarabel', 'cvxpy',
             'cuclarabel'.
+        use_rlt_cuts : bool, default=False
+            If True, add RLT (Reformulation-Linearization Technique) cuts
+            between cone-mate SDP indices to tighten the relaxation.
+        use_triangle_cuts : bool, default=False
+            If True, add lifted triangle cuts for ReLU steps with mixed-bound
+            output dimensions to tighten the relaxation.
         """
         super(SDP, self).__init__(solver_params, solver)
         self.solver_name = solver.lower()  # Store for dispatch
@@ -72,6 +84,9 @@ class SDP(Canonicalizer):
         self.bineq_upperbounds = []
         self.psd_cone_indices = []
         self.bound_constraint_indices = {}  # var -> (start_idx, end_idx)
+
+        self.use_rlt_cuts = use_rlt_cuts
+        self.use_triangle_cuts = use_triangle_cuts
 
         self.C_obj = None
         self._objective_spec = None
@@ -256,6 +271,8 @@ class SDP(Canonicalizer):
         new_canon.bineq_upperbounds = self.bineq_upperbounds.copy()
         new_canon.psd_cone_indices = [s.copy() for s in self.psd_cone_indices]
         new_canon.bound_constraint_indices = self.bound_constraint_indices.copy()
+        new_canon.use_rlt_cuts = self.use_rlt_cuts
+        new_canon.use_triangle_cuts = self.use_triangle_cuts
         new_canon.C_obj = self.C_obj.copy() if self.C_obj is not None else None
         new_canon.obbt_handler = self.obbt_handler
         new_canon._objective_spec = self._objective_spec

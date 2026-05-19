@@ -34,13 +34,21 @@ class Verifier(object):
         solver="gurobi",
         obbt_handler="gurobi",
         params=None,
+        use_rlt_cuts=False,
+        use_triangle_cuts=False,
     ):
         self.theory_func = theory_func
         self.iterates = []
         self.params = []
         self.steps = []
 
-        self.canonicalizer = self._get_canonicalizer(method, params, solver)
+        self.canonicalizer = self._get_canonicalizer(
+            method,
+            params,
+            solver,
+            use_rlt_cuts=use_rlt_cuts,
+            use_triangle_cuts=use_triangle_cuts,
+        )
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
         self.use_obbt_handler = True if obbt_handler else False
         if self.obbt_handler is not None:
@@ -92,7 +100,13 @@ class Verifier(object):
         return summary_statistics[item]
 
     @staticmethod
-    def _get_canonicalizer(method: str, solver_params: dict, solver: dict):
+    def _get_canonicalizer(
+        method: str,
+        solver_params: dict,
+        solver: dict,
+        use_rlt_cuts: bool = False,
+        use_triangle_cuts: bool = False,
+    ):
         """
          Return an initialized instance for the requested method.
 
@@ -113,6 +127,12 @@ class Verifier(object):
              (and common aliases) include:
              - ``"gurobi"``, ``"grb"``
 
+         use_rlt_cuts: bool, default=False
+             SDP-only: enable RLT cuts between cone-mate indices.
+
+         use_triangle_cuts: bool, default=False
+             SDP-only: enable lifted triangle cuts for mixed-bound ReLU outputs.
+
          Returns
          -------
          Canonicalizer
@@ -128,7 +148,12 @@ class Verifier(object):
             case "mip":
                 return MIP(solver_params=solver_params, solver=solver)
             case "sdp":
-                return SDP(solver_params=solver_params, solver=solver)
+                return SDP(
+                    solver_params=solver_params,
+                    solver=solver,
+                    use_rlt_cuts=use_rlt_cuts,
+                    use_triangle_cuts=use_triangle_cuts,
+                )
             case "simulator":
                 return Simulator()
             case _:
