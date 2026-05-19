@@ -96,13 +96,13 @@ def test_cuts_dirty_triggers(sdp_solver):
 
     # add_var marks dirty.
     canon._cuts_dirty = False
-    x = vp.add_param(2, lb=0, ub=1)
+    vp.add_param(2, lb=0, ub=1)
     assert canon._cuts_dirty is True
 
     # canonicalize_relu marks dirty + registers the step.
     canon._cuts_dirty = False
     z0 = vp.add_iterate(2, lb=-1, ub=1)
-    z1 = vp.step.relu(z0)
+    vp.step.relu(z0)
     assert canon._cuts_dirty is True
     assert len(canon._relu_steps) >= 1
 
