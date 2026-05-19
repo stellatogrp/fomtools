@@ -1,0 +1,78 @@
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Union
+
+import numpy as np
+
+
+@dataclass
+class LinearLayer:
+    weight: np.ndarray
+    bias: np.ndarray | None = None
+
+    def __post_init__(self):
+        self.weight = np.asarray(self.weight, dtype=float)
+        if self.bias is not None:
+            self.bias = np.asarray(self.bias, dtype=float)
+
+
+@dataclass
+class ReLULayer:
+    pass
+
+
+NNLayer = Union[LinearLayer, ReLULayer]
+
+
+def from_torch(model) -> list[NNLayer]:
+    """
+    Convert a PyTorch module to a list of NNLayers.
+
+    Walks ``model.children()`` recursively and converts:
+      - ``nn.Linear``  -> ``LinearLayer``
+      - ``nn.ReLU``    -> ``ReLULayer``
+      - ``nn.Sequential`` / ``nn.Module`` containers -> flattened recursively
+
+    Only ReLU activations and linear layers are supported. Other layer types
+    (BatchNorm, dropout, etc.) raise ``ValueError``.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        A PyTorch module (typically ``nn.Sequential``).
+
+    Returns
+    -------
+    list[NNLayer]
+    """
+    try:
+        import torch.nn as nn
+    except ImportError:
+        raise ImportError("PyTorch is required for from_torch(). Install with: pip install torch")
+
+    layers = []
+
+    def _walk(module):
+        children = list(module.children())
+        if not children:
+            if isinstance(module, nn.Linear):
+                W = module.weight.detach().cpu().numpy()
+                b = module.bias.detach().cpu().numpy() if module.bias is not None else None
+                layers.append(LinearLayer(weight=W, bias=b))
+            elif isinstance(module, nn.ReLU):
+                layers.append(ReLULayer())
+            else:
+                raise ValueError(
+                    f"Unsupported layer type: {type(module).__name__}. "
+                    "Only nn.Linear and nn.ReLU are supported."
+                )
+        else:
+            for child in children:
+                _walk(child)
+
+    _walk(model)
+    return layers
+
+

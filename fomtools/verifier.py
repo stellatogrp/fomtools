@@ -10,6 +10,7 @@ from fomtools.canonicalizers.sdp import SDP
 from fomtools.canonicalizers.simulator import Simulator
 from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
+from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
 from fomtools.stepdecomposers.simulator_step_decomposer import SimulatorStepDecomposer
@@ -345,7 +346,7 @@ class Verifier(object):
                 else:
                     decomposition_dict[leaf] = composed
 
-            const[offset:offset + p.ndim] = p.const
+            const[offset : offset + p.ndim] = p.const
             offset += p.ndim
 
         result = LinearExpression(decomposition_dict=decomposition_dict, const=const)
@@ -710,6 +711,47 @@ class Verifier(object):
         self.canonicalizer.update_bounds(target_expr, _lb, _ub)
 
         return (sum(_lb > ref_expr.lb) + sum(_ub < ref_expr.ub)) / (2.0 * len(_lb))
+
+    def neural_network(self, expr: LinearExpression, layers: list) -> LinearExpression:
+        """
+        Thread ``expr`` through a feedforward ReLU network inside this Verifier.
+
+        The network is unrolled into alternating affine and ReLU VP steps.
+        Affine layers are applied analytically (no new solver variable); ReLU
+        layers call ``run_step`` so the solver gets the appropriate constraints.
+
+        Parameters
+        ----------
+        expr : LinearExpression
+            Network input (e.g. a bounded iterate or parameter).
+        layers : list
+            Ordered sequence of ``LinearLayer`` / ``ReLULayer`` objects.
+        Returns
+        -------
+        LinearExpression
+            Network output, expressed in terms of the original leaf variables.
+
+        """
+
+        for i, layer in enumerate(layers):
+            if isinstance(layer, LinearLayer):
+                W, b = layer.weight, layer.bias
+
+                if W.shape[1] != expr.ndim:
+                    raise ValueError(
+                        f"Layer {i}: weight shape {W.shape} is incompatible with "
+                        f"input dimension {expr.ndim}."
+                    )
+
+                expr = self.run_step(expr, Affine, weight=W, bias=b)
+
+            elif isinstance(layer, ReLULayer):
+                expr = self.run_step(expr, Relu)
+
+            else:
+                raise ValueError(f"Layer {i}: unsupported layer type {type(layer).__name__}.")
+
+        return expr
 
     def get_solution_value(self, iterate: LinearExpression) -> np.ndarray:
         """

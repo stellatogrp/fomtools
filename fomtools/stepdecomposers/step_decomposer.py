@@ -142,6 +142,8 @@ class StepDecomposer:
         LinearExpression
             The step's left-hand side (output) variable.
         """
+        if hasattr(step, "sync_lhs_bounds"):
+            step.sync_lhs_bounds()
         # registered as "param" for MIP/SDP compatibility; Simulator registers
         # step lhs as an iterate with zero init so subsequent steps can reference it.
         self.register_var(step.lhs, var_type="param")
