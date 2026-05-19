@@ -1,4 +1,5 @@
 import logging
+import warnings
 from typing import List, Sequence
 
 import numpy as np
@@ -166,9 +167,23 @@ class Verifier(object):
          Raises
          ------
          ValueError
-             If the requested canonicalizer is one of the supported options.
+             If the requested canonicalizer is not one of the supported options.
         """
-        match method.lower():
+        method_lower = method.lower()
+        if method_lower != "sdp" and (use_rlt_cuts or use_triangle_cuts):
+            enabled = []
+            if use_rlt_cuts:
+                enabled.append("use_rlt_cuts")
+            if use_triangle_cuts:
+                enabled.append("use_triangle_cuts")
+            warnings.warn(
+                f"{', '.join(enabled)} is SDP-only and will be ignored for "
+                f"method={method!r}.",
+                UserWarning,
+                stacklevel=3,
+            )
+
+        match method_lower:
             case "mip":
                 return MIP(solver_params=solver_params, solver=solver)
             case "sdp":

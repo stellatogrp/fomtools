@@ -1,3 +1,5 @@
+from itertools import combinations
+
 import cvxpy as cp
 import numpy as np
 import scipy.sparse as spa
@@ -366,9 +368,8 @@ class SDP(Canonicalizer):
             self.Aeq_matrices.append(symmetrize(M_quad.tocsc()))
             self.beq_consts.append(0)
 
-        # PSD cone for {0} ∪ x_indices
+        # PSD cone for {0} ∪ x_indices (also marks _cuts_dirty via add_psd_cone_indices)
         self.add_psd_cone_indices(x_idx_bounds)
-        self._cuts_dirty = True
 
     def _add_inequality_constraint_impl(self, constraint: Constraint) -> None:
         """
@@ -841,8 +842,6 @@ class SDP(Canonicalizer):
         sdp_idx_bounds : dict[int, tuple[float, float]]
             Mapping from SDP index to its current ``(lb, ub)`` pair.
         """
-        from itertools import combinations
-
         added_pairs = set()
         for cone_set in self.psd_cone_indices:
             sorted_indices = sorted(i for i in cone_set if i != 0)
@@ -924,36 +923,47 @@ class SDP(Canonicalizer):
         Append lifted triangle cuts for every registered ReLU step.
 
         For each step, iterate over output index pairs ``(i, j)``: emit one
-        cut whenever row ``i`` has mixed bounds (``step.lb[i] < 0 <
-        step.ub[i]``) and column ``j`` has finite upper bound. See paper
-        §4.5 eq 25/26 for the derivation.
+        cut whenever row ``i`` has mixed bounds (``rhs_lb[i] < 0 <
+        rhs_ub[i]``) and column ``j`` has finite upper bound. Bounds are
+        recomputed fresh from ``step.rhs.bound_propagation()`` so they
+        reflect any leaf tightening since ``canonicalize_relu`` ran. See
+        paper §4.5 eq 25/26 for the derivation.
         """
         for step in self._relu_steps:
             rhs = step.rhs
+            rhs_lb, rhs_ub = rhs.bound_propagation()
             A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(rhs)
             b_vec = np.asarray(rhs.const)
             y_idx_bounds = [self.var_idx_map[step.lhs]]
 
             d = step.lhs.ndim
             for i in range(d):
-                if step.lb[i] >= 0 or step.ub[i] <= 0:
+                if rhs_lb[i] >= 0 or rhs_ub[i] <= 0:
                     continue
                 for j in range(d):
-                    if not np.isfinite(step.ub[j]):
+                    if not np.isfinite(rhs_ub[j]):
                         continue
                     self._build_triangle_cut_for_pair(
-                        step, i, j, A_mat, b_vec, x_idx_bounds, y_idx_bounds
+                        i,
+                        j,
+                        A_mat,
+                        b_vec,
+                        x_idx_bounds,
+                        y_idx_bounds,
+                        rhs_lb,
+                        rhs_ub,
                     )
 
     def _build_triangle_cut_for_pair(
         self,
-        step: Relu,
         i: int,
         j: int,
         A_mat: np.ndarray,
         b_vec: np.ndarray,
         x_idx_bounds: list,
         y_idx_bounds: list,
+        rhs_lb: np.ndarray,
+        rhs_ub: np.ndarray,
     ) -> None:
         """
         Append the lifted triangle cut for output pair ``(i, j)`` of a ReLU
@@ -962,7 +972,10 @@ class SDP(Canonicalizer):
         Derivation:
         ``(E_ii (a_i^T x + b_i) + c_i − y_i)(u_j − a_j^T x − b_j) ≥ 0``
         where ``E_ii = u_i / (u_i − l_i)``, ``c_i = −E_ii · l_i``, and
-        ``(l_i, u_i)`` are ``step.lb[i]``, ``step.ub[i]``.
+        ``(l_i, u_i, u_j)`` are taken from the freshly propagated bounds
+        ``rhs_lb`` / ``rhs_ub`` of the ReLU's input expression. Using
+        propagated bounds (rather than the cached ``step.lb``/``step.ub``)
+        keeps the cuts in sync with leaf tightening — see ``_build_triangle_cuts``.
 
         Expanding gives 9 product groups that land in the lifted-matrix
         slots:
@@ -979,9 +992,9 @@ class SDP(Canonicalizer):
         """
         n_dim = self.get_sdp_var_dim()
 
-        lb_i = step.lb[i]
-        ub_i = step.ub[i]
-        ub_j = step.ub[j]
+        lb_i = rhs_lb[i]
+        ub_i = rhs_ub[i]
+        ub_j = rhs_ub[j]
         E_ii = ub_i / (ub_i - lb_i)
         c_i = -E_ii * lb_i
 

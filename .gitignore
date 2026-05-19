@@ -381,3 +381,4 @@ cython_debug/
 .direnv
 .envrc
 fomtools.project
+.entropy/

@@ -7,6 +7,8 @@ the SDP relaxation while preserving the MIP lower-bound property.
 This file is built up phase-by-phase alongside the implementation in
 fomtools/canonicalizers/sdp.py. Each phase adds a new section.
 """
+import warnings
+
 import numpy as np
 import pytest
 
@@ -73,6 +75,34 @@ def test_flags_stored_on_canonicalizer(sdp_solver):
     vp2 = Verifier(method='sdp', solver=sdp_solver, obbt_handler=None)
     assert vp2.canonicalizer.use_rlt_cuts is False
     assert vp2.canonicalizer.use_triangle_cuts is False
+
+
+@pytest.mark.parametrize("flag", ["use_rlt_cuts", "use_triangle_cuts"])
+def test_cut_flags_warn_for_non_sdp_methods(flag):
+    """Passing a cut flag with method != 'sdp' should emit a UserWarning."""
+    kwargs = {flag: True}
+    with pytest.warns(UserWarning, match=flag):
+        Verifier(method='mip', solver='highs', obbt_handler=None, **kwargs)
+
+
+def test_cut_flags_no_warning_when_off_for_non_sdp():
+    """When both flags are off (default), no warning is emitted for any method."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        Verifier(method='mip', solver='highs', obbt_handler=None)
+
+
+def test_cut_flags_no_warning_for_sdp():
+    """Passing flags with method='sdp' is the normal path, no warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        Verifier(
+            method='sdp',
+            solver='clarabel',
+            obbt_handler=None,
+            use_rlt_cuts=True,
+            use_triangle_cuts=True,
+        )
 
 
 # ============================================================
@@ -450,6 +480,52 @@ def test_triangle_cut_matrices_symmetric():
         diff = M - M.T
         diff.eliminate_zeros()
         assert diff.nnz == 0
+
+
+def test_triangle_cuts_use_fresh_leaf_bounds():
+    """Triangle cuts read bounds from rhs.bound_propagation() at rebuild time,
+    so leaf tightening after canonicalize_relu changes the emitted cut.
+
+    This is the parity property with RLT cuts: both families must pick up
+    leaf tightening on the next solve.
+    """
+    from fomtools.canonicalizers.sdp import SDP
+    from fomtools.linearexpression import LinearExpression
+    from fomtools.steps import Relu
+
+    canon = SDP(solver="clarabel", use_triangle_cuts=True)
+    z = LinearExpression.from_int(1, lb=np.array([-2.0]), ub=np.array([2.0]))
+    canon.add_var(z)
+    step = Relu(rhs=z)
+    step.update_bounds(z.lb, z.ub)
+    canon.add_var(step.lhs)
+    canon.canonicalize_relu(step)
+
+    # First rebuild: chord based on rhs ∈ [-2, 2].
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_triangle_cuts()
+    M_loose = canon._cut_ineq_matrices[0].toarray()
+
+    # Tighten the leaf's bounds in place.
+    z.update_bounds(np.array([-1.0]), np.array([1.0]))
+
+    # Second rebuild: chord should now be based on rhs ∈ [-1, 1].
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_triangle_cuts()
+    M_tight = canon._cut_ineq_matrices[0].toarray()
+
+    # The constant term at X[0,0] differs between the chords:
+    # loose: E_ii=0.5, c_i=1.0, b_i=b_j=0, ub_j=2  =>  const = E_ii*b_i*ub_j
+    #        + c_i*ub_j - ... = 0 + 1*2 - 0 - 0 = 2.0
+    # tight: E_ii=0.5, c_i=0.5, ub_j=1            =>  const = 0 + 0.5*1 - 0 - 0
+    #        = 0.5
+    # symmetrize halves nothing on the diagonal, so [0,0] entries are exactly
+    # these values divided by 2 (since the cut is stored as -symmetrize(N)).
+    assert not np.allclose(M_loose, M_tight), (
+        "Triangle cut matrix should change when leaf bounds tighten"
+    )
 
 
 # ============================================================
