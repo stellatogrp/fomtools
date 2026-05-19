@@ -47,13 +47,13 @@ class SDP(Canonicalizer):
         Indices defining PSD cone constraints.
     bound_constraint_indices : dict
         Mapping from variable to its bound constraint indices.
-    use_rlt_cuts : bool
+    rlt_cuts : bool
         If True, add RLT (Reformulation-Linearization Technique) cuts
         between off-diagonal pairs of SDP indices that co-exist in some
         ``psd_cone_indices`` entry. Each pair yields 4 McCormick
         inequalities. Cuts are lazily rebuilt when bounds, cones, or
         variables change. See paper §4.5 eq 18.
-    use_triangle_cuts : bool
+    triangle_cuts : bool
         If True, add lifted triangle cuts for every ReLU step's
         mixed-bound output rows. Each cut multiplies the per-output
         triangle inequality by a nonneg bound multiplier, yielding a
@@ -66,8 +66,8 @@ class SDP(Canonicalizer):
         self,
         solver_params=None,
         solver="clarabel",
-        use_rlt_cuts=False,
-        use_triangle_cuts=False,
+        rlt_cuts=False,
+        triangle_cuts=False,
     ):
         """
         Initialize the SDP canonicalizer.
@@ -79,10 +79,10 @@ class SDP(Canonicalizer):
         solver : str, default='clarabel'
             Name of the SDP solver to use. Options: 'clarabel', 'cvxpy',
             'cuclarabel'.
-        use_rlt_cuts : bool, default=False
+        rlt_cuts : bool, default=False
             If True, add RLT (Reformulation-Linearization Technique) cuts
             between cone-mate SDP indices to tighten the relaxation.
-        use_triangle_cuts : bool, default=False
+        triangle_cuts : bool, default=False
             If True, add lifted triangle cuts for ReLU steps with mixed-bound
             output dimensions to tighten the relaxation.
         """
@@ -98,8 +98,8 @@ class SDP(Canonicalizer):
         self.psd_cone_indices = []
         self.bound_constraint_indices = {}  # var -> (start_idx, end_idx)
 
-        self.use_rlt_cuts = use_rlt_cuts
-        self.use_triangle_cuts = use_triangle_cuts
+        self.rlt_cuts = rlt_cuts
+        self.triangle_cuts = triangle_cuts
         self._cuts_dirty = True
         self._cut_ineq_matrices = []
         self._cut_bineq_upperbounds = []
@@ -291,8 +291,8 @@ class SDP(Canonicalizer):
         new_canon.bineq_upperbounds = self.bineq_upperbounds.copy()
         new_canon.psd_cone_indices = [s.copy() for s in self.psd_cone_indices]
         new_canon.bound_constraint_indices = self.bound_constraint_indices.copy()
-        new_canon.use_rlt_cuts = self.use_rlt_cuts
-        new_canon.use_triangle_cuts = self.use_triangle_cuts
+        new_canon.rlt_cuts = self.rlt_cuts
+        new_canon.triangle_cuts = self.triangle_cuts
         # Cuts get rebuilt from current state on the copy's first solve.
         new_canon._cuts_dirty = True
         new_canon._cut_ineq_matrices = []
@@ -808,7 +808,7 @@ class SDP(Canonicalizer):
         ``_cut_ineq_matrices`` / ``_cut_bineq_upperbounds``, which are
         concatenated with the regular ineq block at solve time.
 
-        When both ``use_rlt_cuts`` and ``use_triangle_cuts`` are False this is
+        When both ``rlt_cuts`` and ``triangle_cuts`` are False this is
         effectively a no-op (cut lists stay empty).
         """
         if not self._cuts_dirty:
@@ -817,13 +817,13 @@ class SDP(Canonicalizer):
         self._cut_ineq_matrices = []
         self._cut_bineq_upperbounds = []
 
-        if self.use_rlt_cuts or self.use_triangle_cuts:
+        if self.rlt_cuts or self.triangle_cuts:
             sdp_idx_bounds = self._build_sdp_idx_bounds()
 
-            if self.use_rlt_cuts:
+            if self.rlt_cuts:
                 self._build_rlt_cuts(sdp_idx_bounds)
 
-            if self.use_triangle_cuts:
+            if self.triangle_cuts:
                 self._build_triangle_cuts()
 
         self._cuts_dirty = False

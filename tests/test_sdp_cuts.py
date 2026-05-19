@@ -16,7 +16,7 @@ from fomtools.verifier import Verifier
 from tests.conftest import SDP_SOLVERS, TEST_EPS
 
 
-def _build_nnls_sdp(K, sdp_solver, use_rlt_cuts=False, use_triangle_cuts=False):
+def _build_nnls_sdp(K, sdp_solver, rlt_cuts=False, triangle_cuts=False):
     """Build a small NNLS SDP verifier matching tests/test_nnls_sdp_mip.py.
 
     Returns the solved SDP two-norm-squared objective value.
@@ -30,8 +30,8 @@ def _build_nnls_sdp(K, sdp_solver, use_rlt_cuts=False, use_triangle_cuts=False):
         method='sdp',
         solver=sdp_solver,
         obbt_handler='highs',
-        use_rlt_cuts=use_rlt_cuts,
-        use_triangle_cuts=use_triangle_cuts,
+        rlt_cuts=rlt_cuts,
+        triangle_cuts=triangle_cuts,
     )
 
     x = vp.add_param(m, lb=0, ub=0.1)
@@ -54,7 +54,7 @@ def test_flags_default_off_matches_baseline(sdp_solver):
     """With both flags off, SDP objective matches the existing baseline."""
     _, baseline = _build_nnls_sdp(K=1, sdp_solver=sdp_solver)
     _, with_flags_off = _build_nnls_sdp(
-        K=1, sdp_solver=sdp_solver, use_rlt_cuts=False, use_triangle_cuts=False
+        K=1, sdp_solver=sdp_solver, rlt_cuts=False, triangle_cuts=False
     )
     assert abs(baseline - with_flags_off) <= TEST_EPS
 
@@ -66,18 +66,18 @@ def test_flags_stored_on_canonicalizer(sdp_solver):
         method='sdp',
         solver=sdp_solver,
         obbt_handler=None,
-        use_rlt_cuts=True,
-        use_triangle_cuts=True,
+        rlt_cuts=True,
+        triangle_cuts=True,
     )
-    assert vp.canonicalizer.use_rlt_cuts is True
-    assert vp.canonicalizer.use_triangle_cuts is True
+    assert vp.canonicalizer.rlt_cuts is True
+    assert vp.canonicalizer.triangle_cuts is True
 
     vp2 = Verifier(method='sdp', solver=sdp_solver, obbt_handler=None)
-    assert vp2.canonicalizer.use_rlt_cuts is False
-    assert vp2.canonicalizer.use_triangle_cuts is False
+    assert vp2.canonicalizer.rlt_cuts is False
+    assert vp2.canonicalizer.triangle_cuts is False
 
 
-@pytest.mark.parametrize("flag", ["use_rlt_cuts", "use_triangle_cuts"])
+@pytest.mark.parametrize("flag", ["rlt_cuts", "triangle_cuts"])
 def test_cut_flags_warn_for_non_sdp_methods(flag):
     """Passing a cut flag with method != 'sdp' should emit a UserWarning."""
     kwargs = {flag: True}
@@ -100,8 +100,8 @@ def test_cut_flags_no_warning_for_sdp():
             method='sdp',
             solver='clarabel',
             obbt_handler=None,
-            use_rlt_cuts=True,
-            use_triangle_cuts=True,
+            rlt_cuts=True,
+            triangle_cuts=True,
         )
 
 
@@ -117,7 +117,7 @@ def test_cuts_dirty_triggers(sdp_solver):
         method='sdp',
         solver=sdp_solver,
         obbt_handler=None,
-        use_rlt_cuts=True,
+        rlt_cuts=True,
     )
     canon = vp.canonicalizer
 
@@ -146,7 +146,7 @@ def test_cuts_dirty_triggers(sdp_solver):
 def test_rebuild_clears_dirty_after_solve(sdp_solver):
     """After solve, the copy that ran has _cuts_dirty cleared."""
     vp, _ = _build_nnls_sdp(
-        K=1, sdp_solver=sdp_solver, use_rlt_cuts=True, use_triangle_cuts=True
+        K=1, sdp_solver=sdp_solver, rlt_cuts=True, triangle_cuts=True
     )
     assert vp.canonicalizer._solved_copy is not None
     assert vp.canonicalizer._solved_copy._cuts_dirty is False
@@ -159,7 +159,7 @@ def test_copy_resets_dirty(sdp_solver):
         method='sdp',
         solver=sdp_solver,
         obbt_handler=None,
-        use_rlt_cuts=True,
+        rlt_cuts=True,
     )
     z = vp.add_iterate(2, lb=-1, ub=1)
     _ = vp.step.relu(z)
@@ -199,7 +199,7 @@ def _solved_canon(vp):
 @pytest.mark.parametrize("sdp_solver", SDP_SOLVERS)
 def test_rlt_cut_count(sdp_solver):
     """Number of RLT cuts = 4 × unique cone-mate off-diagonal pairs."""
-    vp, _ = _build_nnls_sdp(K=1, sdp_solver=sdp_solver, use_rlt_cuts=True)
+    vp, _ = _build_nnls_sdp(K=1, sdp_solver=sdp_solver, rlt_cuts=True)
     canon = _solved_canon(vp)
     assert len(canon._cut_ineq_matrices) == _expected_rlt_cut_count(canon)
     assert len(canon._cut_bineq_upperbounds) == len(canon._cut_ineq_matrices)
@@ -208,7 +208,7 @@ def test_rlt_cut_count(sdp_solver):
 @pytest.mark.parametrize("sdp_solver", SDP_SOLVERS)
 def test_rlt_cut_matrices_symmetric(sdp_solver):
     """Each RLT cut matrix is symmetric."""
-    vp, _ = _build_nnls_sdp(K=1, sdp_solver=sdp_solver, use_rlt_cuts=True)
+    vp, _ = _build_nnls_sdp(K=1, sdp_solver=sdp_solver, rlt_cuts=True)
     canon = _solved_canon(vp)
     for M in canon._cut_ineq_matrices:
         diff = (M - M.T)
@@ -222,7 +222,7 @@ def test_rlt_cuts_tighten_bound(sdp_solver):
     """SDP objective with RLT cuts ≤ baseline (we maximize, so tighter relaxation
     gives smaller upper bound)."""
     _, baseline = _build_nnls_sdp(K=1, sdp_solver=sdp_solver)
-    _, with_rlt = _build_nnls_sdp(K=1, sdp_solver=sdp_solver, use_rlt_cuts=True)
+    _, with_rlt = _build_nnls_sdp(K=1, sdp_solver=sdp_solver, rlt_cuts=True)
     assert with_rlt <= baseline + TEST_EPS
 
 
@@ -231,7 +231,7 @@ def test_rlt_cuts_preserve_mip_lower_bound(sdp_solver):
     """MIP infinity-norm bound ≤ sqrt(SDP two-norm-sq with RLT) — the same
     relationship verified in test_nnls_sdp_mip.py, now with RLT cuts on."""
     _, sdp_two_norm_sq = _build_nnls_sdp(
-        K=1, sdp_solver=sdp_solver, use_rlt_cuts=True
+        K=1, sdp_solver=sdp_solver, rlt_cuts=True
     )
 
     # Build the matching MIP and solve.
@@ -258,7 +258,7 @@ def test_rlt_cuts_algebra_on_known_primal():
     from fomtools.canonicalizers.sdp import SDP, symmetrize  # noqa: F401
 
     # Hand-construct the canonicalizer state.
-    canon = SDP(solver="clarabel", use_rlt_cuts=True)
+    canon = SDP(solver="clarabel", rlt_cuts=True)
     # Manually populate range so dim = 3 and we have two slots at indices 1, 2.
     canon.range_marker = 3
     canon._pad_existing_A_matrices()
@@ -290,7 +290,7 @@ def test_rlt_diagonal_skip():
     1 element taken 2 at a time is empty — diagonal pairs never reached)."""
     from fomtools.canonicalizers.sdp import SDP
 
-    canon = SDP(solver="clarabel", use_rlt_cuts=True)
+    canon = SDP(solver="clarabel", rlt_cuts=True)
     # Insert a cone with only one non-zero index.
     canon.psd_cone_indices = [{0, 1}]
     canon.range_marker = 2
@@ -316,7 +316,7 @@ def test_rlt_cuts_invalidated_by_update_bounds():
             method='sdp',
             solver='clarabel',
             obbt_handler='highs',
-            use_rlt_cuts=True,
+            rlt_cuts=True,
         )
         x = vp.add_param(m, lb=0, ub=0.1)
         z0 = vp.add_iterate(n, lb=lb, ub=ub)
@@ -334,7 +334,7 @@ def test_rlt_cuts_invalidated_by_update_bounds():
 # ============================================================
 
 
-def _build_mixed_relu_problem(use_triangle_cuts=False, use_rlt_cuts=False):
+def _build_mixed_relu_problem(triangle_cuts=False, rlt_cuts=False):
     """A 1D ReLU with z ∈ [-1, 1] so the output is genuinely mixed.
 
     Returns (verifier, solved_value).
@@ -343,8 +343,8 @@ def _build_mixed_relu_problem(use_triangle_cuts=False, use_rlt_cuts=False):
         method='sdp',
         solver='clarabel',
         obbt_handler=None,
-        use_triangle_cuts=use_triangle_cuts,
-        use_rlt_cuts=use_rlt_cuts,
+        triangle_cuts=triangle_cuts,
+        rlt_cuts=rlt_cuts,
     )
     z0 = vp.add_iterate(1, lb=-1.0, ub=1.0)
     z1 = vp.step.relu(z0)
@@ -358,7 +358,7 @@ def test_triangle_cuts_skipped_when_no_mixed_rows():
         method='sdp',
         solver='clarabel',
         obbt_handler=None,
-        use_triangle_cuts=True,
+        triangle_cuts=True,
     )
     # All-positive input range → relu is identity → step.lb[0] = 1 > 0.
     z0 = vp.add_iterate(2, lb=1.0, ub=2.0)
@@ -372,7 +372,7 @@ def test_triangle_cuts_skipped_when_no_mixed_rows():
 
 def test_triangle_cuts_emitted_when_mixed():
     """A genuinely mixed ReLU step (lb<0<ub) emits the right number of cuts."""
-    vp, _ = _build_mixed_relu_problem(use_triangle_cuts=True)
+    vp, _ = _build_mixed_relu_problem(triangle_cuts=True)
     canon = _solved_canon(vp)
     # 1D mixed step → 1 mixed row, 1 finite-ub col → exactly 1 triangle cut.
     assert len(canon._cut_ineq_matrices) == 1
@@ -385,7 +385,7 @@ def test_triangle_cut_count_2d():
         method='sdp',
         solver='clarabel',
         obbt_handler=None,
-        use_triangle_cuts=True,
+        triangle_cuts=True,
     )
     z0 = vp.add_iterate(2, lb=-1.0, ub=1.0)  # both dims mixed
     z1 = vp.step.relu(z0)
@@ -399,14 +399,14 @@ def test_triangle_cut_count_2d():
 def test_triangle_cuts_tighten_bound():
     """SDP with triangle cuts ≤ baseline (maximizing, tighter relaxation)."""
     _, baseline = _build_mixed_relu_problem()
-    _, with_tri = _build_mixed_relu_problem(use_triangle_cuts=True)
+    _, with_tri = _build_mixed_relu_problem(triangle_cuts=True)
     assert with_tri <= baseline + TEST_EPS
 
 
 def test_triangle_cuts_preserve_mip_lower_bound():
     """MIP infinity-norm ≤ sqrt(SDP two-norm-sq with triangle cuts)."""
     _, sdp_two_norm_sq = _build_nnls_sdp(
-        K=1, sdp_solver='clarabel', use_triangle_cuts=True
+        K=1, sdp_solver='clarabel', triangle_cuts=True
     )
     m, n = 3, 2
     np.random.seed(0)
@@ -429,7 +429,7 @@ def test_triangle_cut_algebra_on_known_primal():
     from fomtools.steps import Relu
 
     # Build the canonicalizer state directly.
-    canon = SDP(solver="clarabel", use_triangle_cuts=True)
+    canon = SDP(solver="clarabel", triangle_cuts=True)
     # We need a Relu step whose rhs is a leaf variable z with bounds [-1, 1].
     # Construct the leaf and register it.
     from fomtools.linearexpression import LinearExpression
@@ -474,7 +474,7 @@ def test_triangle_cut_algebra_on_known_primal():
 
 def test_triangle_cut_matrices_symmetric():
     """Each triangle cut matrix is symmetric."""
-    vp, _ = _build_mixed_relu_problem(use_triangle_cuts=True)
+    vp, _ = _build_mixed_relu_problem(triangle_cuts=True)
     canon = _solved_canon(vp)
     for M in canon._cut_ineq_matrices:
         diff = M - M.T
@@ -493,7 +493,7 @@ def test_triangle_cuts_use_fresh_leaf_bounds():
     from fomtools.linearexpression import LinearExpression
     from fomtools.steps import Relu
 
-    canon = SDP(solver="clarabel", use_triangle_cuts=True)
+    canon = SDP(solver="clarabel", triangle_cuts=True)
     z = LinearExpression.from_int(1, lb=np.array([-2.0]), ub=np.array([2.0]))
     canon.add_var(z)
     step = Relu(rhs=z)
@@ -541,7 +541,7 @@ FLAG_COMBOS = [
 ]
 
 
-def _build_ista_sdp(K, sdp_solver, use_rlt_cuts=False, use_triangle_cuts=False):
+def _build_ista_sdp(K, sdp_solver, rlt_cuts=False, triangle_cuts=False):
     """ISTA SDP setup mirroring tests/test_ista_sdp_mip.py."""
     m, n = 3, 2
     np.random.seed(0)
@@ -558,8 +558,8 @@ def _build_ista_sdp(K, sdp_solver, use_rlt_cuts=False, use_triangle_cuts=False):
         method='sdp',
         solver=sdp_solver,
         obbt_handler='highs',
-        use_rlt_cuts=use_rlt_cuts,
-        use_triangle_cuts=use_triangle_cuts,
+        rlt_cuts=rlt_cuts,
+        triangle_cuts=triangle_cuts,
     )
     b_param = vp.add_param(m, lb=b - 0.1, ub=b + 0.1)
     z = [vp.add_iterate(n, lb=1, ub=1.1)]
@@ -569,7 +569,7 @@ def _build_ista_sdp(K, sdp_solver, use_rlt_cuts=False, use_triangle_cuts=False):
     return vp, vp.solve()
 
 
-def _build_boxpgd_sdp(K, sdp_solver, use_rlt_cuts=False, use_triangle_cuts=False):
+def _build_boxpgd_sdp(K, sdp_solver, rlt_cuts=False, triangle_cuts=False):
     """Box PGD SDP setup mirroring tests/test_boxpgd_sdp_mip.py."""
     n = 2
     np.random.seed(0)
@@ -583,8 +583,8 @@ def _build_boxpgd_sdp(K, sdp_solver, use_rlt_cuts=False, use_triangle_cuts=False
         method='sdp',
         solver=sdp_solver,
         obbt_handler='highs',
-        use_rlt_cuts=use_rlt_cuts,
-        use_triangle_cuts=use_triangle_cuts,
+        rlt_cuts=rlt_cuts,
+        triangle_cuts=triangle_cuts,
     )
     q_param = vp.add_param(n, lb=q - 0.1, ub=q + 0.1)
     z = [vp.add_iterate(n, lb=0, ub=0.1)]
@@ -653,7 +653,7 @@ def _mip_inf_norm_boxpgd(K):
 def test_nnls_mip_bound_preserved_all_combos(use_rlt, use_tri, K):
     """mip_inf_norm ≤ sqrt(sdp_two_norm_sq) for every flag combination."""
     _, sdp_sq = _build_nnls_sdp(
-        K=K, sdp_solver='clarabel', use_rlt_cuts=use_rlt, use_triangle_cuts=use_tri
+        K=K, sdp_solver='clarabel', rlt_cuts=use_rlt, triangle_cuts=use_tri
     )
     mip_inf = _mip_inf_norm_nnls(K)
     assert mip_inf <= np.sqrt(sdp_sq) + TEST_EPS, (
@@ -666,7 +666,7 @@ def test_nnls_mip_bound_preserved_all_combos(use_rlt, use_tri, K):
 @pytest.mark.parametrize("K", [1, 2])
 def test_ista_mip_bound_preserved_all_combos(use_rlt, use_tri, K):
     _, sdp_sq = _build_ista_sdp(
-        K=K, sdp_solver='clarabel', use_rlt_cuts=use_rlt, use_triangle_cuts=use_tri
+        K=K, sdp_solver='clarabel', rlt_cuts=use_rlt, triangle_cuts=use_tri
     )
     mip_inf = _mip_inf_norm_ista(K)
     assert mip_inf <= np.sqrt(sdp_sq) + TEST_EPS, (
@@ -679,7 +679,7 @@ def test_ista_mip_bound_preserved_all_combos(use_rlt, use_tri, K):
 @pytest.mark.parametrize("K", [1, 2])
 def test_boxpgd_mip_bound_preserved_all_combos(use_rlt, use_tri, K):
     _, sdp_sq = _build_boxpgd_sdp(
-        K=K, sdp_solver='clarabel', use_rlt_cuts=use_rlt, use_triangle_cuts=use_tri
+        K=K, sdp_solver='clarabel', rlt_cuts=use_rlt, triangle_cuts=use_tri
     )
     mip_inf = _mip_inf_norm_boxpgd(K)
     assert mip_inf <= np.sqrt(sdp_sq) + TEST_EPS, (
@@ -695,10 +695,10 @@ def test_both_flags_compose_no_worse_than_either():
     the relaxation further (or leave it unchanged).
     """
     _, baseline = _build_nnls_sdp(K=1, sdp_solver='clarabel')
-    _, with_rlt = _build_nnls_sdp(K=1, sdp_solver='clarabel', use_rlt_cuts=True)
-    _, with_tri = _build_nnls_sdp(K=1, sdp_solver='clarabel', use_triangle_cuts=True)
+    _, with_rlt = _build_nnls_sdp(K=1, sdp_solver='clarabel', rlt_cuts=True)
+    _, with_tri = _build_nnls_sdp(K=1, sdp_solver='clarabel', triangle_cuts=True)
     _, with_both = _build_nnls_sdp(
-        K=1, sdp_solver='clarabel', use_rlt_cuts=True, use_triangle_cuts=True
+        K=1, sdp_solver='clarabel', rlt_cuts=True, triangle_cuts=True
     )
     assert with_both <= with_rlt + TEST_EPS
     assert with_both <= with_tri + TEST_EPS

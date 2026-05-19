@@ -35,8 +35,8 @@ class Verifier(object):
         solver="gurobi",
         obbt_handler="gurobi",
         params=None,
-        use_rlt_cuts=False,
-        use_triangle_cuts=False,
+        rlt_cuts=False,
+        triangle_cuts=False,
     ):
         """
         Initialize a Verifier instance.
@@ -54,10 +54,10 @@ class Verifier(object):
             ``None``.
         params : dict, optional
             Solver-specific parameters forwarded to the canonicalizer.
-        use_rlt_cuts : bool, default False
+        rlt_cuts : bool, default False
             SDP-only: when True, add RLT cuts between cone-mate index
             pairs (paper §4.5 eq 18). No effect for ``method != "sdp"``.
-        use_triangle_cuts : bool, default False
+        triangle_cuts : bool, default False
             SDP-only: when True, add lifted triangle cuts for mixed-bound
             ReLU outputs (paper §4.5 eq 25/26). No effect for
             ``method != "sdp"``.
@@ -71,8 +71,8 @@ class Verifier(object):
             method,
             params,
             solver,
-            use_rlt_cuts=use_rlt_cuts,
-            use_triangle_cuts=use_triangle_cuts,
+            rlt_cuts=rlt_cuts,
+            triangle_cuts=triangle_cuts,
         )
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
         self.use_obbt_handler = True if obbt_handler else False
@@ -129,8 +129,8 @@ class Verifier(object):
         method: str,
         solver_params: dict,
         solver: dict,
-        use_rlt_cuts: bool = False,
-        use_triangle_cuts: bool = False,
+        rlt_cuts: bool = False,
+        triangle_cuts: bool = False,
     ):
         """
          Return an initialized instance for the requested method.
@@ -152,10 +152,10 @@ class Verifier(object):
              (and common aliases) include:
              - ``"gurobi"``, ``"grb"``
 
-         use_rlt_cuts: bool, default=False
+         rlt_cuts: bool, default=False
              SDP-only: enable RLT cuts between cone-mate indices.
 
-         use_triangle_cuts: bool, default=False
+         triangle_cuts: bool, default=False
              SDP-only: enable lifted triangle cuts for mixed-bound ReLU outputs.
 
          Returns
@@ -170,12 +170,12 @@ class Verifier(object):
              If the requested canonicalizer is not one of the supported options.
         """
         method_lower = method.lower()
-        if method_lower != "sdp" and (use_rlt_cuts or use_triangle_cuts):
+        if method_lower != "sdp" and (rlt_cuts or triangle_cuts):
             enabled = []
-            if use_rlt_cuts:
-                enabled.append("use_rlt_cuts")
-            if use_triangle_cuts:
-                enabled.append("use_triangle_cuts")
+            if rlt_cuts:
+                enabled.append("rlt_cuts")
+            if triangle_cuts:
+                enabled.append("triangle_cuts")
             warnings.warn(
                 f"{', '.join(enabled)} is SDP-only and will be ignored for "
                 f"method={method!r}.",
@@ -190,8 +190,8 @@ class Verifier(object):
                 return SDP(
                     solver_params=solver_params,
                     solver=solver,
-                    use_rlt_cuts=use_rlt_cuts,
-                    use_triangle_cuts=use_triangle_cuts,
+                    rlt_cuts=rlt_cuts,
+                    triangle_cuts=triangle_cuts,
                 )
             case "simulator":
                 return Simulator()
