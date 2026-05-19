@@ -297,3 +297,156 @@ def test_rlt_cuts_invalidated_by_update_bounds():
     loose = _solve_with_z0_bounds(5.0, 5.1)
     tight = _solve_with_z0_bounds(5.02, 5.08)
     assert tight <= loose + TEST_EPS
+
+
+# ============================================================
+# Phase 3: Lifted triangle cuts
+# ============================================================
+
+
+def _build_mixed_relu_problem(use_triangle_cuts=False, use_rlt_cuts=False):
+    """A 1D ReLU with z ∈ [-1, 1] so the output is genuinely mixed.
+
+    Returns (verifier, solved_value).
+    """
+    vp = Verifier(
+        method='sdp',
+        solver='clarabel',
+        obbt_handler=None,
+        use_triangle_cuts=use_triangle_cuts,
+        use_rlt_cuts=use_rlt_cuts,
+    )
+    z0 = vp.add_iterate(1, lb=-1.0, ub=1.0)
+    z1 = vp.step.relu(z0)
+    vp.set_objective_norm(z1 - z0, 2)
+    return vp, vp.solve()
+
+
+def test_triangle_cuts_skipped_when_no_mixed_rows():
+    """If a ReLU step has only non-mixed rows, no triangle cuts are emitted."""
+    vp = Verifier(
+        method='sdp',
+        solver='clarabel',
+        obbt_handler=None,
+        use_triangle_cuts=True,
+    )
+    # All-positive input range → relu is identity → step.lb[0] = 1 > 0.
+    z0 = vp.add_iterate(2, lb=1.0, ub=2.0)
+    _z1 = vp.step.relu(z0)
+    vp.set_objective_norm(_z1 - z0, 2)
+    vp.solve()
+    canon = _solved_canon(vp)
+    # No triangle cuts since no row is mixed.
+    assert len(canon._cut_ineq_matrices) == 0
+
+
+def test_triangle_cuts_emitted_when_mixed():
+    """A genuinely mixed ReLU step (lb<0<ub) emits the right number of cuts."""
+    vp, _ = _build_mixed_relu_problem(use_triangle_cuts=True)
+    canon = _solved_canon(vp)
+    # 1D mixed step → 1 mixed row, 1 finite-ub col → exactly 1 triangle cut.
+    assert len(canon._cut_ineq_matrices) == 1
+    assert len(canon._cut_bineq_upperbounds) == 1
+
+
+def test_triangle_cut_count_2d():
+    """For d-dim ReLU with k mixed rows and all-finite ub, expect k*d cuts."""
+    vp = Verifier(
+        method='sdp',
+        solver='clarabel',
+        obbt_handler=None,
+        use_triangle_cuts=True,
+    )
+    z0 = vp.add_iterate(2, lb=-1.0, ub=1.0)  # both dims mixed
+    z1 = vp.step.relu(z0)
+    vp.set_objective_norm(z1 - z0, 2)
+    vp.solve()
+    canon = _solved_canon(vp)
+    # 2 mixed rows × 2 cols → 4 cuts.
+    assert len(canon._cut_ineq_matrices) == 4
+
+
+def test_triangle_cuts_tighten_bound():
+    """SDP with triangle cuts ≤ baseline (maximizing, tighter relaxation)."""
+    _, baseline = _build_mixed_relu_problem()
+    _, with_tri = _build_mixed_relu_problem(use_triangle_cuts=True)
+    assert with_tri <= baseline + TEST_EPS
+
+
+def test_triangle_cuts_preserve_mip_lower_bound():
+    """MIP infinity-norm ≤ sqrt(SDP two-norm-sq with triangle cuts)."""
+    _, sdp_two_norm_sq = _build_nnls_sdp(
+        K=1, sdp_solver='clarabel', use_triangle_cuts=True
+    )
+    m, n = 3, 2
+    np.random.seed(0)
+    A = np.random.normal(size=(m, n))
+    t = 0.01
+
+    vp_mip = Verifier(method='mip', solver='highs', obbt_handler='highs')
+    x = vp_mip.add_param(m, lb=0, ub=0.1)
+    z = [vp_mip.add_iterate(n, lb=5, ub=5.1)]
+    z.append(vp_mip.step.relu(z[0] - t * A.T @ (A @ z[0] - x)))
+    vp_mip.set_objective_norm([z[1] - z[0]], np.inf)
+    mip_inf_norm = vp_mip.solve()
+    assert mip_inf_norm <= np.sqrt(sdp_two_norm_sq) + TEST_EPS
+
+
+def test_triangle_cut_algebra_on_known_primal():
+    """Build a triangle cut by hand on a 1D ReLU and verify it holds on a
+    rank-1 lift X = [1; z; y][1; z; y]^T for many feasible (z, y)."""
+    from fomtools.canonicalizers.sdp import SDP
+    from fomtools.steps import Relu
+
+    # Build the canonicalizer state directly.
+    canon = SDP(solver="clarabel", use_triangle_cuts=True)
+    # We need a Relu step whose rhs is a leaf variable z with bounds [-1, 1].
+    # Construct the leaf and register it.
+    from fomtools.linearexpression import LinearExpression
+
+    z = LinearExpression.from_int(1, lb=np.array([-1.0]), ub=np.array([1.0]))
+    canon.add_var(z)
+    step = Relu(rhs=z)
+    # step.update_bounds with the same bounds (since rhs is leaf z).
+    step.update_bounds(z.lb, z.ub)
+    canon.add_var(step.lhs)
+    canon.canonicalize_relu(step)
+
+    # Inspect SDP indexing
+    z_start, _ = canon.var_idx_map[z]
+    y_start, _ = canon.var_idx_map[step.lhs]
+
+    # Force a triangle-only rebuild for inspection.
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_triangle_cuts()
+    assert len(canon._cut_ineq_matrices) == 1
+
+    M = canon._cut_ineq_matrices[0]
+    b = canon._cut_bineq_upperbounds[0]
+
+    n = canon.get_sdp_var_dim()
+    rng = np.random.default_rng(0)
+    for _ in range(50):
+        z_val = rng.uniform(-1.0, 1.0)
+        y_val = max(0.0, z_val)
+        v = np.zeros(n)
+        v[0] = 1.0
+        v[z_start] = z_val
+        v[y_start] = y_val
+        X = np.outer(v, v)
+        lhs = float((M @ X).trace())
+        assert lhs <= b + 1e-9, (
+            f"Triangle cut violated at z={z_val}, y={y_val}: "
+            f"lhs={lhs} > b={b}"
+        )
+
+
+def test_triangle_cut_matrices_symmetric():
+    """Each triangle cut matrix is symmetric."""
+    vp, _ = _build_mixed_relu_problem(use_triangle_cuts=True)
+    canon = _solved_canon(vp)
+    for M in canon._cut_ineq_matrices:
+        diff = M - M.T
+        diff.eliminate_zeros()
+        assert diff.nnz == 0

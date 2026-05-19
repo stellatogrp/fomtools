@@ -909,9 +909,110 @@ class SDP(Canonicalizer):
         self._cut_bineq_upperbounds.append(-u_p * l_q)
 
     def _build_triangle_cuts(self) -> None:
-        """Append lifted triangle cuts for ReLU steps (Phase 3)."""
-        # Implementation lands in Phase 3.
-        return
+        """
+        Append lifted triangle cuts for every registered ReLU step.
+
+        For each step, iterate over output index pairs ``(i, j)``: emit one
+        cut whenever row ``i`` has mixed bounds (``step.lb[i] < 0 <
+        step.ub[i]``) and column ``j`` has finite upper bound. See paper
+        §4.5 eq 25/26 for the derivation.
+        """
+        for step in self._relu_steps:
+            rhs = step.rhs
+            A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(rhs)
+            b_vec = np.asarray(rhs.const)
+            y_idx_bounds = [self.var_idx_map[step.lhs]]
+
+            d = step.lhs.ndim
+            for i in range(d):
+                if step.lb[i] >= 0 or step.ub[i] <= 0:
+                    continue
+                for j in range(d):
+                    if not np.isfinite(step.ub[j]):
+                        continue
+                    self._build_triangle_cut_for_pair(
+                        step, i, j, A_mat, b_vec, x_idx_bounds, y_idx_bounds
+                    )
+
+    def _build_triangle_cut_for_pair(
+        self,
+        step: Relu,
+        i: int,
+        j: int,
+        A_mat: np.ndarray,
+        b_vec: np.ndarray,
+        x_idx_bounds: list,
+        y_idx_bounds: list,
+    ) -> None:
+        """
+        Append the lifted triangle cut for output pair ``(i, j)`` of a ReLU
+        step.
+
+        Derivation:
+        ``(E_ii (a_i^T x + b_i) + c_i − y_i)(u_j − a_j^T x − b_j) ≥ 0``
+        where ``E_ii = u_i / (u_i − l_i)``, ``c_i = −E_ii · l_i``, and
+        ``(l_i, u_i)`` are ``step.lb[i]``, ``step.ub[i]``.
+
+        Expanding gives 9 product groups that land in the lifted-matrix
+        slots:
+        - xx-block: coefficient ``−E_ii · outer(a_i, a_j)``
+        - y_i ⊗ x row: coefficient ``+a_j``
+        - y_i linear (``[y_i_idx, 0]``): ``(b_j − u_j)``
+        - x linear (``[0, x]``): ``E_ii u_j a_i − E_ii b_j a_i − E_ii b_i a_j
+          − c_i a_j``
+        - constant (``[0, 0]``): ``E_ii b_i u_j − E_ii b_i b_j + c_i u_j
+          − c_i b_j``
+
+        The cut is ``tr(symmetrize(N) X) ≥ 0``, stored as
+        ``tr(−symmetrize(N) X) ≤ 0``.
+        """
+        n_dim = self.get_sdp_var_dim()
+
+        lb_i = step.lb[i]
+        ub_i = step.ub[i]
+        ub_j = step.ub[j]
+        E_ii = ub_i / (ub_i - lb_i)
+        c_i = -E_ii * lb_i
+
+        a_i = np.asarray(A_mat[i, :]).flatten()
+        a_j = np.asarray(A_mat[j, :]).flatten()
+        b_i = float(b_vec[i])
+        b_j = float(b_vec[j])
+
+        y_start, _y_end = y_idx_bounds[0]
+        y_i_idx = y_start + i
+
+        N = spa.lil_matrix((n_dim, n_dim))
+
+        # xx-block: -E_ii * outer(a_i, a_j) at process_2d_ranges(x, x)
+        xx_idx = process_2d_ranges(x_idx_bounds, x_idx_bounds)
+        N[xx_idx] = -E_ii * np.outer(a_i, a_j)
+
+        # y_i ⊗ x row: +a_j at row y_i_idx, cols x-concat
+        yi_x_idx = process_2d_ranges([(y_i_idx, y_i_idx + 1)], x_idx_bounds)
+        N[yi_x_idx] = a_j
+
+        # y_i linear: (b_j - ub_j) at [y_i_idx, 0]
+        N[y_i_idx, 0] = b_j - ub_j
+
+        # x linear at row 0
+        lin = (
+            E_ii * ub_j * a_i
+            - E_ii * b_j * a_i
+            - E_ii * b_i * a_j
+            - c_i * a_j
+        )
+        x_row0_idx = process_1d_ranges(x_idx_bounds, row=True)
+        N[x_row0_idx] = lin
+
+        # Constant at [0, 0]
+        const = E_ii * b_i * ub_j - E_ii * b_i * b_j + c_i * ub_j - c_i * b_j
+        N[0, 0] = const
+
+        # Cut: tr(symmetrize(N) X) >= 0  =>  push -symmetrize(N) with ub = 0
+        N_sym = symmetrize(N.tocsc())
+        self._cut_ineq_matrices.append(-N_sym)
+        self._cut_bineq_upperbounds.append(0.0)
 
     def solve_model(self, steps=None, convex_hull_cuts=False):
         """Solve the SDP problem using the configured solver.
