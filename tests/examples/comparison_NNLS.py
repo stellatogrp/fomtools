@@ -19,27 +19,31 @@ PEPit is solved with ||z0 - z*|| <= R
 
 import numpy as np
 import matplotlib.pyplot as plt
+
+from fomtools.verifier import Verifier
 from PEPit import PEP
 from PEPit.functions import SmoothConvexFunction, ConvexIndicatorFunction
 from PEPit.primitive_steps import proximal_step
 
-from fomtools.verifier import Verifier
 
 # ── Problem setup (identical to NNLS.py tutorial) ────────────────────────────
 np.random.seed(0)
 m, n = 5, 3
 A = np.random.normal(size=(m, n))
 
-x_lb, x_ub = 0.0, 0.5
+x_lb, x_ub = 0.0, 0.25
 z0_lb, z0_ub = 5.0, 5.1
 
 L = float(np.max(np.linalg.eigvals(A.T @ A)))
 eta = 1.0 / L
 K = 5
+N = 10  # number of simulation samples
 
 solver_params = {"OutputFlag": 0, "LogToConsole": 0}
 
 MATCH_MIP_AT_K1 = False
+RLT_CUTS = True
+TRIANGLE_CUTS = True
 
 # ── MIP — squared 2-norm of fixed-point residual (MIQP, Gurobi only) ─────────
 vp_mip = Verifier(method="mip", solver="gurobi", obbt_handler="highs",
@@ -56,7 +60,11 @@ for k in range(1, K + 1):
     print(f"MIP  k={k}: {mip_residuals[-1]:.6f}")
 
 # ── SDP — 2-norm of fixed-point residual ─────────────────────────────────────
-vp_sdp = Verifier(method="sdp", solver="clarabel", obbt_handler="highs")
+vp_sdp = Verifier(method="sdp",
+                  solver="clarabel",
+                  obbt_handler="highs",
+                  rlt_cuts=RLT_CUTS,
+                  triangle_cuts=TRIANGLE_CUTS)
 
 x_sdp = vp_sdp.add_param(m, lb=x_lb, ub=x_ub)
 z_sdp = [vp_sdp.add_iterate(n, lb=z0_lb, ub=z0_ub)]
@@ -103,6 +111,20 @@ for k in range(1, K + 1):
     pepit_residuals.append(problem.solve(solver="SCS", verbose=False))
     print(f"PEPit k={k}: {pepit_residuals[-1]:.6f}  (R={R:.4f})")
 
+# ── Simulation — squared 2-norm of fixed-point residual, max over N samples ──
+rng = np.random.default_rng(0)
+sim_per_sample = np.zeros((N, K))
+for i in range(N):
+    x_sim = rng.uniform(x_lb, x_ub, size=m)
+    z_sim = [rng.uniform(z0_lb, z0_ub, size=n)]
+    for k in range(1, K + 1):
+        z_sim.append(np.maximum(z_sim[k - 1] - eta * A.T @ (A @ z_sim[k - 1] - x_sim), 0.0))
+        sim_per_sample[i, k - 1] = np.sum((z_sim[k] - z_sim[k - 1]) ** 2)
+
+sim_residuals = sim_per_sample.max(axis=0).tolist()
+for k in range(1, K + 1):
+    print(f"Sim  k={k}: {sim_residuals[k - 1]:.6f}  (max over N={N})")
+
 # ── Plot ──────────────────────────────────────────────────────────────────────
 iters = range(1, K + 1)
 
@@ -110,12 +132,13 @@ plt.figure(figsize=(7, 4))
 plt.plot(iters, mip_residuals,   "o-",  label="MIP")
 plt.plot(iters, sdp_residuals,   "s--", label="SDP")
 plt.plot(iters, pepit_residuals, "^:",  label="PEPit")
+plt.plot(iters, sim_residuals,   "d-.", label=f"Simulation (max over N={N})")
 plt.yscale("log")
 plt.xlabel(r"Iteration $k$")
 plt.ylabel(r"Worst-case $\|z^k - z^{k-1}\|_2^2$")
 plt.title(f"NNLS: MIP vs SDP vs PEPit ({K} iterations)")
 plt.legend()
 plt.tight_layout()
-plt.savefig("nnls_sdp_vs_mip.png", dpi=150)
+# plt.savefig("nnls_sdp_vs_mip.png", dpi=150)
 plt.show()
-print("Plot saved to nnls_sdp_vs_mip.png")
+# print("Plot saved to nnls_sdp_vs_mip.png")
