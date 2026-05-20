@@ -17,14 +17,13 @@ PEPit is solved with ||z0 - z*|| <= R
     MATCH_MIP_AT_K1 = False → R = z0_ub * sqrt(n), the geometric worst-case distance implied by the box bounds
 """
 
-import numpy as np
 import matplotlib.pyplot as plt
-
-from fomtools.verifier import Verifier
+import numpy as np
 from PEPit import PEP
-from PEPit.functions import SmoothConvexFunction, ConvexIndicatorFunction
+from PEPit.functions import ConvexIndicatorFunction, SmoothConvexFunction
 from PEPit.primitive_steps import proximal_step
 
+from fomtools.verifier import Verifier
 
 # ── Problem setup (identical to NNLS.py tutorial) ────────────────────────────
 np.random.seed(0)
