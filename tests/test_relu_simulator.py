@@ -33,9 +33,10 @@ def test_relu_simulator():
     q_samples = rng.uniform(low=-1.0, high=1.0, size=(10000, n))
     q_param = vp.add_param(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
 
-    vp.step.relu(z[0] - step_size * (P @ z[0] + q_param))
+    for k in range(1, K + 1):
+        z[k] = vp.step.relu(z[k - 1] - step_size * (P @ z[k - 1] + q_param))
 
-    residuals = vp.solve(K=K)
+    residuals = vp.solve()
     assert vp['n_samples'] == len(q_samples)
     assert vp['risk_bound'] >= vp['empirical_risk']
     assert residuals[:, -1].mean() < residuals[:, 0].mean()

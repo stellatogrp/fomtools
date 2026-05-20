@@ -1,4 +1,6 @@
+from fomtools.linearexpression import LinearExpression
 from fomtools.stepdecomposers.step_decomposer import StepDecomposer
+from fomtools.steps.step import Step
 
 
 class SimulatorStepDecomposer(StepDecomposer):
@@ -10,4 +12,9 @@ class SimulatorStepDecomposer(StepDecomposer):
     steps require explicit decomposition.
     """
 
-    pass  # All steps handled as primitives via _process_primitive
+    def _process_primitive(self, step: Step) -> LinearExpression:
+        # Skip sync_lhs_bounds — the simulator evaluates numerically and
+        # handles affine solves itself via canonicalize_affine.
+        self.register_var(step.lhs, var_type="param")
+        self.canonicalizer.canonicalize(step)
+        return step.lhs

@@ -32,10 +32,15 @@ from contextlib import nullcontext
 from typing import Any
 
 
-# todo: what to do if samples is missing from a leaf expression
 class Simulator(Canonicalizer):
     """
     An interface for simulating a Verification Problem using CuPy.
+
+    Steps are recorded during canonicalization and compiled into efficient
+    batched functions at solve time. This deferred-compilation approach
+    allows an arbitrary sequence of steps to be registered incrementally
+    (matching the MIP/SDP user experience) and then evaluated in a single
+    forward pass over all parameter samples.
 
     Attributes
     ----------
@@ -49,21 +54,17 @@ class Simulator(Canonicalizer):
         its initial values. Each array should have shape (dim,), representing
         the initial state for that iterate.
 
-    step_function: Callable
-        A function that executes the step on the underlying ``step`` object.
+    step_descriptors : list[tuple[Step, Callable]]
+        A list of (step, activation) tuples recorded during canonicalization.
+        Each activation is a callable that applies the step-specific
+        nonlinearity to the assembled rhs result.
 
-    device: Desired device type. Supported values are:
-        - ``None``: Use the default list returned by ``jax.devices()``.
-        - ``"cpu"``: Restrict selection to CPU devices.
-        - ``"gpu"``: Restrict selection to GPU devices.
+    residual_specs : dict[int, tuple[list[LinearExpression], int | float | str]]
+        A dictionary mapping step indices to (expr_list, norm_ord) tuples
+        that define how residuals are computed at each step.
 
-    Note
-    ----
-        Calling `step.relu(...)` more than once on the same Simulator instance
-        will overwrite the previously stored ReLU step. Only the most recent
-        call is retained, and earlier calls are silently discarded.
-        This class is currently designed for workflows where each operation
-        type is invoked at most once per simulation step.
+    device : int
+        GPU device ID for CuPy execution.
     """
 
     def __init__(self, random_seed=0):
@@ -72,7 +73,8 @@ class Simulator(Canonicalizer):
         self.iterate_to_samples = {}
 
         self._seed_counter = random_seed
-        self.step_function = None
+        self.step_descriptors = []
+        self.residual_specs = {}
         self.device = 0  # GPU device ID
 
     @staticmethod
@@ -247,6 +249,10 @@ class Simulator(Canonicalizer):
             elif var_type == "param":
                 if samples is not None:
                     self.param_to_samples[_var] = cp.array(samples, dtype=cp.float32)
+                else:
+                    # Step output — register as iterate with zero init so
+                    # subsequent steps can reference it via the value table.
+                    self.iterate_to_samples[_var] = cp.zeros(_var.ndim, dtype=cp.float32)
 
             else:
                 raise ValueError("Unknown variable type")
@@ -394,7 +400,7 @@ class Simulator(Canonicalizer):
                 - ``z_slices`` maps to a dictionary mapping each iterate identifier (leaf)
                     to a slice indicating its location within z0.
                 - ``p_slices`` maps to a dictionary mapping each parameter identifier (leaf) to a
-                    slice indicating its location within the second dimension of q_samples.”
+                    slice indicating its location within the second dimension of q_samples."
 
         """
 
@@ -574,325 +580,300 @@ class Simulator(Canonicalizer):
 
         return result
 
+    # ------------------------------------------------------------------
+    # Canonicalize methods — record (step, activation) for deferred eval
+    # ------------------------------------------------------------------
+
     def canonicalize_relu(self, step: "Step") -> None:
         """
-        Registers the provided ReLU step for CuPy simulation.
-
-        This method converts the linear expression defining the input to the
-        ReLU operation into a CuPy-evaluable form and constructs a corresponding
-        update function. The update function has signature ``f(z_stacked, p_stacked)``
-        where the iterate and parameter variables are provided as concatenated vectors.
-        Slice mappings are used internally to extract the relevant components for
-        each variable.
-
-        The constructed function is stored in ``self.step_function`` and can be
-        used during simulation to evaluate the ReLU update.
+        Record the provided ReLU step for deferred evaluation at solve time.
 
         Parameters
         ----------
         step: Step
-            A step object containing the ReLU operation. The `step.rhs` attribute
-            holds the LinearExpression representing the input to the ReLU.
-
-        Returns
-        -------
-        None
-
+            A step object containing the ReLU operation.
         """
-        coeffs = self._linear_expr_to_cupy(step.rhs)
-        simulation_data = self._prepare_simulation_data()
 
-        def update_fn(z_stacked: cp.ndarray, p_stacked: cp.ndarray) -> cp.ndarray:
-            """
-            Evaluate the linear update followed by a ReLU activation.
-
-            This function reconstructs the value of a linear expression from
-            stacked iterate and parameter vectors. The contributions of each
-            variable are computed using the precomputed coefficient matrices
-            and slice mappings. A ReLU activation is applied to the resulting
-            value.
-
-            Parameters
-            ----------
-            z_stacked: cp.ndarray
-                Concatenation of all iterate variables, with shape. Individual iterate
-                values are retrieved using slices stored in ``simulation_data["z_slices"]``.
-
-            p_stacked: cp.ndarray
-                Concatenation of all parameter variables. Individual parameter values
-                are retrieved using slices stored in ``simulation_data["p_slices"]``.
-
-            Returns
-            -------
-            cp.ndarray
-                The value of the linear expression evaluated at the provided
-                iterates and parameters, after applying a ReLU activation.
-            """
-            result = self._assemble_linear_combination(
-                z_stacked, p_stacked, coeffs, simulation_data
-            )
+        def activation(result):
             return cp.maximum(result, 0)
 
-        self.step_function = update_fn
+        self.step_descriptors.append((step, activation))
 
     def canonicalize_softthreshold(self, step: "Step") -> None:
         """
-        Registers the provided soft-threshold step for CuPy simulation.
-
-        This method converts the linear expression defining the input to the
-        soft-threshold operation into a CuPy-evaluable form and constructs a
-        corresponding update function. The update function has signature
-        ``f(z_stacked, p_stacked)`` where the iterate and parameter variables
-        are provided as concatenated vectors. Slice mappings are used internally
-        to extract the relevant components for each variable.
-
-        The constructed function is stored in ``self.step_function`` and can be
-        used during simulation to evaluate the soft-threshold update.
+        Record the provided soft-threshold step for deferred evaluation at solve time.
 
         Parameters
         ----------
         step: Step
-            A step object containing the soft-threshold operation. The
-            ``step.rhs`` attribute holds the LinearExpression representing
-            the input, and ``step.lambd`` holds the regularization strength.
-
-        Returns
-        -------
-        None
+            A step object containing the soft-threshold operation.
         """
-        coeffs = self._linear_expr_to_cupy(step.rhs)
-        simulation_data = self._prepare_simulation_data()
         lambd = step.lambd
 
-        def update_fn(z_stacked: cp.ndarray, p_stacked: cp.ndarray) -> cp.ndarray:
-            """
-            Evaluate the linear update followed by a soft-threshold activation.
-
-            Parameters
-            ----------
-            z_stacked: cp.ndarray
-                Concatenation of all iterate variables. Individual iterate values
-                are retrieved using slices stored in ``simulation_data["z_slices"]``.
-
-            p_stacked: cp.ndarray
-                Concatenation of all parameter variables. Individual parameter values
-                are retrieved using slices stored in ``simulation_data["p_slices"]``.
-
-            Returns
-            -------
-            cp.ndarray
-                The value of the linear expression evaluated at the provided iterates
-                and parameters, after applying a soft-threshold activation.
-
-            """
-            result = self._assemble_linear_combination(
-                z_stacked, p_stacked, coeffs, simulation_data
-            )
+        def activation(result):
             return cp.sign(result) * cp.maximum(cp.abs(result) - lambd, 0)
 
-        self.step_function = update_fn
+        self.step_descriptors.append((step, activation))
 
     def canonicalize_saturatedlinear(self, step: "Step") -> None:
         """
-        Registers the provided saturated linear step for CuPy simulation.
-
-        This method converts the linear expression defining the input to the
-        saturated linear operation into a CuPy-evaluable form and constructs a
-        corresponding update function. The update function has signature
-        ``f(z_stacked, p_stacked)`` where the iterate and parameter variables
-        are provided as concatenated vectors. Slice mappings are used internally
-        to extract the relevant components for each variable.
-
-        The constructed function is stored in ``self.step_function`` and can be
-        used during simulation to evaluate the saturated linear update.
+        Record the provided saturated linear step for deferred evaluation at solve time.
 
         Parameters
         ----------
         step: Step
             A step object that represents a saturated linear operation.
-            The ``step.l`` attribute stores the lower saturation bound, while
-            ``step.u`` stores the upper saturation bound.
-
-        Returns
-        -------
-        None
         """
-        coeffs = self._linear_expr_to_cupy(step.rhs)
-        simulation_data = self._prepare_simulation_data()
         l = step.l.lb if hasattr(step.l, "lb") else step.l
         u = step.u.ub if hasattr(step.u, "ub") else step.u
 
-        def update_fn(z_stacked: cp.ndarray, p_stacked: cp.ndarray) -> cp.ndarray:
-            """
-            Evaluate the linear update followed by a saturated linear activation.
-
-            Parameters
-            ----------
-            z_stacked: cp.ndarray
-                Concatenation of all iterate variables. Individual iterate values
-                are retrieved using slices stored in ``simulation_data["z_slices"]``.
-
-            p_stacked: cp.ndarray
-                Concatenation of all parameter variables. Individual parameter values
-                are retrieved using slices stored in ``simulation_data["p_slices"]``.
-
-            Returns
-            -------
-            cp.ndarray
-                The value of the linear expression evaluated at the provided iterates
-                and parameters, after applying a saturated linear activation.
-
-            """
-            result = self._assemble_linear_combination(
-                z_stacked, p_stacked, coeffs, simulation_data
-            )
+        def activation(result):
             return cp.clip(result, l, u)
 
-        self.step_function = update_fn
+        self.step_descriptors.append((step, activation))
 
     def canonicalize_affine(self, step: "Step") -> None:
         """
-        Registers the provided affine step for CuPy simulation.
+        Record the provided affine step for deferred evaluation at solve time.
 
-        This method converts the linear expression defining the input to the
-        affine operation into a CuPy-evaluable form and constructs a
-        corresponding update function. The update function has signature
-        ``f(z_stacked, p_stacked)`` where the iterate and parameter variables
-        are provided as concatenated vectors. Slice mappings are used internally
-        to extract the relevant components for each variable.
-
-        The constructed function is stored in ``self.step_function`` and can be
-        used during simulation to evaluate the affine step.
+        The LU factorization of ``step.lhs_mat`` is computed eagerly since
+        it depends only on a constant matrix.
 
         Parameters
         ----------
         step: Step
-            A step object that represents the affine transformation. The `step.rhs`
-            attribute contains the `LinearExpression` defining the input, while
-            `step.lhs_mat` stores the matrix on the left-hand side of the
-            linear operation.
-
-        Returns
-        -------
-        None
+            A step object that represents the affine transformation.
         """
-        lhs = self._sparse_to_cp(step.lhs_mat)
-        coeffs = self._linear_expr_to_cupy(step.rhs)
-        simulation_data = self._prepare_simulation_data()
+        lhs_mat_cp = self._sparse_to_cp(step.lhs_mat)
 
-        if csp.issparse(lhs):
-            lu = cpspla.splu(lhs)
+        if csp.issparse(lhs_mat_cp):
+            lu = cpspla.splu(lhs_mat_cp)
 
-            def solve(rhs):
+            def activation(rhs):
                 return cp.array([lu.solve(r) for r in rhs])
         else:
 
-            def solve(rhs):
-                return cp.array([cp.linalg.solve(lhs, r) for r in rhs])
+            def activation(rhs):
+                return cp.array([cp.linalg.solve(lhs_mat_cp, r) for r in rhs])
 
-        def update_fn(z_stacked: cp.ndarray, p_stacked: cp.ndarray) -> cp.ndarray:
-            """
-            Evaluate the affine update w = L_z @ v + L_p @ x.
+        self.step_descriptors.append((step, activation))
 
-            Parameters
-            ----------
-            z_stacked: cp.ndarray
-                Concatenation of all iterate variables. Individual iterate values
-                are retrieved using slices stored in ``simulation_data["z_slices"]``.
+    # ------------------------------------------------------------------
+    # Objective methods — store residual specs keyed by step index
+    # ------------------------------------------------------------------
 
-            p_stacked: cp.ndarray
-                Concatenation of all parameter variables. Individual parameter values
-                are retrieved using slices stored in ``simulation_data["p_slices"]``.
+    def set_zero_objective(self):
+        """Record a zero residual at the most recently registered step."""
+        self.residual_specs[len(self.step_descriptors) - 1] = ([], "zero")
 
-            Returns
-            -------
-            cp.ndarray
-                The value of the linear expression evaluated at the provided iterates
-                and parameters.
-            """
-            result = self._assemble_linear_combination(
-                z_stacked, p_stacked, coeffs, simulation_data
-            )
-            return solve(result)
+    def set_infinity_norm_objective(self, expr_list, lb_list=None, ub_list=None):
+        """Record an infinity-norm residual expression at the most recently registered step."""
+        self.residual_specs[len(self.step_descriptors) - 1] = (expr_list, np.inf)
 
-        self.step_function = update_fn
+    def set_two_norm_objective(self, expr_list, lb_list=None, ub_list=None):
+        """Record a squared two-norm residual expression at the most recently registered step."""
+        self.residual_specs[len(self.step_descriptors) - 1] = (expr_list, 2)
 
-    def solve_model(
-        self, K: int, delta: float = 0.05, epsilon: float = 0.0, device: str = None
-    ) -> cp.ndarray:
+    def set_one_norm_objective(self, expr_list):
+        """Record a one-norm residual expression at the most recently registered step."""
+        self.residual_specs[len(self.step_descriptors) - 1] = (expr_list, 1)
+
+    # ------------------------------------------------------------------
+    # Compilation — convert recorded steps/residuals to executable fns
+    # ------------------------------------------------------------------
+
+    def _compile_steps(self, simulation_data):
         """
-        Run a batched simulation of the registered step function.
+        Compile all recorded step descriptors into executable functions.
 
-        This method simulates the iterative dynamics defined by
-        ``self.step_function`` starting from the initial iterate vector.
-        The simulation is performed for each parameter sample.
-        For every sample, the step function is applied sequentially for
-        ``K`` iterations. At each step, the infinity norm of the state update
-        (``max(abs(z_{k+1} - z_k))``) is recorded as a residual.
-
-        After the simulation, a risk bound is computed from the residual
-        trajectories using :meth:`compute_risk_bound`.
+        Called once at the start of ``solve_model`` after all variables are
+        registered. Each step's rhs LinearExpression is converted to CuPy
+        coefficients, and paired with the step's activation function.
 
         Parameters
         ----------
-        K: int
-            Number of iterations to simulate.
+        simulation_data : dict
+            Output of ``_prepare_simulation_data``.
 
+        Returns
+        -------
+        list[tuple[Callable, slice, slice]]
+            A list of ``(evaluate_fn, lhs_slice, prev_slice)`` tuples where
+            ``evaluate_fn(z_stacked, p_stacked) -> cp.ndarray`` computes the
+            step output, ``lhs_slice`` is where to write it in z_stacked,
+            and ``prev_slice`` is the previous iterate's slice (for default
+            residual computation).
+        """
+        compiled = []
+        z_slices = simulation_data["z_slices"]
+
+        for i, (step, activation) in enumerate(self.step_descriptors):
+            coeffs = self._linear_expr_to_cupy(step.rhs)
+            lhs_slice = z_slices[step.lhs]
+
+            # Determine previous iterate slice for default residual computation.
+            # Step 0: find the first original iterate leaf in the rhs decomposition.
+            # Step k>0: use the previous step's lhs.
+            if i == 0:
+                prev_slice = None
+                for leaf in step.rhs.decomposition_dict:
+                    if leaf in z_slices and leaf not in {s.lhs for s, _ in self.step_descriptors}:
+                        prev_slice = z_slices[leaf]
+                        break
+                if prev_slice is None:
+                    prev_slice = lhs_slice
+            else:
+                prev_step, _ = self.step_descriptors[i - 1]
+                prev_slice = z_slices[prev_step.lhs]
+
+            def _make_fn(_coeffs=coeffs, _activation=activation):
+                def evaluate_fn(z_stacked, p_stacked):
+                    result = self._assemble_linear_combination(
+                        z_stacked, p_stacked, _coeffs, simulation_data
+                    )
+                    return _activation(result)
+
+                return evaluate_fn
+
+            compiled.append((_make_fn(), lhs_slice, prev_slice))
+        return compiled
+
+    def _compile_residuals(self, simulation_data):
+        """
+        Compile all recorded residual specs into executable functions.
+
+        Parameters
+        ----------
+        simulation_data : dict
+            Output of ``_prepare_simulation_data``.
+
+        Returns
+        -------
+        dict[int, Callable]
+            A dictionary mapping step index to a callable
+            ``residual_fn(z_stacked, p_stacked) -> cp.ndarray`` of shape ``(N,)``.
+        """
+        compiled = {}
+        for step_idx, (expr_list, norm_ord) in self.residual_specs.items():
+            if norm_ord == "zero":
+
+                def _make_zero_fn():
+                    def residual_fn(z_stacked, p_stacked):
+                        return cp.zeros(z_stacked.shape[0], dtype=cp.float32)
+
+                    return residual_fn
+
+                compiled[step_idx] = _make_zero_fn()
+            else:
+                coeffs_list = [self._linear_expr_to_cupy(expr) for expr in expr_list]
+
+                def _make_fn(_coeffs_list=coeffs_list, _norm_ord=norm_ord):
+                    def residual_fn(z_stacked, p_stacked):
+                        values = [
+                            self._assemble_linear_combination(
+                                z_stacked, p_stacked, c, simulation_data
+                            )
+                            for c in _coeffs_list
+                        ]
+                        concat = cp.concatenate(values, axis=1)
+
+                        if _norm_ord == np.inf:
+                            return cp.max(cp.abs(concat), axis=1)
+                        elif _norm_ord == 2:
+                            return cp.sum(concat**2, axis=1)
+                        elif _norm_ord == 1:
+                            return cp.sum(cp.abs(concat), axis=1)
+
+                    return residual_fn
+
+                compiled[step_idx] = _make_fn()
+        return compiled
+
+    # ------------------------------------------------------------------
+    # Solve
+    # ------------------------------------------------------------------
+
+    def solve_model(
+        self, delta: float = 0.05, epsilon: float = 0.0, device: str = None
+    ) -> cp.ndarray:
+        """
+        Run a batched simulation of all registered steps.
+
+        Each call re-simulates from scratch: the value table is rebuilt,
+        all steps are compiled and executed in sequence, and residuals are
+        computed. This method can be called repeatedly (e.g. inside the
+        user's iteration loop) as new steps are registered.
+
+        Parameters
+        ----------
         delta: float, optional
-            Confidence parameter $\delta \in (0,1)$. The bound holds with
-            probability at least $1 - \delta$.
+            Confidence parameter for the risk bound.
 
         epsilon: float, optional
-            Tolerance level $\epsilon$ defining the $0$–$1$ error.
+            Tolerance level defining the 0-1 error.
 
         device: str, optional
-            The device to run the simulation on. If not specified, the default is `None`,
-            and the simulation will run on the host system without specific device
-            acceleration. The valid options are:
-
-            - `None`: No device (default behavior, runs on the host).
-            - `"cpu"`: Run on the CPU.
-            - `"gpu"`: Run on the GPU, if available.
+            Device to run the simulation on (``None``, ``"cpu"``, or ``"gpu"``).
 
         Returns
         -------
         residuals: cp.ndarray
-           A 2D array of shape ``(num_samples, K)`` containing the residual
-           (infinity norm of successive state differences) at each iteration
-           for each parameter sample.
+           A 2D array of shape ``(num_samples, n_residuals)`` containing
+           the residual at each step for each parameter sample.
 
         Raises
         ------
         ValueError
-            If no step function has been registered with the simulator.
+            If no steps have been registered.
         """
-        self._configure_device(device)
-        if self.step_function is not None:
-            update_fn = self.step_function
-        else:
+        if not self.step_descriptors:
             raise ValueError(
-                "No step function has been registered with this "
-                "simulator instance. Please register a step function "
-                "before running the simulation"
+                "No steps have been registered with this simulator instance. "
+                "Call vp.step.*() before solve()."
             )
+
+        self._configure_device(device)
         simulation_data = self._prepare_simulation_data()
+        compiled_steps = self._compile_steps(simulation_data)
+
+        has_residual_specs = bool(self.residual_specs)
+        if has_residual_specs:
+            compiled_residuals = self._compile_residuals(simulation_data)
+            n_residuals = len(compiled_residuals)
+        else:
+            compiled_residuals = None
+            n_residuals = len(compiled_steps)
 
         with self._get_device_context(self.device):
             z0 = self._to_device(simulation_data["z0"])
             p_samples = self._to_device(simulation_data["p_samples"])
-
             N = p_samples.shape[0]
-            update_fn = self.step_function
 
             def _simulate_batch(z0: cp.ndarray, p_samples: cp.ndarray) -> cp.ndarray:
-                """Simulate K steps for all N samples in parallel."""
+                """Simulate all registered steps for all N samples in parallel."""
                 z_batch = cp.tile(z0, (N, 1))
-                residuals = cp.empty((N, K), dtype=cp.float32)
+                residuals = cp.empty((N, n_residuals), dtype=cp.float32)
+                residual_col = 0
 
-                for k in range(K):
-                    z_new = update_fn(z_batch, p_samples)
-                    residuals[:, k] = cp.max(cp.abs(z_new - z_batch), axis=1)
-                    z_batch = z_new
+                for step_idx, (evaluate_fn, lhs_slice, prev_slice) in enumerate(
+                    compiled_steps
+                ):
+                    z_new = evaluate_fn(z_batch, p_samples)
+
+                    if has_residual_specs:
+                        z_batch[:, lhs_slice] = z_new
+                        if step_idx in compiled_residuals:
+                            residuals[:, residual_col] = compiled_residuals[step_idx](
+                                z_batch, p_samples
+                            )
+                            residual_col += 1
+                    else:
+                        # Default: inf-norm of z[k] - z[k-1]
+                        residuals[:, residual_col] = cp.max(
+                            cp.abs(z_new - z_batch[:, prev_slice]), axis=1
+                        )
+                        z_batch[:, lhs_slice] = z_new
+                        residual_col += 1
 
                 return residuals
 

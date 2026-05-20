@@ -1,4 +1,5 @@
 import logging
+import warnings
 from typing import List, Sequence
 
 import numpy as np
@@ -10,6 +11,7 @@ from fomtools.canonicalizers.sdp import SDP
 from fomtools.canonicalizers.simulator import Simulator
 from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
+from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
 from fomtools.stepdecomposers.simulator_step_decomposer import SimulatorStepDecomposer
@@ -33,13 +35,45 @@ class Verifier(object):
         solver="gurobi",
         obbt_handler="gurobi",
         params=None,
+        rlt_cuts=False,
+        triangle_cuts=False,
     ):
+        """
+        Initialize a Verifier instance.
+
+        Parameters
+        ----------
+        theory_func : callable, optional
+            Theoretical convergence function used by ``theory_bound``.
+        method : {"mip", "sdp", "simulator"}, default "mip"
+            Canonicalization method for the verification problem.
+        solver : str, default "gurobi"
+            Solver backend identifier (e.g., "gurobi", "highs", "clarabel").
+        obbt_handler : str or None, default "gurobi"
+            Solver used by the OBBT bound-tightening handler. Disable with
+            ``None``.
+        params : dict, optional
+            Solver-specific parameters forwarded to the canonicalizer.
+        rlt_cuts : bool, default False
+            SDP-only: when True, add RLT cuts between cone-mate index
+            pairs (paper §4.5 eq 18). No effect for ``method != "sdp"``.
+        triangle_cuts : bool, default False
+            SDP-only: when True, add lifted triangle cuts for mixed-bound
+            ReLU outputs (paper §4.5 eq 25/26). No effect for
+            ``method != "sdp"``.
+        """
         self.theory_func = theory_func
         self.iterates = []
         self.params = []
         self.steps = []
 
-        self.canonicalizer = self._get_canonicalizer(method, params, solver)
+        self.canonicalizer = self._get_canonicalizer(
+            method,
+            params,
+            solver,
+            rlt_cuts=rlt_cuts,
+            triangle_cuts=triangle_cuts,
+        )
         self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
         self.use_obbt_handler = True if obbt_handler else False
         if self.obbt_handler is not None:
@@ -91,7 +125,13 @@ class Verifier(object):
         return summary_statistics[item]
 
     @staticmethod
-    def _get_canonicalizer(method: str, solver_params: dict, solver: dict):
+    def _get_canonicalizer(
+        method: str,
+        solver_params: dict,
+        solver: dict,
+        rlt_cuts: bool = False,
+        triangle_cuts: bool = False,
+    ):
         """
          Return an initialized instance for the requested method.
 
@@ -112,6 +152,12 @@ class Verifier(object):
              (and common aliases) include:
              - ``"gurobi"``, ``"grb"``
 
+         rlt_cuts: bool, default=False
+             SDP-only: enable RLT cuts between cone-mate indices.
+
+         triangle_cuts: bool, default=False
+             SDP-only: enable lifted triangle cuts for mixed-bound ReLU outputs.
+
          Returns
          -------
          Canonicalizer
@@ -121,13 +167,32 @@ class Verifier(object):
          Raises
          ------
          ValueError
-             If the requested canonicalizer is one of the supported options.
+             If the requested canonicalizer is not one of the supported options.
         """
-        match method.lower():
+        method_lower = method.lower()
+        if method_lower != "sdp" and (rlt_cuts or triangle_cuts):
+            enabled = []
+            if rlt_cuts:
+                enabled.append("rlt_cuts")
+            if triangle_cuts:
+                enabled.append("triangle_cuts")
+            warnings.warn(
+                f"{', '.join(enabled)} is SDP-only and will be ignored for "
+                f"method={method!r}.",
+                UserWarning,
+                stacklevel=3,
+            )
+
+        match method_lower:
             case "mip":
                 return MIP(solver_params=solver_params, solver=solver)
             case "sdp":
-                return SDP(solver_params=solver_params, solver=solver)
+                return SDP(
+                    solver_params=solver_params,
+                    solver=solver,
+                    rlt_cuts=rlt_cuts,
+                    triangle_cuts=triangle_cuts,
+                )
             case "simulator":
                 return Simulator()
             case _:
@@ -345,7 +410,7 @@ class Verifier(object):
                 else:
                     decomposition_dict[leaf] = composed
 
-            const[offset:offset + p.ndim] = p.const
+            const[offset : offset + p.ndim] = p.const
             offset += p.ndim
 
         result = LinearExpression(decomposition_dict=decomposition_dict, const=const)
@@ -710,6 +775,47 @@ class Verifier(object):
         self.canonicalizer.update_bounds(target_expr, _lb, _ub)
 
         return (sum(_lb > ref_expr.lb) + sum(_ub < ref_expr.ub)) / (2.0 * len(_lb))
+
+    def neural_network(self, expr: LinearExpression, layers: list) -> LinearExpression:
+        """
+        Thread ``expr`` through a feedforward ReLU network inside this Verifier.
+
+        The network is unrolled into alternating affine and ReLU VP steps.
+        Affine layers are applied analytically (no new solver variable); ReLU
+        layers call ``run_step`` so the solver gets the appropriate constraints.
+
+        Parameters
+        ----------
+        expr : LinearExpression
+            Network input (e.g. a bounded iterate or parameter).
+        layers : list
+            Ordered sequence of ``LinearLayer`` / ``ReLULayer`` objects.
+        Returns
+        -------
+        LinearExpression
+            Network output, expressed in terms of the original leaf variables.
+
+        """
+
+        for i, layer in enumerate(layers):
+            if isinstance(layer, LinearLayer):
+                W, b = layer.weight, layer.bias
+
+                if W.shape[1] != expr.ndim:
+                    raise ValueError(
+                        f"Layer {i}: weight shape {W.shape} is incompatible with "
+                        f"input dimension {expr.ndim}."
+                    )
+
+                expr = self.run_step(expr, Affine, weight=W, bias=b)
+
+            elif isinstance(layer, ReLULayer):
+                expr = self.run_step(expr, Relu)
+
+            else:
+                raise ValueError(f"Layer {i}: unsupported layer type {type(layer).__name__}.")
+
+        return expr
 
     def get_solution_value(self, iterate: LinearExpression) -> np.ndarray:
         """
