@@ -110,17 +110,21 @@ for k in range(1, K + 1):
     pepit_residuals.append(problem.solve(solver="SCS", verbose=False))
     print(f"PEPit k={k}: {pepit_residuals[-1]:.6f}  (R={R:.4f})")
 
-# ── Simulation — squared 2-norm of fixed-point residual, max over N samples ──
-rng = np.random.default_rng(0)
-sim_per_sample = np.zeros((N, K))
-for i in range(N):
-    x_sim = rng.uniform(x_lb, x_ub, size=m)
-    z_sim = [rng.uniform(z0_lb, z0_ub, size=n)]
-    for k in range(1, K + 1):
-        z_sim.append(np.maximum(z_sim[k - 1] - eta * A.T @ (A @ z_sim[k - 1] - x_sim), 0.0))
-        sim_per_sample[i, k - 1] = np.sum((z_sim[k] - z_sim[k - 1]) ** 2)
+# ── Simulation — squared 2-norm of fixed-point residual, N random samples ───
+vp_sim = Verifier(method="simulator")
 
-sim_residuals = sim_per_sample.max(axis=0).tolist()
+rng = np.random.default_rng(0)
+x_samples = rng.uniform(low=x_lb, high=x_ub, size=(N, m))
+x_sim = vp_sim.add_param(ndim=m, lb=x_lb, ub=x_ub, samples=x_samples)
+z_sim = [vp_sim.add_iterate(ndim=n, lb=z0_lb, ub=z0_ub,
+                            init=np.full(n, (z0_lb + z0_ub) / 2))]
+
+for k in range(1, K + 1):
+    z_sim.append(vp_sim.step.relu(z_sim[k - 1] - eta * A.T @ (A @ z_sim[k - 1] - x_sim)))
+    vp_sim.set_objective_norm([z_sim[k] - z_sim[k - 1]], ord=2)
+
+sim_results = vp_sim.solve()
+sim_residuals = sim_results.max(axis=0).tolist()
 for k in range(1, K + 1):
     print(f"Sim  k={k}: {sim_residuals[k - 1]:.6f}  (max over N={N})")
 
