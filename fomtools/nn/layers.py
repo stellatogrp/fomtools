@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Union
-
+from typing import Union
+import collections.abc
 import numpy as np
 
 
@@ -23,8 +23,8 @@ class ReLULayer:
 
 
 NNLayer = Union[LinearLayer, ReLULayer]
-RTOL = 1e-5
-ATOL = 1e-6
+_RTOL = 1e-5
+_ATOL = 1e-6
 
 
 def from_torch(model) -> list[NNLayer]:
@@ -106,7 +106,6 @@ def from_jax(model) -> list[NNLayer]:
     layers = []
 
     def _submodules(module):
-        import collections.abc
         import inspect
 
         children = []
@@ -120,7 +119,11 @@ def from_jax(model) -> list[NNLayer]:
             if isinstance(val, nnx.Module):
                 children.append(val)
             elif isinstance(val, (list, tuple)):
-                children.extend(v for v in val if isinstance(v, nnx.Module))
+                for v in val:
+                    if isinstance(v, nnx.Module):
+                        children.append(v)
+                    elif callable(v) and not inspect.ismethod(v):
+                        children.append(v)
             elif isinstance(val, collections.abc.Callable) and not inspect.ismethod(val):
                 children.append(val)
         return children
@@ -162,7 +165,7 @@ def from_jax(model) -> list[NNLayer]:
     return layers
 
 
-def is_relu(fn: Callable, seed: int = 0, check_grad: bool = True) -> bool:
+def is_relu(fn: collections.abc.Callable, seed: int = 0, check_grad: bool = True) -> bool:
     """
     Return True if `fn` behaves like ReLU on a list of test inputs.
 
@@ -188,7 +191,7 @@ def is_relu(fn: Callable, seed: int = 0, check_grad: bool = True) -> bool:
         import jax
         import jax.numpy as jnp
     except ImportError:
-        raise ImportError("Flax is required for from_jax(). Install with: pip install flax")
+        raise ImportError("JAX is required for is_relu(). Install with: pip install jax")
 
     def _safe_eval(fn, x):
         """Evaluate fn(x), falling back to element-wise application; None on error."""
@@ -223,15 +226,15 @@ def is_relu(fn: Callable, seed: int = 0, check_grad: bool = True) -> bool:
 
     if not bool(jnp.all(jnp.isfinite(got) == jnp.isfinite(expected))):
         return False
-    if not bool(jnp.allclose(got, expected, rtol=RTOL, atol=ATOL)):
+    if not bool(jnp.allclose(got, expected, rtol=_RTOL, atol=_ATOL)):
         return False
 
     if check_grad:
-        nonzero = x[jnp.abs(x) > 10 * ATOL]  # skip the non-differentiable kink
+        nonzero = x[jnp.abs(x) > 10 * _ATOL]  # skip the non-differentiable kink
         expected_g = (nonzero > 0).astype(nonzero.dtype)
         grad_fn = jax.vmap(jax.grad(lambda t: jnp.squeeze(fn(t))))
         g = grad_fn(nonzero)
-        if not bool(jnp.allclose(g, expected_g, rtol=RTOL, atol=ATOL)):
+        if not bool(jnp.allclose(g, expected_g, rtol=_RTOL, atol=_ATOL)):
             return False
 
     return True
