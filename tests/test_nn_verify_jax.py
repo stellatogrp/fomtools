@@ -18,6 +18,7 @@ class ReLUFFNet(nnx.Module):
         prev = input_dim
         for h in hidden_dims:
             layers.append(nnx.Linear(prev, h, rngs=rngs))
+            # lambda is intentional — exercises is_relu's lambda-detection path
             layers.append(lambda x: nnx.relu(x))
             prev = h
         layers.append(nnx.Linear(prev, output_dim, rngs=rngs))
