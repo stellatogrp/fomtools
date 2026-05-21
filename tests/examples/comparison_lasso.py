@@ -1,6 +1,5 @@
 """
 ISTA worst-case bound: MIP vs SDP vs PEPit.
-Reproduces the three verification approaches for the Lasso example (Section 5.3).
 
 Problem:
     minimize  (1/2) ||Ds - x||^2 + lambda * ||s||_1
