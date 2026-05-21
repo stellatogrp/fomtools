@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import collections.abc
 from dataclasses import dataclass
 from typing import Union
-import collections.abc
+
 import numpy as np
 
 

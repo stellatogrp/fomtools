@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from fomtools.nn import from_jax
+from fomtools.nn.layers import is_relu
 from fomtools.verifier import Verifier
 
 flax = pytest.importorskip("flax")
@@ -24,6 +25,20 @@ class ReLUFFNet(nnx.Module):
 
     def __call__(self, x):
         return self.net(x)
+
+
+def test_is_relu():
+    assert is_relu(jax.nn.relu)
+    assert is_relu(lambda x: jnp.maximum(0.0, x))
+    assert is_relu(nnx.relu)
+
+    assert not is_relu(jax.nn.tanh)
+    assert not is_relu(jax.nn.sigmoid)
+    assert not is_relu(jax.nn.leaky_relu)
+    assert not is_relu(lambda x: x)
+    assert not is_relu(lambda x: jnp.zeros_like(x))
+
+    assert is_relu(jax.nn.relu, check_grad=False)
 
 
 @pytest.fixture(scope="module")
