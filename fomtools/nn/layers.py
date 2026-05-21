@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Union, Callable
+from typing import Callable, Union
 
 import numpy as np
 
@@ -106,8 +106,8 @@ def from_jax(model) -> list[NNLayer]:
     layers = []
 
     def _submodules(module):
-        import inspect
         import collections.abc
+        import inspect
 
         children = []
         try:
