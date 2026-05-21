@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections.abc
+import inspect
 from dataclasses import dataclass
 from typing import Union
 
@@ -107,49 +108,34 @@ def from_jax(model) -> list[NNLayer]:
     layers = []
 
     def _submodules(module):
-        import inspect
-
         if isinstance(module, nnx.Sequential):
-            return list(module.layers)
-
-        try:
-            module_children = [
-                val
-                for path, val in nnx.iter_graph(module)
-                if isinstance(val, nnx.Module) and val is not module and len(path) == 1
-            ]
-        except (AttributeError, TypeError):
-            # fallback: scan __dict__ for Module children.
-            module_children = []
             try:
-                for key, val in vars(module).items():
-                    if key.startswith("_"):
-                        continue
-                    if isinstance(val, nnx.Module):
-                        module_children.append(val)
-                    elif isinstance(val, (list, tuple)):
-                        for v in val:
-                            if isinstance(v, nnx.Module):
-                                module_children.append(v)
-            except TypeError:
-                pass
+                return list(module.layers)
+            except AttributeError:
+                pass  # fall through to ordered-vars path
 
-        # nnx.iter_graph doesn't surface plain callables, pick those up from vars
-        callable_children: list = []
+        # Single pass over vars() preserves attribute declaration order,
+        # which is the execution order for modules that interleave Module
+        # attributes and plain callable attributes (e.g. self.fc1, self.act, self.fc2).
+        children: list = []
         try:
             for key, val in vars(module).items():
-                if key.startswith("_") or isinstance(val, nnx.Module):
+                if key.startswith("_"):
                     continue
-                if isinstance(val, (list, tuple)):
+                if isinstance(val, nnx.Module):
+                    children.append(val)
+                elif isinstance(val, (list, tuple)):
                     for v in val:
-                        if not isinstance(v, nnx.Module) and callable(v) and not inspect.ismethod(v):
-                            callable_children.append(v)
-                elif isinstance(val, collections.abc.Callable) and not inspect.ismethod(val):
-                    callable_children.append(val)
+                        if isinstance(v, nnx.Module):
+                            children.append(v)
+                        elif callable(v) and not inspect.ismethod(v):
+                            children.append(v)
+                elif callable(val) and not inspect.ismethod(val):
+                    children.append(val)
         except TypeError:
             pass
 
-        return module_children + callable_children
+        return children
 
     def _walk(module):
         if not isinstance(module, nnx.Module):
@@ -254,8 +240,16 @@ def is_relu(fn: collections.abc.Callable, seed: int = 0, check_grad: bool = True
     if check_grad:
         nonzero = x[jnp.abs(x) > 10 * _ATOL]  # skip the non-differentiable kink
         expected_g = (nonzero > 0).astype(nonzero.dtype)
-        grad_fn = jax.vmap(jax.grad(lambda t: jnp.squeeze(fn(t))))
-        g = grad_fn(nonzero)
+        try:
+            grad_fn = jax.vmap(jax.grad(lambda t: jnp.squeeze(fn(t))))
+            g = grad_fn(nonzero)
+        except Exception:
+            eps = 1e-4
+            pos = _safe_eval(fn, nonzero + eps)
+            neg = _safe_eval(fn, nonzero - eps)
+            if pos is None or neg is None:
+                return False
+            g = (jnp.asarray(pos) - jnp.asarray(neg)) / (2 * eps)
         if not bool(jnp.allclose(g, expected_g, rtol=_RTOL, atol=_ATOL)):
             return False
 
