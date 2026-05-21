@@ -643,8 +643,12 @@ class MIP(Canonicalizer):
                             constraints.append(lhs >= u - (u - lb) * (1 - w1))
 
                 if lb < l and ub > u:
-                    expr = (u - l) / (u - lb) * (rhs - u) + u
-                    constraints.extend([lhs <= expr, lhs >= expr])
+                    constraints.extend(
+                        [
+                            lhs <= (u - l) / (u - lb) * (rhs - u) + u,
+                            lhs >= (u - l) / (ub - l) * (rhs - l) + l,
+                        ]
+                    )
 
                 elif lb < l and ub < u:
                     constraints.extend(
