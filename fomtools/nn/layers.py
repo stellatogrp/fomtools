@@ -108,28 +108,49 @@ def from_jax(model) -> list[NNLayer]:
     def _submodules(module):
         import inspect
 
-        children = []
+        if isinstance(module, nnx.Sequential):
+            return list(module.layers)
+
         try:
-            module_vars = vars(module)
+            module_children = [
+                val
+                for path, val in nnx.iter_graph(module)
+                if isinstance(val, nnx.Module) and val is not module and len(path) == 1
+            ]
+        except (AttributeError, TypeError):
+            # fallback: scan __dict__ for Module children.
+            module_children = []
+            try:
+                for key, val in vars(module).items():
+                    if key.startswith("_"):
+                        continue
+                    if isinstance(val, nnx.Module):
+                        module_children.append(val)
+                    elif isinstance(val, (list, tuple)):
+                        for v in val:
+                            if isinstance(v, nnx.Module):
+                                module_children.append(v)
+            except TypeError:
+                pass
+
+        # nnx.iter_graph doesn't surface plain callables, pick those up from vars
+        callable_children: list = []
+        try:
+            for key, val in vars(module).items():
+                if key.startswith("_") or isinstance(val, nnx.Module):
+                    continue
+                if isinstance(val, (list, tuple)):
+                    for v in val:
+                        if not isinstance(v, nnx.Module) and callable(v) and not inspect.ismethod(v):
+                            callable_children.append(v)
+                elif isinstance(val, collections.abc.Callable) and not inspect.ismethod(val):
+                    callable_children.append(val)
         except TypeError:
-            return children
-        for key, val in module_vars.items():
-            if key.startswith("_"):
-                continue
-            if isinstance(val, nnx.Module):
-                children.append(val)
-            elif isinstance(val, (list, tuple)):
-                for v in val:
-                    if isinstance(v, nnx.Module):
-                        children.append(v)
-                    elif callable(v) and not inspect.ismethod(v):
-                        children.append(v)
-            elif isinstance(val, collections.abc.Callable) and not inspect.ismethod(val):
-                children.append(val)
-        return children
+            pass
+
+        return module_children + callable_children
 
     def _walk(module):
-        # plain callables (not nnx.Module)
         if not isinstance(module, nnx.Module):
             if callable(module) and is_relu(module):
                 layers.append(ReLULayer())

@@ -41,7 +41,7 @@ dev = [
        "networkx",
 ]
 
-nn = ["torch"]
+nn = ["torch", "jax"]
 
 docs = [
        "cvxpy",
