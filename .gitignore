@@ -382,3 +382,4 @@ cython_debug/
 .envrc
 fomtools.project
 .entropy/
+__marimo__/

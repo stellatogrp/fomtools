@@ -44,3 +44,7 @@ class MIPStepDecomposer(StepDecomposer):
             return self._process_primitive(step)
 
         return self._decompose_saturatedlinear_to_relus(step)
+
+    _DECOMPOSERS = {
+        "saturatedlinear": decompose_saturatedlinear,
+    }
