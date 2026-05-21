@@ -77,6 +77,6 @@ class SDPStepDecomposer(StepDecomposer):
         return self._decompose_saturatedlinear_to_relus(step)
 
     _DECOMPOSERS = {
-        "softthreshold": decompose_softthreshold,
         "saturatedlinear": decompose_saturatedlinear,
+        "softthreshold": decompose_softthreshold,
     }

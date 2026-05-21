@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, ClassVar
 
 import numpy as np
 
@@ -35,7 +35,7 @@ class StepDecomposer:
         Callback for registering new leaf variables.
     """
 
-    _DECOMPOSERS: dict = {}
+    _DECOMPOSERS: ClassVar[dict] = {}
 
     def __init__(self, canonicalizer, register_var: Callable[[LinearExpression], None]):
         self.canonicalizer = canonicalizer

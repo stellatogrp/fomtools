@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from typing import ClassVar
 
 import numpy as np
 
@@ -28,7 +29,7 @@ class Canonicalizer:
 
     """
 
-    _CANONICALIZERS: dict = {}
+    _CANONICALIZERS: ClassVar[dict] = {}
 
     def __init__(self, solver_params: dict = None, solver: str = "gurobi"):
         """

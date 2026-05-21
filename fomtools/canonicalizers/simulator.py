@@ -659,10 +659,10 @@ class Simulator(Canonicalizer):
         self.step_descriptors.append((step, activation))
 
     _CANONICALIZERS = {
-        "relu": canonicalize_relu,
-        "softthreshold": canonicalize_softthreshold,
-        "saturatedlinear": canonicalize_saturatedlinear,
         "affine": canonicalize_affine,
+        "relu": canonicalize_relu,
+        "saturatedlinear": canonicalize_saturatedlinear,
+        "softthreshold": canonicalize_softthreshold,
     }
 
     # ------------------------------------------------------------------
