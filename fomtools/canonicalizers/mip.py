@@ -842,3 +842,10 @@ class MIP(Canonicalizer):
 
         self.add_constraints(constraints)
         self.steps.append(step)
+
+    _CANONICALIZERS = {
+        "affine": canonicalize_affine,
+        "relu": canonicalize_relu,
+        "saturatedlinear": canonicalize_saturatedlinear,
+        "softthreshold": canonicalize_softthreshold,
+    }

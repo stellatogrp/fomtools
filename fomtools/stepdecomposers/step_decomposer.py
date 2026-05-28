@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, ClassVar
 
 import numpy as np
 
@@ -14,9 +14,10 @@ class StepDecomposer:
     Decomposes composite steps into primitive steps that the canonicalizer
     can handle directly. Returns LinearExpression (leaf or composite).
 
-    Subclasses can implement ``decompose_{stepname}`` methods to handle
-    specific step types. Steps without a corresponding decompose method
-    are treated as primitives and processed directly via the canonicalizer.
+    Subclasses declare a class-level ``_DECOMPOSERS`` dict mapping the
+    lowercase step class name (e.g. ``"softthreshold"``) to the function
+    that decomposes it. Steps whose name is absent from the registry are
+    treated as primitives and processed directly via the canonicalizer.
 
     Parameters
     ----------
@@ -34,9 +35,18 @@ class StepDecomposer:
         Callback for registering new leaf variables.
     """
 
+    _DECOMPOSERS: ClassVar[dict] = {}
+
     def __init__(self, canonicalizer, register_var: Callable[[LinearExpression], None]):
         self.canonicalizer = canonicalizer
         self.register_var = register_var
+
+    def is_primitive(self, step: Step) -> bool:
+        """
+        Return True if ``step`` has no registered decomposition for this
+        decomposer and should be processed directly as a primitive.
+        """
+        return type(step).__name__.lower() not in self._DECOMPOSERS
 
     def process_step(self, step: Step) -> LinearExpression:
         """
@@ -57,17 +67,10 @@ class StepDecomposer:
             For composite steps, this is a LinearExpression composed from
             the outputs of the decomposed primitive steps.
         """
-        # Convert class name to method name: SoftThreshold -> decompose_softthreshold
-        step_name = type(step).__name__.lower()
-        method_name = f"decompose_{step_name}"
-
-        try:
-            decomposer = getattr(self, method_name)
-        except AttributeError:
-            # No decomposition needed - treat as primitive
+        decomposer = self._DECOMPOSERS.get(type(step).__name__.lower())
+        if decomposer is None:
             return self._process_primitive(step)
-
-        return decomposer(step)
+        return decomposer(self, step)
 
     def _decompose_saturatedlinear_to_relus(
         self, step: SaturatedLinear

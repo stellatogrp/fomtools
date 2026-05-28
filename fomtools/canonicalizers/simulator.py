@@ -658,6 +658,13 @@ class Simulator(Canonicalizer):
 
         self.step_descriptors.append((step, activation))
 
+    _CANONICALIZERS = {
+        "affine": canonicalize_affine,
+        "relu": canonicalize_relu,
+        "saturatedlinear": canonicalize_saturatedlinear,
+        "softthreshold": canonicalize_softthreshold,
+    }
+
     # ------------------------------------------------------------------
     # Objective methods — store residual specs keyed by step index
     # ------------------------------------------------------------------

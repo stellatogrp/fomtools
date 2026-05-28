@@ -459,6 +459,10 @@ class SDP(Canonicalizer):
         self._relu_steps.append(step)
         self._cuts_dirty = True
 
+    _CANONICALIZERS = {
+        "relu": canonicalize_relu,
+    }
+
     def linexpr_to_Amat_and_bounds(self, expr: LinearExpression):
         """
         Extract the coefficient matrix and SDP indices from a LinearExpression.
