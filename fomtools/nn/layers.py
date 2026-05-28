@@ -1,6 +1,7 @@
-
 from __future__ import annotations
 
+import collections.abc
+import inspect
 from dataclasses import dataclass
 from typing import Union
 
@@ -24,6 +25,8 @@ class ReLULayer:
 
 
 NNLayer = Union[LinearLayer, ReLULayer]
+_RTOL = 1e-5
+_ATOL = 1e-6
 
 
 def from_torch(model) -> list[NNLayer]:
@@ -76,3 +79,178 @@ def from_torch(model) -> list[NNLayer]:
     return layers
 
 
+def from_jax(model) -> list[NNLayer]:
+    """
+    Convert a Flax NNX module to a list of NNLayers.
+
+    Walks the module recursively and converts:
+      - ``nnx.Linear``    -> ``LinearLayer``
+      - ReLU modules      -> ``ReLULayer``
+      - container modules -> flattened recursively
+
+    Only ReLU activations and linear layers are supported. Other layer types
+    raise ``ValueError``.
+
+    Parameters
+    ----------
+    model : flax.nnx.Module
+        A Flax NNX module.
+
+    Returns
+    -------
+    list[NNLayer]
+    """
+    try:
+        from flax import nnx
+    except ImportError:
+        raise ImportError("Flax is required for from_jax(). Install with: pip install flax")
+
+    layers = []
+
+    def _submodules(module):
+        if isinstance(module, nnx.Sequential):
+            try:
+                return list(module.layers)
+            except AttributeError:
+                pass  # fall through to ordered-vars path
+
+        # Single pass over vars() preserves attribute declaration order,
+        # which is the execution order for modules that interleave Module
+        # attributes and plain callable attributes (e.g. self.fc1, self.act, self.fc2).
+        children: list = []
+        try:
+            for key, val in vars(module).items():
+                if key.startswith("_"):
+                    continue
+                if isinstance(val, nnx.Module):
+                    children.append(val)
+                elif isinstance(val, (list, tuple)):
+                    for v in val:
+                        if isinstance(v, nnx.Module):
+                            children.append(v)
+                        elif callable(v) and not inspect.ismethod(v):
+                            children.append(v)
+                elif callable(val) and not inspect.ismethod(val):
+                    children.append(val)
+        except TypeError:
+            pass
+
+        return children
+
+    def _walk(module):
+        if not isinstance(module, nnx.Module):
+            if callable(module) and is_relu(module):
+                layers.append(ReLULayer())
+            else:
+                raise ValueError(
+                    f"Unsupported callable: {module!r}. Only nnx.Linear and ReLU are supported."
+                )
+            return
+
+        # recognize Linear before calling _submodules so its callable attrs
+        # don't prevent it from being treated as a leaf.
+        if isinstance(module, nnx.Linear):
+            W = np.asarray(module.kernel.get_value()).T
+            bias = getattr(module, "bias", None)
+            b = np.asarray(bias.get_value()) if bias is not None else None
+            layers.append(LinearLayer(weight=W, bias=b))
+            return
+
+        children = _submodules(module)
+        if not children:
+            if is_relu(module):
+                layers.append(ReLULayer())
+            else:
+                raise ValueError(
+                    f"Unsupported layer type: {type(module).__name__}. "
+                    "Only nnx.Linear and ReLU modules are supported."
+                )
+        else:
+            for child in children:
+                _walk(child)
+
+    _walk(model)
+    return layers
+
+
+def is_relu(fn: collections.abc.Callable, seed: int = 0, check_grad: bool = True) -> bool:
+    """
+    Return True if `fn` behaves like ReLU on a list of test inputs.
+
+    Parameters
+    ----------
+        fn : Callable
+            The unknown activation, applied either vectorized or element-wise.
+
+        seed: int
+            PRNG seed for the random portion of the test inputs.
+
+        check_grad: bool
+            If True, also require fn's gradient to match ReLU's
+            (0 for x < 0, 1 for x > 0; points near 0 are skipped because the
+            derivative is undefined there).
+
+    Returns
+    --------
+    bool
+        True if `fn` behaves like ReLU on a list of test inputs.
+    """
+    try:
+        import jax
+        import jax.numpy as jnp
+    except ImportError:
+        raise ImportError("JAX is required for is_relu(). Install with: pip install jax")
+
+    def _safe_eval(fn, x):
+        """Evaluate fn(x), falling back to element-wise application; None on error."""
+        try:
+            out = fn(x)
+            if jnp.asarray(out).shape == x.shape:
+                return out
+        except Exception:
+            pass
+        try:
+            return jax.vmap(fn)(x)
+        except Exception:
+            return None
+
+    structured = jnp.array(
+        [0.0, -0.0, 1.0, -1.0, 1e-7, -1e-7, 1e3, -1e3, 1e8, -1e8, 3.14159, -2.71828]
+    )
+    key = jax.random.PRNGKey(seed)
+    k1, k2 = jax.random.split(key)
+    uniform = jax.random.uniform(k1, (1000,), minval=-100.0, maxval=100.0)
+    normal = jax.random.normal(k2, (1000,)) * 10.0
+    x = jnp.concatenate([structured, uniform, normal])
+
+    expected = jnp.maximum(0.0, x)
+
+    got = _safe_eval(fn, x)
+    if got is None:
+        return False
+
+    if got.shape != x.shape:
+        return False
+
+    if not bool(jnp.all(jnp.isfinite(got) == jnp.isfinite(expected))):
+        return False
+    if not bool(jnp.allclose(got, expected, rtol=_RTOL, atol=_ATOL)):
+        return False
+
+    if check_grad:
+        nonzero = x[jnp.abs(x) > 10 * _ATOL]  # skip the non-differentiable kink
+        expected_g = (nonzero > 0).astype(nonzero.dtype)
+        try:
+            grad_fn = jax.vmap(jax.grad(lambda t: jnp.squeeze(fn(t))))
+            g = grad_fn(nonzero)
+        except Exception:
+            eps = 1e-4
+            pos = _safe_eval(fn, nonzero + eps)
+            neg = _safe_eval(fn, nonzero - eps)
+            if pos is None or neg is None:
+                return False
+            g = (jnp.asarray(pos) - jnp.asarray(neg)) / (2 * eps)
+        if not bool(jnp.allclose(g, expected_g, rtol=_RTOL, atol=_ATOL)):
+            return False
+
+    return True
