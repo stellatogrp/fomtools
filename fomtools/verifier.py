@@ -543,10 +543,9 @@ class Verifier(object):
         Construct and execute the specified thresholding or activation step.
 
         This method centralizes the execution pipeline for all step-like
-        operators. It instantiates ``step_cls`` with the provided arguments,
-        optionally invokes the OBBT handler to refine bounds, and then
-        incorporates constraints produced by the respective step object
-        into the verification problem.
+        operators. It instantiates ``step_cls`` with the provided
+        arguments and forwards it to the step decomposer, which handles
+        OBBT bound tightening, decomposition, and canonicalization.
 
         Parameters
         ----------
@@ -567,11 +566,6 @@ class Verifier(object):
             Left-hand side linear expression in the operator definition.
         """
         step = step_cls(rhs=rhs, relax_binary_vars=relax_binary_vars, **kwargs)
-
-        if self.use_obbt_handler and not step.skip_obbt:
-            result = self.obbt_handler.obbt(step.rhs, step.lb, step.ub)
-            if result is not None:
-                step.update_bounds(*result)
 
         lhs = self.step_decomposer.process_step(step)
         self.steps.append(step)

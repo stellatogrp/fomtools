@@ -3,7 +3,8 @@ from typing import Callable, ClassVar
 import numpy as np
 
 from fomtools.linearexpression import LinearExpression
-from fomtools.steps import Relu, SaturatedLinear
+from fomtools.proxable_functions import NormL1
+from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
 from fomtools.steps.step import Step
 
 
@@ -53,7 +54,6 @@ class StepDecomposer:
     """
 
     _DECOMPOSERS: ClassVar[dict] = {}
-    _PROX_DECOMPOSERS: ClassVar[dict] = {}
 
     def __init__(self, canonicalizer, register_var: Callable[[LinearExpression], None]):
         self.canonicalizer = canonicalizer
@@ -70,6 +70,14 @@ class StepDecomposer:
         """
         Process a step, decomposing if needed.
 
+        First, runs OBBT (optimization-based bound tightening) on the
+        step's input bounds, unless the step opts out via
+        ``skip_obbt``. OBBT applies to every step that enters this
+        method — top-level user-issued steps, sub-steps produced by
+        decomposition, and steps emitted by prox lowerings — so the
+        tightened bounds propagate through both decomposition and
+        canonicalization.
+
         For primitive steps: registers lhs, canonicalizes, returns step.lhs
         For composite steps: decomposes into primitives, returns composite expr
 
@@ -85,6 +93,12 @@ class StepDecomposer:
             For composite steps, this is a LinearExpression composed from
             the outputs of the decomposed primitive steps.
         """
+        obbt_handler = getattr(self.canonicalizer, "obbt_handler", None)
+        if obbt_handler is not None and not step.skip_obbt:
+            result = obbt_handler.obbt(step.rhs, step.lb, step.ub)
+            if result is not None:
+                step.update_bounds(*result)
+
         decomposer = self._DECOMPOSERS.get(type(step).__name__.lower())
         if decomposer is None:
             return self._process_primitive(step)
@@ -214,3 +228,26 @@ class StepDecomposer:
 
         self.canonicalizer.canonicalize(step)
         return step.lhs
+
+    def prox_norml1(
+        self, prox: NormL1, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower a weighted $\ell_1$-norm prox into a single ``SoftThreshold`` step.
+
+        Uses the identity
+        $\operatorname{prox}_{\gamma \lambda \|\cdot\|_1}(\text{rhs})
+        = S_{\gamma \lambda}(\text{rhs})$, where $S$ is element-wise soft
+        thresholding.
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it. Per-backend handling of the resulting
+        ``SoftThreshold`` happens automatically — e.g. SDP further
+        decomposes it into two ReLUs via ``_DECOMPOSERS``.
+        """
+        step = SoftThreshold(rhs=rhs, lambd=prox.lambd * gamma)
+        return self.process_step(step)
+
+    _PROX_DECOMPOSERS: ClassVar[dict] = {
+        "norml1": prox_norml1,
+    }
