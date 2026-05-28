@@ -9,15 +9,32 @@ from fomtools.steps.step import Step
 
 class StepDecomposer:
     """
-    Base class for step decomposition.
+    Base class for step decomposition and prox lowering.
 
     Decomposes composite steps into primitive steps that the canonicalizer
-    can handle directly. Returns LinearExpression (leaf or composite).
+    can handle directly, and lowers proxable functions into steps + aux
+    variables. Returns LinearExpression (leaf or composite).
 
-    Subclasses declare a class-level ``_DECOMPOSERS`` dict mapping the
-    lowercase step class name (e.g. ``"softthreshold"``) to the function
-    that decomposes it. Steps whose name is absent from the registry are
-    treated as primitives and processed directly via the canonicalizer.
+    Subclasses declare two class-level registry dicts:
+
+    - ``_DECOMPOSERS`` maps the lowercase step class name
+      (e.g. ``"softthreshold"``) to the function that decomposes it.
+      Steps absent from the registry are treated as primitives and
+      processed directly via the canonicalizer.
+    - ``_PROX_DECOMPOSERS`` maps the lowercase proxable function class
+      name (e.g. ``"norml1"``) to the function that lowers it into
+      steps. Proxes absent from the registry raise ``NotImplementedError``
+      — useful for backends that cannot encode a given prox (e.g.
+      ``TotalVariation1D`` on MIP/SDP).
+
+    Subclasses that need to *extend* (rather than replace) an inherited
+    registry should spread the parent dict explicitly, for example::
+
+        class SimulatorStepDecomposer(StepDecomposer):
+            _PROX_DECOMPOSERS: ClassVar[dict] = {
+                **StepDecomposer._PROX_DECOMPOSERS,
+                "totalvariation1d": prox_totalvariation1d,
+            }
 
     Parameters
     ----------
@@ -36,6 +53,7 @@ class StepDecomposer:
     """
 
     _DECOMPOSERS: ClassVar[dict] = {}
+    _PROX_DECOMPOSERS: ClassVar[dict] = {}
 
     def __init__(self, canonicalizer, register_var: Callable[[LinearExpression], None]):
         self.canonicalizer = canonicalizer
@@ -71,6 +89,49 @@ class StepDecomposer:
         if decomposer is None:
             return self._process_primitive(step)
         return decomposer(self, step)
+
+    def process_prox(
+        self,
+        prox_function,
+        rhs: LinearExpression,
+        gamma: float = 1.0,
+    ) -> LinearExpression:
+        """
+        Lower a proxable function into steps + aux variables.
+
+        Looks up the lowercase prox class name (e.g. ``"norml1"``) in
+        this decomposer's ``_PROX_DECOMPOSERS`` registry and invokes the
+        registered lowering function. Raises ``NotImplementedError`` if
+        the prox is not supported on this backend.
+
+        Parameters
+        ----------
+        prox_function : ProxableFunction
+            A pre-configured proxable function instance carrying problem
+            data (e.g. the ``lambd`` of a weighted L1 norm).
+        rhs : LinearExpression
+            The input expression to which the prox is applied.
+        gamma : float, default 1.0
+            The proximal step size.
+
+        Returns
+        -------
+        LinearExpression
+            The output expression ``prox_{gamma * f}(rhs)``.
+
+        Raises
+        ------
+        NotImplementedError
+            If this decomposer's ``_PROX_DECOMPOSERS`` registry has no
+            entry for the concrete type of ``prox_function``.
+        """
+        proxer = self._PROX_DECOMPOSERS.get(type(prox_function).__name__.lower())
+        if proxer is None:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} does not support "
+                f"{type(prox_function).__name__}"
+            )
+        return proxer(self, prox_function, rhs, gamma)
 
     def _decompose_saturatedlinear_to_relus(
         self, step: SaturatedLinear
