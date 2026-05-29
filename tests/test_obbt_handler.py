@@ -23,7 +23,6 @@ from tests.conftest import (
     step_input_widths,
 )
 
-
 # --------------------------------------------------------------------------
 # Local builders for ReLU / saturated-linear chains (constant bounds so the
 # saturated-linear step stays a MIP primitive and exercises the OBBT
