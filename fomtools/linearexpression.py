@@ -684,13 +684,30 @@ def stack(exprs: list[LinearExpression]) -> LinearExpression:
         ``sum(e.ndim for e in exprs)``. ``result.const`` is the
         concatenation of each component's ``const``; ``result.lb`` / ``result.ub``
         are computed once at construction by interval propagation from the
-        component leaves. To pick up later bound tightening on those leaves,
-        call ``result.bound_propagation()`` again.
+        component leaves.
 
     Raises
     ------
     ValueError
         If ``exprs`` is empty.
+
+    Warnings
+    --------
+    The stack's ``lb`` / ``ub`` attributes are a **snapshot** taken at
+    construction time. They do *not* refresh automatically when a
+    component leaf's bounds are tightened later (for example by an OBBT
+    pass triggered by ``add_constraint``). Any consumer that needs
+    up-to-date stack bounds must explicitly recompute them via::
+
+        stack_expr.lb, stack_expr.ub = stack_expr.bound_propagation()
+
+    This matters most in the dual / KKT use case (the primary motivator
+    for ``stack``): if the stack is reused across multiple constraint
+    additions, stale snapshot bounds can cause downstream OBBT passes
+    to under-tighten. Canonicalizer constraint emission is unaffected
+    — it walks ``decomposition_dict`` straight to the underlying leaves,
+    whose bounds *are* always current — so this caveat applies only to
+    callers that read ``stack_expr.lb`` / ``stack_expr.ub`` directly.
     """
     if len(exprs) == 0:
         raise ValueError("stack() requires at least one expression")

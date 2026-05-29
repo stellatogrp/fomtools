@@ -733,7 +733,21 @@ class Simulator(Canonicalizer):
         # Leaves a step *introduces* (where activation results get written).
         # For most steps this is the full ``lhs`` leaf; for partial-projection
         # Relu it is the smaller fresh proj-leaf returned by ``lhs_leaves``.
-        step_leaves = [s.lhs_leaves[0] for s, _ in self.step_descriptors]
+        # The simulator writes one ``z_new`` slot per step, so we require
+        # ``lhs_leaves`` to be a single-leaf list. If a future step type
+        # introduces multiple fresh leaves per call, _compile_steps must be
+        # extended to allocate and write a slot per leaf — fail loudly here
+        # rather than silently dropping the extra leaves.
+        step_leaves = []
+        for s, _ in self.step_descriptors:
+            leaves = s.lhs_leaves
+            if len(leaves) != 1:
+                raise NotImplementedError(
+                    f"{type(s).__name__}.lhs_leaves returned {len(leaves)} leaves; "
+                    "Simulator._compile_steps assumes exactly one fresh leaf per step. "
+                    "Extend the compile/write loop to handle multi-leaf steps."
+                )
+            step_leaves.append(leaves[0])
 
         for i, (step, activation) in enumerate(self.step_descriptors):
             coeffs = self._linear_expr_to_cupy(step.rhs)
