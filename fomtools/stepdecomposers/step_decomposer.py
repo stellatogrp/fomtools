@@ -3,7 +3,7 @@ from typing import Callable, ClassVar
 import numpy as np
 
 from fomtools.linearexpression import LinearExpression
-from fomtools.proxable_functions import NormL1
+from fomtools.proxable_functions import IndNonNegative, NormL1
 from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
 from fomtools.steps.step import Step
 
@@ -229,6 +229,21 @@ class StepDecomposer:
         self.canonicalizer.canonicalize(step)
         return step.lhs
 
+    def prox_indnonnegative(
+        self, prox: IndNonNegative, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower a non-negative-orthant indicator prox into a single ``Relu`` step.
+
+        Uses the identity $\operatorname{prox}_{\gamma I_{\geq 0}}(\text{rhs})
+        = \max(\text{rhs}, 0)$, which is precisely ``Relu(rhs)``. The
+        result is independent of $\gamma$.
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it.
+        """
+        return self.process_step(Relu(rhs=rhs))
+
     def prox_norml1(
         self, prox: NormL1, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -249,5 +264,6 @@ class StepDecomposer:
         return self.process_step(step)
 
     _PROX_DECOMPOSERS: ClassVar[dict] = {
+        "indnonnegative": prox_indnonnegative,
         "norml1": prox_norml1,
     }

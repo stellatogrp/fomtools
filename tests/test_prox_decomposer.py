@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from fomtools.linearexpression import LinearExpression
-from fomtools.proxable_functions import NormL1, ProxableFunction
+from fomtools.proxable_functions import IndNonNegative, NormL1, ProxableFunction
 from fomtools.steps import Relu, SoftThreshold
 from fomtools.verifier import Verifier
 
@@ -84,6 +84,38 @@ def test_norml1_decomposes_to_two_relus_on_sdp():
     # SDP canonicalizer tracks Relus it encoded
     assert len(v.canonicalizer._relu_steps) == 2
     assert all(isinstance(s, Relu) for s in v.canonicalizer._relu_steps)
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_indnonnegative_returns_linear_expression(method):
+    """IndNonNegative prox is registered on the base; every backend inherits."""
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    out = v.prox(IndNonNegative(), rhs)
+
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_indnonnegative_emits_relu_on_mip():
+    """On MIP, IndNonNegative lowers to a single Relu primitive."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(IndNonNegative(), rhs)
+
+    n_relu = sum(1 for s in v.canonicalizer.steps if isinstance(s, Relu))
+    assert n_relu == 1
+
+
+def test_indnonnegative_gamma_is_ignored():
+    """Indicator prox is gamma-independent; lowering should still produce one Relu."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(IndNonNegative(), rhs, gamma=42.0)
+
+    n_relu = sum(1 for s in v.canonicalizer.steps if isinstance(s, Relu))
+    assert n_relu == 1
 
 
 def test_unsupported_prox_raises_on_every_backend():
