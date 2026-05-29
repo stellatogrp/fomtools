@@ -19,12 +19,15 @@ import pytest
 
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import (
+    IndBallLinf,
+    IndBox,
     IndNonNegative,
     IndNonPositive,
+    IndPoint,
     NormL1,
     ProxableFunction,
 )
-from fomtools.steps import Relu, SoftThreshold
+from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
 from fomtools.verifier import Verifier
 
 
@@ -149,6 +152,117 @@ def test_indnonpositive_emits_one_relu_on_mip():
     # Bounds on -rhs are [-rhs.ub, -rhs.lb] = [-1, 2]
     np.testing.assert_allclose(relus[0].lb, [-1.0, -1.0, -1.0])
     np.testing.assert_allclose(relus[0].ub, [2.0, 2.0, 2.0])
+
+
+# --- IndBallLinf ---
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_indballlinf_returns_linear_expression(method):
+    """IndBallLinf prox is registered on the base; every backend inherits."""
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-2.0, ub=2.0)
+
+    out = v.prox(IndBallLinf(r=0.7), rhs)
+
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_indballlinf_emits_satlin_with_symmetric_bounds():
+    """IndBallLinf lowers to SaturatedLinear with l=-r, u=r broadcast to rhs.ndim."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-2.0, ub=2.0)
+    v.prox(IndBallLinf(r=0.7), rhs)
+
+    satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
+    assert len(satlins) == 1
+    np.testing.assert_allclose(satlins[0].l, [-0.7, -0.7, -0.7])
+    np.testing.assert_allclose(satlins[0].u, [0.7, 0.7, 0.7])
+
+
+# --- IndBox ---
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_indbox_returns_linear_expression(method):
+    """IndBox prox lowering is registered on the base; every backend inherits."""
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-2.0, ub=2.0)
+
+    out = v.prox(IndBox(l=-0.5, u=0.5), rhs)
+
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_indbox_scalar_bounds_broadcast():
+    """Scalar l/u get broadcast to rhs.ndim before SaturatedLinear sees them."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-2.0, ub=2.0)
+    v.prox(IndBox(l=-0.5, u=0.5), rhs)
+
+    satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
+    assert len(satlins) == 1
+    np.testing.assert_allclose(satlins[0].l, [-0.5, -0.5, -0.5])
+    np.testing.assert_allclose(satlins[0].u, [0.5, 0.5, 0.5])
+
+
+def test_indbox_array_bounds_forwarded_unchanged():
+    """Array l/u pass through to SaturatedLinear unchanged."""
+    l = np.array([-1.0, 0.0, -0.5])
+    u = np.array([0.5, 1.0, 1.0])
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-2.0, ub=2.0)
+    v.prox(IndBox(l=l, u=u), rhs)
+
+    satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
+    assert len(satlins) == 1
+    np.testing.assert_allclose(satlins[0].l, l)
+    np.testing.assert_allclose(satlins[0].u, u)
+
+
+# --- IndPoint ---
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_indpoint_returns_linear_expression(method):
+    """
+    IndPoint lowers to a degenerate SaturatedLinear with l == u == p.
+    All three backends should accept this.
+    """
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    out = v.prox(IndPoint(p=np.array([0.1, 0.2, 0.3])), rhs)
+
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_indpoint_scalar_broadcast():
+    """Scalar p is broadcast to rhs.ndim; SaturatedLinear sees l == u arrays."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(IndPoint(p=0.5), rhs)
+
+    satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
+    assert len(satlins) == 1
+    np.testing.assert_allclose(satlins[0].l, [0.5, 0.5, 0.5])
+    np.testing.assert_allclose(satlins[0].u, [0.5, 0.5, 0.5])
+
+
+def test_indpoint_lhs_bounds_collapse_to_p():
+    """The SaturatedLinear lhs bounds collapse to [p, p] for IndPoint."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    p = np.array([0.1, 0.2, 0.3])
+    v.prox(IndPoint(p=p), rhs)
+
+    satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
+    assert len(satlins) == 1
+    np.testing.assert_allclose(satlins[0].lhs.lb, p)
+    np.testing.assert_allclose(satlins[0].lhs.ub, p)
 
 
 def test_unsupported_prox_raises_on_every_backend():

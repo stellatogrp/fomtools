@@ -4,6 +4,7 @@ from fomtools.proxable_functions.hinge_loss import HingeLoss
 from fomtools.proxable_functions.huber_loss import HuberLoss
 from fomtools.proxable_functions.ind_affine import IndAffine
 from fomtools.proxable_functions.ind_ball_linf import IndBallLinf
+from fomtools.proxable_functions.ind_box import IndBox
 from fomtools.proxable_functions.ind_half_space import IndHalfSpace
 from fomtools.proxable_functions.ind_nonnegative import IndNonNegative
 from fomtools.proxable_functions.ind_nonpositive import IndNonPositive

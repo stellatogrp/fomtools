@@ -3,7 +3,14 @@ from typing import Callable, ClassVar
 import numpy as np
 
 from fomtools.linearexpression import LinearExpression
-from fomtools.proxable_functions import IndNonNegative, IndNonPositive, NormL1
+from fomtools.proxable_functions import (
+    IndBallLinf,
+    IndBox,
+    IndNonNegative,
+    IndNonPositive,
+    IndPoint,
+    NormL1,
+)
 from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
 from fomtools.steps.step import Step
 
@@ -229,6 +236,61 @@ class StepDecomposer:
         self.canonicalizer.canonicalize(step)
         return step.lhs
 
+    @staticmethod
+    def _to_satlin_bound(value, ndim: int):
+        """
+        Broadcast a scalar ``l``/``u`` to an array of length ``ndim``;
+        pass arrays and ``LinearExpression`` parameters through.
+
+        The MIP canonicalizer iterates over ``step.l`` and ``step.u`` per
+        coordinate (``mip.py:603``), so scalars must be expanded before
+        construction.
+        """
+        if hasattr(value, "lb"):  # LinearExpression — pass through
+            return value
+        arr = np.asarray(value, dtype=float)
+        if arr.ndim == 0:
+            return np.full(ndim, float(arr))
+        return arr
+
+    def prox_indballlinf(
+        self, prox: IndBallLinf, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower an $\ell_\infty$-ball indicator prox via a single
+        ``SaturatedLinear`` step that clips to $[-r, r]$.
+
+        Uses the identity
+        $\operatorname{prox}_{\gamma I_{\|\cdot\|_\infty \leq r}}(\text{rhs})
+        = \operatorname{clip}(\text{rhs}, -r, r)$, independent of $\gamma$.
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it.
+        """
+        l = np.full(rhs.ndim, -prox.r)
+        u = np.full(rhs.ndim, prox.r)
+        return self.process_step(SaturatedLinear(rhs=rhs, l=l, u=u))
+
+    def prox_indbox(
+        self, prox: IndBox, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower a box-indicator prox via a single ``SaturatedLinear`` step
+        that clips to $[l, u]$ element-wise.
+
+        Uses the identity
+        $\operatorname{prox}_{\gamma I_{[l, u]}}(\text{rhs})
+        = \min(\max(\text{rhs}, l), u)$, independent of $\gamma$. Scalar
+        bounds are broadcast to ``rhs.ndim``; arrays and
+        ``LinearExpression`` parameters are forwarded through.
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it.
+        """
+        l = self._to_satlin_bound(prox.l, rhs.ndim)
+        u = self._to_satlin_bound(prox.u, rhs.ndim)
+        return self.process_step(SaturatedLinear(rhs=rhs, l=l, u=u))
+
     def prox_indnonnegative(
         self, prox: IndNonNegative, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -260,6 +322,25 @@ class StepDecomposer:
         """
         return -self.process_step(Relu(rhs=-rhs))
 
+    def prox_indpoint(
+        self, prox: IndPoint, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower a singleton-set indicator prox via a degenerate
+        ``SaturatedLinear`` step with $l = u = p$.
+
+        Uses the identity
+        $\operatorname{prox}_{\gamma I_{\{p\}}}(\text{rhs}) = p$,
+        independent of $\gamma$. The lowering encodes this as
+        ``SaturatedLinear(rhs, l=p, u=p)`` whose output bounds collapse
+        to $[p, p]$. Scalar ``p`` is broadcast to ``rhs.ndim``.
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it.
+        """
+        p = self._to_satlin_bound(prox.p, rhs.ndim)
+        return self.process_step(SaturatedLinear(rhs=rhs, l=p, u=p))
+
     def prox_norml1(
         self, prox: NormL1, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -280,7 +361,10 @@ class StepDecomposer:
         return self.process_step(step)
 
     _PROX_DECOMPOSERS: ClassVar[dict] = {
+        "indballlinf": prox_indballlinf,
+        "indbox": prox_indbox,
         "indnonnegative": prox_indnonnegative,
         "indnonpositive": prox_indnonpositive,
+        "indpoint": prox_indpoint,
         "norml1": prox_norml1,
     }
