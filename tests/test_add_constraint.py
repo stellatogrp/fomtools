@@ -111,12 +111,10 @@ def test_add_constraint_tightens_bounds(vp):
     assert result <= 10 + TEST_EPS, "Constraint should tighten bounds"
 
 
-def test_skip_obbt_affine_step(vp):
+def test_affine_step_solves(vp):
     """
-    Test that Affine steps correctly skip OBBT.
-
-    This test verifies that the skip_obbt=True attribute on Affine
-    steps works correctly and the problem is still solvable.
+    Test that an Affine step (``implicit_linear``) composed with a ReLU
+    produces a solvable verification problem.
     """
     import scipy.sparse as spa
 
@@ -130,7 +128,7 @@ def test_skip_obbt_affine_step(vp):
     p = vp.add_param(n, lb=1, ub=2)
     z0 = vp.add_iterate(n, lb=0, ub=0)
 
-    # Apply implicit_linear (Affine) step - this should skip OBBT
+    # Apply implicit_linear (Affine) step
     z1 = vp.step.implicit_linear(z0 + p, lhs_mat=lhs.todense())
 
     # Add another step

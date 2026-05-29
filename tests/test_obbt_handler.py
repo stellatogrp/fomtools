@@ -225,11 +225,18 @@ def test_obbt_relu_and_satlin_relaxation_tightens(solver, op):
 
 
 # --------------------------------------------------------------------------
-# 7. Affine steps skip OBBT input tightening but still feed the OBBT LP.
+# 7. Affine steps participate in OBBT both as inputs and as relaxations.
 # --------------------------------------------------------------------------
 
 @pytest.mark.parametrize("solver", SOLVERS)
-def test_skip_obbt_affine_still_holds(solver):
+def test_affine_obbt_input_tightening(solver):
+    """
+    Baseline Affine OBBT case: with only an upstream iterate's box in the
+    OBBT LP, OBBT cannot improve on interval propagation, so the affine
+    input bounds equal ``rhs.bound_propagation()``. The affine equality
+    is still registered with the OBBT LP, so a downstream ReLU's input
+    bounds remain at least as tight as interval propagation.
+    """
     from fomtools.steps import Affine
 
     np.random.seed(3)
@@ -240,9 +247,11 @@ def test_skip_obbt_affine_still_holds(solver):
     y = v.run_step(z, Affine, weight=W)
 
     affine_step = v.steps[-1]
-    assert affine_step.skip_obbt is True
 
-    # Affine bounds come from analytic interval propagation of the input.
+    # In this trivial scenario (single box-constrained input, no further
+    # constraints in the OBBT LP), OBBT on the affine input equals interval
+    # propagation. The point is that this path now *runs* — see the
+    # constrained-witness test below for a case where it strictly tightens.
     rhs_lb, rhs_ub = affine_step.rhs.bound_propagation()
     assert np.allclose(affine_step.lb, rhs_lb)
     assert np.allclose(affine_step.ub, rhs_ub)
@@ -254,3 +263,49 @@ def test_skip_obbt_affine_still_holds(solver):
     relu_lb, relu_ub = relu_step.rhs.bound_propagation()
     assert np.all(relu_step.lb >= relu_lb - TEST_EPS)
     assert np.all(relu_step.ub <= relu_ub + TEST_EPS)
+
+
+@pytest.mark.parametrize("solver", SOLVERS)
+def test_affine_obbt_tightens_when_constrained(solver):
+    """
+    Witness that OBBT input tightening for Affine is not a no-op when there
+    is cross-coordinate structure to exploit. Build
+    ``iterate -> Affine_1 -> Affine_2``: the equality ``y == W1 @ z`` enters
+    the OBBT LP after Affine_1, so OBBT on Affine_2's input ``W2 @ y`` can
+    substitute through to ``W2 @ W1 @ z`` and optimize over ``z``'s box
+    — strictly tighter than interval propagation, which double-applies
+    ``|·|`` across the matrix product.
+
+    Pre-PR (``Affine.skip_obbt = True``), Affine_2's input bounds equalled
+    ``rhs.bound_propagation()`` exactly. Post-PR they should be tighter or
+    equal everywhere, and strictly tighter in at least one coordinate.
+    """
+    from fomtools.steps import Affine
+
+    np.random.seed(11)
+    n = 3
+    W1 = np.random.normal(size=(n, n))
+    W2 = np.random.normal(size=(n, n))
+    v = Verifier(solver=solver, obbt_solver=solver, params={"OutputFlag": 0})
+    z = v.add_iterate(n, lb=-1.0 * np.ones(n), ub=1.0 * np.ones(n))
+    y = v.run_step(z, Affine, weight=W1)       # Affine_1 equality into OBBT LP
+    _ = v.run_step(y, Affine, weight=W2)       # Affine_2 input is what we check
+
+    affine_step = v.steps[-1]
+    rhs_lb, rhs_ub = affine_step.rhs.bound_propagation()
+
+    # OBBT never widens.
+    assert np.all(affine_step.lb >= rhs_lb - TEST_EPS)
+    assert np.all(affine_step.ub <= rhs_ub + TEST_EPS)
+
+    # OBBT does something: at least one coordinate strictly tightens
+    # because Affine_1's equality couples the y coordinates in the OBBT LP.
+    tightened = (
+        np.any(affine_step.lb > rhs_lb + 1e-4) or np.any(affine_step.ub < rhs_ub - 1e-4)
+    )
+    assert tightened, (
+        "Expected OBBT to strictly tighten at least one Affine_2 input bound "
+        "via the Affine_1 equality in the OBBT LP; got "
+        f"lb={affine_step.lb}, ub={affine_step.ub} vs "
+        f"rhs_lb={rhs_lb}, rhs_ub={rhs_ub}."
+    )
