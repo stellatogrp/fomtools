@@ -1,17 +1,108 @@
+import numpy as np
+
 from fomtools.proxable_functions import ProxableFunction
-from fomtools.utils import norm
 
 
 class ElasticNet(ProxableFunction):
-    def __init__(self, mu, lambd):
-        if mu < 0 or lambd < 0:
-            raise ValueError("mu and lamb must be positive")
+    r"""
+    Elastic-net regularizer.
 
-        self.mu = mu
-        self.lambd = lambd
+    Represents the convex function
 
-    def elastic_net(self, x):
-        return self.mu * norm(x, 1) + (self.lambd / 2) * norm(x, 2) ** 2
+    $$
+        f(x) = \alpha \|x\|_1 + \beta \|x\|_2^2,
+    $$
 
-    def prox(self, x, gamma=1):
-        pass
+    with non-negative scalars $\alpha, \beta$. Note that the $\ell_2$
+    term has no leading $1/2$ factor: $\nabla(\beta \|x\|_2^2) = 2\beta x$.
+
+    Notes
+    -----
+    The proximal operator admits the closed form
+
+    $$
+        \operatorname{prox}_{\gamma f}(v) \;=\;
+            \frac{S_{\alpha\gamma}(v)}{1 + 2\beta\gamma},
+    $$
+
+    where $S_\lambda(w) = \operatorname{sign}(w)\,\max(|w| - \lambda, 0)$
+    is element-wise soft thresholding. Two boundary cases recover
+    familiar operators:
+
+    - $\beta = 0$: pure $\ell_1$, identical to ``NormL1(lambd=alpha)``.
+    - $\alpha = 0$: pure ridge, $v / (1 + 2\beta\gamma)$.
+    """
+
+    def __init__(self, alpha: float, beta: float):
+        super().__init__()
+        if alpha < 0 or beta < 0:
+            raise ValueError("alpha and beta must be non-negative")
+        self.alpha = alpha
+        self.beta = beta
+
+    def eval(self, x: np.ndarray) -> float:
+        r"""
+        Evaluate $f(x) = \alpha\|x\|_1 + \beta\|x\|_2^2$.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Point at which to evaluate the function.
+
+        Returns
+        -------
+        float
+            The function value $\alpha\|x\|_1 + \beta\|x\|_2^2$.
+        """
+        return float(self.alpha * np.sum(np.abs(x)) + self.beta * np.sum(x * x))
+
+    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+        r"""
+        Compute the proximal point of the elastic-net regularizer.
+
+        Uses the closed form
+
+        $$
+            \operatorname{prox}_{\gamma f}(\text{rhs}) \;=\;
+                \frac{S_{\alpha\gamma}(\text{rhs})}{1 + 2\beta\gamma}.
+        $$
+
+        Soft-thresholding is sign-equivariant, so the formula treats
+        positive and negative entries symmetrically; the
+        $1/(1 + 2\beta\gamma)$ factor is the ridge shrinkage piece.
+
+        Parameters
+        ----------
+        rhs : np.ndarray
+            Input point.
+        gamma : float, default 1.0
+            Proximal step size.
+
+        Returns
+        -------
+        np.ndarray
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{rhs})$.
+        """
+        thresh = self.alpha * gamma
+        soft = np.sign(rhs) * np.maximum(np.abs(rhs) - thresh, 0.0)
+        return soft / (1.0 + 2.0 * self.beta * gamma)
+
+    def grad(self, x: np.ndarray) -> np.ndarray:
+        r"""
+        Compute a subgradient of $f$ at $x$.
+
+        Returns $2\beta x + \alpha \operatorname{sign}(x)$, with
+        $\operatorname{sign}(0) = 0$ selecting the canonical
+        subgradient at zero for the $\ell_1$ part.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Point at which to evaluate the subgradient.
+
+        Returns
+        -------
+        np.ndarray
+            A subgradient $g \in \partial f(x)$.
+        """
+        return 2.0 * self.beta * x + self.alpha * np.sign(x)

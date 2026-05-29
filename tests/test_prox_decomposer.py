@@ -19,6 +19,7 @@ import pytest
 
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import (
+    ElasticNet,
     IndBallLinf,
     IndBox,
     IndNonNegative,
@@ -92,6 +93,110 @@ def test_norml1_decomposes_to_two_relus_on_sdp():
     # SDP canonicalizer tracks Relus it encoded
     assert len(v.canonicalizer._relu_steps) == 2
     assert all(isinstance(s, Relu) for s in v.canonicalizer._relu_steps)
+
+
+# --- ElasticNet ---
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_elasticnet_returns_linear_expression(method):
+    """ElasticNet prox is registered on the base; every backend inherits."""
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    out = v.prox(ElasticNet(alpha=0.3, beta=0.5), rhs, gamma=0.4)
+
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_elasticnet_emits_softthreshold_on_mip():
+    """
+    ElasticNet lowers to a single SoftThreshold step on MIP, with the
+    threshold scaled by alpha*gamma (the post-softthreshold scalar
+    shrinkage by 1/(1+2*beta*gamma) is an analytic LinearExpression op,
+    not a separate step).
+    """
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(ElasticNet(alpha=0.3, beta=0.5), rhs, gamma=0.4)
+
+    soft_steps = [
+        s for s in v.canonicalizer.steps if isinstance(s, SoftThreshold)
+    ]
+    assert len(soft_steps) == 1
+    # SoftThreshold's lambd should be alpha * gamma = 0.12
+    assert np.isclose(soft_steps[0].lambd, 0.12)
+
+
+def test_elasticnet_decomposes_to_two_relus_on_sdp():
+    """
+    On SDP, the SoftThreshold from prox_elasticnet recursively decomposes
+    into two ReLUs via _DECOMPOSERS — same composition as NormL1.
+    """
+    v = _make_verifier("sdp")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(ElasticNet(alpha=0.3, beta=0.5), rhs, gamma=0.4)
+
+    assert len(v.canonicalizer._relu_steps) == 2
+    assert all(isinstance(s, Relu) for s in v.canonicalizer._relu_steps)
+
+
+def test_elasticnet_reduces_to_norml1_when_beta_zero():
+    """
+    With beta = 0 the ridge-shrinkage scalar collapses to 1, so
+    ElasticNet(alpha, 0) produces a SoftThreshold step identical to
+    NormL1(alpha) at the same gamma.
+    """
+    alpha, gamma = 0.3, 0.4
+
+    v_en = _make_verifier("mip")
+    rhs_en = v_en.add_param(3, lb=-1.0, ub=1.0)
+    v_en.prox(ElasticNet(alpha=alpha, beta=0.0), rhs_en, gamma=gamma)
+
+    v_l1 = _make_verifier("mip")
+    rhs_l1 = v_l1.add_param(3, lb=-1.0, ub=1.0)
+    v_l1.prox(NormL1(lambd=alpha), rhs_l1, gamma=gamma)
+
+    soft_en = [
+        s for s in v_en.canonicalizer.steps if isinstance(s, SoftThreshold)
+    ][0]
+    soft_l1 = [
+        s for s in v_l1.canonicalizer.steps if isinstance(s, SoftThreshold)
+    ][0]
+    assert np.isclose(soft_en.lambd, soft_l1.lambd)
+
+
+def test_elasticnet_ridge_only_when_alpha_zero():
+    """
+    With alpha = 0 the prox is pure ridge shrinkage: rhs / (1 + 2*beta*gamma).
+    Verified numerically on the math wrapper (the lowering still emits a
+    SoftThreshold with lambd=0, which is the identity-shaped envelope).
+    """
+    beta, gamma = 0.5, 0.4
+    rhs = np.array([-2.0, 0.05, 1.5])
+    expected = rhs / (1.0 + 2.0 * beta * gamma)
+    np.testing.assert_allclose(
+        ElasticNet(alpha=0.0, beta=beta).prox(rhs, gamma), expected
+    )
+
+
+def test_elasticnet_prox_matches_closed_form():
+    """
+    Numerical math-layer sanity: ElasticNet.prox matches the closed-form
+    S_{alpha*gamma}(rhs) / (1 + 2*beta*gamma) on a random rhs.
+    """
+    rng = np.random.default_rng(7)
+    alpha, beta, gamma = 0.3, 0.5, 0.4
+    rhs = rng.normal(size=8)
+    thresh = alpha * gamma
+    expected = (
+        np.sign(rhs) * np.maximum(np.abs(rhs) - thresh, 0.0)
+        / (1.0 + 2.0 * beta * gamma)
+    )
+    np.testing.assert_allclose(
+        ElasticNet(alpha=alpha, beta=beta).prox(rhs, gamma), expected
+    )
 
 
 @pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])

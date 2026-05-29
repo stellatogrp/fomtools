@@ -5,6 +5,7 @@ import numpy as np
 
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import (
+    ElasticNet,
     IndBallLinf,
     IndBox,
     IndNonNegative,
@@ -278,6 +279,31 @@ class StepDecomposer:
             return np.full(ndim, float(arr))
         return arr
 
+    def prox_elasticnet(
+        self, prox: ElasticNet, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower an elastic-net prox to a ``SoftThreshold`` step plus a
+        scalar shrinkage on the output.
+
+        Uses the closed form
+
+        $$
+            \operatorname{prox}_{\gamma (\alpha\|\cdot\|_1 + \beta\|\cdot\|_2^2)}(v)
+            \;=\; \frac{S_{\alpha\gamma}(v)}{1 + 2\beta\gamma}.
+        $$
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it. The ``SoftThreshold`` is recursively
+        decomposed per-backend (e.g. SDP turns it into two ReLUs via
+        ``_DECOMPOSERS``); the $1/(1 + 2\beta\gamma)$ factor applies
+        analytically to the resulting composite ``LinearExpression``.
+        """
+        soft = self.process_step(
+            SoftThreshold(rhs=rhs, lambd=prox.alpha * gamma)
+        )
+        return soft / (1.0 + 2.0 * prox.beta * gamma)
+
     def prox_indballlinf(
         self, prox: IndBallLinf, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -386,6 +412,7 @@ class StepDecomposer:
         return self.process_step(step)
 
     _PROX_DECOMPOSERS: ClassVar[dict] = {
+        "elasticnet": prox_elasticnet,
         "indballlinf": prox_indballlinf,
         "indbox": prox_indbox,
         "indnonnegative": prox_indnonnegative,
