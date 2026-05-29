@@ -9,7 +9,7 @@ from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
 from fomtools.solvers.clarabel import ClarabelSolver
 from fomtools.solvers.cuclarabel import CuClarabelSolver
-from fomtools.steps import Relu
+from fomtools.steps import Affine, Relu
 from fomtools.utils.range_utils import process_1d_ranges, process_2d_ranges
 from fomtools.utils.sparse_utils import efficient_csc_pad
 
@@ -459,7 +459,25 @@ class SDP(Canonicalizer):
         self._relu_steps.append(step)
         self._cuts_dirty = True
 
+    def canonicalize_affine(self, step: Affine) -> None:
+        """
+        Encode an Affine step as a linear equality constraint.
+
+        The Affine step asserts ``step.lhs_mat @ step.lhs == step.rhs``;
+        this is the same equality MIP encodes (``mip.py:404``). On SDP it
+        flows through ``add_constraint`` → ``_add_equality_constraint_impl``,
+        which emits the linear matrix, the quadratic strengthening, and
+        the PSD cone membership for the involved leaves.
+
+        Parameters
+        ----------
+        step : Affine
+            The affine step to canonicalize.
+        """
+        self.add_constraint(step.lhs_mat @ step.lhs == step.rhs)
+
     _CANONICALIZERS = {
+        "affine": canonicalize_affine,
         "relu": canonicalize_relu,
     }
 
