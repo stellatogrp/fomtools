@@ -18,7 +18,12 @@ import numpy as np
 import pytest
 
 from fomtools.linearexpression import LinearExpression
-from fomtools.proxable_functions import IndNonNegative, NormL1, ProxableFunction
+from fomtools.proxable_functions import (
+    IndNonNegative,
+    IndNonPositive,
+    NormL1,
+    ProxableFunction,
+)
 from fomtools.steps import Relu, SoftThreshold
 from fomtools.verifier import Verifier
 
@@ -116,6 +121,34 @@ def test_indnonnegative_gamma_is_ignored():
 
     n_relu = sum(1 for s in v.canonicalizer.steps if isinstance(s, Relu))
     assert n_relu == 1
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_indnonpositive_returns_linear_expression(method):
+    """IndNonPositive prox is registered on the base; every backend inherits."""
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    out = v.prox(IndNonPositive(), rhs)
+
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_indnonpositive_emits_one_relu_on_mip():
+    """
+    IndNonPositive uses the -Relu(-rhs) reduction, so MIP sees exactly one Relu.
+    Its input bounds are the negation/swap of the original rhs bounds.
+    """
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-2.0, ub=1.0)
+    v.prox(IndNonPositive(), rhs)
+
+    relus = [s for s in v.canonicalizer.steps if isinstance(s, Relu)]
+    assert len(relus) == 1
+    # Bounds on -rhs are [-rhs.ub, -rhs.lb] = [-1, 2]
+    np.testing.assert_allclose(relus[0].lb, [-1.0, -1.0, -1.0])
+    np.testing.assert_allclose(relus[0].ub, [2.0, 2.0, 2.0])
 
 
 def test_unsupported_prox_raises_on_every_backend():
