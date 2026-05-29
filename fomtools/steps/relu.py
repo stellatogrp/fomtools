@@ -88,27 +88,30 @@ class Relu(Step):
         Parameters
         ----------
         ranges: Tuple[int, int] or List[Tuple[int, int]]
-            Either a single (start, end) pair or an iterable of such pair.
+            Either a single (start, end) pair or an iterable of such pairs.
             Each pair is interpreted as a half-open interval ``[start, end)``.
 
         Returns
         -------
         set[int]
-            The unique integers contained in the given half-open range(s)
+            The unique integers contained in the given half-open range(s).
 
         Examples
         --------
-        >>> relu = Relu()
-        >>> relu._get_ranges(((1, 2), (5, 9)))
-        {1, 2, 5, 6, 7, 8}
+        >>> Relu._get_ranges(((1, 2), (5, 9)))
+        {1, 5, 6, 7, 8}
 
-        >>> relu._get_ranges((4, 7))
+        >>> Relu._get_ranges((4, 7))
         {4, 5, 6}
         """
+        # Try the iterable-of-pairs form first. If ``ranges`` is a single
+        # ``(start, end)`` pair, unpacking its int elements raises TypeError
+        # ("cannot unpack non-iterable int") — fall back to the single-range
+        # form. This avoids the pre-existing ``ranges.append((0, 0))``
+        # workaround which silently mutated caller-owned lists.
         try:
-            ranges.append((0, 0))
-            return {i for (min, max) in ranges for i in range(min, max)}
-        except AttributeError:
+            return {i for (start, end) in ranges for i in range(start, end)}
+        except TypeError:
             return set(range(ranges[0], ranges[1]))
 
     def _build_composite_lhs(self) -> LinearExpression:

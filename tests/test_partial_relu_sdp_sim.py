@@ -88,6 +88,25 @@ def test_partial_relu_proj_leaf_bounds():
     assert np.allclose(step._lhs_proj_leaf.ub, [2.0, 2.0])
 
 
+def test_get_ranges_does_not_mutate_caller_list():
+    """``_get_ranges`` must not mutate the caller-owned proj_ranges list."""
+    ranges = [(1, 3), (5, 8)]
+    snapshot = list(ranges)
+    result = Relu._get_ranges(ranges)
+    assert ranges == snapshot
+    assert result == {1, 2, 5, 6, 7}
+
+
+def test_get_ranges_single_tuple():
+    """Single (start, end) pair recovers the half-open integer range."""
+    assert Relu._get_ranges((4, 7)) == {4, 5, 6}
+
+
+def test_get_ranges_tuple_of_tuples():
+    """A tuple of (start, end) pairs is accepted as an iterable."""
+    assert Relu._get_ranges(((1, 2), (5, 9))) == {1, 5, 6, 7, 8}
+
+
 # ---------------------------------------------------------------------------
 # SDP integration
 # ---------------------------------------------------------------------------
