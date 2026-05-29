@@ -1,10 +1,12 @@
 import logging
+from typing import ClassVar, List
 
 import numpy as np
 
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
-from fomtools.constraint import Constraint
+from fomtools.constraint import Constraint, is_binary_free
 from fomtools.linearexpression import LinearExpression
+from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 log = logging.getLogger(__name__)
 
@@ -75,6 +77,22 @@ class OBBTHandler(Canonicalizer):
         """
         self.solver.add_constr(constraint)
 
+    def add_constraints(self, constraints: List[Constraint]) -> None:
+        """
+        Add a list of constraints to the OBBT handler instance.
+
+        Parameters
+        ----------
+        constraints : List[Constraint]
+            Constraint objects to add to the OBBT instance. Every constraint
+            must be binary-free (the OBBT model is a pure linear program).
+
+        Returns
+        -------
+        None
+        """
+        self.solver.constraints_to_solver(constraints)
+
     def update_bounds(
         self, expression: LinearExpression, lb: float | np.ndarray, ub: float | np.ndarray
     ) -> None:
@@ -138,7 +156,7 @@ class OBBTHandler(Canonicalizer):
                 self.solver.optimize()
 
                 if not self.solver.is_optimal():
-                    log.info(f"bound tighting failed, GRB model status: {self.solver['status']}")
+                    log.info("bound tightening failed: OBBT model not solved to optimality")
                     log.info(f"i = {i}, sense={sense}")
                     return
 
@@ -152,3 +170,141 @@ class OBBTHandler(Canonicalizer):
 
         assert np.all(lb_out <= ub_out)
         return np.maximum(lb, lb_out), np.minimum(ub, ub_out)
+
+    # ------------------------------------------------------------------
+    # Linear (binary-free) canonicalization of steps into the OBBT LP.
+    #
+    # These methods mirror the *linear* equality and convex-envelope rows of
+    # the MIP canonicalizer (``fomtools/canonicalizers/mip.py``) with all
+    # binary-indicator (big-M) rows and Huchette cuts removed. They are an
+    # independent reimplementation -- they do not import or call MIP code --
+    # so the OBBT model is a pure LP. A small amount of duplication of the row
+    # expressions is intentional. Every method must be invoked with the step's
+    # *already-tightened* bounds, since the envelope coefficients bake in
+    # ``lb``/``ub``.
+    # ------------------------------------------------------------------
+
+    def _add_binary_free(self, constraints: List[Constraint]) -> None:
+        """Assert the constraints are binary-free, then add them to the LP."""
+        assert all(is_binary_free(c) for c in constraints), (
+            "OBBT handler received a constraint involving a binary variable"
+        )
+        self.add_constraints(constraints)
+
+    def canonicalize_affine(self, step: Affine) -> None:
+        """Add the affine equality ``lhs_mat @ lhs == rhs`` to the OBBT LP."""
+        self._add_binary_free([step.lhs_mat @ step.lhs == step.rhs])
+
+    def canonicalize_relu(self, step: Relu) -> None:
+        """
+        Add the binary-free ReLU relaxation rows to the OBBT LP.
+
+        Mirrors ``MIP._build_relu_constraints`` keeping only the equality
+        cases and, for the uncertain region, the triangle envelope
+        ``{ lhs >= rhs, lhs <= ub/(ub-lb) * (rhs - lb) }``. The big-M rows are
+        dropped.
+        """
+        constraints = []
+        for i, (_lhs, _rhs) in enumerate(zip(step.lhs, step.rhs)):
+            if i not in step.proj_indices:
+                constraints.append(_lhs == _rhs)
+            elif step.ub[i] <= 0:
+                constraints.append(_lhs == 0)
+            elif step.lb[i] > 0:
+                constraints.append(_lhs == _rhs)
+            else:
+                constraints.extend(
+                    [
+                        _lhs <= step.ub[i] / (step.ub[i] - step.lb[i]) * (_rhs - step.lb[i]),
+                        _lhs >= _rhs,
+                    ]
+                )
+        self._add_binary_free(constraints)
+
+    def canonicalize_saturatedlinear(self, step: SaturatedLinear) -> None:
+        """
+        Add the binary-free saturated-linear relaxation rows to the OBBT LP.
+
+        Mirrors ``MIP.canonicalize_saturatedlinear`` keeping only the
+        saturated/pass-through equalities and the convex-envelope slope rows;
+        all big-M rows are dropped.
+        """
+        constraints = []
+        for l, u, lb, ub, lhs, rhs in zip(
+            step.l, step.u, step.lb, step.ub, step.lhs, step.rhs
+        ):
+            if lb >= u:
+                constraints.append(lhs == u)
+            elif ub <= l:
+                constraints.append(lhs == l)
+            elif lb >= l and ub <= u:
+                constraints.append(lhs == rhs)
+            elif lb < l and ub > u:
+                constraints.extend(
+                    [
+                        lhs <= (u - l) / (u - lb) * (rhs - u) + u,
+                        lhs >= (u - l) / (ub - l) * (rhs - l) + l,
+                    ]
+                )
+            elif lb < l and ub < u:
+                constraints.extend(
+                    [lhs >= rhs, lhs <= ((ub - l) / (ub - lb)) * (rhs - ub) + ub]
+                )
+            elif lb > l and ub > u:
+                constraints.extend(
+                    [lhs <= rhs, lhs >= ((u - lb) / (ub - lb) * (rhs - lb) + lb)]
+                )
+        self._add_binary_free(constraints)
+
+    def canonicalize_softthreshold(self, step: SoftThreshold) -> None:
+        """
+        Add the binary-free soft-threshold relaxation rows to the OBBT LP.
+
+        Mirrors ``MIP.canonicalize_softthreshold`` keeping only the fixed-region
+        equalities and the convex-envelope rows; all big-M rows are dropped.
+        """
+        constraints = []
+        for lb, ub, lhs_lb, lhs_ub, lhs, rhs in zip(
+            step.lb, step.ub, step.lhs.lb, step.lhs.ub, step.lhs, step.rhs
+        ):
+            if lb >= step.lambd:
+                constraints.append(lhs == rhs - step.lambd)
+            elif ub <= -step.lambd:
+                constraints.append(lhs == rhs + step.lambd)
+            elif lb >= -step.lambd and ub <= step.lambd:
+                constraints.append(lhs == 0)
+            elif lb < -step.lambd and ub > step.lambd:
+                constraints.extend(
+                    [
+                        lhs >= rhs - step.lambd,
+                        lhs <= rhs + step.lambd,
+                        lhs <= lhs_ub / (ub + step.lambd) * (rhs + step.lambd),
+                        lhs >= lhs_lb / (lb - step.lambd) * (rhs - step.lambd),
+                    ]
+                )
+            elif -step.lambd <= lb <= step.lambd < ub:
+                constraints.extend(
+                    [
+                        lhs >= 0,
+                        lhs <= lhs_ub / (ub - lb) * (rhs - lb),
+                        lhs >= rhs - step.lambd,
+                    ]
+                )
+            elif step.lambd >= ub >= -step.lambd >= lb:
+                constraints.extend(
+                    [
+                        lhs <= 0,
+                        lhs >= lhs_lb / (lb - ub) * (rhs - ub),
+                        lhs <= rhs + step.lambd,
+                    ]
+                )
+            else:
+                raise RuntimeError("Unreachable code")
+        self._add_binary_free(constraints)
+
+    _CANONICALIZERS: ClassVar[dict] = {
+        "affine": canonicalize_affine,
+        "relu": canonicalize_relu,
+        "saturatedlinear": canonicalize_saturatedlinear,
+        "softthreshold": canonicalize_softthreshold,
+    }
