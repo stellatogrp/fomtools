@@ -42,11 +42,28 @@ class Step:
     def __init__(self, rhs: LinearExpression, relax_binary_vars: bool = False):
         self.rhs = rhs
         self.relax_binary_vars = relax_binary_vars
+        # Default: every output coordinate is "projected" (i.e., the step
+        # transformation applies to all rows). Subclasses that support
+        # partial projection (e.g. ``Relu`` with ``proj_ranges``) override
+        # this in their own ``__init__``.
+        self.proj_indices = set(range(rhs.ndim))
 
     @cached_property
     def lhs(self) -> LinearExpression:
         """Left-hand side linear expression in the operator definition."""
         return LinearExpression.from_int(self.rhs.ndim)
+
+    @property
+    def lhs_leaves(self) -> list[LinearExpression]:
+        """Leaves this step introduces and that must be registered with the
+        canonicalizer / step-decomposer.
+
+        Default: ``[self.lhs]`` (the lhs is itself a leaf). Steps that expose
+        a non-leaf composite ``lhs`` (currently only partial-projection
+        ``Relu``) override this to return the smaller fresh leaf actually
+        introduced.
+        """
+        return [self.lhs]
 
     def update_bounds(self, lb, ub):
         raise NotImplementedError

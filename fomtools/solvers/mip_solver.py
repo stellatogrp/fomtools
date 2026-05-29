@@ -118,12 +118,22 @@ class MIPSolver(Solver):
 
         for step in steps:
             y_var, y_val = self.get_relaxed_variables(step.rhs)
-            w_var, w_val = self.get_relaxed_variables(step.lhs)
+            # ``step.lhs_leaves[0]`` is the fresh MIP variable: the full lhs
+            # leaf for full relu, or the smaller proj-leaf for partial relu.
+            # ``rhs_to_pos`` maps each projected rhs row to its row in that
+            # fresh leaf; for full relu this is the identity dict.
+            w_leaf = step.lhs_leaves[0]
+            w_var, w_val = self.get_relaxed_variables(w_leaf)
+
+            rhs_to_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
 
             l = np.concatenate(step.rhs.lb)
             u = np.concatenate(step.rhs.ub)
 
             for i in range(step.lhs.ndim):
+                if i not in rhs_to_pos:
+                    continue
+                pos = rhs_to_pos[i]
                 # special case out sparse matrices as needed
                 A = np.concatenate(
                     [
@@ -133,8 +143,8 @@ class MIPSolver(Solver):
                 )
 
                 # TODO: Gurobi is leaked in this part
-                Iint, lI, h, L_hat, U_hat = get_cuts(step, i, w_val[i], A, y_val, l, u)
+                Iint, lI, h, L_hat, U_hat = get_cuts(step, i, w_val[pos], A, y_val, l, u)
                 if Iint is not None:
                     self.add_constr(
-                        create_new_constr(w_var[i], A, y_var, Iint, lI, h, L_hat, U_hat)
+                        create_new_constr(w_var[pos], A, y_var, Iint, lI, h, L_hat, U_hat)
                     )

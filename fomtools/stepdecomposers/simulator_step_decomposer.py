@@ -15,6 +15,7 @@ class SimulatorStepDecomposer(StepDecomposer):
     def _process_primitive(self, step: Step) -> LinearExpression:
         # Skip sync_lhs_bounds — the simulator evaluates numerically and
         # handles affine solves itself via canonicalize_affine.
-        self.register_var(step.lhs, var_type="param")
+        for leaf in step.lhs_leaves:
+            self.register_var(leaf, var_type="param")
         self.canonicalizer.canonicalize(step)
         return step.lhs
