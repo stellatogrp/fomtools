@@ -49,7 +49,7 @@ solver_params = {"OutputFlag": 0, "LogToConsole": 0}
 MATCH_MIP_AT_K1 = True
 
 # ── MIP — squared 2-norm of fixed-point residual (MIQP, Gurobi only) ──────────
-vp_mip = Verifier(method="mip", solver="gurobi", obbt_handler="gurobi",
+vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver="gurobi",
                   params=solver_params)
 
 x_mip = vp_mip.add_param(p, lb=x_lb, ub=x_ub)
@@ -67,7 +67,7 @@ for k in range(1, K + 1):
         x_worst_k5 = vp_mip.get_solution_value(x_mip)
 
 # ── SDP — squared 2-norm of fixed-point residual ──────────────────────────────
-vp_sdp = Verifier(method="sdp", solver="clarabel", obbt_handler="highs")
+vp_sdp = Verifier(method="sdp", solver="clarabel", obbt_solver="highs")
 
 x_sdp = vp_sdp.add_param(p, lb=x_lb, ub=x_ub)
 s_sdp = [s0]

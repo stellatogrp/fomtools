@@ -56,14 +56,14 @@ def test_add_constraint_inequality(vp):
     mip_solver_name = MIP_SOLVER_NAMES[type(vp.canonicalizer.solver).__name__]
 
     # Unconstrained baseline
-    vp_unc = Verifier(method='mip', solver=mip_solver_name, obbt_handler=None)
+    vp_unc = Verifier(method='mip', solver=mip_solver_name, obbt_solver=None)
     x_unc = vp_unc.add_iterate(n, lb=0, ub=10)
     z_unc = vp_unc.step.relu(x_unc - 3)
     vp_unc.set_objective_norm([z_unc], np.inf)
     result_unc = vp_unc.solve()
 
     # Constrained: x[i] <= 5 for all i
-    vp_con = Verifier(method='mip', solver=mip_solver_name, obbt_handler=None)
+    vp_con = Verifier(method='mip', solver=mip_solver_name, obbt_solver=None)
     x_con = vp_con.add_iterate(n, lb=0, ub=10)
     for i in range(n):
         vp_con.add_constraint(x_con[i] <= 5)
@@ -163,7 +163,7 @@ def test_add_constraint_equality_sdp_mip_comparison(vp, vp_sdp):
     vp_mip = Verifier(
         method='mip',
         solver=mip_solver_name,
-        obbt_handler=None
+        obbt_solver=None
     )
 
     x_mip = vp_mip.add_iterate(n, lb=0, ub=10)
@@ -180,7 +180,7 @@ def test_add_constraint_equality_sdp_mip_comparison(vp, vp_sdp):
     vp_sdp_local = Verifier(
         method='sdp',
         solver=sdp_solver_name,
-        obbt_handler=None
+        obbt_solver=None
     )
 
     x_sdp = vp_sdp_local.add_iterate(n, lb=0, ub=10)

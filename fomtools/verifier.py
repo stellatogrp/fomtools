@@ -33,7 +33,7 @@ class Verifier(object):
         theory_func=None,
         method="mip",
         solver="gurobi",
-        obbt_handler="gurobi",
+        obbt_solver="gurobi",
         params=None,
         rlt_cuts=False,
         triangle_cuts=False,
@@ -49,7 +49,7 @@ class Verifier(object):
             Canonicalization method for the verification problem.
         solver : str, default "gurobi"
             Solver backend identifier (e.g., "gurobi", "highs", "clarabel").
-        obbt_handler : str or None, default "gurobi"
+        obbt_solver : str or None, default "gurobi"
             Solver used by the OBBT bound-tightening handler. Disable with
             ``None``.
         params : dict, optional
@@ -74,8 +74,8 @@ class Verifier(object):
             rlt_cuts=rlt_cuts,
             triangle_cuts=triangle_cuts,
         )
-        self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
-        self.use_obbt_handler = True if obbt_handler else False
+        self.obbt_handler = OBBTHandler(solver=obbt_solver) if obbt_solver else None
+        self.use_obbt_handler = True if obbt_solver else False
         if self.obbt_handler is not None:
             self.canonicalizer.obbt_handler = self.obbt_handler
         decomposer_cls = self._get_step_decomposer(method)

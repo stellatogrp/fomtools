@@ -19,7 +19,7 @@ def vp(request: pytest.FixtureRequest):
     Pytest fixture that provides a `Verifier` instance. This fixture
     is parameterized to run tests using different solvers.
     """
-    return Verifier(solver=request.param, obbt_handler=request.param)
+    return Verifier(solver=request.param, obbt_solver=request.param)
 
 
 @pytest.fixture(params=SOLVERS, scope="function")
@@ -28,7 +28,7 @@ def vp_param_1(request: pytest.FixtureRequest):
     Pytest fixture that provides a `Verifier` instance configured with
     a solver whose output flag is set to 0 (silent mode).
     """
-    return Verifier(solver=request.param, obbt_handler=request.param, params={"OutputFlag": 0})
+    return Verifier(solver=request.param, obbt_solver=request.param, params={"OutputFlag": 0})
 
 
 @pytest.fixture(params=SOLVERS, scope="function")
@@ -40,7 +40,7 @@ def vp_param_2(request: pytest.FixtureRequest):
     """
     return Verifier(
         solver=request.param,
-        obbt_handler=request.param,
+        obbt_solver=request.param,
         params={"TimeLimit": 10, "MIPGap": 1e-4, "OutputFlag": 0},
     )
 
@@ -58,7 +58,7 @@ def vp_theory(request: pytest.FixtureRequest):
             return np.inf
         return 2 * init_C / np.sqrt((k - 1) * (k + 2))
 
-    return Verifier(solver=request.param, obbt_handler=request.param, theory_func=theory_func)
+    return Verifier(solver=request.param, obbt_solver=request.param, theory_func=theory_func)
 
 
 @pytest.fixture(params=SDP_SOLVERS, scope="function")
@@ -67,4 +67,60 @@ def vp_sdp(request: pytest.FixtureRequest):
     Pytest fixture that provides an SDP Verifier instance.
     Parameterized to run tests with different SDP solver backends.
     """
-    return Verifier(method='sdp', solver=request.param, obbt_handler=None)
+    return Verifier(method='sdp', solver=request.param, obbt_solver=None)
+
+
+@pytest.fixture(params=SDP_SOLVERS, scope="function")
+def vp_sdp_obbt(request: pytest.FixtureRequest):
+    """
+    Pytest fixture providing an SDP Verifier with the OBBT handler enabled
+    (using HiGHS as the LP backend for bound tightening).
+    """
+    return Verifier(method="sdp", solver=request.param, obbt_solver="highs")
+
+
+# --------------------------------------------------------------------------
+# Shared builders/helpers for OBBT tests.
+# --------------------------------------------------------------------------
+
+def build_lasso_ista(obbt, solver, *, method="mip", K=3, seed=0, n=3, m=4,
+                     t=0.05, lambd=0.1):
+    """
+    Build a K-step ISTA (lasso) soft-threshold chain, mirroring
+    ``_obbt_leak_repro.py``.
+
+    Parameters
+    ----------
+    obbt : str or None
+        OBBT handler solver name (e.g. ``"gurobi"``/``"highs"``) or ``None``.
+    solver : str
+        Main backend solver name.
+    method : str, default "mip"
+        Verifier backend method (``"mip"`` or ``"sdp"``).
+
+    Returns
+    -------
+    tuple[Verifier, list[LinearExpression]]
+        The verifier and the list of iterates ``[z_0, ..., z_K]``.
+    """
+    np.random.seed(seed)
+    A = np.random.normal(size=(m, n))
+    W = np.eye(n) - t * A.T @ A
+    G = t * A.T
+
+    params = {"OutputFlag": 0} if method == "mip" else None
+    v = Verifier(method=method, solver=solver, obbt_solver=obbt, params=params)
+    z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
+    b = v.add_param(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
+
+    iterates = [z]
+    for _ in range(K):
+        z = v.step.soft_threshold(rhs=W @ z + G @ b, lambd=lambd * t)
+        iterates.append(z)
+    return v, iterates
+
+
+def step_input_widths(v, step_name="SoftThreshold"):
+    """Return per-step input bound widths (``ub - lb``) for steps of a type."""
+    steps = [s for s in v.canonicalizer.steps if type(s).__name__ == step_name]
+    return [s.ub - s.lb for s in steps]
