@@ -118,12 +118,26 @@ class MIPSolver(Solver):
 
         for step in steps:
             y_var, y_val = self.get_relaxed_variables(step.rhs)
-            w_var, w_val = self.get_relaxed_variables(step.lhs)
+            # For partial-projection Relu, the fresh proj-leaf (size
+            # ``len(proj_indices)``) is the actual MIP variable; the composite
+            # ``step.lhs`` has rhs.ndim logical rows but only the proj rows live
+            # in a fresh solver variable. Pull the relaxed values from that
+            # leaf and remap rhs index ``i`` to its position in the leaf.
+            w_leaf = step.lhs_leaves[0]
+            w_var, w_val = self.get_relaxed_variables(w_leaf)
+
+            if getattr(step, "_lhs_proj_leaf", None) is not None:
+                rhs_to_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
+            else:
+                rhs_to_pos = {i: i for i in range(step.lhs.ndim)}
 
             l = np.concatenate(step.rhs.lb)
             u = np.concatenate(step.rhs.ub)
 
             for i in range(step.lhs.ndim):
+                if i not in rhs_to_pos:
+                    continue
+                pos = rhs_to_pos[i]
                 # special case out sparse matrices as needed
                 A = np.concatenate(
                     [
@@ -133,8 +147,8 @@ class MIPSolver(Solver):
                 )
 
                 # TODO: Gurobi is leaked in this part
-                Iint, lI, h, L_hat, U_hat = get_cuts(step, i, w_val[i], A, y_val, l, u)
+                Iint, lI, h, L_hat, U_hat = get_cuts(step, i, w_val[pos], A, y_val, l, u)
                 if Iint is not None:
                     self.add_constr(
-                        create_new_constr(w_var[i], A, y_var, Iint, lI, h, L_hat, U_hat)
+                        create_new_constr(w_var[pos], A, y_var, Iint, lI, h, L_hat, U_hat)
                     )

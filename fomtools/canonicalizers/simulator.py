@@ -588,14 +588,29 @@ class Simulator(Canonicalizer):
         """
         Record the provided ReLU step for deferred evaluation at solve time.
 
+        For partial-projection relu (``step._lhs_proj_leaf is not None``),
+        the activation evaluates only on the projected rhs coords and writes
+        them into ``_lhs_proj_leaf``. The non-proj rows of ``step.lhs``
+        share decomposition with ``step.rhs`` and are read off the existing
+        rhs leaves at evaluation time — no separate storage needed.
+
         Parameters
         ----------
         step: Step
             A step object containing the ReLU operation.
         """
+        if step._lhs_proj_leaf is None:
 
-        def activation(result):
-            return cp.maximum(result, 0)
+            def activation(result):
+                return cp.maximum(result, 0)
+
+        else:
+            proj_idx = np.array(sorted(step.proj_indices), dtype=int)
+
+            def activation(result):
+                # result shape: (N, rhs.ndim).
+                # Output shape: (N, len(proj_idx)) — the value of _lhs_proj_leaf.
+                return cp.maximum(result[:, proj_idx], 0)
 
         self.step_descriptors.append((step, activation))
 
@@ -714,24 +729,28 @@ class Simulator(Canonicalizer):
         compiled = []
         z_slices = simulation_data["z_slices"]
 
+        # Leaves a step *introduces* (where activation results get written).
+        # For partial-projection Relu this is the small ``_lhs_proj_leaf``;
+        # for everything else it's the full ``lhs`` (which is itself a leaf).
+        step_leaves = [s.lhs_leaves[0] for s, _ in self.step_descriptors]
+
         for i, (step, activation) in enumerate(self.step_descriptors):
             coeffs = self._linear_expr_to_cupy(step.rhs)
-            lhs_slice = z_slices[step.lhs]
+            lhs_slice = z_slices[step_leaves[i]]
 
             # Determine previous iterate slice for default residual computation.
             # Step 0: find the first original iterate leaf in the rhs decomposition.
-            # Step k>0: use the previous step's lhs.
+            # Step k>0: use the previous step's fresh leaf.
             if i == 0:
                 prev_slice = None
                 for leaf in step.rhs.decomposition_dict:
-                    if leaf in z_slices and leaf not in {s.lhs for s, _ in self.step_descriptors}:
+                    if leaf in z_slices and leaf not in set(step_leaves):
                         prev_slice = z_slices[leaf]
                         break
                 if prev_slice is None:
                     prev_slice = lhs_slice
             else:
-                prev_step, _ = self.step_descriptors[i - 1]
-                prev_slice = z_slices[prev_step.lhs]
+                prev_slice = z_slices[step_leaves[i - 1]]
 
             def _make_fn(_coeffs=coeffs, _activation=activation):
                 def evaluate_fn(z_stacked, p_stacked):

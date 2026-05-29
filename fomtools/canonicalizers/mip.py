@@ -487,26 +487,29 @@ class MIP(Canonicalizer):
             MIP constraints for the ReLU activation.
         """
         constraints = []
-        for i, (_lhs, _rhs) in enumerate(zip(step.lhs, step.rhs)):
-            if i not in step.proj_indices:
+        # Iterate proj indices only. For partial projection, ``step.lhs`` is a
+        # composite whose non-proj rows share decomposition with ``step.rhs``;
+        # those rows already satisfy ``lhs[i] == rhs[i]`` structurally, so no
+        # explicit constraint is needed. For full projection, ``proj_indices``
+        # covers every row and behavior matches the previous implementation.
+        for i in sorted(step.proj_indices):
+            _lhs = step.lhs[i]
+            _rhs = step.rhs[i]
+            if step.ub[i] <= 0:
+                constraints.append(_lhs == 0)
+            elif step.lb[i] > 0:
                 constraints.append(_lhs == _rhs)
             else:
-                if step.ub[i] <= 0:
-                    constraints.append(_lhs == 0)
-                elif step.lb[i] > 0:
-                    constraints.append(_lhs == _rhs)
-                elif step.ub[i] > 0 or step.lb[i] <= 0:
-                    new_var = LinearExpression.from_int(_rhs.ndim, is_binary=True)
-                    step.idx_with_binary_vars.add(i)
-                    constraints.append(_lhs <= step.ub[i] * new_var)
-
-                    constraints.extend(
-                        [
-                            _lhs <= step.ub[i] / (step.ub[i] - step.lb[i]) * (_rhs - step.lb[i]),
-                            _lhs >= _rhs,
-                            _lhs <= _rhs - step.lb[i] * (1 - new_var),
-                        ]
-                    )
+                new_var = LinearExpression.from_int(_rhs.ndim, is_binary=True)
+                step.idx_with_binary_vars.add(i)
+                constraints.append(_lhs <= step.ub[i] * new_var)
+                constraints.extend(
+                    [
+                        _lhs <= step.ub[i] / (step.ub[i] - step.lb[i]) * (_rhs - step.lb[i]),
+                        _lhs >= _rhs,
+                        _lhs <= _rhs - step.lb[i] * (1 - new_var),
+                    ]
+                )
         return constraints
 
     def canonicalize_saturatedlinear(self, step: SaturatedLinear):
