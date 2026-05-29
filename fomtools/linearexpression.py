@@ -655,3 +655,66 @@ class LinearExpression:
     def eval(self):
         # TODO
         raise NotImplementedError("LinExpr.eval() needs to be implemented.")
+
+
+def stack(exprs: list[LinearExpression]) -> LinearExpression:
+    r"""
+    Concatenate ``LinearExpression`` objects along axis 0 into a single view.
+
+    The result shares storage with its components: no new optimization
+    variables are introduced and no equality constraint of the form
+    ``y == [e_1; ...; e_n]`` is added. Any constraint or bound update on a
+    leaf appearing in ``exprs`` automatically applies to the corresponding
+    slice of the returned stack, since canonicalizers walk the result's
+    ``decomposition_dict`` directly to the underlying leaves.
+
+    Parameters
+    ----------
+    exprs : list[LinearExpression]
+        Components to stack. Each must be a valid ``LinearExpression``
+        (leaf or derived). Components may share leaves
+        (e.g. ``stack([x, 2*x])``); shared leaves are deduplicated in the
+        result's ``decomposition_dict`` via summation of their composed
+        coefficient matrices.
+
+    Returns
+    -------
+    LinearExpression
+        A non-leaf ``LinearExpression`` of dimension
+        ``sum(e.ndim for e in exprs)``. ``result.const`` is the
+        concatenation of each component's ``const``; ``result.lb`` / ``result.ub``
+        are computed once at construction by interval propagation from the
+        component leaves. To pick up later bound tightening on those leaves,
+        call ``result.bound_propagation()`` again.
+
+    Raises
+    ------
+    ValueError
+        If ``exprs`` is empty.
+    """
+    if len(exprs) == 0:
+        raise ValueError("stack() requires at least one expression")
+
+    total_dim = sum(e.ndim for e in exprs)
+    decomposition_dict: dict = {}
+    const = np.zeros(total_dim)
+    offset = 0
+    for e in exprs:
+        rows = np.arange(offset, offset + e.ndim)
+        cols = np.arange(e.ndim)
+        sel = spa.csc_matrix(
+            (np.ones(e.ndim), (rows, cols)),
+            shape=(total_dim, e.ndim),
+        )
+        for leaf, coeff in e.decomposition_dict.items():
+            composed = sel @ coeff
+            if leaf in decomposition_dict:
+                decomposition_dict[leaf] = decomposition_dict[leaf] + composed
+            else:
+                decomposition_dict[leaf] = composed
+        const[offset : offset + e.ndim] = e.const
+        offset += e.ndim
+
+    result = LinearExpression(decomposition_dict=decomposition_dict, const=const)
+    result.lb, result.ub = result.bound_propagation()
+    return result
