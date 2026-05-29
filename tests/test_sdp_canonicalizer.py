@@ -106,7 +106,7 @@ class TestCanonicalizeAffine:
 
     @staticmethod
     def _make_verifier():
-        return Verifier(method="sdp", solver="clarabel", obbt_handler=None)
+        return Verifier(method="sdp", solver="clarabel", obbt_solver=None)
 
     def test_canonicalize_does_not_raise(self):
         """Issuing an Affine step on SDP completes without NotImplementedError."""

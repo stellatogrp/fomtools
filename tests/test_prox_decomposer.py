@@ -37,13 +37,13 @@ def _make_verifier(method: str, obbt: str | None = None) -> Verifier:
         return Verifier(
             method="mip",
             solver="gurobi",
-            obbt_handler=obbt,
+            obbt_solver=obbt,
             params={"OutputFlag": 0},
         )
     if method == "sdp":
-        return Verifier(method="sdp", solver="clarabel", obbt_handler=obbt)
+        return Verifier(method="sdp", solver="clarabel", obbt_solver=obbt)
     if method == "simulator":
-        return Verifier(method="simulator", obbt_handler=None)
+        return Verifier(method="simulator", obbt_solver=None)
     raise ValueError(f"unknown method: {method}")
 
 

@@ -29,7 +29,7 @@ def _build_nnls_sdp(K, sdp_solver, rlt_cuts=False, triangle_cuts=False):
     vp = Verifier(
         method='sdp',
         solver=sdp_solver,
-        obbt_handler='highs',
+        obbt_solver='highs',
         rlt_cuts=rlt_cuts,
         triangle_cuts=triangle_cuts,
     )
@@ -65,14 +65,14 @@ def test_flags_stored_on_canonicalizer(sdp_solver):
     vp = Verifier(
         method='sdp',
         solver=sdp_solver,
-        obbt_handler=None,
+        obbt_solver=None,
         rlt_cuts=True,
         triangle_cuts=True,
     )
     assert vp.canonicalizer.rlt_cuts is True
     assert vp.canonicalizer.triangle_cuts is True
 
-    vp2 = Verifier(method='sdp', solver=sdp_solver, obbt_handler=None)
+    vp2 = Verifier(method='sdp', solver=sdp_solver, obbt_solver=None)
     assert vp2.canonicalizer.rlt_cuts is False
     assert vp2.canonicalizer.triangle_cuts is False
 
@@ -82,14 +82,14 @@ def test_cut_flags_warn_for_non_sdp_methods(flag):
     """Passing a cut flag with method != 'sdp' should emit a UserWarning."""
     kwargs = {flag: True}
     with pytest.warns(UserWarning, match=flag):
-        Verifier(method='mip', solver='highs', obbt_handler=None, **kwargs)
+        Verifier(method='mip', solver='highs', obbt_solver=None, **kwargs)
 
 
 def test_cut_flags_no_warning_when_off_for_non_sdp():
     """When both flags are off (default), no warning is emitted for any method."""
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
-        Verifier(method='mip', solver='highs', obbt_handler=None)
+        Verifier(method='mip', solver='highs', obbt_solver=None)
 
 
 def test_cut_flags_no_warning_for_sdp():
@@ -99,7 +99,7 @@ def test_cut_flags_no_warning_for_sdp():
         Verifier(
             method='sdp',
             solver='clarabel',
-            obbt_handler=None,
+            obbt_solver=None,
             rlt_cuts=True,
             triangle_cuts=True,
         )
@@ -116,7 +116,7 @@ def test_cuts_dirty_triggers(sdp_solver):
     vp = Verifier(
         method='sdp',
         solver=sdp_solver,
-        obbt_handler=None,
+        obbt_solver=None,
         rlt_cuts=True,
     )
     canon = vp.canonicalizer
@@ -158,7 +158,7 @@ def test_copy_resets_dirty(sdp_solver):
     vp = Verifier(
         method='sdp',
         solver=sdp_solver,
-        obbt_handler=None,
+        obbt_solver=None,
         rlt_cuts=True,
     )
     z = vp.add_iterate(2, lb=-1, ub=1)
@@ -240,7 +240,7 @@ def test_rlt_cuts_preserve_mip_lower_bound(sdp_solver):
     A = np.random.normal(size=(m, n))
     t = 0.01
 
-    vp_mip = Verifier(method='mip', solver='highs', obbt_handler='highs')
+    vp_mip = Verifier(method='mip', solver='highs', obbt_solver='highs')
     x_mip = vp_mip.add_param(m, lb=0, ub=0.1)
     z_mip = [vp_mip.add_iterate(n, lb=5, ub=5.1)]
     for k in range(1):
@@ -315,7 +315,7 @@ def test_rlt_cuts_invalidated_by_update_bounds():
         vp = Verifier(
             method='sdp',
             solver='clarabel',
-            obbt_handler='highs',
+            obbt_solver='highs',
             rlt_cuts=True,
         )
         x = vp.add_param(m, lb=0, ub=0.1)
@@ -342,7 +342,7 @@ def _build_mixed_relu_problem(triangle_cuts=False, rlt_cuts=False):
     vp = Verifier(
         method='sdp',
         solver='clarabel',
-        obbt_handler=None,
+        obbt_solver=None,
         triangle_cuts=triangle_cuts,
         rlt_cuts=rlt_cuts,
     )
@@ -357,7 +357,7 @@ def test_triangle_cuts_skipped_when_no_mixed_rows():
     vp = Verifier(
         method='sdp',
         solver='clarabel',
-        obbt_handler=None,
+        obbt_solver=None,
         triangle_cuts=True,
     )
     # All-positive input range → relu is identity → step.lb[0] = 1 > 0.
@@ -384,7 +384,7 @@ def test_triangle_cut_count_2d():
     vp = Verifier(
         method='sdp',
         solver='clarabel',
-        obbt_handler=None,
+        obbt_solver=None,
         triangle_cuts=True,
     )
     z0 = vp.add_iterate(2, lb=-1.0, ub=1.0)  # both dims mixed
@@ -413,7 +413,7 @@ def test_triangle_cuts_preserve_mip_lower_bound():
     A = np.random.normal(size=(m, n))
     t = 0.01
 
-    vp_mip = Verifier(method='mip', solver='highs', obbt_handler='highs')
+    vp_mip = Verifier(method='mip', solver='highs', obbt_solver='highs')
     x = vp_mip.add_param(m, lb=0, ub=0.1)
     z = [vp_mip.add_iterate(n, lb=5, ub=5.1)]
     z.append(vp_mip.step.relu(z[0] - t * A.T @ (A @ z[0] - x)))
@@ -557,7 +557,7 @@ def _build_ista_sdp(K, sdp_solver, rlt_cuts=False, triangle_cuts=False):
     vp = Verifier(
         method='sdp',
         solver=sdp_solver,
-        obbt_handler='highs',
+        obbt_solver='highs',
         rlt_cuts=rlt_cuts,
         triangle_cuts=triangle_cuts,
     )
@@ -582,7 +582,7 @@ def _build_boxpgd_sdp(K, sdp_solver, rlt_cuts=False, triangle_cuts=False):
     vp = Verifier(
         method='sdp',
         solver=sdp_solver,
-        obbt_handler='highs',
+        obbt_solver='highs',
         rlt_cuts=rlt_cuts,
         triangle_cuts=triangle_cuts,
     )
@@ -600,7 +600,7 @@ def _mip_inf_norm_nnls(K):
     np.random.seed(0)
     A = np.random.normal(size=(m, n))
     t = 0.01
-    vp = Verifier(method='mip', solver='highs', obbt_handler='highs')
+    vp = Verifier(method='mip', solver='highs', obbt_solver='highs')
     x = vp.add_param(m, lb=0, ub=0.1)
     z = [vp.add_iterate(n, lb=5, ub=5.1)]
     for k in range(K):
@@ -621,7 +621,7 @@ def _mip_inf_norm_ista(K):
     Bt = t * A.T
     lambda_t = lambd * t
 
-    vp = Verifier(method='mip', solver='highs', obbt_handler='highs')
+    vp = Verifier(method='mip', solver='highs', obbt_solver='highs')
     b_param = vp.add_param(m, lb=b - 0.1, ub=b + 0.1)
     z = [vp.add_iterate(n, lb=1, ub=1.1)]
     for k in range(K):
@@ -638,7 +638,7 @@ def _mip_inf_norm_boxpgd(K):
     l = np.array([-1.0, -0.5])
     u = np.array([0.5, 1.0])
     t = 0.5
-    vp = Verifier(method='mip', solver='highs', obbt_handler='highs')
+    vp = Verifier(method='mip', solver='highs', obbt_solver='highs')
     q_param = vp.add_param(n, lb=q - 0.1, ub=q + 0.1)
     z = [vp.add_iterate(n, lb=0, ub=0.1)]
     for k in range(K):

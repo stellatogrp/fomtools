@@ -6,6 +6,33 @@ if TYPE_CHECKING:
     from fomtools.linearexpression import LinearExpression
 
 
+def is_binary_free(constraint: "Constraint") -> bool:
+    """
+    Return ``True`` if the constraint involves no binary leaf variables.
+
+    A constraint is "binary-free" iff none of the leaf expressions in
+    ``constraint.lhs.decomposition_dict`` is flagged ``is_binary``. Such
+    constraints are safe to add to the OBBT handler's LP (which must remain a
+    pure linear program). Binary leaves are created via
+    :meth:`LinearExpression.from_int` with ``is_binary=True`` (e.g. the big-M
+    indicator variables in the MIP canonicalizer).
+
+    Parameters
+    ----------
+    constraint : Constraint
+        The constraint to inspect.
+
+    Returns
+    -------
+    bool
+        ``True`` if no leaf in the constraint is binary, ``False`` otherwise.
+    """
+    return not any(
+        getattr(leaf, "is_binary", False)
+        for leaf in constraint.lhs.decomposition_dict
+    )
+
+
 class Constraint:
     r"""
     A symbolic relation between two expressions (or an expression and a vector),

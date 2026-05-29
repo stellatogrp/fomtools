@@ -27,7 +27,7 @@ def test_nnls_sdp(vp_sdp):
 
 def test_sdp_direct_solver_calls():
     """Test direct solver method calls on canonicalizer."""
-    vp = Verifier(method='sdp', solver='clarabel', obbt_handler='highs')
+    vp = Verifier(method='sdp', solver='clarabel', obbt_solver='highs')
     m, n = 3, 2
 
     np.random.seed(0)
@@ -96,7 +96,7 @@ def test_sdp_update_bounds_not_found(vp_sdp):
     _x = vp_sdp.add_param(2, lb=0, ub=1)
 
     # Create a different expression that wasn't added
-    vp2 = Verifier(method='sdp', solver='clarabel', obbt_handler='highs')
+    vp2 = Verifier(method='sdp', solver='clarabel', obbt_solver='highs')
     y = vp2.add_param(2, lb=0, ub=1)
 
     with pytest.raises(ValueError, match="Expression not found"):

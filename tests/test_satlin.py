@@ -145,7 +145,7 @@ def test_satlin_sdp_mip(vp_param_2, vp_sdp):
     mip_solver_name = {"GurobiSolver": "gurobi", "HiGHSSolver": "highs"}[mip_solver_name]
 
     # --- SDP ---
-    vp_s = Verifier(method="sdp", solver=sdp_solver_name, obbt_handler="highs")
+    vp_s = Verifier(method="sdp", solver=sdp_solver_name, obbt_solver="highs")
     q_s = vp_s.add_param(n, lb=q - q_offset, ub=q + q_offset)
     z_s = [vp_s.add_iterate(n, lb=z0_init, ub=z0_init)]
     for k in range(K):
@@ -154,7 +154,7 @@ def test_satlin_sdp_mip(vp_param_2, vp_sdp):
     sdp_res = vp_s.solve()
 
     # --- MIP ---
-    vp_m = Verifier(solver=mip_solver_name, obbt_handler=mip_solver_name,
+    vp_m = Verifier(solver=mip_solver_name, obbt_solver=mip_solver_name,
                      params={"TimeLimit": 10, "MIPGap": 1e-4, "OutputFlag": 0})
     q_m = vp_m.add_param(n, lb=q - q_offset, ub=q + q_offset)
     z_m = [vp_m.add_iterate(n, lb=z0_init, ub=z0_init)]
@@ -183,7 +183,7 @@ def test_satlin_param_sdp_mip(vp_param_2, vp_sdp):
     mip_solver_name = {"GurobiSolver": "gurobi", "HiGHSSolver": "highs"}[mip_solver_name]
 
     # --- SDP ---
-    vp_s = Verifier(method="sdp", solver=sdp_solver_name, obbt_handler="highs")
+    vp_s = Verifier(method="sdp", solver=sdp_solver_name, obbt_solver="highs")
     q_s = vp_s.add_param(n, lb=q - q_offset, ub=q + q_offset)
     top_s = vp_s.add_param(1, lb=0.5, ub=0.6)
     l_rest_s = vp_s.add_param(n - 1, lb=np.array([-1.2, -0.35]), ub=np.array([-1.1, 0]))
@@ -198,7 +198,7 @@ def test_satlin_param_sdp_mip(vp_param_2, vp_sdp):
     sdp_res = vp_s.solve()
 
     # --- MIP ---
-    vp_m = Verifier(solver=mip_solver_name, obbt_handler=mip_solver_name,
+    vp_m = Verifier(solver=mip_solver_name, obbt_solver=mip_solver_name,
                      params={"TimeLimit": 10, "MIPGap": 1e-4, "OutputFlag": 0})
     q_m = vp_m.add_param(n, lb=q - q_offset, ub=q + q_offset)
     top_m = vp_m.add_param(1, lb=0.5, ub=0.6)
