@@ -9,7 +9,7 @@ from fomtools.canonicalizers.mip import MIP
 from fomtools.canonicalizers.obbt_handler import OBBTHandler
 from fomtools.canonicalizers.sdp import SDP
 from fomtools.canonicalizers.simulator import Simulator
-from fomtools.constraint import Constraint
+from fomtools.constraint import Constraint, is_binary_free
 from fomtools.linearexpression import LinearExpression
 from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
@@ -437,7 +437,9 @@ class Verifier(object):
         -------
         None
         """
-        if self.use_obbt_handler:
+        # Only forward binary-free constraints to the OBBT handler so its model
+        # stays a pure LP (binary leaves would otherwise be relaxed silently).
+        if self.use_obbt_handler and is_binary_free(constr):
             self.obbt_handler.add_constraint(constr)
             self._tighten_constraint_bounds(constr)
         self.canonicalizer.add_constraint(constr)
@@ -566,11 +568,8 @@ class Verifier(object):
         """
         step = step_cls(rhs=rhs, relax_binary_vars=relax_binary_vars, **kwargs)
 
-        if self.use_obbt_handler and not step.skip_obbt:
-            result = self.obbt_handler.obbt(step.rhs, step.lb, step.ub)
-            if result is not None:
-                step.update_bounds(*result)
-
+        # OBBT input-tightening + relaxation building happens per-primitive in
+        # StepDecomposer._process_primitive, so decomposed sub-steps are covered.
         lhs = self.step_decomposer.process_step(step)
         self.steps.append(step)
 
@@ -626,6 +625,14 @@ class Verifier(object):
             improv_frac = (sum(_lb > lb) + sum(_ub < ub)) / (2.0 * len(lb))
 
         self.canonicalizer.add_theory_cut(C, target_expr, lb, ub)
+
+        # Mirror the (binary-free) theory cut into the OBBT LP so subsequent
+        # bound tightening benefits from it as well.
+        if self.use_obbt_handler:
+            theory_cuts = [target_expr >= lb - C, target_expr <= ub + C]
+            self.obbt_handler.add_constraints(
+                [c for c in theory_cuts if is_binary_free(c)]
+            )
         return improv_frac
 
     def set_zero_objective(self):
