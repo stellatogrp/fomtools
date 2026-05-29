@@ -88,6 +88,31 @@ def test_partial_relu_proj_leaf_bounds():
     assert np.allclose(step._lhs_proj_leaf.ub, [2.0, 2.0])
 
 
+def test_partial_relu_lhs_prunes_dead_rhs_leaves():
+    """A rhs leaf whose coefficient is nonzero only on projected rows
+    contributes zero to the composite lhs (S_nonproj masks those rows).
+    The composite must prune that dead entry instead of carrying a leaf
+    with an all-zero coefficient — otherwise a canonicalizer walking
+    ``lhs.decomposition_dict`` would do a wasted ``var_idx_map`` lookup
+    (and KeyError if the leaf isn't registered).
+    """
+    x = _leaf(3)
+    y = _leaf(3)
+    # proj_indices = {1, 2}; non-proj is {0}. N contributes only to rows 1 & 2,
+    # so S_nonproj @ N is all-zero and y must drop out of the composite.
+    M = np.eye(3)
+    N = np.zeros((3, 3))
+    N[1, 0] = 1.0
+    N[2, 0] = 1.0
+    rhs_expr = M @ x + N @ y
+    step = Relu(rhs=rhs_expr, proj_ranges=(1, 3))
+    assert y not in step.lhs.decomposition_dict
+    # x still contributes via row 0, so it stays.
+    assert x in step.lhs.decomposition_dict
+    # And of course the fresh proj leaf is in the dict.
+    assert step._lhs_proj_leaf in step.lhs.decomposition_dict
+
+
 def test_get_ranges_does_not_mutate_caller_list():
     """``_get_ranges`` must not mutate the caller-owned proj_ranges list."""
     ranges = [(1, 3), (5, 8)]

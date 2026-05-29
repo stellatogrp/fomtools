@@ -715,6 +715,12 @@ def stack(exprs: list[LinearExpression]) -> LinearExpression:
         const[offset : offset + e.ndim] = e.const
         offset += e.ndim
 
-    result = LinearExpression(decomposition_dict=decomposition_dict, const=const)
+    # Drop entries whose composed coefficient is all-zero — possible when a
+    # component's leaf coefficient is supported only on rows masked out by
+    # the selection matrix. Pruning prevents canonicalizers walking the
+    # result's decomposition_dict from looking up irrelevant leaves.
+    result = LinearExpression(
+        decomposition_dict=prune_dict(decomposition_dict), const=const
+    )
     result.lb, result.ub = result.bound_propagation()
     return result

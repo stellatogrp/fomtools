@@ -145,6 +145,26 @@ def test_stack_empty_raises():
         stack([])
 
 
+def test_stack_prunes_dead_leaves():
+    """A component whose decomposition carries an all-zero coefficient on
+    some leaf must not propagate that leaf into the stack's decomposition.
+    Arithmetic ops already prune, so we hand-build a LinearExpression with
+    a dead entry to exercise the prune in ``stack()`` directly.
+    """
+    x = _leaf(2, lb=-1.0, ub=1.0)
+    y = _leaf(2, lb=-1.0, ub=1.0)
+    component = LinearExpression(
+        decomposition_dict={
+            x: spa.eye(2),
+            y: spa.csc_matrix((2, 2)),  # all-zero — dead entry
+        },
+        const=np.zeros(2),
+    )
+    result = stack([component])
+    assert x in result.decomposition_dict
+    assert y not in result.decomposition_dict
+
+
 def test_stack_single_expression_is_identity_view():
     x = _leaf(4)
     y = stack([x])

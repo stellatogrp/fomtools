@@ -5,6 +5,7 @@ import scipy.sparse as spa
 
 from fomtools.linearexpression import LinearExpression
 from fomtools.steps.step import Step
+from fomtools.utils.dict_utils import prune_dict
 
 
 class Relu(Step):
@@ -154,7 +155,13 @@ class Relu(Step):
 
         const = S_nonproj @ self.rhs.const
 
-        result = LinearExpression(decomposition_dict=decomposition_dict, const=const)
+        # Drop entries whose composed coefficient is all-zero — happens when
+        # an rhs leaf contributes only to projected rows, since ``S_nonproj``
+        # zeros out those rows. Pruning prevents downstream canonicalizers
+        # from looking up an irrelevant leaf in ``var_idx_map``.
+        result = LinearExpression(
+            decomposition_dict=prune_dict(decomposition_dict), const=const
+        )
         # Initialize array-valued bounds so later update_bounds calls have a
         # consistent shape to maximize/minimize against.
         result.lb, result.ub = result.bound_propagation()
