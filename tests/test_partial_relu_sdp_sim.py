@@ -167,12 +167,11 @@ def _partial_relu_np(x, proj_ranges):
 
 
 def test_simulator_partial_relu_runs():
-    """Sanity: simulator with partial relu completes a multi-iter PGD without error.
+    """Multi-iter partial-relu PGD with the default residual path.
 
-    Uses explicit inf-norm residual specs on ``z[k] - z[k-1]`` (the natural
-    convergence measure on the *full composite* output, since the default
-    residual path compares fresh-leaf slots whose shapes mismatch across
-    partial vs full iterates).
+    The default residual now compares the *full composite* outputs across
+    iterations, so partial-projection ReLU works even when the caller does
+    not register an explicit residual spec.
     """
     np.random.seed(42)
     K = 5
@@ -195,13 +194,47 @@ def test_simulator_partial_relu_runs():
             z[k - 1] - step_size * (P @ z[k - 1] + q_param),
             proj_ranges=(1, 3),
         )
-        vp.set_objective_norm(z[k] - z[k - 1], np.inf)
 
     residuals = vp.solve()
     assert residuals.shape[0] == len(q_samples)
     assert residuals.shape[1] == K
     # PGD with partial relu still produces monotonic-ish residual decay.
     assert residuals[0, -1] <= residuals[0, 0] + TEST_EPS
+
+
+def test_simulator_partial_relu_default_residual_matches_explicit():
+    """Default residual (composite-based) and explicit ``z[k]-z[k-1]`` spec
+    must agree numerically. Pins the contract that the default path computes
+    the convergence residual on the full composite output, not on the small
+    fresh proj-leaf.
+    """
+    np.random.seed(7)
+    K = 4
+    n = 3
+    step_size = 0.05
+    P = np.random.normal(size=(n, n))
+    P = P @ P.T
+    rng = np.random.default_rng(0)
+    q_samples = rng.uniform(low=-1.0, high=1.0, size=(20, n))
+
+    def run(with_explicit_residual: bool):
+        vp = Verifier(method="simulator", obbt_handler=None)
+        z = [None] * (K + 1)
+        z[0] = vp.add_iterate(ndim=n, lb=-10.0, ub=10.0, init=np.full(n, 1.0))
+        q = vp.add_param(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
+        for k in range(1, K + 1):
+            z[k] = vp.step.relu(
+                z[k - 1] - step_size * (P @ z[k - 1] + q),
+                proj_ranges=(1, 3),
+            )
+            if with_explicit_residual:
+                vp.set_objective_norm(z[k] - z[k - 1], np.inf)
+        return np.asarray(vp.solve())
+
+    default = run(with_explicit_residual=False)
+    explicit = run(with_explicit_residual=True)
+    assert default.shape == explicit.shape
+    assert np.allclose(default, explicit, atol=1e-4)
 
 
 def test_simulator_partial_relu_differs_from_full():

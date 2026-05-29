@@ -719,12 +719,17 @@ class Simulator(Canonicalizer):
 
         Returns
         -------
-        list[tuple[Callable, slice, slice]]
-            A list of ``(evaluate_fn, lhs_slice, prev_slice)`` tuples where
-            ``evaluate_fn(z_stacked, p_stacked) -> cp.ndarray`` computes the
-            step output, ``lhs_slice`` is where to write it in z_stacked,
-            and ``prev_slice`` is the previous iterate's slice (for default
-            residual computation).
+        list[tuple[Callable, slice, slice, Callable]]
+            A list of ``(evaluate_fn, lhs_slice, prev_slice, compose_lhs)``
+            tuples where ``evaluate_fn(z_stacked, p_stacked) -> cp.ndarray``
+            computes the activation output to write into ``lhs_slice``, and
+            ``compose_lhs(z_stacked, p_stacked) -> cp.ndarray`` evaluates
+            the full composite ``step.lhs`` from the state vector (matters
+            for partial-projection ReLU, where the activation only fills
+            the fresh proj-leaf slot and the non-proj rows of ``step.lhs``
+            are read off shared rhs leaves). ``prev_slice`` points to the
+            previous iterate's slice in ``z_stacked`` for the default
+            step-0 residual.
         """
         compiled = []
         z_slices = simulation_data["z_slices"]
@@ -736,11 +741,19 @@ class Simulator(Canonicalizer):
 
         for i, (step, activation) in enumerate(self.step_descriptors):
             coeffs = self._linear_expr_to_cupy(step.rhs)
+            # For full ReLU/satlin/etc., ``step.lhs`` is a leaf and these
+            # coeffs amount to ``identity @ z_stacked[:, lhs_slice]``, so
+            # ``compose_lhs`` simply returns what was just written. For
+            # partial-projection ReLU, the composite ``step.lhs`` mixes
+            # the fresh proj-leaf with passthrough rows of ``step.rhs``;
+            # evaluating this combination yields the full output.
+            lhs_coeffs = self._linear_expr_to_cupy(step.lhs)
             lhs_slice = z_slices[step_leaves[i]]
 
             # Determine previous iterate slice for default residual computation.
             # Step 0: find the first original iterate leaf in the rhs decomposition.
-            # Step k>0: use the previous step's fresh leaf.
+            # Step k>0: previous step's composite output is provided by the caller
+            # via the cached composed-lhs from the prior iteration.
             if i == 0:
                 prev_slice = None
                 for leaf in step.rhs.decomposition_dict:
@@ -761,7 +774,15 @@ class Simulator(Canonicalizer):
 
                 return evaluate_fn
 
-            compiled.append((_make_fn(), lhs_slice, prev_slice))
+            def _make_composer(_lhs_coeffs=lhs_coeffs):
+                def compose_lhs(z_stacked, p_stacked):
+                    return self._assemble_linear_combination(
+                        z_stacked, p_stacked, _lhs_coeffs, simulation_data
+                    )
+
+                return compose_lhs
+
+            compiled.append((_make_fn(), lhs_slice, prev_slice, _make_composer()))
         return compiled
 
     def _compile_residuals(self, simulation_data):
@@ -880,25 +901,42 @@ class Simulator(Canonicalizer):
                 z_batch = cp.tile(z0, (N, 1))
                 residuals = cp.empty((N, n_residuals), dtype=cp.float32)
                 residual_col = 0
+                # Cache of the previous step's composite-lhs value, used by
+                # the default residual path so that partial-projection ReLU
+                # (where ``z_new`` only holds the projected outputs) still
+                # produces a residual on the full composite output.
+                prev_composed = None
 
-                for step_idx, (evaluate_fn, lhs_slice, prev_slice) in enumerate(
-                    compiled_steps
-                ):
+                for step_idx, (
+                    evaluate_fn,
+                    lhs_slice,
+                    prev_slice,
+                    compose_lhs,
+                ) in enumerate(compiled_steps):
                     z_new = evaluate_fn(z_batch, p_samples)
+                    z_batch[:, lhs_slice] = z_new
 
                     if has_residual_specs:
-                        z_batch[:, lhs_slice] = z_new
                         if step_idx in compiled_residuals:
                             residuals[:, residual_col] = compiled_residuals[step_idx](
                                 z_batch, p_samples
                             )
                             residual_col += 1
                     else:
-                        # Default: inf-norm of z[k] - z[k-1]
+                        # Default: inf-norm of composite_lhs[k] - composite_lhs[k-1].
+                        # For full ReLU/satlin/etc., compose_lhs returns the freshly
+                        # written leaf value (==z_new). For partial-projection ReLU,
+                        # it assembles the full output (proj rows from the fresh leaf,
+                        # non-proj rows from shared rhs leaves).
+                        composed = compose_lhs(z_batch, p_samples)
+                        if step_idx == 0:
+                            prev_full = z_batch[:, prev_slice]
+                        else:
+                            prev_full = prev_composed
                         residuals[:, residual_col] = cp.max(
-                            cp.abs(z_new - z_batch[:, prev_slice]), axis=1
+                            cp.abs(composed - prev_full), axis=1
                         )
-                        z_batch[:, lhs_slice] = z_new
+                        prev_composed = composed
                         residual_col += 1
 
                 return residuals
