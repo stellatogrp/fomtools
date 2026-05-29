@@ -169,7 +169,11 @@ class StepDecomposer:
             step.sync_lhs_bounds()
         # registered as "param" for MIP/SDP compatibility; Simulator registers
         # step lhs as an iterate with zero init so subsequent steps can reference it.
-        self.register_var(step.lhs, var_type="param")
+        # For steps whose lhs is a composite view (e.g. partial-projection Relu),
+        # lhs_leaves names only the fresh leaves that actually need solver-side
+        # variables; non-fresh rows reuse rhs leaves and are already registered.
+        for leaf in step.lhs_leaves:
+            self.register_var(leaf, var_type="param")
 
         self.canonicalizer.canonicalize(step)
 

@@ -425,32 +425,45 @@ class SDP(Canonicalizer):
         on the SDP matrix variable and registers the appropriate PSD cone
         constraint for the lifted formulation.
 
+        Operates uniformly over ``step.proj_indices`` and binds equalities to
+        ``step.lhs_leaves[0]``. For full ReLU, ``proj_indices`` covers every
+        rhs row and ``lhs_leaves[0]`` is the full lhs leaf — equivalent to a
+        standard full-output encoding. For partial-projection ReLU, only the
+        projected rows get lifted equalities and ``lhs_leaves[0]`` is the
+        smaller fresh proj-leaf; the non-projected rows are structurally
+        fused into shared rhs leaves at composition time, so no equalities
+        and no SDP rows are emitted for them.
+
         Parameters
         ----------
         step : Relu
             The ReLU step containing input expression (rhs) and output
             variable (lhs).
         """
-        lhs, rhs = step.lhs, step.rhs
+        rhs = step.rhs
         A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(rhs)
         b_vec = rhs.const
-        y_idx_bounds = [self.var_idx_map[lhs]]
 
+        y_leaf = step.lhs_leaves[0]
+        proj_list = sorted(step.proj_indices)
+
+        y_idx_bounds = [self.var_idx_map[y_leaf]]
         relu_psd_cone_indices = y_idx_bounds + x_idx_bounds
 
-        m, n = A_mat.shape
         y_idx_ranges_2d = process_2d_ranges(y_idx_bounds, y_idx_bounds)
         y_idx_ranges_1d = process_1d_ranges(y_idx_bounds)
         xy_idx_ranges = process_2d_ranges(x_idx_bounds, y_idx_bounds)
-        I = np.eye(lhs.ndim)
+        I = np.eye(y_leaf.ndim)
 
         curr_prob_dim = self.get_sdp_var_dim()
-        for i in range(m):
+        for j, i in enumerate(proj_list):
+            # j indexes y_leaf (size = len(proj_list));
+            # i indexes rhs row in A_mat / b_vec (size = rhs.ndim).
+            Ij = I[j]
             new_A = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
-            Ii = I[i]
-            new_A[y_idx_ranges_2d] = np.outer(Ii, Ii)
-            new_A[xy_idx_ranges] = -np.outer(A_mat[i], Ii)
-            new_A[y_idx_ranges_1d] = -b_vec[i] * Ii
+            new_A[y_idx_ranges_2d] = np.outer(Ij, Ij)
+            new_A[xy_idx_ranges] = -np.outer(A_mat[i], Ij)
+            new_A[y_idx_ranges_1d] = -b_vec[i] * Ij
 
             self.Aeq_matrices.append(symmetrize(new_A.tocsc()))
             self.beq_consts.append(0)
@@ -713,7 +726,8 @@ class SDP(Canonicalizer):
         """
         step = Relu(rhs=expr)
         step.update_bounds(*canon_copy.get_expression_bounds(expr))
-        canon_copy.add_var(step.lhs)
+        for leaf in step.lhs_leaves:
+            canon_copy.add_var(leaf)
         canon_copy.canonicalize_relu(step)
         return step.lhs
 
@@ -938,10 +952,19 @@ class SDP(Canonicalizer):
             rhs_lb, rhs_ub = rhs.bound_propagation()
             A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(rhs)
             b_vec = np.asarray(rhs.const)
-            y_idx_bounds = [self.var_idx_map[step.lhs]]
 
-            d = step.lhs.ndim
+            # Map each rhs row to its position in the fresh y-leaf. For full
+            # relu this is the identity dict (proj_indices spans rhs.ndim);
+            # for partial relu it maps only projected rhs rows and skips the
+            # rest (handled by the ``if i not in rhs_to_y_pos`` guard below).
+            y_leaf = step.lhs_leaves[0]
+            rhs_to_y_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
+            y_idx_bounds = [self.var_idx_map[y_leaf]]
+
+            d = rhs.ndim
             for i in range(d):
+                if i not in rhs_to_y_pos:
+                    continue
                 if rhs_lb[i] >= 0 or rhs_ub[i] <= 0:
                     continue
                 for j in range(d):
@@ -956,6 +979,7 @@ class SDP(Canonicalizer):
                         y_idx_bounds,
                         rhs_lb,
                         rhs_ub,
+                        y_pos=rhs_to_y_pos[i],
                     )
 
     def _build_triangle_cut_for_pair(
@@ -968,6 +992,7 @@ class SDP(Canonicalizer):
         y_idx_bounds: list,
         rhs_lb: np.ndarray,
         rhs_ub: np.ndarray,
+        y_pos: int | None = None,
     ) -> None:
         """
         Append the lifted triangle cut for output pair ``(i, j)`` of a ReLU
@@ -1008,7 +1033,9 @@ class SDP(Canonicalizer):
         b_j = float(b_vec[j])
 
         y_start, _y_end = y_idx_bounds[0]
-        y_i_idx = y_start + i
+        # ``y_pos`` is the row of the (possibly smaller) fresh leaf that
+        # corresponds to rhs row ``i``. For full-projection it equals ``i``.
+        y_i_idx = y_start + (y_pos if y_pos is not None else i)
 
         N = spa.lil_matrix((n_dim, n_dim))
 

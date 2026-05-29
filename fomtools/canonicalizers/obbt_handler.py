@@ -213,13 +213,16 @@ class OBBTHandler(Canonicalizer):
         Mirrors ``MIP._build_relu_constraints`` keeping only the equality
         cases and, for the uncertain region, the triangle envelope
         ``{ lhs >= rhs, lhs <= ub/(ub-lb) * (rhs - lb) }``. The big-M rows are
-        dropped.
+        dropped. Iterates ``proj_indices`` only — for partial-projection
+        ReLU the non-proj rows of ``step.lhs`` share decomposition with
+        ``step.rhs`` (composite passthrough), so emitting ``lhs[i] == rhs[i]``
+        would reduce to a degenerate ``0 == 0`` that the solver rejects.
         """
         constraints = []
-        for i, (_lhs, _rhs) in enumerate(zip(step.lhs, step.rhs)):
-            if i not in step.proj_indices:
-                constraints.append(_lhs == _rhs)
-            elif step.ub[i] <= 0:
+        for i in sorted(step.proj_indices):
+            _lhs = step.lhs[i]
+            _rhs = step.rhs[i]
+            if step.ub[i] <= 0:
                 constraints.append(_lhs == 0)
             elif step.lb[i] > 0:
                 constraints.append(_lhs == _rhs)
