@@ -56,14 +56,14 @@ def test_add_constraint_inequality(vp):
     mip_solver_name = MIP_SOLVER_NAMES[type(vp.canonicalizer.solver).__name__]
 
     # Unconstrained baseline
-    vp_unc = Verifier(method='mip', solver=mip_solver_name, obbt_handler=None)
+    vp_unc = Verifier(method='mip', solver=mip_solver_name, obbt_solver=None)
     x_unc = vp_unc.add_iterate(n, lb=0, ub=10)
     z_unc = vp_unc.step.relu(x_unc - 3)
     vp_unc.set_objective_norm([z_unc], np.inf)
     result_unc = vp_unc.solve()
 
     # Constrained: x[i] <= 5 for all i
-    vp_con = Verifier(method='mip', solver=mip_solver_name, obbt_handler=None)
+    vp_con = Verifier(method='mip', solver=mip_solver_name, obbt_solver=None)
     x_con = vp_con.add_iterate(n, lb=0, ub=10)
     for i in range(n):
         vp_con.add_constraint(x_con[i] <= 5)
@@ -111,12 +111,10 @@ def test_add_constraint_tightens_bounds(vp):
     assert result <= 10 + TEST_EPS, "Constraint should tighten bounds"
 
 
-def test_skip_obbt_affine_step(vp):
+def test_affine_step_solves(vp):
     """
-    Test that Affine steps correctly skip OBBT.
-
-    This test verifies that the skip_obbt=True attribute on Affine
-    steps works correctly and the problem is still solvable.
+    Test that an Affine step (``implicit_linear``) composed with a ReLU
+    produces a solvable verification problem.
     """
     import scipy.sparse as spa
 
@@ -130,7 +128,7 @@ def test_skip_obbt_affine_step(vp):
     p = vp.add_param(n, lb=1, ub=2)
     z0 = vp.add_iterate(n, lb=0, ub=0)
 
-    # Apply implicit_linear (Affine) step - this should skip OBBT
+    # Apply implicit_linear (Affine) step
     z1 = vp.step.implicit_linear(z0 + p, lhs_mat=lhs.todense())
 
     # Add another step
@@ -163,7 +161,7 @@ def test_add_constraint_equality_sdp_mip_comparison(vp, vp_sdp):
     vp_mip = Verifier(
         method='mip',
         solver=mip_solver_name,
-        obbt_handler=None
+        obbt_solver=None
     )
 
     x_mip = vp_mip.add_iterate(n, lb=0, ub=10)
@@ -180,7 +178,7 @@ def test_add_constraint_equality_sdp_mip_comparison(vp, vp_sdp):
     vp_sdp_local = Verifier(
         method='sdp',
         solver=sdp_solver_name,
-        obbt_handler=None
+        obbt_solver=None
     )
 
     x_sdp = vp_sdp_local.add_iterate(n, lb=0, ub=10)

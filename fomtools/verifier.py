@@ -8,7 +8,7 @@ from fomtools.canonicalizers.mip import MIP
 from fomtools.canonicalizers.obbt_handler import OBBTHandler
 from fomtools.canonicalizers.sdp import SDP
 from fomtools.canonicalizers.simulator import Simulator
-from fomtools.constraint import Constraint
+from fomtools.constraint import Constraint, is_binary_free
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
@@ -32,7 +32,7 @@ class Verifier(object):
         theory_func=None,
         method="mip",
         solver="gurobi",
-        obbt_handler="gurobi",
+        obbt_solver="gurobi",
         params=None,
         rlt_cuts=False,
         triangle_cuts=False,
@@ -48,7 +48,7 @@ class Verifier(object):
             Canonicalization method for the verification problem.
         solver : str, default "gurobi"
             Solver backend identifier (e.g., "gurobi", "highs", "clarabel").
-        obbt_handler : str or None, default "gurobi"
+        obbt_solver : str or None, default "gurobi"
             Solver used by the OBBT bound-tightening handler. Disable with
             ``None``.
         params : dict, optional
@@ -73,8 +73,8 @@ class Verifier(object):
             rlt_cuts=rlt_cuts,
             triangle_cuts=triangle_cuts,
         )
-        self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
-        self.use_obbt_handler = True if obbt_handler else False
+        self.obbt_handler = OBBTHandler(solver=obbt_solver) if obbt_solver else None
+        self.use_obbt_handler = True if obbt_solver else False
         if self.obbt_handler is not None:
             self.canonicalizer.obbt_handler = self.obbt_handler
         decomposer_cls = self._get_step_decomposer(method)
@@ -408,7 +408,9 @@ class Verifier(object):
         -------
         None
         """
-        if self.use_obbt_handler:
+        # Only forward binary-free constraints to the OBBT handler so its model
+        # stays a pure LP (binary leaves would otherwise be relaxed silently).
+        if self.use_obbt_handler and is_binary_free(constr):
             self.obbt_handler.add_constraint(constr)
             self._tighten_constraint_bounds(constr)
         self.canonicalizer.add_constraint(constr)
@@ -537,11 +539,8 @@ class Verifier(object):
         """
         step = step_cls(rhs=rhs, relax_binary_vars=relax_binary_vars, **kwargs)
 
-        if self.use_obbt_handler and not step.skip_obbt:
-            result = self.obbt_handler.obbt(step.rhs, step.lb, step.ub)
-            if result is not None:
-                step.update_bounds(*result)
-
+        # OBBT input-tightening + relaxation building happens per-primitive in
+        # StepDecomposer._process_primitive, so decomposed sub-steps are covered.
         lhs = self.step_decomposer.process_step(step)
         self.steps.append(step)
 
@@ -597,6 +596,14 @@ class Verifier(object):
             improv_frac = (sum(_lb > lb) + sum(_ub < ub)) / (2.0 * len(lb))
 
         self.canonicalizer.add_theory_cut(C, target_expr, lb, ub)
+
+        # Mirror the (binary-free) theory cut into the OBBT LP so subsequent
+        # bound tightening benefits from it as well.
+        if self.use_obbt_handler:
+            theory_cuts = [target_expr >= lb - C, target_expr <= ub + C]
+            self.obbt_handler.add_constraints(
+                [c for c in theory_cuts if is_binary_free(c)]
+            )
         return improv_frac
 
     def set_zero_objective(self):

@@ -101,7 +101,7 @@ def test_one_norm_mixed_sign_optimal(vp):
     """
     mip_solver_name = MIP_SOLVER_NAMES[type(vp.canonicalizer.solver).__name__]
 
-    vp_test = Verifier(method='mip', solver=mip_solver_name, obbt_handler='highs')
+    vp_test = Verifier(method='mip', solver=mip_solver_name, obbt_solver='highs')
     x = vp_test.add_param(1, lb=2, ub=5)
     y = vp_test.add_param(1, lb=-8, ub=-3)
 
@@ -215,13 +215,13 @@ def test_one_norm_vs_infinity_norm(vp):
     n = 3
 
     # One-norm
-    vp1 = Verifier(method='mip', solver=mip_solver_name, obbt_handler='highs')
+    vp1 = Verifier(method='mip', solver=mip_solver_name, obbt_solver='highs')
     x1 = vp1.add_iterate(n, lb=0, ub=5)
     vp1.set_objective_norm(x1, 1)
     one_norm_result = vp1.solve()
 
     # Infinity-norm
-    vp2 = Verifier(method='mip', solver=mip_solver_name, obbt_handler='highs')
+    vp2 = Verifier(method='mip', solver=mip_solver_name, obbt_solver='highs')
     x2 = vp2.add_iterate(n, lb=0, ub=5)
     vp2.set_objective_norm(x2, np.inf)
     inf_norm_result = vp2.solve()
@@ -371,13 +371,13 @@ def test_one_norm_sdp_vs_two_norm(vp_sdp):
     n = 3
 
     # One-norm
-    vp1 = Verifier(method='sdp', solver=sdp_solver, obbt_handler=None)
+    vp1 = Verifier(method='sdp', solver=sdp_solver, obbt_solver=None)
     x1 = vp1.add_iterate(n, lb=0, ub=5)
     vp1.set_objective_norm(x1, 1)
     one_norm_result = vp1.solve()
 
     # Two-norm (returns squared norm)
-    vp2 = Verifier(method='sdp', solver=sdp_solver, obbt_handler=None)
+    vp2 = Verifier(method='sdp', solver=sdp_solver, obbt_solver=None)
     x2 = vp2.add_iterate(n, lb=0, ub=5)
     vp2.set_objective_norm(x2, 2)
     two_norm_sq_result = vp2.solve()

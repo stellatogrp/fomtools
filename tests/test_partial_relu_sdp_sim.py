@@ -140,7 +140,7 @@ def test_get_ranges_tuple_of_tuples():
 @pytest.mark.parametrize("sdp_solver", ["clarabel"])
 def test_sdp_partial_relu_var_count(sdp_solver):
     """SDP allocates only len(proj_indices) fresh rows for partial relu."""
-    v = Verifier(method="sdp", solver=sdp_solver, obbt_handler=None)
+    v = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
     x = v.add_iterate(3, lb=-1.0, ub=1.0)
     pre_marker = v.canonicalizer.range_marker
     step_lhs = v.step.relu(x, proj_ranges=(1, 3))
@@ -155,7 +155,7 @@ def test_sdp_partial_relu_var_count(sdp_solver):
 @pytest.mark.parametrize("sdp_solver", ["clarabel"])
 def test_sdp_partial_relu_aeq_count(sdp_solver):
     """canonicalize_relu emits len(proj_indices) lifted equalities, not rhs.ndim."""
-    v = Verifier(method="sdp", solver=sdp_solver, obbt_handler=None)
+    v = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
     x = v.add_iterate(4, lb=-1.0, ub=1.0)
     pre = len(v.canonicalizer.Aeq_matrices)
     v.step.relu(x, proj_ranges=(1, 3))
@@ -167,7 +167,7 @@ def test_sdp_partial_relu_aeq_count(sdp_solver):
 @pytest.mark.parametrize("sdp_solver", ["clarabel"])
 def test_sdp_full_relu_unchanged_var_count(sdp_solver):
     """Regression: full relu still allocates rhs.ndim rows."""
-    v = Verifier(method="sdp", solver=sdp_solver, obbt_handler=None)
+    v = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
     x = v.add_iterate(3, lb=-1.0, ub=1.0)
     pre = v.canonicalizer.range_marker
     v.step.relu(x)
@@ -181,8 +181,8 @@ def test_sdp_partial_relu_bound_dominates_mip():
     n = 3
     proj_ranges = (1, 3)
 
-    def build(method, solver, obbt_handler):
-        kwargs = {"solver": solver, "obbt_handler": obbt_handler}
+    def build(method, solver, obbt_solver):
+        kwargs = {"solver": solver, "obbt_solver": obbt_solver}
         if method is None:
             kwargs["params"] = {"OutputFlag": 0}
         else:
@@ -222,7 +222,7 @@ def test_simulator_partial_relu_runs():
     n = 3
     step_size = 0.05
 
-    vp = Verifier(method="simulator", obbt_handler=None)
+    vp = Verifier(method="simulator", obbt_solver=None)
     z = [None] * (K + 1)
     z[0] = vp.add_iterate(ndim=n, lb=-10.0, ub=10.0, init=np.full(n, 1.0))
 
@@ -262,7 +262,7 @@ def test_simulator_partial_relu_default_residual_matches_explicit():
     q_samples = rng.uniform(low=-1.0, high=1.0, size=(20, n))
 
     def run(with_explicit_residual: bool):
-        vp = Verifier(method="simulator", obbt_handler=None)
+        vp = Verifier(method="simulator", obbt_solver=None)
         z = [None] * (K + 1)
         z[0] = vp.add_iterate(ndim=n, lb=-10.0, ub=10.0, init=np.full(n, 1.0))
         q = vp.add_param(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
@@ -291,7 +291,7 @@ def test_simulator_partial_relu_differs_from_full():
     q_samples = rng.uniform(low=-1.0, high=1.0, size=(20, n))
 
     def run(proj_ranges):
-        vp = Verifier(method="simulator", obbt_handler=None)
+        vp = Verifier(method="simulator", obbt_solver=None)
         z0 = vp.add_iterate(ndim=n, lb=-2.0, ub=2.0, init=np.full(n, -0.5))
         q = vp.add_param(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
         kwargs = {} if proj_ranges is None else {"proj_ranges": proj_ranges}
@@ -323,8 +323,8 @@ def test_partial_relu_sdp_geq_mip_pgd():
     t = 0.01
     q_offset = 0.5
 
-    def build(method, solver, obbt_handler):
-        kwargs = {"solver": solver, "obbt_handler": obbt_handler}
+    def build(method, solver, obbt_solver):
+        kwargs = {"solver": solver, "obbt_solver": obbt_solver}
         if method is None:
             kwargs["params"] = {"OutputFlag": 0}
         else:

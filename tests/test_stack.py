@@ -206,7 +206,7 @@ def test_stack_through_relu_mip(solver):
     nu_ub = np.array([2.0, 1.0])
 
     def build(use_stack: bool):
-        v = Verifier(solver=solver, obbt_handler=solver, params={"OutputFlag": 0})
+        v = Verifier(solver=solver, obbt_solver=solver, params={"OutputFlag": 0})
         x = v.add_iterate(2, lb=x_lb, ub=x_ub)
         nu = v.add_iterate(2, lb=nu_lb, ub=nu_ub)
         if use_stack:
@@ -249,7 +249,7 @@ def test_stack_through_relu_sdp(vp, vp_sdp):
     nu_lb = np.array([-0.5, -1.5])
     nu_ub = np.array([2.0, 1.0])
 
-    v_sdp = Verifier(method="sdp", solver=sdp_solver_name, obbt_handler=None)
+    v_sdp = Verifier(method="sdp", solver=sdp_solver_name, obbt_solver=None)
     x = v_sdp.add_iterate(2, lb=x_lb, ub=x_ub)
     nu = v_sdp.add_iterate(2, lb=nu_lb, ub=nu_ub)
     z_sdp = v_sdp.step.relu(rhs=stack([x, nu]))
@@ -258,7 +258,7 @@ def test_stack_through_relu_sdp(vp, vp_sdp):
 
     v_mip = Verifier(
         solver=mip_solver_name,
-        obbt_handler=mip_solver_name,
+        obbt_solver=mip_solver_name,
         params={"OutputFlag": 0},
     )
     x_m = v_mip.add_iterate(2, lb=x_lb, ub=x_ub)
@@ -287,7 +287,7 @@ def test_stack_through_affine(solver):
     M = np.random.randn(3, 4)
 
     def build(use_stack):
-        v = Verifier(solver=solver, obbt_handler=solver, params={"OutputFlag": 0})
+        v = Verifier(solver=solver, obbt_solver=solver, params={"OutputFlag": 0})
         x = v.add_iterate(2, lb=x_lb, ub=x_ub)
         nu = v.add_iterate(2, lb=nu_lb, ub=nu_ub)
         if use_stack:
@@ -324,7 +324,7 @@ def test_stack_inherits_leaf_constraint(solver):
     nu_ub = np.array([0.6, 0.5])
 
     def build(use_stack):
-        v = Verifier(solver=solver, obbt_handler=solver, params={"OutputFlag": 0})
+        v = Verifier(solver=solver, obbt_solver=solver, params={"OutputFlag": 0})
         x = v.add_iterate(2, lb=c, ub=c)  # pinned at construction
         nu = v.add_iterate(2, lb=nu_lb, ub=nu_ub)
         if use_stack:
@@ -367,7 +367,7 @@ def test_obbt_tightens_unbounded_dual_via_stack(solver):
     i.e. ``nu = -x``. With ``x in [-1, 1]^2`` the tight bounds on ``nu``
     are ``[-1, 1]^2``.
     """
-    v = Verifier(solver=solver, obbt_handler=solver, params={"OutputFlag": 0})
+    v = Verifier(solver=solver, obbt_solver=solver, params={"OutputFlag": 0})
     x = v.add_iterate(2, lb=-1.0, ub=1.0)
     nu = v.add_iterate(2, lb=-np.inf, ub=np.inf)
 

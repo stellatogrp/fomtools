@@ -8,7 +8,7 @@ from tests.conftest import TEST_EPS
 def test_two_norm_mip_simple_gurobi():
     """Test two-norm objective with MIP using Gurobi."""
     n = 2
-    vp = Verifier(method="mip", solver="gurobi", obbt_handler=None)
+    vp = Verifier(method="mip", solver="gurobi", obbt_solver=None)
 
     x = vp.add_iterate(n, lb=-1, ub=1)
     vp.set_objective_norm(x, 2)
@@ -21,7 +21,7 @@ def test_two_norm_mip_simple_gurobi():
 def test_two_norm_mip_highs_raises():
     """Test that two-norm objective with HiGHS raises an error."""
     n = 2
-    vp = Verifier(method="mip", solver="highs", obbt_handler=None)
+    vp = Verifier(method="mip", solver="highs", obbt_solver=None)
 
     x = vp.add_iterate(n, lb=-1, ub=1)
     vp.set_objective_norm(x, 2)
@@ -33,7 +33,7 @@ def test_two_norm_mip_highs_raises():
 def test_two_norm_mip_asymmetric_bounds():
     """Test two-norm with asymmetric bounds."""
     n = 2
-    vp = Verifier(method="mip", solver="gurobi", obbt_handler=None)
+    vp = Verifier(method="mip", solver="gurobi", obbt_solver=None)
 
     x = vp.add_iterate(n, lb=np.array([0, -2]), ub=np.array([1, 1]))
     vp.set_objective_norm(x, 2)
@@ -46,7 +46,7 @@ def test_two_norm_mip_asymmetric_bounds():
 def test_two_norm_mip_after_relu():
     """Test two-norm on ReLU output."""
     n = 2
-    vp = Verifier(method="mip", solver="gurobi", obbt_handler=None)
+    vp = Verifier(method="mip", solver="gurobi", obbt_solver=None)
 
     x = vp.add_iterate(n, lb=-1, ub=1)
     y = vp.step.relu(x)
@@ -63,7 +63,7 @@ def test_two_norm_mip_expression_difference():
     np.random.seed(42)
     A = np.random.randn(n, n)
 
-    vp = Verifier(method="mip", solver="gurobi", obbt_handler=None)
+    vp = Verifier(method="mip", solver="gurobi", obbt_solver=None)
 
     x = vp.add_iterate(n, lb=0, ub=0.5)
     y = vp.step.relu(A @ x)
@@ -80,13 +80,13 @@ def test_two_norm_mip_vs_sdp():
     np.random.seed(0)
 
     # MIP with Gurobi
-    vp_mip = Verifier(method="mip", solver="gurobi", obbt_handler=None)
+    vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver=None)
     x_mip = vp_mip.add_iterate(n, lb=-1, ub=1)
     vp_mip.set_objective_norm(x_mip, 2)
     result_mip = vp_mip.solve()
 
     # SDP
-    vp_sdp = Verifier(method="sdp", solver="clarabel", obbt_handler=None)
+    vp_sdp = Verifier(method="sdp", solver="clarabel", obbt_solver=None)
     x_sdp = vp_sdp.add_iterate(n, lb=-1, ub=1)
     vp_sdp.set_objective_norm(x_sdp, 2)
     result_sdp = vp_sdp.solve()
@@ -101,14 +101,14 @@ def test_two_norm_mip_vs_sdp_after_relu():
     np.random.seed(42)
 
     # MIP with Gurobi
-    vp_mip = Verifier(method="mip", solver="gurobi", obbt_handler=None)
+    vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver=None)
     x_mip = vp_mip.add_iterate(n, lb=-1, ub=1)
     y_mip = vp_mip.step.relu(x_mip)
     vp_mip.set_objective_norm(y_mip - x_mip, 2)
     result_mip = vp_mip.solve()
 
     # SDP
-    vp_sdp = Verifier(method="sdp", solver="clarabel", obbt_handler=None)
+    vp_sdp = Verifier(method="sdp", solver="clarabel", obbt_solver=None)
     x_sdp = vp_sdp.add_iterate(n, lb=-1, ub=1)
     y_sdp = vp_sdp.step.relu(x_sdp)
     vp_sdp.set_objective_norm(y_sdp - x_sdp, 2)
@@ -122,7 +122,7 @@ def test_two_norm_mip_vs_sdp_after_relu():
 def test_two_norm_mip_with_constraint():
     """Test two-norm with additional constraint."""
     n = 2
-    vp = Verifier(method="mip", solver="gurobi", obbt_handler=None)
+    vp = Verifier(method="mip", solver="gurobi", obbt_solver=None)
 
     x = vp.add_iterate(n, lb=-1, ub=1)
     # Constrain sum(x) <= 0
@@ -139,12 +139,12 @@ def test_two_norm_mip_multiple_solves():
     """Test that multiple solves work correctly."""
     n = 2
 
-    vp1 = Verifier(method="mip", solver="gurobi", obbt_handler=None)
+    vp1 = Verifier(method="mip", solver="gurobi", obbt_solver=None)
     x1 = vp1.add_iterate(n, lb=-1, ub=1)
     vp1.set_objective_norm(x1, 2)
     result1 = vp1.solve()
 
-    vp2 = Verifier(method="mip", solver="gurobi", obbt_handler=None)
+    vp2 = Verifier(method="mip", solver="gurobi", obbt_solver=None)
     x2 = vp2.add_iterate(n, lb=-0.5, ub=0.5)
     vp2.set_objective_norm(x2, 2)
     result2 = vp2.solve()
@@ -158,7 +158,7 @@ def test_two_norm_mip_linear_transform():
     n = 2
     A = np.array([[2.0, 0.0], [0.0, 1.0]])
 
-    vp = Verifier(method="mip", solver="gurobi", obbt_handler=None)
+    vp = Verifier(method="mip", solver="gurobi", obbt_solver=None)
     x = vp.add_iterate(n, lb=-1, ub=1)
     vp.set_objective_norm(A @ x, 2)
     result = vp.solve()

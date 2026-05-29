@@ -24,7 +24,7 @@ def test_saturated_linear_simulator():
     lb = -5.0
     ub = 5.0
 
-    vp = Verifier(method="simulator", obbt_handler=None)
+    vp = Verifier(method="simulator", obbt_solver=None)
 
     z = [None] * (K + 1)
     z[0] = vp.add_iterate(ndim=n, lb=lb, ub=ub, init=np.full(n, 1))
