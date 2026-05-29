@@ -168,7 +168,10 @@ class OBBTHandler(Canonicalizer):
         # reset objective
         self.solver.set_objective(0)
 
-        assert np.all(lb_out <= ub_out)
+        # Tolerance guards against minor LP-solver inconsistency between the
+        # min and max solves for the same index (e.g. lb_out slightly above
+        # ub_out); the intersection below clamps the bounds either way.
+        assert np.all(lb_out <= ub_out + 1e-7)
         return np.maximum(lb, lb_out), np.minimum(ub, ub_out)
 
     # ------------------------------------------------------------------
@@ -185,14 +188,22 @@ class OBBTHandler(Canonicalizer):
     # ------------------------------------------------------------------
 
     def _add_binary_free(self, constraints: List[Constraint]) -> None:
-        """Assert the constraints are binary-free, then add them to the LP."""
-        assert all(is_binary_free(c) for c in constraints), (
-            "OBBT handler received a constraint involving a binary variable"
-        )
+        """Check the constraints are binary-free, then add them to the LP."""
+        if not all(is_binary_free(c) for c in constraints):
+            raise ValueError(
+                "OBBT handler received a constraint involving a binary variable"
+            )
         self.add_constraints(constraints)
 
     def canonicalize_affine(self, step: Affine) -> None:
-        """Add the affine equality ``lhs_mat @ lhs == rhs`` to the OBBT LP."""
+        """
+        Add the affine equality ``lhs_mat @ lhs == rhs`` to the OBBT LP.
+
+        ``lhs_mat`` is a documented attribute of the :class:`Affine` step
+        interface; this mirrors ``MIP.canonicalize_affine`` exactly (both rely
+        on the same equality), so the two stay consistent if ``Affine`` is
+        refactored.
+        """
         self._add_binary_free([step.lhs_mat @ step.lhs == step.rhs])
 
     def canonicalize_relu(self, step: Relu) -> None:
@@ -254,6 +265,10 @@ class OBBTHandler(Canonicalizer):
                 constraints.extend(
                     [lhs <= rhs, lhs >= ((u - lb) / (ub - lb) * (rhs - lb) + lb)]
                 )
+            # No else: boundary cases (e.g. lb == l with ub > u, or lb < l with
+            # ub == u) intentionally add no envelope row — they are measure-zero
+            # and the variable's box bounds remain a valid relaxation. This
+            # mirrors MIP.canonicalize_saturatedlinear, which has the same gap.
         self._add_binary_free(constraints)
 
     def canonicalize_softthreshold(self, step: SoftThreshold) -> None:

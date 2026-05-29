@@ -1,3 +1,4 @@
+import logging
 from typing import Callable, ClassVar
 
 import numpy as np
@@ -5,6 +6,8 @@ import numpy as np
 from fomtools.linearexpression import LinearExpression
 from fomtools.steps import Relu, SaturatedLinear
 from fomtools.steps.step import Step
+
+log = logging.getLogger(__name__)
 
 
 class StepDecomposer:
@@ -172,8 +175,17 @@ class StepDecomposer:
 
         # Add this primitive's binary-free relaxation to the OBBT LP for use by
         # subsequent steps. Affine equalities are added too (skip_obbt only
-        # gates input tightening, not the relaxation).
+        # gates input tightening, not the relaxation). If a step type has no
+        # OBBT relaxation registered, degrade gracefully: the OBBT LP simply
+        # omits this step's constraints (looser, still-valid bounds) rather
+        # than crashing problem construction.
         if obbt is not None:
-            obbt.canonicalize(step)
+            try:
+                obbt.canonicalize(step)
+            except NotImplementedError:
+                log.warning(
+                    "OBBT: no relaxation for %s; tightening may be weaker",
+                    type(step).__name__,
+                )
 
         return step.lhs
