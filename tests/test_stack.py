@@ -2,10 +2,17 @@ import numpy as np
 import pytest
 import scipy.sparse as spa
 
-import fomtools as vp
+import fomtools as fom
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.verifier import Verifier
 from tests.conftest import SOLVERS, TEST_EPS
+
+# Map MIP solver class names to solver identifier strings (mirrors
+# ``tests/test_nnls_sdp_mip.py``).
+MIP_SOLVER_NAMES = {
+    "GurobiSolver": "gurobi",
+    "HiGHSSolver": "highs",
+}
 
 
 def _leaf(ndim, lb=-1.0, ub=1.0):
@@ -177,7 +184,7 @@ def test_stack_single_expression_is_identity_view():
 
 
 def test_stack_exposed_at_package_level():
-    assert vp.stack is stack
+    assert fom.stack is stack
 
 
 # ---------------------------------------------------------------------------
@@ -221,36 +228,49 @@ def test_stack_through_relu_mip(solver):
     assert r_stack == pytest.approx(r_direct, abs=TEST_EPS)
 
 
-@pytest.mark.parametrize("sdp_solver", ["clarabel"])
-def test_stack_through_relu_sdp(sdp_solver):
+def test_stack_through_relu_sdp(vp, vp_sdp):
     """
     SDP version: pass a stacked LinearExpression into relu and confirm the
-    SDP relaxation produces a sane upper bound (≥ the MIP optimum, since SDP
-    is a relaxation; per memory note ``feedback_sdp_no_solution_value`` we
-    compare bounds, not solution values).
+    SDP relaxation produces a sane upper bound on the MIP optimum (per memory
+    note ``feedback_sdp_no_solution_value`` we compare bounds, not solution
+    values).
+
+    Uses both the ``vp`` (MIP, parametrized over gurobi/highs) and ``vp_sdp``
+    (SDP, parametrized over its solvers) fixtures. To stay HiGHS-compatible
+    we compute inf-norm on MIP and squared two-norm on SDP, then assert
+    ``mip_inf_norm <= sqrt(sdp_two_norm_sq)`` (a valid bound since
+    ``||z||_inf <= ||z||_2``).
     """
+    mip_solver_name = MIP_SOLVER_NAMES[type(vp.canonicalizer.solver).__name__]
+    sdp_solver_name = vp_sdp.canonicalizer.solver_name
+
     x_lb = np.array([-1.0, -2.0])
     x_ub = np.array([1.0, 0.5])
     nu_lb = np.array([-0.5, -1.5])
     nu_ub = np.array([2.0, 1.0])
 
-    v_sdp = Verifier(method="sdp", solver=sdp_solver, obbt_handler=None)
+    v_sdp = Verifier(method="sdp", solver=sdp_solver_name, obbt_handler=None)
     x = v_sdp.add_iterate(2, lb=x_lb, ub=x_ub)
     nu = v_sdp.add_iterate(2, lb=nu_lb, ub=nu_ub)
-    y = stack([x, nu])
-    z = v_sdp.step.relu(rhs=y)
-    v_sdp.set_two_norm_objective([z])
-    sdp_bound = v_sdp.solve()
+    z_sdp = v_sdp.step.relu(rhs=stack([x, nu]))
+    v_sdp.set_objective_norm(z_sdp, 2)
+    sdp_two_norm_sq = v_sdp.solve()
 
-    v_mip = Verifier(solver="gurobi", obbt_handler="gurobi", params={"OutputFlag": 0})
+    v_mip = Verifier(
+        solver=mip_solver_name,
+        obbt_handler=mip_solver_name,
+        params={"OutputFlag": 0},
+    )
     x_m = v_mip.add_iterate(2, lb=x_lb, ub=x_ub)
     nu_m = v_mip.add_iterate(2, lb=nu_lb, ub=nu_ub)
-    y_m = stack([x_m, nu_m])
-    z_m = v_mip.step.relu(rhs=y_m)
-    v_mip.set_two_norm_objective([z_m])
-    mip_residual = v_mip.solve()
+    z_mip = v_mip.step.relu(rhs=stack([x_m, nu_m]))
+    v_mip.set_objective_norm(z_mip, np.inf)
+    mip_inf_norm = v_mip.solve()
 
-    assert sdp_bound >= mip_residual - TEST_EPS
+    sdp_two_norm = np.sqrt(sdp_two_norm_sq)
+    assert mip_inf_norm <= sdp_two_norm + TEST_EPS, (
+        f"MIP inf-norm ({mip_inf_norm}) should be <= SDP two-norm ({sdp_two_norm})"
+    )
 
 
 @pytest.mark.parametrize("solver", SOLVERS)
