@@ -20,6 +20,7 @@ import pytest
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import (
     ElasticNet,
+    HuberLoss,
     IndBallLinf,
     IndBox,
     IndNonNegative,
@@ -197,6 +198,112 @@ def test_elasticnet_prox_matches_closed_form():
     np.testing.assert_allclose(
         ElasticNet(alpha=alpha, beta=beta).prox(rhs, gamma), expected
     )
+
+
+# --- HuberLoss ---
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_huberloss_returns_linear_expression(method):
+    """HuberLoss prox is registered on the base; every backend inherits."""
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    out = v.prox(HuberLoss(delta=0.5), rhs, gamma=0.4)
+
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_huberloss_emits_softthreshold_on_mip():
+    """
+    HuberLoss lowers to a single SoftThreshold step on MIP, with the
+    threshold scaled to delta * (1 + gamma).
+    """
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(HuberLoss(delta=0.5), rhs, gamma=0.4)
+
+    soft_steps = [
+        s for s in v.canonicalizer.steps if isinstance(s, SoftThreshold)
+    ]
+    assert len(soft_steps) == 1
+    # lambd should be delta * (1 + gamma) = 0.5 * 1.4 = 0.7
+    assert np.isclose(soft_steps[0].lambd, 0.7)
+
+
+def test_huberloss_decomposes_to_two_relus_on_sdp():
+    """
+    On SDP, the SoftThreshold from prox_huberloss recursively decomposes
+    into two ReLUs via _DECOMPOSERS — same composition shape as the user's
+    explicit two-ReLU form.
+    """
+    v = _make_verifier("sdp")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(HuberLoss(delta=0.5), rhs, gamma=0.4)
+
+    assert len(v.canonicalizer._relu_steps) == 2
+    assert all(isinstance(s, Relu) for s in v.canonicalizer._relu_steps)
+
+
+def test_huberloss_prox_middle_branch():
+    """
+    For rhs entirely inside the quadratic region (|rhs_i| <= delta*(1+gamma)),
+    the prox is pure linear shrinkage by 1/(1+gamma).
+    """
+    delta, gamma = 1.0, 1.0
+    # theta = 2.0; all |rhs_i| < 2.0
+    rhs = np.array([-1.5, 0.5, 1.9, -0.1])
+    expected = rhs / (1.0 + gamma)
+    np.testing.assert_allclose(
+        HuberLoss(delta=delta).prox(rhs, gamma), expected
+    )
+
+
+def test_huberloss_prox_tail_branch():
+    """
+    For rhs entirely outside the quadratic region (|rhs_i| > delta*(1+gamma)),
+    the prox subtracts a constant gamma*delta toward zero.
+    """
+    delta, gamma = 1.0, 1.0
+    # theta = 2.0; all |rhs_i| > 2.0
+    rhs = np.array([-5.0, 3.5, 2.5, -4.2])
+    expected = rhs - gamma * delta * np.sign(rhs)
+    np.testing.assert_allclose(
+        HuberLoss(delta=delta).prox(rhs, gamma), expected
+    )
+
+
+def test_huberloss_prox_matches_closed_form():
+    """
+    Numerical math-layer sanity: HuberLoss.prox matches the closed-form
+    piecewise formula on a random rhs mixing both regimes.
+    """
+    rng = np.random.default_rng(11)
+    delta, gamma = 0.7, 0.6
+    rhs = rng.normal(scale=2.0, size=12)  # mixes the quadratic and linear regions
+    theta = delta * (1.0 + gamma)
+    expected = np.where(
+        np.abs(rhs) <= theta,
+        rhs / (1.0 + gamma),
+        rhs - gamma * delta * np.sign(rhs),
+    )
+    np.testing.assert_allclose(
+        HuberLoss(delta=delta).prox(rhs, gamma), expected
+    )
+
+
+def test_huberloss_delta_zero_identity():
+    """
+    delta = 0 makes h(x) identically zero; the prox is the identity for
+    any rhs and any gamma.
+    """
+    rhs = np.array([-3.7, 0.0, 0.42, 2.0])
+    for gamma in (0.1, 1.0, 10.0):
+        np.testing.assert_allclose(HuberLoss(delta=0.0).prox(rhs, gamma), rhs)
+
+
+# --- IndNonNegative ---
 
 
 @pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])

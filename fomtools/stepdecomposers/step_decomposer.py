@@ -6,6 +6,7 @@ import numpy as np
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import (
     ElasticNet,
+    HuberLoss,
     IndBallLinf,
     IndBox,
     IndNonNegative,
@@ -304,6 +305,33 @@ class StepDecomposer:
         )
         return soft / (1.0 + 2.0 * prox.beta * gamma)
 
+    def prox_huberloss(
+        self, prox: HuberLoss, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower an element-wise Huber prox to a single ``SoftThreshold``
+        step plus arithmetic on the output.
+
+        Uses the closed form
+
+        $$
+            \operatorname{prox}_{\gamma h}(v)
+                \;=\; \frac{v + \gamma\, S_{\delta(1+\gamma)}(v)}{1+\gamma},
+        $$
+
+        where the bracketed soft threshold $S_\theta(w)
+        = \operatorname{ReLU}(w-\theta) - \operatorname{ReLU}(-w-\theta)$
+        encodes the two-ReLU tail behavior. This is one native primitive
+        on MIP and Simulator; on SDP it decomposes recursively into two
+        ReLUs via ``_DECOMPOSERS``.
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it.
+        """
+        theta = prox.delta * (1.0 + gamma)
+        soft = self.process_step(SoftThreshold(rhs=rhs, lambd=theta))
+        return (rhs + gamma * soft) / (1.0 + gamma)
+
     def prox_indballlinf(
         self, prox: IndBallLinf, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -413,6 +441,7 @@ class StepDecomposer:
 
     _PROX_DECOMPOSERS: ClassVar[dict] = {
         "elasticnet": prox_elasticnet,
+        "huberloss": prox_huberloss,
         "indballlinf": prox_indballlinf,
         "indbox": prox_indbox,
         "indnonnegative": prox_indnonnegative,
