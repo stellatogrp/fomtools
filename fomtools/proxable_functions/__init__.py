@@ -15,8 +15,7 @@ from fomtools.proxable_functions.least_squares import LeastSquares
 from fomtools.proxable_functions.linear import Linear
 from fomtools.proxable_functions.norm_inf import NormInf
 from fomtools.proxable_functions.norm_l1 import NormL1
-from fomtools.proxable_functions.proximal_operator import ProxableFunction
 from fomtools.proxable_functions.quadratic import Quadratic
-# from sqr_norm_l2 import Sqr
+from fomtools.proxable_functions.sq_l2_norm import SqL2Norm
 from fomtools.proxable_functions.sum_positive import SumPositive
 from fomtools.proxable_functions.total_variation_1d import TotalVariation1D

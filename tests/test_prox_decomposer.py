@@ -26,8 +26,10 @@ from fomtools.proxable_functions import (
     IndNonNegative,
     IndNonPositive,
     IndPoint,
+    Linear,
     NormL1,
     ProxableFunction,
+    SqL2Norm,
 )
 from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
 from fomtools.verifier import Verifier
@@ -475,6 +477,180 @@ def test_indpoint_lhs_bounds_collapse_to_p():
     assert len(satlins) == 1
     np.testing.assert_allclose(satlins[0].lhs.lb, p)
     np.testing.assert_allclose(satlins[0].lhs.ub, p)
+
+
+# --- Linear ---
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_linear_returns_linear_expression(method):
+    """
+    Linear lowers to pure ``rhs - gamma*c`` arithmetic on the
+    ``LinearExpression`` — no Step is emitted and no fresh leaf is
+    introduced. All three backends inherit from the base class.
+    """
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    c = np.array([1.0, -2.0, 3.0])
+    out = v.prox(Linear(c=c), rhs, gamma=0.5)
+
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_linear_emits_no_steps_on_mip():
+    """Linear's prox is pure arithmetic — no Step is added to the canonicalizer."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    n_steps_before = len(v.canonicalizer.steps)
+    v.prox(Linear(c=np.array([1.0, -2.0, 3.0])), rhs, gamma=0.5)
+    assert len(v.canonicalizer.steps) == n_steps_before
+
+
+def test_linear_const_and_coefficient_with_array_c():
+    """
+    For numeric ``c``, the output decomposition equals
+    ``I * rhs_leaf`` (coefficient) and ``const == -gamma*c``.
+    """
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    c = np.array([1.0, -2.0, 3.0])
+    gamma = 0.5
+    out = v.prox(Linear(c=c), rhs, gamma=gamma)
+
+    np.testing.assert_allclose(out.const, -gamma * c)
+    # rhs is a leaf — its decomposition is {rhs: I}; after subtracting gamma*c
+    # (a constant), the coefficient on rhs is still I.
+    np.testing.assert_allclose(
+        out.decomposition_dict[rhs].toarray(), np.eye(3)
+    )
+
+
+def test_linear_supports_scalar_c():
+    """Scalar ``c`` broadcasts via ``LinearExpression - gamma * scalar``."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    out = v.prox(Linear(c=2.5), rhs, gamma=0.4)
+    np.testing.assert_allclose(out.const, np.full(3, -0.4 * 2.5))
+
+
+def test_linear_supports_linexpr_c():
+    """
+    When ``c`` is itself a ``LinearExpression`` parameter, the output
+    references both leaves: ``+I`` on ``rhs`` and ``-gamma*I`` on ``c``.
+    """
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    c = v.add_param(3, lb=-0.5, ub=0.5)
+
+    gamma = 0.5
+    out = v.prox(Linear(c=c), rhs, gamma=gamma)
+
+    np.testing.assert_allclose(
+        out.decomposition_dict[rhs].toarray(), np.eye(3)
+    )
+    np.testing.assert_allclose(
+        out.decomposition_dict[c].toarray(), -gamma * np.eye(3)
+    )
+
+
+def test_linear_prox_matches_closed_form():
+    """Numpy-level: ``Linear(c).prox(rhs, gamma)`` equals ``rhs - gamma*c``."""
+    rng = np.random.default_rng(0)
+    for _ in range(5):
+        c = rng.standard_normal(4)
+        rhs = rng.standard_normal(4)
+        gamma = float(rng.uniform(0.1, 2.0))
+        np.testing.assert_allclose(
+            Linear(c=c).prox(rhs, gamma=gamma), rhs - gamma * c
+        )
+    # scalar c case
+    np.testing.assert_allclose(
+        Linear(c=1.5).prox(np.array([2.0, 3.0]), gamma=0.5),
+        np.array([2.0, 3.0]) - 0.5 * 1.5,
+    )
+
+
+def test_linear_eval_and_grad():
+    """Numpy-level eval and grad sanity."""
+    c = np.array([1.0, 2.0, 3.0])
+    f = Linear(c=c)
+    assert np.isclose(f.eval(np.array([1.0, 1.0, 1.0])), 6.0)
+    np.testing.assert_allclose(f.grad(np.zeros(3)), c)
+
+
+# --- SqL2Norm ---
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_sql2norm_returns_linear_expression(method):
+    """
+    SqL2Norm lowers to ``rhs / (1 + gamma)`` — pure scalar shrinkage,
+    no Step emitted. All three backends inherit from the base class.
+    """
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    out = v.prox(SqL2Norm(), rhs, gamma=0.5)
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_sql2norm_emits_no_steps_on_mip():
+    """SqL2Norm's prox is pure arithmetic — no Step is added."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    n_steps_before = len(v.canonicalizer.steps)
+    v.prox(SqL2Norm(), rhs, gamma=0.5)
+    assert len(v.canonicalizer.steps) == n_steps_before
+
+
+def test_sql2norm_coefficient_is_scaled_identity():
+    """The output decomposition is ``(1/(1+gamma)) * I`` on the rhs leaf."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    gamma = 0.5
+    out = v.prox(SqL2Norm(), rhs, gamma=gamma)
+
+    np.testing.assert_allclose(
+        out.decomposition_dict[rhs].toarray(), np.eye(3) / (1.0 + gamma)
+    )
+    np.testing.assert_allclose(out.const, np.zeros(3))
+
+
+def test_sql2norm_gamma_one_halves_coefficient():
+    """At the default ``gamma=1``, the coefficient collapses to ``0.5 * I``."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    out = v.prox(SqL2Norm(), rhs)
+    np.testing.assert_allclose(
+        out.decomposition_dict[rhs].toarray(), 0.5 * np.eye(3)
+    )
+
+
+def test_sql2norm_prox_matches_closed_form():
+    """Numpy-level: ``SqL2Norm().prox(rhs, gamma)`` equals ``rhs/(1+gamma)``."""
+    rng = np.random.default_rng(1)
+    for _ in range(5):
+        rhs = rng.standard_normal(4)
+        gamma = float(rng.uniform(0.1, 2.0))
+        np.testing.assert_allclose(
+            SqL2Norm().prox(rhs, gamma=gamma), rhs / (1.0 + gamma)
+        )
+
+
+def test_sql2norm_eval_and_grad():
+    """Numpy-level eval and grad sanity."""
+    f = SqL2Norm()
+    assert np.isclose(f.eval(np.array([3.0, 4.0])), 12.5)
+    x = np.array([1.0, -2.0, 3.0])
+    np.testing.assert_allclose(f.grad(x), x)
 
 
 def test_unsupported_prox_raises_on_every_backend():

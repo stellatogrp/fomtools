@@ -12,7 +12,9 @@ from fomtools.proxable_functions import (
     IndNonNegative,
     IndNonPositive,
     IndPoint,
+    Linear,
     NormL1,
+    SqL2Norm,
 )
 from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
 from fomtools.steps.step import Step
@@ -424,6 +426,22 @@ class StepDecomposer:
         p = self._to_satlin_bound(prox.p, rhs.ndim)
         return self.process_step(SaturatedLinear(rhs=rhs, l=p, u=p))
 
+    def prox_linear(
+        self, prox: Linear, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower a linear cost prox $f(x) = c^\top x$ to ``rhs - gamma * c``.
+
+        Pure ``LinearExpression`` arithmetic — no ``Step`` and no fresh
+        leaf variables are introduced. ``prox.c`` may be a scalar, an
+        ``np.ndarray``, or a ``LinearExpression`` parameter; arithmetic
+        dispatch handles each transparently.
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it.
+        """
+        return rhs - gamma * prox.c
+
     def prox_norml1(
         self, prox: NormL1, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -443,6 +461,21 @@ class StepDecomposer:
         step = SoftThreshold(rhs=rhs, lambd=prox.lambd * gamma)
         return self.process_step(step)
 
+    def prox_sql2norm(
+        self, prox: SqL2Norm, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower the squared $\ell_2$-norm prox $f(x) = \tfrac{1}{2}\|x\|_2^2$
+        to ``rhs / (1 + gamma)``.
+
+        Pure scalar shrinkage on the ``LinearExpression`` — no ``Step``
+        and no fresh leaf variables are introduced.
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it.
+        """
+        return rhs / (1.0 + gamma)
+
     _PROX_DECOMPOSERS: ClassVar[dict] = {
         "elasticnet": prox_elasticnet,
         "huberloss": prox_huberloss,
@@ -451,5 +484,7 @@ class StepDecomposer:
         "indnonnegative": prox_indnonnegative,
         "indnonpositive": prox_indnonpositive,
         "indpoint": prox_indpoint,
+        "linear": prox_linear,
         "norml1": prox_norml1,
+        "sql2norm": prox_sql2norm,
     }
