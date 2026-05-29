@@ -1,3 +1,4 @@
+import logging
 from typing import Callable, ClassVar
 
 import numpy as np
@@ -5,6 +6,8 @@ import numpy as np
 from fomtools.linearexpression import LinearExpression
 from fomtools.steps import Relu, SaturatedLinear
 from fomtools.steps.step import Step
+
+log = logging.getLogger(__name__)
 
 
 class StepDecomposer:
@@ -131,9 +134,17 @@ class StepDecomposer:
         """
         Default handling for primitive steps.
 
-        Registers the step's output variable with the canonicalizer and
-        OBBT handler, encodes the step constraints, and returns the
-        output variable.
+        When an OBBT handler is attached to the canonicalizer, this first
+        tightens the step's *input* bounds against the OBBT LP (built from the
+        relaxations of all previously processed primitives), then registers the
+        output variable, canonicalizes into the main backend, and finally adds
+        this primitive's own binary-free linear relaxation to the OBBT LP so
+        that subsequent steps can be tightened against it.
+
+        Because this hook runs once per *finalized primitive* — including each
+        ReLU that the SDP/MIP decomposers produce — the OBBT relaxation always
+        lands on the same leaf objects the backend uses, so every leaf
+        (including decomposition auxiliaries) is tightened.
 
         Parameters
         ----------
@@ -145,6 +156,15 @@ class StepDecomposer:
         LinearExpression
             The step's left-hand side (output) variable.
         """
+        obbt = getattr(self.canonicalizer, "obbt_handler", None)
+
+        # Tighten the input bounds BEFORE the output box and envelope
+        # coefficients (which bake in lb/ub) are computed.
+        if obbt is not None and not step.skip_obbt:
+            result = obbt.obbt(step.rhs, step.lb, step.ub)
+            if result is not None:
+                step.update_bounds(*result)
+
         if hasattr(step, "sync_lhs_bounds"):
             step.sync_lhs_bounds()
         # registered as "param" for MIP/SDP compatibility; Simulator registers
@@ -152,4 +172,20 @@ class StepDecomposer:
         self.register_var(step.lhs, var_type="param")
 
         self.canonicalizer.canonicalize(step)
+
+        # Add this primitive's binary-free relaxation to the OBBT LP for use by
+        # subsequent steps. Affine equalities are added too (skip_obbt only
+        # gates input tightening, not the relaxation). If a step type has no
+        # OBBT relaxation registered, degrade gracefully: the OBBT LP simply
+        # omits this step's constraints (looser, still-valid bounds) rather
+        # than crashing problem construction.
+        if obbt is not None:
+            try:
+                obbt.canonicalize(step)
+            except NotImplementedError:
+                log.warning(
+                    "OBBT: no relaxation for %s; tightening may be weaker",
+                    type(step).__name__,
+                )
+
         return step.lhs

@@ -133,13 +133,13 @@ def test_infinity_norm_sdp_vs_one_norm(vp_sdp):
     n = 3
 
     # One-norm
-    vp1 = Verifier(method="sdp", solver=sdp_solver, obbt_handler=None)
+    vp1 = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
     x1 = vp1.add_iterate(n, lb=0, ub=5)
     vp1.set_objective_norm(x1, 1)
     one_norm_result = vp1.solve()
 
     # Infinity-norm
-    vp2 = Verifier(method="sdp", solver=sdp_solver, obbt_handler=None)
+    vp2 = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
     x2 = vp2.add_iterate(n, lb=0, ub=5)
     vp2.set_objective_norm(x2, np.inf)
     inf_norm_result = vp2.solve()
