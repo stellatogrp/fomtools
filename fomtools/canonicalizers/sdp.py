@@ -425,11 +425,14 @@ class SDP(Canonicalizer):
         on the SDP matrix variable and registers the appropriate PSD cone
         constraint for the lifted formulation.
 
-        For a partial-projection step (``step._lhs_proj_leaf is not None``),
-        only the projected output coordinates need fresh SDP variables and
-        lifted equalities; the non-projected outputs share decomposition with
-        the rhs and are therefore structurally fused — no equalities emitted
-        for them and no SDP rows added for them either.
+        Operates uniformly over ``step.proj_indices`` and binds equalities to
+        ``step.lhs_leaves[0]``. For full ReLU, ``proj_indices`` covers every
+        rhs row and ``lhs_leaves[0]`` is the full lhs leaf — equivalent to a
+        standard full-output encoding. For partial-projection ReLU, only the
+        projected rows get lifted equalities and ``lhs_leaves[0]`` is the
+        smaller fresh proj-leaf; the non-projected rows are structurally
+        fused into shared rhs leaves at composition time, so no equalities
+        and no SDP rows are emitted for them.
 
         Parameters
         ----------
@@ -441,12 +444,8 @@ class SDP(Canonicalizer):
         A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(rhs)
         b_vec = rhs.const
 
-        if step._lhs_proj_leaf is None:
-            y_leaf = step.lhs
-            proj_list = list(range(rhs.ndim))
-        else:
-            y_leaf = step._lhs_proj_leaf
-            proj_list = sorted(step.proj_indices)
+        y_leaf = step.lhs_leaves[0]
+        proj_list = sorted(step.proj_indices)
 
         y_idx_bounds = [self.var_idx_map[y_leaf]]
         relu_psd_cone_indices = y_idx_bounds + x_idx_bounds
@@ -954,16 +953,12 @@ class SDP(Canonicalizer):
             A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(rhs)
             b_vec = np.asarray(rhs.const)
 
-            # For partial-projection relu, only projected rhs rows have a
-            # corresponding y-row in the (smaller) fresh leaf. Map each rhs
-            # row index to its y-leaf position via `rhs_to_y_pos`; non-proj
-            # rhs rows have no y row and are skipped for the inner cut.
-            if step._lhs_proj_leaf is None:
-                y_leaf = step.lhs
-                rhs_to_y_pos = {i: i for i in range(rhs.ndim)}
-            else:
-                y_leaf = step._lhs_proj_leaf
-                rhs_to_y_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
+            # Map each rhs row to its position in the fresh y-leaf. For full
+            # relu this is the identity dict (proj_indices spans rhs.ndim);
+            # for partial relu it maps only projected rhs rows and skips the
+            # rest (handled by the ``if i not in rhs_to_y_pos`` guard below).
+            y_leaf = step.lhs_leaves[0]
+            rhs_to_y_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
             y_idx_bounds = [self.var_idx_map[y_leaf]]
 
             d = rhs.ndim

@@ -118,18 +118,14 @@ class MIPSolver(Solver):
 
         for step in steps:
             y_var, y_val = self.get_relaxed_variables(step.rhs)
-            # For partial-projection Relu, the fresh proj-leaf (size
-            # ``len(proj_indices)``) is the actual MIP variable; the composite
-            # ``step.lhs`` has rhs.ndim logical rows but only the proj rows live
-            # in a fresh solver variable. Pull the relaxed values from that
-            # leaf and remap rhs index ``i`` to its position in the leaf.
+            # ``step.lhs_leaves[0]`` is the fresh MIP variable: the full lhs
+            # leaf for full relu, or the smaller proj-leaf for partial relu.
+            # ``rhs_to_pos`` maps each projected rhs row to its row in that
+            # fresh leaf; for full relu this is the identity dict.
             w_leaf = step.lhs_leaves[0]
             w_var, w_val = self.get_relaxed_variables(w_leaf)
 
-            if getattr(step, "_lhs_proj_leaf", None) is not None:
-                rhs_to_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
-            else:
-                rhs_to_pos = {i: i for i in range(step.lhs.ndim)}
+            rhs_to_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
 
             l = np.concatenate(step.rhs.lb)
             u = np.concatenate(step.rhs.ub)

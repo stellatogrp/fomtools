@@ -42,6 +42,11 @@ class Step:
     def __init__(self, rhs: LinearExpression, relax_binary_vars: bool = False):
         self.rhs = rhs
         self.relax_binary_vars = relax_binary_vars
+        # Default: every output coordinate is "projected" (i.e., the step
+        # transformation applies to all rows). Subclasses that support
+        # partial projection (e.g. ``Relu`` with ``proj_ranges``) override
+        # this in their own ``__init__``.
+        self.proj_indices = set(range(rhs.ndim))
 
     @cached_property
     def lhs(self) -> LinearExpression:
