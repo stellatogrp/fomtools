@@ -310,3 +310,46 @@ def test_stack_inherits_leaf_constraint(solver):
     # output is 0.7 from the x-side coord).
     expected = max(np.maximum(c, 0.0).max(), np.maximum(nu_ub, 0.0).max())
     assert r_stack == pytest.approx(expected, abs=TEST_EPS)
+
+
+@pytest.mark.filterwarnings("ignore:invalid value encountered in add:RuntimeWarning")
+@pytest.mark.parametrize("solver", SOLVERS)
+def test_obbt_tightens_unbounded_dual_via_stack(solver):
+    """
+    KKT-style use case: a dual variable ``nu`` starts unbounded (lb=-inf,
+    ub=inf). After adding a coupling constraint ``M @ stack([x, nu]) == 0``
+    with ``x`` bounded, OBBT must infer finite bounds on ``nu`` from the
+    constraint plus ``x``'s bounds, propagate them back to the original
+    ``nu`` leaf, and (via leaf-driven bound_propagation) tighten the stack
+    too.
+
+    Concretely we use ``M = [I  I]`` so the equality reads ``x + nu == 0``,
+    i.e. ``nu = -x``. With ``x in [-1, 1]^2`` the tight bounds on ``nu``
+    are ``[-1, 1]^2``.
+    """
+    v = Verifier(solver=solver, obbt_handler=solver, params={"OutputFlag": 0})
+    x = v.add_iterate(2, lb=-1.0, ub=1.0)
+    nu = v.add_iterate(2, lb=-np.inf, ub=np.inf)
+
+    # Sanity: nu is initially unbounded.
+    assert np.all(np.isinf(nu.lb))
+    assert np.all(np.isinf(nu.ub))
+
+    M = np.hstack([np.eye(2), np.eye(2)])  # shape (2, 4): [x; nu] -> x + nu
+    y = stack([x, nu])
+
+    v.add_constraint(M @ y == np.zeros(2))
+
+    # The leaf nu is now bounded by OBBT, derived purely from x's bounds and
+    # the coupling constraint.
+    assert np.all(np.isfinite(nu.lb))
+    assert np.all(np.isfinite(nu.ub))
+    assert np.allclose(nu.lb, -1.0, atol=TEST_EPS)
+    assert np.allclose(nu.ub, 1.0, atol=TEST_EPS)
+
+    # The stack's bound_propagation reads current leaf bounds, so a fresh
+    # call surfaces the tightening on its second half. The first half stays
+    # at x's existing [-1, 1].
+    new_lb, new_ub = y.bound_propagation()
+    assert np.allclose(new_lb, np.array([-1.0, -1.0, -1.0, -1.0]), atol=TEST_EPS)
+    assert np.allclose(new_ub, np.array([1.0, 1.0, 1.0, 1.0]), atol=TEST_EPS)
