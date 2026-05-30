@@ -30,6 +30,8 @@ from fomtools.proxable_functions import (
     NormL1,
     ProxableFunction,
     SqL2Norm,
+    SumNegative,
+    SumPositive,
 )
 from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
 from fomtools.verifier import Verifier
@@ -651,6 +653,148 @@ def test_sql2norm_eval_and_grad():
     assert np.isclose(f.eval(np.array([3.0, 4.0])), 12.5)
     x = np.array([1.0, -2.0, 3.0])
     np.testing.assert_allclose(f.grad(x), x)
+
+
+# --- SumPositive ---
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_sumpositive_returns_linear_expression(method):
+    """
+    SumPositive lowers to one SaturatedLinear (clip to [0, gamma]) followed
+    by a subtraction. All three backends accept this.
+    """
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    out = v.prox(SumPositive(), rhs, gamma=0.5)
+
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_sumpositive_emits_one_satlin_on_mip():
+    """One SaturatedLinear with l == 0, u == gamma; nothing else."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    gamma = 0.5
+    v.prox(SumPositive(), rhs, gamma=gamma)
+
+    satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
+    assert len(satlins) == 1
+    np.testing.assert_allclose(satlins[0].l, np.zeros(3))
+    np.testing.assert_allclose(satlins[0].u, np.full(3, gamma))
+
+
+def test_sumpositive_prox_matches_closed_form():
+    """
+    Numpy-level: SumPositive.prox matches the piecewise definition on
+    a mixed-sign input crossing all three branches.
+    """
+    f = SumPositive()
+    rhs = np.array([2.0, 0.3, -0.5, -2.0, 0.0])
+    gamma = 1.0
+    expected = np.array([1.0, 0.0, -0.5, -2.0, 0.0])
+    np.testing.assert_allclose(f.prox(rhs, gamma=gamma), expected)
+
+    rng = np.random.default_rng(0)
+    for _ in range(5):
+        x = rng.standard_normal(6)
+        g = float(rng.uniform(0.1, 2.0))
+        out = f.prox(x, gamma=g)
+        expected = np.where(
+            x > g, x - g, np.where(x < 0, x, 0.0)
+        )
+        np.testing.assert_allclose(out, expected)
+
+
+def test_sumpositive_eval_and_grad():
+    """Numpy-level eval and grad sanity."""
+    f = SumPositive()
+    assert np.isclose(f.eval(np.array([1.0, -2.0, 3.0])), 4.0)
+    np.testing.assert_allclose(
+        f.grad(np.array([1.0, -2.0, 3.0, 0.0])),
+        np.array([1.0, 0.0, 1.0, 0.0]),
+    )
+
+
+# --- SumNegative ---
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_sumnegative_returns_linear_expression(method):
+    """
+    SumNegative lowers to one SaturatedLinear (clip to [-gamma, 0])
+    followed by a subtraction. All three backends accept this.
+    """
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    out = v.prox(SumNegative(), rhs, gamma=0.5)
+
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_sumnegative_emits_one_satlin_on_mip():
+    """One SaturatedLinear with l == -gamma, u == 0; nothing else."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    gamma = 0.5
+    v.prox(SumNegative(), rhs, gamma=gamma)
+
+    satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
+    assert len(satlins) == 1
+    np.testing.assert_allclose(satlins[0].l, np.full(3, -gamma))
+    np.testing.assert_allclose(satlins[0].u, np.zeros(3))
+
+
+def test_sumnegative_prox_matches_closed_form():
+    """
+    Numpy-level: SumNegative.prox matches the piecewise definition on
+    a mixed-sign input crossing all three branches.
+    """
+    f = SumNegative()
+    rhs = np.array([2.0, 0.3, -0.5, -2.0, 0.0])
+    gamma = 1.0
+    expected = np.array([2.0, 0.3, 0.0, -1.0, 0.0])
+    np.testing.assert_allclose(f.prox(rhs, gamma=gamma), expected)
+
+    rng = np.random.default_rng(1)
+    for _ in range(5):
+        x = rng.standard_normal(6)
+        g = float(rng.uniform(0.1, 2.0))
+        out = f.prox(x, gamma=g)
+        expected = np.where(
+            x < -g, x + g, np.where(x > 0, x, 0.0)
+        )
+        np.testing.assert_allclose(out, expected)
+
+
+def test_sumnegative_eval_and_grad():
+    """Numpy-level eval and grad sanity."""
+    f = SumNegative()
+    assert np.isclose(f.eval(np.array([1.0, -2.0, 3.0])), 2.0)
+    np.testing.assert_allclose(
+        f.grad(np.array([1.0, -2.0, 3.0, 0.0])),
+        np.array([0.0, -1.0, 0.0, 0.0]),
+    )
+
+
+def test_sumnegative_is_sumpositive_mirror():
+    """
+    The reflection identity $f_-(x) = f_+(-x)$ implies
+    $\\operatorname{prox}_{\\gamma f_-}(v) = -\\operatorname{prox}_{\\gamma f_+}(-v)$.
+    Catches sign drift in either lowering.
+    """
+    f_pos, f_neg = SumPositive(), SumNegative()
+    rng = np.random.default_rng(2)
+    for _ in range(8):
+        v_vec = rng.standard_normal(5)
+        g = float(rng.uniform(0.1, 2.0))
+        np.testing.assert_allclose(
+            f_neg.prox(v_vec, gamma=g), -f_pos.prox(-v_vec, gamma=g)
+        )
 
 
 def test_unsupported_prox_raises_on_every_backend():

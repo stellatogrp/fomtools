@@ -15,6 +15,8 @@ from fomtools.proxable_functions import (
     Linear,
     NormL1,
     SqL2Norm,
+    SumNegative,
+    SumPositive,
 )
 from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
 from fomtools.steps.step import Step
@@ -476,6 +478,46 @@ class StepDecomposer:
         """
         return rhs / (1.0 + gamma)
 
+    def prox_sumnegative(
+        self, prox: SumNegative, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower the sum-of-negative-parts prox $f(x) = \sum_i \max(0, -x_i)$
+        to a single ``SaturatedLinear`` clip to $[-\gamma, 0]$ followed
+        by a subtraction:
+
+        $$
+            \operatorname{prox}_{\gamma f}(v) = v - \mathrm{satlin}(v;\, -\gamma,\, 0).
+        $$
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it.
+        """
+        l = self._to_satlin_bound(-gamma, rhs.ndim)
+        u = self._to_satlin_bound(0.0, rhs.ndim)
+        clip = self.process_step(SaturatedLinear(rhs=rhs, l=l, u=u))
+        return rhs - clip
+
+    def prox_sumpositive(
+        self, prox: SumPositive, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower the sum-of-positive-parts prox $f(x) = \sum_i \max(0, x_i)$
+        to a single ``SaturatedLinear`` clip to $[0, \gamma]$ followed
+        by a subtraction:
+
+        $$
+            \operatorname{prox}_{\gamma f}(v) = v - \mathrm{satlin}(v;\, 0,\, \gamma).
+        $$
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it.
+        """
+        l = self._to_satlin_bound(0.0, rhs.ndim)
+        u = self._to_satlin_bound(gamma, rhs.ndim)
+        clip = self.process_step(SaturatedLinear(rhs=rhs, l=l, u=u))
+        return rhs - clip
+
     _PROX_DECOMPOSERS: ClassVar[dict] = {
         "elasticnet": prox_elasticnet,
         "huberloss": prox_huberloss,
@@ -487,4 +529,6 @@ class StepDecomposer:
         "linear": prox_linear,
         "norml1": prox_norml1,
         "sql2norm": prox_sql2norm,
+        "sumnegative": prox_sumnegative,
+        "sumpositive": prox_sumpositive,
     }
