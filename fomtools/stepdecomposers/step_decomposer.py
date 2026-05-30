@@ -15,6 +15,7 @@ from fomtools.proxable_functions import (
     IndPoint,
     Linear,
     NormL1,
+    Quadratic,
     SqL2Norm,
     SumNegative,
     SumPositive,
@@ -58,23 +59,45 @@ class StepDecomposer:
     ----------
     canonicalizer : Canonicalizer
         The canonicalizer instance to use for encoding constraints.
-    register_var : Callable[[LinearExpression], None]
+    register_var : Callable[..., None]
         Callback function to register new leaf variables with both the
         canonicalizer and OBBT handler.
+    add_iterate : Callable[..., LinearExpression]
+        Callback to introduce a fresh iterate leaf (the new iterate
+        produced by a prox step). Used by KKT-style prox lowerings
+        that define their output implicitly via an equality constraint
+        rather than via a ``Step`` activation. Must track the new leaf
+        in ``Verifier.iterates``.
+    add_constraint : Callable[..., None]
+        Callback to post an arbitrary constraint, routed through both
+        the main canonicalizer and (when enabled) the OBBT handler.
+        Used by KKT-style prox lowerings.
 
     Attributes
     ----------
     canonicalizer : Canonicalizer
         The canonicalizer instance used for constraint encoding.
-    register_var : Callable[[LinearExpression], None]
+    register_var : Callable[..., None]
         Callback for registering new leaf variables.
+    add_iterate : Callable[..., LinearExpression]
+        Callback for introducing a fresh iterate leaf.
+    add_constraint : Callable[..., None]
+        Callback for posting an OBBT-aware constraint.
     """
 
     _DECOMPOSERS: ClassVar[dict] = {}
 
-    def __init__(self, canonicalizer, register_var: Callable[[LinearExpression], None]):
+    def __init__(
+        self,
+        canonicalizer,
+        register_var: Callable[..., None],
+        add_iterate: Callable[..., LinearExpression],
+        add_constraint: Callable[..., None],
+    ):
         self.canonicalizer = canonicalizer
         self.register_var = register_var
+        self.add_iterate = add_iterate
+        self.add_constraint = add_constraint
 
     def is_primitive(self, step: Step) -> bool:
         """
@@ -491,6 +514,32 @@ class StepDecomposer:
         step = SoftThreshold(rhs=rhs, lambd=prox.lambd * gamma)
         return self.process_step(step)
 
+    def prox_quadratic(
+        self, prox: Quadratic, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower a convex-quadratic prox $f(x) = \tfrac{1}{2}x^\top Q x + q^\top x$
+        to a single linear equality on a fresh iterate ``u``:
+
+        $$
+            (I + \gamma Q)\, u \;=\; \text{rhs} - \gamma q.
+        $$
+
+        No inverse or pseudoinverse is formed — the equality is posted
+        as-is and the solver handles the linear system. ``q`` may be
+        numeric data or a ``LinearExpression`` parameter; either form
+        flows through ``LinearExpression`` arithmetic uniformly.
+
+        Backend-independent: registered on the base class. Simulator
+        overrides this with a deferral (no per-step activation callback
+        is available for an implicitly-defined iterate).
+        """
+        n = rhs.ndim
+        u = self.add_iterate(n, lb=-np.inf, ub=np.inf, init=np.zeros(n))
+        M = np.eye(n) + gamma * prox.Q
+        self.add_constraint(M @ u == rhs - gamma * prox.q)
+        return u
+
     def prox_sql2norm(
         self, prox: SqL2Norm, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -557,6 +606,7 @@ class StepDecomposer:
         "indpoint": prox_indpoint,
         "linear": prox_linear,
         "norml1": prox_norml1,
+        "quadratic": prox_quadratic,
         "sql2norm": prox_sql2norm,
         "sumnegative": prox_sumnegative,
         "sumpositive": prox_sumpositive,

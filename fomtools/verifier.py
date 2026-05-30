@@ -78,7 +78,12 @@ class Verifier(object):
         if self.obbt_handler is not None:
             self.canonicalizer.obbt_handler = self.obbt_handler
         decomposer_cls = self._get_step_decomposer(method)
-        self.step_decomposer = decomposer_cls(self.canonicalizer, self._register_var)
+        self.step_decomposer = decomposer_cls(
+            self.canonicalizer,
+            self._register_var,
+            self.add_iterate,
+            self.add_constraint,
+        )
         self._step_proxy = _StepProxy(self)
 
     def __getitem__(self, item):

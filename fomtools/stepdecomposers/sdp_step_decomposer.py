@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 import numpy as np
 
 from fomtools.linearexpression import LinearExpression
@@ -76,7 +78,23 @@ class SDPStepDecomposer(StepDecomposer):
         """
         return self._decompose_saturatedlinear_to_relus(step)
 
+    def prox_quadratic(self, prox, rhs, gamma=1.0):
+        # TODO(sdp): Implement Quadratic prox on the SDP backend. The base
+        # lowering allocates u with ±inf bounds, but SDP rejects infinite
+        # bounds at registration (sdp.py:173), so OBBT cannot tighten them
+        # in time. Possible paths: (a) require OBBT-first registration on
+        # SDP, (b) compute finite bounds via a separate LP solve before
+        # registering u. Deferred.
+        raise NotImplementedError(
+            "Quadratic prox is not yet supported on the SDP backend"
+        )
+
     _DECOMPOSERS = {
         "saturatedlinear": decompose_saturatedlinear,
         "softthreshold": decompose_softthreshold,
+    }
+
+    _PROX_DECOMPOSERS: ClassVar[dict] = {
+        **StepDecomposer._PROX_DECOMPOSERS,
+        "quadratic": prox_quadratic,
     }

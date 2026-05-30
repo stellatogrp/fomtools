@@ -30,6 +30,7 @@ from fomtools.proxable_functions import (
     Linear,
     NormL1,
     ProxableFunction,
+    Quadratic,
     SqL2Norm,
     SumNegative,
     SumPositive,
@@ -751,6 +752,154 @@ def test_sql2norm_eval_and_grad():
     assert np.isclose(f.eval(np.array([3.0, 4.0])), 12.5)
     x = np.array([1.0, -2.0, 3.0])
     np.testing.assert_allclose(f.grad(x), x)
+
+
+# --- Quadratic ---
+
+
+def test_quadratic_returns_linear_expression_on_mip():
+    """
+    Quadratic lowers to a single linear equality (I + γQ) u == rhs - γq on
+    a fresh iterate u. MIP-only: SDP and Simulator backends explicitly
+    defer (see the two ``_raises_notimplemented`` tests below).
+    """
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    Q = np.eye(3) * 2.0
+    q = np.array([0.5, -0.5, 0.1])
+    out = v.prox(Quadratic(Q=Q, q=q), rhs, gamma=0.5)
+
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+@pytest.mark.parametrize("method", ["sdp", "simulator"])
+def test_quadratic_unsupported_backend_raises(method):
+    """SDP and Simulator backends explicitly defer Quadratic with a clear message."""
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    with pytest.raises(NotImplementedError, match="Quadratic"):
+        v.prox(Quadratic(Q=np.eye(3), q=np.zeros(3)), rhs)
+
+
+def test_quadratic_introduces_one_iterate():
+    """The prox lowering introduces exactly one fresh iterate u in verifier.iterates."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    n_before = len(v.iterates)
+    v.prox(Quadratic(Q=np.eye(3), q=np.zeros(3)), rhs)
+    assert len(v.iterates) == n_before + 1
+    # The new iterate is the output u of dim 3.
+    assert v.iterates[-1].ndim == 3
+
+
+def test_quadratic_emits_no_step():
+    """Quadratic lowers via constraint, not via a Step; canonicalizer.steps unchanged."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    n_steps_before = len(v.canonicalizer.steps)
+    v.prox(Quadratic(Q=np.eye(3), q=np.zeros(3)), rhs)
+    assert len(v.canonicalizer.steps) == n_steps_before
+
+
+def test_quadratic_prox_matches_closed_form():
+    """Numpy-level: prox solves (I + γQ) u = rhs − γq via np.linalg.solve."""
+    rng = np.random.default_rng(0)
+    for _ in range(5):
+        n = int(rng.integers(2, 6))
+        A = rng.standard_normal((n, n))
+        Q = A.T @ A  # PSD
+        q = rng.standard_normal(n)
+        rhs = rng.standard_normal(n)
+        gamma = float(rng.uniform(0.1, 2.0))
+
+        out = Quadratic(Q=Q, q=q).prox(rhs, gamma=gamma)
+        expected = np.linalg.solve(np.eye(n) + gamma * Q, rhs - gamma * q)
+        np.testing.assert_allclose(out, expected, atol=1e-10)
+
+
+def test_quadratic_supports_linexpr_q():
+    """
+    When ``q`` is a LinearExpression parameter, the posted equality must
+    reference q's leaf, u's leaf, and rhs's leaf. The output ``u`` is still
+    a fresh leaf.
+    """
+    v = _make_verifier("mip")
+    n = 3
+    rhs = v.add_param(n, lb=-1.0, ub=1.0)
+    q_param = v.add_param(n, lb=-0.5, ub=0.5)
+    Q = np.eye(n) * 2.0
+
+    out = v.prox(Quadratic(Q=Q, q=q_param), rhs, gamma=0.5)
+    assert out.is_leaf
+    assert out.ndim == n
+    # ``u`` is freshly created — not the same leaf as rhs or q_param.
+    assert out is not rhs
+    assert out is not q_param
+
+
+def test_quadratic_end_to_end_mip():
+    """
+    Pin ``rhs`` via tight bounds, solve a trivial objective on ``u``, and
+    verify the optimum equals the closed-form np.linalg.solve answer.
+    This is the strongest numerical check: it exercises the full
+    constraint-posting path (canonicalizer + OBBT + solver).
+    """
+    Q = np.array([[2.0, 0.5], [0.5, 1.5]])
+    q = np.array([1.0, -1.0])
+    gamma = 0.5
+    rhs_value = np.array([0.3, -0.2])
+
+    v = _make_verifier("mip")
+    rhs = v.add_param(2, lb=rhs_value, ub=rhs_value)  # pinned
+    u = v.prox(Quadratic(Q=Q, q=q), rhs, gamma=gamma)
+
+    # Closed-form reference
+    expected = np.linalg.solve(np.eye(2) + gamma * Q, rhs_value - gamma * q)
+
+    # Minimize then maximize each coordinate of u; the feasible value of u
+    # is uniquely determined by the equality, so min == max == expected[i].
+    solver = v.canonicalizer.solver
+    for i in range(2):
+        solver.set_objective(u[i], "minimize")
+        solver.optimize()
+        assert solver.is_optimal()
+        u_min = solver["objVal"]
+
+        solver.set_objective(u[i], "maximize")
+        solver.optimize()
+        assert solver.is_optimal()
+        u_max = solver["objVal"]
+
+        assert np.isclose(u_min, u_max, atol=1e-6)
+        assert np.isclose(u_min, expected[i], atol=1e-6)
+
+
+def test_quadratic_eval_and_grad():
+    """Numpy eval and grad sanity."""
+    Q = np.array([[2.0, 0.0], [0.0, 4.0]])
+    q = np.array([1.0, -1.0])
+    f = Quadratic(Q=Q, q=q)
+    x = np.array([1.0, 2.0])
+    # 0.5 * (2*1 + 4*4) + (1*1 + (-1)*2) = 0.5*18 + (-1) = 8
+    assert np.isclose(f.eval(x), 8.0)
+    np.testing.assert_allclose(f.grad(x), Q @ x + q)
+
+
+def test_quadratic_rejects_nonsquare_Q():
+    """Non-square Q is invalid; raise at construction."""
+    with pytest.raises(ValueError, match="square"):
+        Quadratic(Q=np.zeros((3, 4)), q=np.zeros(3))
+
+
+def test_quadratic_rejects_mismatched_q_shape():
+    """Mismatched q.shape vs Q is invalid; raise at construction."""
+    with pytest.raises(ValueError, match="shape"):
+        Quadratic(Q=np.eye(3), q=np.zeros(4))
 
 
 # --- SumPositive ---
