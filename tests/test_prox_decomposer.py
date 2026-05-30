@@ -23,6 +23,7 @@ from fomtools.proxable_functions import (
     HuberLoss,
     IndBallLinf,
     IndBox,
+    IndHalfSpace,
     IndNonNegative,
     IndNonPositive,
     IndPoint,
@@ -436,6 +437,103 @@ def test_indbox_array_bounds_forwarded_unchanged():
     assert len(satlins) == 1
     np.testing.assert_allclose(satlins[0].l, l)
     np.testing.assert_allclose(satlins[0].u, u)
+
+
+# --- IndHalfSpace ---
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_indhalfspace_returns_linear_expression(method):
+    """
+    IndHalfSpace lowers to one scalar Relu plus a rank-one lift back to
+    rhs.ndim. All three backends accept this.
+    """
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    out = v.prox(IndHalfSpace(a=np.array([1.0, 1.0, 0.0]), b=0.5), rhs)
+
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_indhalfspace_emits_one_scalar_relu_on_mip():
+    """Exactly one Relu, applied to a 1-D signed-distance LinearExpression."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(IndHalfSpace(a=np.array([1.0, 1.0, 0.0]), b=0.5), rhs)
+
+    relus = [s for s in v.canonicalizer.steps if isinstance(s, Relu)]
+    assert len(relus) == 1
+    assert relus[0].rhs.ndim == 1
+
+
+def test_indhalfspace_gamma_is_ignored():
+    """
+    Indicator prox is independent of gamma — the emitted step structure
+    is identical regardless of the gamma argument.
+    """
+    a, b = np.array([1.0, -1.0, 0.5]), 0.3
+
+    v1 = _make_verifier("mip")
+    rhs1 = v1.add_param(3, lb=-1.0, ub=1.0)
+    v1.prox(IndHalfSpace(a=a, b=b), rhs1, gamma=1.0)
+
+    v2 = _make_verifier("mip")
+    rhs2 = v2.add_param(3, lb=-1.0, ub=1.0)
+    v2.prox(IndHalfSpace(a=a, b=b), rhs2, gamma=10.0)
+
+    relus1 = [s for s in v1.canonicalizer.steps if isinstance(s, Relu)]
+    relus2 = [s for s in v2.canonicalizer.steps if isinstance(s, Relu)]
+    assert len(relus1) == len(relus2) == 1
+    assert relus1[0].rhs.ndim == relus2[0].rhs.ndim == 1
+
+
+def test_indhalfspace_prox_matches_closed_form():
+    """
+    Numpy-level: cover the three regions — strictly inside, on the
+    boundary (prox is identity), and outside (boundary projection).
+    """
+    a = np.array([1.0, 2.0, -1.0])
+    b = 0.5
+    norm_a_sq = float(np.dot(a, a))
+    f = IndHalfSpace(a=a, b=b)
+
+    # strictly inside (a @ v = -1.5 < 0.5): prox == v
+    v_in = np.array([0.0, -0.5, 0.5])
+    np.testing.assert_allclose(f.prox(v_in), v_in)
+
+    # boundary (a @ v == b exactly): prox == v
+    v_bd = np.array([0.5, 0.0, 0.0])
+    assert np.isclose(float(a @ v_bd), b)
+    np.testing.assert_allclose(f.prox(v_bd), v_bd)
+
+    # outside: prox lands on the boundary
+    v_out = np.array([1.0, 1.0, 0.0])
+    expected = v_out - ((float(a @ v_out) - b) / norm_a_sq) * a
+    np.testing.assert_allclose(f.prox(v_out), expected)
+    assert np.isclose(float(a @ f.prox(v_out)), b)
+
+
+def test_indhalfspace_eval():
+    """eval returns 0.0 inside the halfspace, +inf outside."""
+    f = IndHalfSpace(a=np.array([1.0, 0.0]), b=1.0)
+    assert f.eval(np.array([0.5, 100.0])) == 0.0     # inside
+    assert f.eval(np.array([1.0, 100.0])) == 0.0     # boundary
+    assert f.eval(np.array([1.5, 100.0])) == np.inf  # outside
+
+
+def test_indhalfspace_rejects_zero_a():
+    """Zero ``a`` would zero the projection denominator; reject at construction."""
+    with pytest.raises(ValueError, match="nonzero"):
+        IndHalfSpace(a=np.zeros(3), b=0.0)
+
+
+def test_indhalfspace_grad_raises():
+    """Indicators are not differentiable; grad must raise."""
+    f = IndHalfSpace(a=np.array([1.0, 0.0]), b=0.0)
+    with pytest.raises(NotImplementedError):
+        f.grad(np.array([0.0, 0.0]))
 
 
 # --- IndPoint ---

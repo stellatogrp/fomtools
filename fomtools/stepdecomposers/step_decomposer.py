@@ -9,6 +9,7 @@ from fomtools.proxable_functions import (
     HuberLoss,
     IndBallLinf,
     IndBox,
+    IndHalfSpace,
     IndNonNegative,
     IndNonPositive,
     IndPoint,
@@ -378,6 +379,33 @@ class StepDecomposer:
         u = self._to_satlin_bound(prox.u, rhs.ndim)
         return self.process_step(SaturatedLinear(rhs=rhs, l=l, u=u))
 
+    def prox_indhalfspace(
+        self, prox: IndHalfSpace, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower a half-space indicator prox to a single scalar ``Relu``
+        lifted back to the input dimension:
+
+        $$
+            \operatorname{prox}_{\gamma I_{\{a^\top x \le b\}}}(v)
+            \;=\; v - \mathrm{ReLU}\!\left(\frac{a^\top v - b}{\|a\|^2}\right)\, a.
+        $$
+
+        The ``Relu`` step operates on the scalar signed-distance
+        ``LinearExpression`` ``(a @ rhs - b) / ||a||^2``; the lift back
+        to vector dimension uses ``a.reshape(-1, 1) @ relu_excess`` since
+        ``LinearExpression.__mul__`` only accepts scalars. Independent of
+        $\gamma$.
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it.
+        """
+        # LinearExpression.__rmatmul__ requires a 2-D matrix on the left, so
+        # reshape a to (1, n) for the inner product and (n, 1) for the lift.
+        excess = (prox.a.reshape(1, -1) @ rhs - prox.b) / prox._norm_a_sq
+        relu_excess = self.process_step(Relu(rhs=excess))
+        return rhs - prox.a.reshape(-1, 1) @ relu_excess
+
     def prox_indnonnegative(
         self, prox: IndNonNegative, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -523,6 +551,7 @@ class StepDecomposer:
         "huberloss": prox_huberloss,
         "indballlinf": prox_indballlinf,
         "indbox": prox_indbox,
+        "indhalfspace": prox_indhalfspace,
         "indnonnegative": prox_indnonnegative,
         "indnonpositive": prox_indnonpositive,
         "indpoint": prox_indpoint,
