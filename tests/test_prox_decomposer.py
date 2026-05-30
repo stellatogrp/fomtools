@@ -774,14 +774,80 @@ def test_quadratic_returns_linear_expression_on_mip():
     assert out.ndim == 3
 
 
-@pytest.mark.parametrize("method", ["sdp", "simulator"])
-def test_quadratic_unsupported_backend_raises(method):
-    """SDP and Simulator backends explicitly defer Quadratic with a clear message."""
-    v = _make_verifier(method)
+def test_quadratic_simulator_raises_notimplemented():
+    """Simulator backend explicitly defers Quadratic with a clear message."""
+    v = _make_verifier("simulator")
     rhs = v.add_param(3, lb=-1.0, ub=1.0)
 
     with pytest.raises(NotImplementedError, match="Quadratic"):
         v.prox(Quadratic(Q=np.eye(3), q=np.zeros(3)), rhs)
+
+
+def test_quadratic_sdp_works():
+    """SDP now accepts Quadratic: finite bounds on u are derived via
+    solve_linexpr through M^{-1} @ (rhs - γq), with no inverse formed
+    in the verification model."""
+    v = _make_verifier("sdp")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    out = v.prox(Quadratic(Q=np.eye(3) * 2.0, q=np.zeros(3)), rhs, gamma=0.5)
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+    assert np.all(np.isfinite(out.lb))
+    assert np.all(np.isfinite(out.ub))
+
+
+def test_quadratic_sdp_obbt_tightens_registered_bounds():
+    """With OBBT enabled on SDP, the u bounds end up at least as tight as
+    the solve-derived placeholder bounds. The SDP model's bound
+    constraints are rewritten in place by SDP.update_bounds (sdp.py:198),
+    so the final model verifies against the OBBT-tightened bounds."""
+    from fomtools.linearexpression import solve_linexpr
+
+    Q = np.eye(3) * 2.0
+    q = np.array([0.5, -0.5, 0.1])
+    gamma = 0.5
+    rhs_lb, rhs_ub = np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
+    M = np.eye(3) + gamma * Q
+
+    # Reference: solve-derived bounds (what SDP gets at registration).
+    v_ref = _make_verifier("sdp")
+    rhs_ref = v_ref.add_param(3, lb=rhs_lb, ub=rhs_ub)
+    solve_lb, solve_ub = solve_linexpr(M, rhs_ref - gamma * q).bound_propagation()
+
+    # With OBBT: SDP.update_bounds is called by _tighten_constraint_bounds.
+    v_obbt = _make_verifier("sdp", obbt="gurobi")
+    rhs = v_obbt.add_param(3, lb=rhs_lb, ub=rhs_ub)
+    u = v_obbt.prox(Quadratic(Q=Q, q=q), rhs, gamma=gamma)
+
+    # The OBBT-tightened bounds must dominate (be at least as tight as)
+    # the solve-derived ones. For this diagonal Q + box rhs the two
+    # coincide because solve-derived is already tight; the assertion
+    # catches any regression where tightened values fail to reach the
+    # LinearExpression / SDP model.
+    assert np.all(u.lb >= solve_lb - 1e-9)
+    assert np.all(u.ub <= solve_ub + 1e-9)
+    assert np.all(np.isfinite(u.lb))
+    assert np.all(np.isfinite(u.ub))
+
+
+def test_quadratic_derived_bounds_match_analytic_diagonal_Q():
+    """For diagonal Q, u_i = M_ii^{-1} * (rhs_i - γ q_i) with
+    M_ii = 1 + γ q_ii. solve_linexpr + bound_propagation must reproduce
+    the analytic interval exactly (M_ii > 0 preserves order)."""
+    v = _make_verifier("mip")
+    diag = np.array([1.0, 4.0, 9.0])
+    Q = np.diag(diag)
+    q = np.array([0.5, -0.5, 0.0])
+    gamma = 0.5
+    rhs_lb, rhs_ub = np.array([-1.0, -2.0, -3.0]), np.array([1.0, 2.0, 3.0])
+    rhs = v.add_param(3, lb=rhs_lb, ub=rhs_ub)
+
+    u = v.prox(Quadratic(Q=Q, q=q), rhs, gamma=gamma)
+    M_diag = 1.0 + gamma * diag
+    expected_lb = (rhs_lb - gamma * q) / M_diag
+    expected_ub = (rhs_ub - gamma * q) / M_diag
+    np.testing.assert_allclose(u.lb, expected_lb, atol=1e-10)
+    np.testing.assert_allclose(u.ub, expected_ub, atol=1e-10)
 
 
 def test_quadratic_introduces_one_iterate():

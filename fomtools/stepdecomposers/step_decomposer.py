@@ -3,7 +3,7 @@ from typing import Callable, ClassVar
 
 import numpy as np
 
-from fomtools.linearexpression import LinearExpression
+from fomtools.linearexpression import LinearExpression, solve_linexpr
 from fomtools.proxable_functions import (
     ElasticNet,
     HuberLoss,
@@ -525,19 +525,31 @@ class StepDecomposer:
             (I + \gamma Q)\, u \;=\; \text{rhs} - \gamma q.
         $$
 
-        No inverse or pseudoinverse is formed — the equality is posted
-        as-is and the solver handles the linear system. ``q`` may be
-        numeric data or a ``LinearExpression`` parameter; either form
-        flows through ``LinearExpression`` arithmetic uniformly.
+        No inverse or pseudoinverse is formed in the verification model —
+        the equality is posted as-is and the solver handles the linear
+        system. Initial bounds on ``u`` are derived via interval
+        propagation through a throwaway ``LinearExpression`` that
+        represents ``M^{-1} @ (rhs - gamma * q)``, built via
+        ``solve_linexpr`` (per-leaf ``np.linalg.solve`` — no inverse
+        materialized as a matrix). Those bounds are tightened further
+        whenever OBBT is enabled, via the existing
+        ``Verifier._tighten_constraint_bounds`` path triggered by
+        ``add_constraint``. ``q`` may be numeric data or a
+        ``LinearExpression`` parameter.
 
         Backend-independent: registered on the base class. Simulator
         overrides this with a deferral (no per-step activation callback
         is available for an implicitly-defined iterate).
         """
         n = rhs.ndim
-        u = self.add_iterate(n, lb=-np.inf, ub=np.inf, init=np.zeros(n))
         M = np.eye(n) + gamma * prox.Q
-        self.add_constraint(M @ u == rhs - gamma * prox.q)
+        rhs_shift = rhs - gamma * prox.q
+
+        # Throwaway expression: never registered, only used for bound prop.
+        u_lb, u_ub = solve_linexpr(M, rhs_shift).bound_propagation()
+
+        u = self.add_iterate(n, lb=u_lb, ub=u_ub)
+        self.add_constraint(M @ u == rhs_shift)
         return u
 
     def prox_sql2norm(
