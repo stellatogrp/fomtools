@@ -21,6 +21,7 @@ from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import (
     ElasticNet,
     HuberLoss,
+    IndAffine,
     IndBallLinf,
     IndBox,
     IndHalfSpace,
@@ -371,6 +372,215 @@ def test_indnonpositive_emits_one_relu_on_mip():
     # Bounds on -rhs are [-rhs.ub, -rhs.lb] = [-1, 2]
     np.testing.assert_allclose(relus[0].lb, [-1.0, -1.0, -1.0])
     np.testing.assert_allclose(relus[0].ub, [2.0, 2.0, 2.0])
+
+
+# --- IndAffine ---
+
+
+def test_indaffine_returns_linear_expression_on_mip():
+    """IndAffine introduces a primal u and dual ν via a block KKT system;
+    the prox output is u as a LinearExpression of dim n."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    A = np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
+    b = np.array([0.5, 0.3])
+    out = v.prox(IndAffine(A=A, b=b), rhs)
+
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_indaffine_sdp_works():
+    """SDP path works without OBBT — bounds for both u and ν derived
+    via solve_linexpr on the block KKT matrix."""
+    v = _make_verifier("sdp")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    A = np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
+    b = np.array([0.5, 0.3])
+    out = v.prox(IndAffine(A=A, b=b), rhs)
+
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+    assert np.all(np.isfinite(out.lb))
+    assert np.all(np.isfinite(out.ub))
+
+
+def test_indaffine_sdp_obbt_tightens_registered_bounds():
+    """With OBBT enabled on SDP, bounds on both u and ν are at least
+    as tight as the solve-derived placeholders, and SDP.update_bounds
+    rewrites the bound constraint matrices in place — same regression
+    net as Quadratic's equivalent test."""
+    from fomtools.linearexpression import LinearExpression, solve_linexpr, stack
+
+    A = np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
+    b = np.array([0.5, 0.3])
+    rhs_lb, rhs_ub = np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
+    M_block = np.block([[np.eye(3), A.T], [A, np.zeros((2, 2))]])
+
+    # Reference: solve-derived bounds (what SDP gets at registration).
+    v_ref = _make_verifier("sdp")
+    rhs_ref = v_ref.add_param(3, lb=rhs_lb, ub=rhs_ub)
+    b_le = LinearExpression(decomposition_dict={}, const=b)
+    solve_lb, solve_ub = solve_linexpr(
+        M_block, stack([rhs_ref, b_le])
+    ).bound_propagation()
+
+    # With OBBT enabled: SDP.update_bounds is called by _tighten_constraint_bounds.
+    v_obbt = _make_verifier("sdp", obbt="gurobi")
+    rhs = v_obbt.add_param(3, lb=rhs_lb, ub=rhs_ub)
+    u = v_obbt.prox(IndAffine(A=A, b=b), rhs)
+    nu = v_obbt.iterates[-1]
+
+    # OBBT-tightened bounds must dominate the solve-derived ones.
+    assert np.all(u.lb >= solve_lb[:3] - 1e-9)
+    assert np.all(u.ub <= solve_ub[:3] + 1e-9)
+    assert np.all(nu.lb >= solve_lb[3:] - 1e-9)
+    assert np.all(nu.ub <= solve_ub[3:] + 1e-9)
+    assert np.all(np.isfinite(u.lb))
+    assert np.all(np.isfinite(nu.lb))
+
+
+def test_indaffine_simulator_raises_notimplemented():
+    """Simulator backend defers IndAffine (shares the implicit-iterate
+    limitation with Quadratic/LeastSquares)."""
+    v = _make_verifier("simulator")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    with pytest.raises(NotImplementedError, match="IndAffine"):
+        v.prox(
+            IndAffine(A=np.array([[1.0, 1.0, 1.0]]), b=np.array([0.0])), rhs
+        )
+
+
+def test_indaffine_introduces_two_iterates():
+    """First multi-iterate KKT prox: registers exactly TWO new iterates
+    (primal u of dim n, dual ν of dim m)."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(4, lb=-1.0, ub=1.0)
+
+    A = np.array([[1.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 1.0]])  # m=2, n=4
+    b = np.array([0.5, -0.3])
+
+    n_before = len(v.iterates)
+    v.prox(IndAffine(A=A, b=b), rhs)
+    assert len(v.iterates) == n_before + 2
+    # The two new iterates: u (dim n=4) and ν (dim m=2), in that order.
+    assert v.iterates[-2].ndim == 4
+    assert v.iterates[-1].ndim == 2
+
+
+def test_indaffine_emits_no_step():
+    """Lowering posts equality constraints, never a Step."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    A = np.array([[1.0, 1.0, 0.0]])
+    b = np.array([0.5])
+
+    n_steps_before = len(v.canonicalizer.steps)
+    v.prox(IndAffine(A=A, b=b), rhs)
+    assert len(v.canonicalizer.steps) == n_steps_before
+
+
+def test_indaffine_prox_matches_closed_form():
+    """Numpy-level: prox = rhs - A.T @ solve(A A.T, A rhs - b), and the
+    result lies exactly on the set {x : Ax = b}."""
+    rng = np.random.default_rng(0)
+    for _ in range(5):
+        n = int(rng.integers(3, 6))
+        m = int(rng.integers(1, n))  # m < n so AA.T is invertible
+        A = rng.standard_normal((m, n))
+        b = rng.standard_normal(m)
+        rhs = rng.standard_normal(n)
+
+        ind = IndAffine(A=A, b=b)
+        out = ind.prox(rhs)
+        expected = rhs - A.T @ np.linalg.solve(A @ A.T, A @ rhs - b)
+        np.testing.assert_allclose(out, expected, atol=1e-10)
+        # Projection lands on the affine set.
+        np.testing.assert_allclose(A @ out, b, atol=1e-10)
+
+
+def test_indaffine_gamma_is_ignored():
+    """Indicator-prox γ-independence: the result is the same for any γ."""
+    A = np.array([[1.0, 2.0, 0.0]])
+    b = np.array([1.0])
+    rhs = np.array([0.5, 0.5, 0.5])
+    ind = IndAffine(A=A, b=b)
+    np.testing.assert_allclose(ind.prox(rhs, gamma=1.0), ind.prox(rhs, gamma=10.0))
+
+
+def test_indaffine_eval():
+    """eval returns 0 on the affine set, +inf off it."""
+    A = np.array([[1.0, 1.0]])
+    b = np.array([1.0])
+    ind = IndAffine(A=A, b=b)
+    assert ind.eval(np.array([0.5, 0.5])) == 0.0       # on
+    assert ind.eval(np.array([0.6, 0.4])) == 0.0       # on (sum 1)
+    assert ind.eval(np.array([1.0, 1.0])) == np.inf    # off (sum 2)
+
+
+def test_indaffine_grad_raises():
+    """Indicators are not differentiable; grad must raise."""
+    ind = IndAffine(A=np.eye(2), b=np.zeros(2))
+    with pytest.raises(NotImplementedError):
+        ind.grad(np.zeros(2))
+
+
+def test_indaffine_supports_linexpr_b():
+    """``b`` may be a LinearExpression parameter; the posted equalities
+    reference rhs, u, ν, and b's leaf."""
+    v = _make_verifier("mip")
+    n, m = 3, 2
+    A = np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
+    rhs = v.add_param(n, lb=-1.0, ub=1.0)
+    b_param = v.add_param(m, lb=-0.5, ub=0.5)
+
+    out = v.prox(IndAffine(A=A, b=b_param), rhs)
+    assert out.is_leaf
+    assert out.ndim == n
+
+
+def test_indaffine_end_to_end_mip():
+    """Pin rhs via tight bounds, solve for u, assert u matches the
+    closed-form projection and Au == b numerically."""
+    A = np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
+    b = np.array([0.5, 0.3])
+    rhs_value = np.array([0.4, 0.6, -0.2])
+
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=rhs_value, ub=rhs_value)
+    u = v.prox(IndAffine(A=A, b=b), rhs)
+
+    expected = rhs_value - A.T @ np.linalg.solve(A @ A.T, A @ rhs_value - b)
+
+    solver = v.canonicalizer.solver
+    for i in range(3):
+        solver.set_objective(u[i], "minimize")
+        solver.optimize()
+        assert solver.is_optimal()
+        u_min = solver["objVal"]
+
+        solver.set_objective(u[i], "maximize")
+        solver.optimize()
+        assert solver.is_optimal()
+        u_max = solver["objVal"]
+
+        assert np.isclose(u_min, u_max, atol=1e-6)
+        assert np.isclose(u_min, expected[i], atol=1e-6)
+
+
+def test_indaffine_rejects_nonmatching_b_shape():
+    """b must have length equal to A.shape[0]."""
+    with pytest.raises(ValueError, match="shape"):
+        IndAffine(A=np.eye(3), b=np.zeros(4))
+
+
+def test_indaffine_rejects_1d_A():
+    """A must be 2-D."""
+    with pytest.raises(ValueError, match="2-D"):
+        IndAffine(A=np.array([1.0, 2.0, 3.0]), b=np.array([0.0]))
 
 
 # --- IndBallLinf ---

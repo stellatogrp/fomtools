@@ -22,20 +22,22 @@ class SimulatorStepDecomposer(StepDecomposer):
         self.canonicalizer.canonicalize(step)
         return step.lhs
 
-    def prox_quadratic(self, prox, rhs, gamma=1.0):
-        # TODO(simulator): Implement Quadratic-family proxes on Simulator.
-        # The prox is defined implicitly by (I + gamma*Q) u == rhs - gamma*q,
-        # which has no per-step activation callback the simulator can use.
-        # Implementation requires solving the linear system per sample
-        # (e.g., via np.linalg.solve on the gamma-weighted matrix). Used
-        # as the dispatch target for both ``Quadratic`` and its subclass
-        # ``LeastSquares``; the error message reports the concrete class.
+    def _implicit_iterate_not_supported(self, prox, rhs, gamma=1.0):
+        # TODO(simulator): Implement implicit-iterate proxes on Simulator.
+        # Shared deferral for prox lowerings that register a fresh iterate
+        # defined implicitly by an equality constraint (Quadratic,
+        # LeastSquares, IndAffine, …). The Simulator backend has no
+        # per-step activation callback to compute the iterate's value per
+        # sample — fixing this would need a per-sample np.linalg.solve on
+        # the prox-specific linear system. The error message reports the
+        # concrete class via ``type(prox).__name__``.
         raise NotImplementedError(
             f"{type(prox).__name__} prox is not yet supported on the Simulator backend"
         )
 
     _PROX_DECOMPOSERS: ClassVar[dict] = {
         **StepDecomposer._PROX_DECOMPOSERS,
-        "quadratic": prox_quadratic,
-        "leastsquares": prox_quadratic,
+        "quadratic": _implicit_iterate_not_supported,
+        "leastsquares": _implicit_iterate_not_supported,
+        "indaffine": _implicit_iterate_not_supported,
     }

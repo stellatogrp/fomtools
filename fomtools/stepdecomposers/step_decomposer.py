@@ -3,10 +3,11 @@ from typing import Callable, ClassVar
 
 import numpy as np
 
-from fomtools.linearexpression import LinearExpression, solve_linexpr
+from fomtools.linearexpression import LinearExpression, solve_linexpr, stack
 from fomtools.proxable_functions import (
     ElasticNet,
     HuberLoss,
+    IndAffine,
     IndBallLinf,
     IndBox,
     IndHalfSpace,
@@ -364,6 +365,75 @@ class StepDecomposer:
         soft = self.process_step(SoftThreshold(rhs=rhs, lambd=theta))
         return (rhs + gamma * soft) / (1.0 + gamma)
 
+    def prox_indaffine(
+        self, prox: IndAffine, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower the affine-set indicator prox $I_{\{Ax = b\}}$ to a
+        two-iterate KKT system on a primal $u$ and an equality
+        multiplier $\nu$:
+
+        $$
+            \begin{bmatrix} I & A^\top \\ A & 0 \end{bmatrix}
+            \begin{bmatrix} u \\ \nu \end{bmatrix}
+            =
+            \begin{bmatrix} \text{rhs} \\ b \end{bmatrix}.
+        $$
+
+        Independent of $\gamma$ (indicator prox). No inverse is formed
+        in the verification model — the two KKT rows are posted as
+        separate linear equalities and the solver handles the block
+        system. Initial finite bounds on ``u`` and ``ν`` are derived
+        via interval propagation through a throwaway ``LinearExpression``
+        that represents $M_{\text{block}}^{-1}$ applied to the stacked
+        right-hand side, built via :func:`solve_linexpr`. Bounds are
+        tightened further whenever OBBT is enabled, via the existing
+        ``_tighten_constraint_bounds`` path triggered by the two
+        ``add_constraint`` calls. ``b`` may be numeric data or a
+        ``LinearExpression`` parameter; both flow through ``stack`` and
+        ``solve_linexpr`` uniformly.
+
+        Backend-independent: registered on the base class. Simulator
+        defers (no per-step activation callback for an implicitly
+        defined iterate); see the Simulator override.
+        """
+        A, b = prox.A, prox.b
+        m, n = prox.m, prox.n
+
+        # Lift ``b`` to a LinearExpression for the stack+solve step.
+        # EAFP test for LE-ness (avoid isinstance per codebase convention).
+        try:
+            _ = b.decomposition_dict
+            b_le = b
+        except AttributeError:
+            b_le = LinearExpression(
+                decomposition_dict={},
+                const=np.atleast_1d(np.asarray(b, dtype=float)),
+            )
+
+        # Block KKT matrix (constant; just numpy).
+        M_block = np.block([
+            [np.eye(n), A.T],
+            [A, np.zeros((m, m))],
+        ])
+
+        # Throwaway LE representing M_block^{-1} @ [rhs; b]; never registered.
+        stacked_rhs_LE = stack([rhs, b_le])
+        combined_lb, combined_ub = solve_linexpr(
+            M_block, stacked_rhs_LE
+        ).bound_propagation()
+        u_lb, u_ub = combined_lb[:n], combined_ub[:n]
+        nu_lb, nu_ub = combined_lb[n:], combined_ub[n:]
+
+        # Register both iterates with derived finite bounds.
+        u = self.add_iterate(n, lb=u_lb, ub=u_ub)
+        nu = self.add_iterate(m, lb=nu_lb, ub=nu_ub)
+
+        # Post the two KKT rows; each goes through OBBT (when enabled).
+        self.add_constraint(u + A.T @ nu == rhs)
+        self.add_constraint(A @ u == b)
+        return u
+
     def prox_indballlinf(
         self, prox: IndBallLinf, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -610,6 +680,7 @@ class StepDecomposer:
     _PROX_DECOMPOSERS: ClassVar[dict] = {
         "elasticnet": prox_elasticnet,
         "huberloss": prox_huberloss,
+        "indaffine": prox_indaffine,
         "indballlinf": prox_indballlinf,
         "indbox": prox_indbox,
         "indhalfspace": prox_indhalfspace,
