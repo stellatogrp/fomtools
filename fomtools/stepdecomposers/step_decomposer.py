@@ -20,6 +20,7 @@ from fomtools.proxable_functions import (
     Linear,
     NormL1,
     Quadratic,
+    SoftNonnegativePenalty,
     SqL2Norm,
     SumNegative,
     SumPositive,
@@ -674,6 +675,38 @@ class StepDecomposer:
         self.add_constraint(M @ u == rhs_shift)
         return u
 
+    def prox_softnonnegativepenalty(
+        self, prox: SoftNonnegativePenalty, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower the one-sided quadratic penalty prox to a scaled LeakyReLU,
+        expressed via the standard ``Relu`` step:
+
+        $$
+            \operatorname{prox}_{\gamma f}(v)
+                = \tilde\alpha(\gamma)\, v
+                  + \bigl(1 - \tilde\alpha(\gamma)\bigr)\operatorname{ReLU}(v),
+            \qquad
+            \tilde\alpha(\gamma) = \frac{\alpha}{\alpha + \gamma(1 - \alpha)}.
+        $$
+
+        At $\gamma = 1$ this is the standard LeakyReLU with slope
+        $\alpha$; at $\alpha \to 0^+$ it collapses to plain ReLU.
+
+        NOTE: A dedicated ``LeakyReLU`` step (analogous to ``Relu``) would
+        let the canonicalizers encode the activation directly without the
+        intermediate "scale + ReLU + scale + add" arithmetic. That can be
+        a future addition. For now we reuse the existing ``Relu`` step,
+        which is exact and works on all three backends.
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it.
+        """
+        alpha = prox.alpha
+        alpha_tilde = alpha / (alpha + gamma * (1.0 - alpha))
+        relu_out = self.process_step(Relu(rhs=rhs))
+        return alpha_tilde * rhs + (1.0 - alpha_tilde) * relu_out
+
     def prox_sql2norm(
         self, prox: SqL2Norm, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -745,6 +778,7 @@ class StepDecomposer:
         "linear": prox_linear,
         "norml1": prox_norml1,
         "quadratic": prox_quadratic,
+        "softnonnegativepenalty": prox_softnonnegativepenalty,
         "sql2norm": prox_sql2norm,
         "sumnegative": prox_sumnegative,
         "sumpositive": prox_sumpositive,

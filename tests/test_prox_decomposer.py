@@ -35,6 +35,7 @@ from fomtools.proxable_functions import (
     NormL1,
     ProxableFunction,
     Quadratic,
+    SoftNonnegativePenalty,
     SqL2Norm,
     SumNegative,
     SumPositive,
@@ -1060,6 +1061,133 @@ def test_linear_eval_and_grad():
     f = Linear(c=c)
     assert np.isclose(f.eval(np.array([1.0, 1.0, 1.0])), 6.0)
     np.testing.assert_allclose(f.grad(np.zeros(3)), c)
+
+
+# --- SoftNonnegativePenalty ---
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_softnonnegativepenalty_returns_linear_expression(method):
+    """SoftNonnegativePenalty lowers to one Relu step plus arithmetic;
+    all three backends accept it."""
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    out = v.prox(SoftNonnegativePenalty(alpha=0.1), rhs, gamma=0.5)
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_softnonnegativepenalty_emits_one_relu_on_mip():
+    """Exactly one Relu step is emitted by the lowering."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(SoftNonnegativePenalty(alpha=0.2), rhs, gamma=1.0)
+
+    relus = [s for s in v.canonicalizer.steps if isinstance(s, Relu)]
+    assert len(relus) == 1
+    # The Relu acts on the input rhs leaf directly.
+    assert relus[0].rhs is rhs
+
+
+def test_softnonnegativepenalty_prox_matches_closed_form_gamma_one():
+    """Numpy-level at γ=1: prox = α·v + (1-α)·max(v, 0) (standard LeakyReLU)."""
+    rng = np.random.default_rng(0)
+    for _ in range(5):
+        n = int(rng.integers(2, 6))
+        alpha = float(rng.uniform(0.05, 0.95))
+        rhs = rng.uniform(-3.0, 3.0, size=n)
+
+        out = SoftNonnegativePenalty(alpha=alpha).prox(rhs, gamma=1.0)
+        expected = alpha * rhs + (1.0 - alpha) * np.maximum(rhs, 0.0)
+        np.testing.assert_allclose(out, expected)
+
+
+def test_softnonnegativepenalty_prox_matches_closed_form_general_gamma():
+    """Numpy-level for several γ: prox uses α̃(γ) = α / (α + γ(1-α))."""
+    rng = np.random.default_rng(1)
+    for gamma in [0.1, 0.5, 1.0, 2.0, 5.0]:
+        alpha = 0.3
+        rhs = rng.uniform(-3.0, 3.0, size=4)
+        out = SoftNonnegativePenalty(alpha=alpha).prox(rhs, gamma=gamma)
+        alpha_tilde = alpha / (alpha + gamma * (1.0 - alpha))
+        expected = alpha_tilde * rhs + (1.0 - alpha_tilde) * np.maximum(rhs, 0.0)
+        np.testing.assert_allclose(out, expected)
+
+
+def test_softnonnegativepenalty_alpha_one_is_identity():
+    """α=1 ⇒ f ≡ 0, prox is identity for any γ."""
+    rng = np.random.default_rng(2)
+    rhs = rng.uniform(-3.0, 3.0, size=5)
+    for gamma in [0.1, 1.0, 10.0]:
+        np.testing.assert_allclose(
+            SoftNonnegativePenalty(alpha=1.0).prox(rhs, gamma=gamma), rhs
+        )
+
+
+def test_softnonnegativepenalty_small_alpha_approaches_relu():
+    """α → 0⁺ ⇒ f → I_{R+}, prox → ReLU."""
+    rhs = np.array([-2.0, -0.5, 0.0, 0.5, 2.0])
+    out = SoftNonnegativePenalty(alpha=1e-6).prox(rhs, gamma=1.0)
+    np.testing.assert_allclose(out, np.maximum(rhs, 0.0), atol=1e-5)
+
+
+def test_softnonnegativepenalty_eval():
+    """eval is (1-α)/(2α) · sum(max(0, -x)²); zero on the non-negative orthant."""
+    alpha = 0.1
+    p = SoftNonnegativePenalty(alpha=alpha)
+    # Mixed-sign input
+    x = np.array([-1.0, 0.5, -2.0])
+    coeff = (1.0 - alpha) / (2.0 * alpha)
+    expected = coeff * (1.0 + 0.0 + 4.0)
+    assert np.isclose(p.eval(x), expected)
+    # Non-negative input
+    assert p.eval(np.array([0.0, 1.0, 2.0])) == 0.0
+
+
+def test_softnonnegativepenalty_grad():
+    """grad is (1-α)/α · min(x, 0): zero on non-negatives, scaled on negatives."""
+    alpha = 0.1
+    p = SoftNonnegativePenalty(alpha=alpha)
+    x = np.array([-1.0, 0.5, -2.0])
+    coeff = (1.0 - alpha) / alpha
+    expected = coeff * np.array([-1.0, 0.0, -2.0])
+    np.testing.assert_allclose(p.grad(x), expected)
+
+
+def test_softnonnegativepenalty_rejects_alpha_out_of_range():
+    """α must lie in (0, 1]."""
+    for bad in [0.0, -0.1, 1.5, 2.0]:
+        with pytest.raises(ValueError, match=r"\(0, 1\]"):
+            SoftNonnegativePenalty(alpha=bad)
+
+
+def test_softnonnegativepenalty_end_to_end_mip():
+    """Pin rhs via tight bounds, solve, verify the recovered prox value
+    matches the LeakyReLU formula coordinate-wise."""
+    alpha = 0.25
+    gamma = 1.0
+    rhs_value = np.array([-1.0, 0.5, -0.3])
+    expected = alpha * rhs_value + (1.0 - alpha) * np.maximum(rhs_value, 0.0)
+
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=rhs_value, ub=rhs_value)
+    out = v.prox(SoftNonnegativePenalty(alpha=alpha), rhs, gamma=gamma)
+
+    solver = v.canonicalizer.solver
+    for i in range(3):
+        solver.set_objective(out[i], "minimize")
+        solver.optimize()
+        assert solver.is_optimal()
+        u_min = solver["objVal"]
+
+        solver.set_objective(out[i], "maximize")
+        solver.optimize()
+        assert solver.is_optimal()
+        u_max = solver["objVal"]
+
+        assert np.isclose(u_min, u_max, atol=1e-6)
+        assert np.isclose(u_min, expected[i], atol=1e-6)
 
 
 # --- SqL2Norm ---
