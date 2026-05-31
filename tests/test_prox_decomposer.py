@@ -27,6 +27,7 @@ from fomtools.proxable_functions import (
     IndNonNegative,
     IndNonPositive,
     IndPoint,
+    LeastSquares,
     Linear,
     NormL1,
     ProxableFunction,
@@ -966,6 +967,182 @@ def test_quadratic_rejects_mismatched_q_shape():
     """Mismatched q.shape vs Q is invalid; raise at construction."""
     with pytest.raises(ValueError, match="shape"):
         Quadratic(Q=np.eye(3), q=np.zeros(4))
+
+
+# --- LeastSquares (inherits from Quadratic) ---
+
+
+def test_leastsquares_isinstance_quadratic():
+    """LeastSquares must IS-A Quadratic. The dispatcher distinguishes by
+    concrete class name, but the inheritance contract powers the math
+    (prox/grad inherited unchanged from Quadratic)."""
+    from fomtools.proxable_functions import Quadratic
+    ls = LeastSquares(A=np.eye(3), b=np.zeros(3))
+    assert isinstance(ls, Quadratic)
+
+
+def test_leastsquares_Q_and_q_set_correctly():
+    """Constructor must call super().__init__(Q=A.T@A, q=-A.T@b)
+    correctly; downstream prox uses these fields generically."""
+    A = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 0.0]])
+    b = np.array([1.0, 0.0, -1.0])
+    ls = LeastSquares(A=A, b=b)
+    np.testing.assert_allclose(ls.Q, A.T @ A)
+    np.testing.assert_allclose(ls.q, -A.T @ b)
+
+
+def test_leastsquares_returns_linear_expression_on_mip():
+    """LeastSquares lowers via the same prox_quadratic the dispatcher
+    finds under the 'leastsquares' alias."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    A = np.eye(3) + 0.1 * np.ones((3, 3))
+    b = np.array([0.5, -0.5, 0.1])
+
+    out = v.prox(LeastSquares(A=A, b=b), rhs, gamma=0.5)
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_leastsquares_sdp_works():
+    """SDP path works without OBBT — inherits Quadratic's solve-based
+    bound derivation via solve_linexpr."""
+    v = _make_verifier("sdp")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    A = np.eye(3) + 0.1 * np.ones((3, 3))
+    b = np.array([0.5, -0.5, 0.1])
+
+    out = v.prox(LeastSquares(A=A, b=b), rhs, gamma=0.5)
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+    assert np.all(np.isfinite(out.lb))
+    assert np.all(np.isfinite(out.ub))
+
+
+def test_leastsquares_simulator_raises_notimplemented():
+    """Simulator backend defers LeastSquares (same shape as Quadratic);
+    the error message names the concrete subclass."""
+    v = _make_verifier("simulator")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    with pytest.raises(NotImplementedError, match="LeastSquares"):
+        v.prox(LeastSquares(A=np.eye(3), b=np.zeros(3)), rhs)
+
+
+def test_leastsquares_prox_matches_closed_form():
+    """Numpy-level: prox solves (I + γ A.T@A) u = rhs + γ A.T@b."""
+    rng = np.random.default_rng(0)
+    for _ in range(5):
+        n = int(rng.integers(2, 5))
+        m = int(rng.integers(2, 6))
+        A = rng.standard_normal((m, n))
+        b = rng.standard_normal(m)
+        rhs = rng.standard_normal(n)
+        gamma = float(rng.uniform(0.1, 2.0))
+
+        out = LeastSquares(A=A, b=b).prox(rhs, gamma=gamma)
+        expected = np.linalg.solve(np.eye(n) + gamma * A.T @ A, rhs + gamma * A.T @ b)
+        np.testing.assert_allclose(out, expected, atol=1e-10)
+
+
+def test_leastsquares_eval_matches_squared_norm():
+    """eval must return 0.5 * ||Ax - b||^2 — *including* the constant
+    that Quadratic.eval drops. Catches a missing override."""
+    A = np.array([[1.0, 2.0], [3.0, 4.0]])
+    b = np.array([1.0, 0.5])
+    x = np.array([0.5, -0.3])
+    ls = LeastSquares(A=A, b=b)
+    expected = 0.5 * float(np.sum((A @ x - b) ** 2))
+    assert np.isclose(ls.eval(x), expected)
+    # Sanity: not equal to Quadratic.eval (which lacks the constant).
+    quad_only = 0.5 * float(x @ ls.Q @ x) + float(ls.q @ x)
+    assert not np.isclose(ls.eval(x), quad_only)
+    assert np.isclose(ls.eval(x) - quad_only, 0.5 * float(b @ b))
+
+
+def test_leastsquares_grad_matches_AT_residual():
+    """Inherited grad: Qx + q = A.T @ (Ax - b)."""
+    A = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+    b = np.array([1.0, 0.0, -1.0])
+    x = np.array([0.5, -0.3])
+    ls = LeastSquares(A=A, b=b)
+    np.testing.assert_allclose(ls.grad(x), A.T @ (A @ x - b))
+
+
+def test_leastsquares_introduces_one_iterate():
+    """Same structural property as Quadratic: one fresh iterate appended."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    n_before = len(v.iterates)
+    v.prox(LeastSquares(A=np.eye(3), b=np.zeros(3)), rhs)
+    assert len(v.iterates) == n_before + 1
+    assert v.iterates[-1].ndim == 3
+
+
+def test_leastsquares_emits_no_step():
+    """Same structural property as Quadratic: lowering posts a constraint, not a Step."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+
+    n_steps_before = len(v.canonicalizer.steps)
+    v.prox(LeastSquares(A=np.eye(3), b=np.zeros(3)), rhs)
+    assert len(v.canonicalizer.steps) == n_steps_before
+
+
+def test_leastsquares_supports_linexpr_b():
+    """``b`` can be a LinearExpression parameter; q = -A.T @ b flows through
+    LinearExpression.__rmatmul__ and the posted equality references b's leaf."""
+    v = _make_verifier("mip")
+    n, m = 3, 4
+    A = np.eye(m, n) + 0.1
+    rhs = v.add_param(n, lb=-1.0, ub=1.0)
+    b_param = v.add_param(m, lb=-0.5, ub=0.5)
+
+    out = v.prox(LeastSquares(A=A, b=b_param), rhs, gamma=0.5)
+    assert out.is_leaf
+    assert out.ndim == n
+
+
+def test_leastsquares_end_to_end_mip():
+    """Pin rhs via tight bounds, solve, assert u matches the closed form."""
+    A = np.array([[1.0, 2.0], [3.0, 1.0]])
+    b = np.array([0.5, -0.5])
+    gamma = 0.5
+    rhs_value = np.array([0.3, -0.2])
+
+    v = _make_verifier("mip")
+    rhs = v.add_param(2, lb=rhs_value, ub=rhs_value)
+    u = v.prox(LeastSquares(A=A, b=b), rhs, gamma=gamma)
+
+    expected = np.linalg.solve(np.eye(2) + gamma * A.T @ A, rhs_value + gamma * A.T @ b)
+
+    solver = v.canonicalizer.solver
+    for i in range(2):
+        solver.set_objective(u[i], "minimize")
+        solver.optimize()
+        assert solver.is_optimal()
+        u_min = solver["objVal"]
+
+        solver.set_objective(u[i], "maximize")
+        solver.optimize()
+        assert solver.is_optimal()
+        u_max = solver["objVal"]
+
+        assert np.isclose(u_min, u_max, atol=1e-6)
+        assert np.isclose(u_min, expected[i], atol=1e-6)
+
+
+def test_leastsquares_rejects_nonmatching_b_shape():
+    """b must have length equal to A.shape[0]."""
+    with pytest.raises(ValueError, match="shape"):
+        LeastSquares(A=np.eye(3), b=np.zeros(4))
+
+
+def test_leastsquares_rejects_1d_A():
+    """A must be 2-D."""
+    with pytest.raises(ValueError, match="2-D"):
+        LeastSquares(A=np.array([1.0, 2.0, 3.0]), b=np.array([0.0]))
 
 
 # --- SumPositive ---

@@ -23,16 +23,19 @@ class SimulatorStepDecomposer(StepDecomposer):
         return step.lhs
 
     def prox_quadratic(self, prox, rhs, gamma=1.0):
-        # TODO(simulator): Implement Quadratic prox on the Simulator backend.
+        # TODO(simulator): Implement Quadratic-family proxes on Simulator.
         # The prox is defined implicitly by (I + gamma*Q) u == rhs - gamma*q,
         # which has no per-step activation callback the simulator can use.
         # Implementation requires solving the linear system per sample
-        # (e.g., via np.linalg.solve on the gamma-weighted matrix).
+        # (e.g., via np.linalg.solve on the gamma-weighted matrix). Used
+        # as the dispatch target for both ``Quadratic`` and its subclass
+        # ``LeastSquares``; the error message reports the concrete class.
         raise NotImplementedError(
-            "Quadratic prox is not yet supported on the Simulator backend"
+            f"{type(prox).__name__} prox is not yet supported on the Simulator backend"
         )
 
     _PROX_DECOMPOSERS: ClassVar[dict] = {
         **StepDecomposer._PROX_DECOMPOSERS,
         "quadratic": prox_quadratic,
+        "leastsquares": prox_quadratic,
     }

@@ -616,6 +616,7 @@ class StepDecomposer:
         "indnonnegative": prox_indnonnegative,
         "indnonpositive": prox_indnonpositive,
         "indpoint": prox_indpoint,
+        "leastsquares": prox_quadratic,
         "linear": prox_linear,
         "norml1": prox_norml1,
         "quadratic": prox_quadratic,
