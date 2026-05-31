@@ -11,6 +11,7 @@ from fomtools.proxable_functions.ind_nonpositive import IndNonPositive
 from fomtools.proxable_functions.ind_point import IndPoint
 from fomtools.proxable_functions.ind_polyhedral import IndPolyhedral
 from fomtools.proxable_functions.ind_simplex import IndSimplex
+from fomtools.proxable_functions.labeled_hinge_loss import LabeledHingeLoss
 from fomtools.proxable_functions.least_squares import LeastSquares
 from fomtools.proxable_functions.linear import Linear
 from fomtools.proxable_functions.norm_inf import NormInf

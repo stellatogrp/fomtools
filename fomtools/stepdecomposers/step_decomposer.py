@@ -2,10 +2,12 @@ import logging
 from typing import Callable, ClassVar
 
 import numpy as np
+import scipy.sparse as spa
 
 from fomtools.linearexpression import LinearExpression, solve_linexpr, stack
 from fomtools.proxable_functions import (
     ElasticNet,
+    HingeLoss,
     HuberLoss,
     IndAffine,
     IndBallLinf,
@@ -14,6 +16,7 @@ from fomtools.proxable_functions import (
     IndNonNegative,
     IndNonPositive,
     IndPoint,
+    LabeledHingeLoss,
     Linear,
     NormL1,
     Quadratic,
@@ -338,6 +341,27 @@ class StepDecomposer:
         )
         return soft / (1.0 + 2.0 * prox.beta * gamma)
 
+    def prox_hingeloss(
+        self, prox: HingeLoss, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower the standard hinge prox $g(x) = \sum_i \max(0, 1 - x_i)$
+        to a single ``SaturatedLinear`` clip on the margin residual
+        $1 - \text{rhs}$ to $[0, \gamma]$, added back to ``rhs``:
+
+        $$
+            \operatorname{prox}_{\gamma g}(v) = v + \mathrm{satlin}(1 - v;\, 0,\, \gamma).
+        $$
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it.
+        """
+        residual = -rhs + 1.0
+        l = self._to_satlin_bound(0.0, rhs.ndim)
+        u = self._to_satlin_bound(gamma, rhs.ndim)
+        clip = self.process_step(SaturatedLinear(rhs=residual, l=l, u=u))
+        return rhs + clip
+
     def prox_huberloss(
         self, prox: HuberLoss, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -549,6 +573,34 @@ class StepDecomposer:
         p = self._to_satlin_bound(prox.p, rhs.ndim)
         return self.process_step(SaturatedLinear(rhs=rhs, l=p, u=p))
 
+    def prox_labeledhingeloss(
+        self, prox: LabeledHingeLoss, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower the labeled hinge prox
+        $g_y(x) = \sum_i \max(0, 1 - y_i x_i)$ using
+
+        $$
+            \operatorname{prox}_{\gamma g_y}(v)
+            = v + y \cdot \mathrm{satlin}(1 - y v;\, 0,\, \gamma).
+        $$
+
+        Element-wise scaling by $y$ is encoded as
+        ``scipy.sparse.diags(y) @ rhs`` — ``LinearExpression.__mul__``
+        only accepts scalars; the sparse-diagonal matmul keeps the
+        resulting LE's coefficients compact (no dense $n \times n$
+        matrix is materialized).
+
+        Backend-independent: registered on the base class so all step
+        decomposers inherit it.
+        """
+        Y = spa.diags(prox.y)
+        residual = -(Y @ rhs) + 1.0
+        l = self._to_satlin_bound(0.0, rhs.ndim)
+        u = self._to_satlin_bound(gamma, rhs.ndim)
+        clip = self.process_step(SaturatedLinear(rhs=residual, l=l, u=u))
+        return rhs + Y @ clip
+
     def prox_linear(
         self, prox: Linear, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -679,6 +731,7 @@ class StepDecomposer:
 
     _PROX_DECOMPOSERS: ClassVar[dict] = {
         "elasticnet": prox_elasticnet,
+        "hingeloss": prox_hingeloss,
         "huberloss": prox_huberloss,
         "indaffine": prox_indaffine,
         "indballlinf": prox_indballlinf,
@@ -687,6 +740,7 @@ class StepDecomposer:
         "indnonnegative": prox_indnonnegative,
         "indnonpositive": prox_indnonpositive,
         "indpoint": prox_indpoint,
+        "labeledhingeloss": prox_labeledhingeloss,
         "leastsquares": prox_quadratic,
         "linear": prox_linear,
         "norml1": prox_norml1,

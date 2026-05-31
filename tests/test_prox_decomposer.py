@@ -20,6 +20,7 @@ import pytest
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import (
     ElasticNet,
+    HingeLoss,
     HuberLoss,
     IndAffine,
     IndBallLinf,
@@ -28,6 +29,7 @@ from fomtools.proxable_functions import (
     IndNonNegative,
     IndNonPositive,
     IndPoint,
+    LabeledHingeLoss,
     LeastSquares,
     Linear,
     NormL1,
@@ -309,6 +311,69 @@ def test_huberloss_delta_zero_identity():
     rhs = np.array([-3.7, 0.0, 0.42, 2.0])
     for gamma in (0.1, 1.0, 10.0):
         np.testing.assert_allclose(HuberLoss(delta=0.0).prox(rhs, gamma), rhs)
+
+
+# --- HingeLoss ---
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_hingeloss_returns_linear_expression(method):
+    """Standard hinge lowers to one SaturatedLinear clip on the margin
+    residual 1 - rhs; all three backends accept it."""
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    out = v.prox(HingeLoss(), rhs, gamma=0.5)
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_hingeloss_emits_one_satlin_on_mip():
+    """One SaturatedLinear with l=0, u=γ, applied to the margin residual."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    gamma = 0.5
+    v.prox(HingeLoss(), rhs, gamma=gamma)
+
+    satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
+    assert len(satlins) == 1
+    np.testing.assert_allclose(satlins[0].l, np.zeros(3))
+    np.testing.assert_allclose(satlins[0].u, np.full(3, gamma))
+
+
+def test_hingeloss_prox_matches_closed_form():
+    """Numpy-level: covers all three branches of the piecewise formula."""
+    g = HingeLoss()
+    # v < 1 - γ: shift up by γ; in middle: clamp to 1; v > 1: identity.
+    rhs = np.array([-1.0, 0.0, 0.5, 0.8, 1.5, 2.0])
+    gamma = 0.5
+    expected = np.array([-0.5, 0.5, 1.0, 1.0, 1.5, 2.0])
+    np.testing.assert_allclose(g.prox(rhs, gamma=gamma), expected)
+
+    rng = np.random.default_rng(0)
+    for _ in range(5):
+        v_vec = rng.uniform(-3.0, 3.0, size=6)
+        g_val = float(rng.uniform(0.1, 2.0))
+        out = g.prox(v_vec, gamma=g_val)
+        expected = np.where(
+            v_vec < 1 - g_val,
+            v_vec + g_val,
+            np.where(v_vec <= 1, 1.0, v_vec),
+        )
+        np.testing.assert_allclose(out, expected)
+
+
+def test_hingeloss_eval_matches_pointwise():
+    """eval is the sum of max(0, 1 - x_i)."""
+    g = HingeLoss()
+    x = np.array([0.0, 0.5, 1.0, 2.0, -1.0])
+    assert np.isclose(g.eval(x), 1.0 + 0.5 + 0.0 + 0.0 + 2.0)
+
+
+def test_hingeloss_grad_subgradient():
+    """Subgradient: -1 if x < 1, else 0."""
+    g = HingeLoss()
+    x = np.array([0.5, 1.0, 1.5, -2.0])
+    np.testing.assert_allclose(g.grad(x), [-1.0, 0.0, 0.0, -1.0])
 
 
 # --- IndNonNegative ---
@@ -789,6 +854,108 @@ def test_indpoint_lhs_bounds_collapse_to_p():
     assert len(satlins) == 1
     np.testing.assert_allclose(satlins[0].lhs.lb, p)
     np.testing.assert_allclose(satlins[0].lhs.ub, p)
+
+
+# --- LabeledHingeLoss ---
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_labeledhingeloss_returns_linear_expression(method):
+    """Labeled hinge lowers to one SaturatedLinear clip on the labeled
+    margin residual; all three backends accept it."""
+    v = _make_verifier(method)
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    out = v.prox(
+        LabeledHingeLoss(y=np.array([1.0, -1.0, 1.0])), rhs, gamma=0.5
+    )
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
+
+
+def test_labeledhingeloss_emits_one_satlin_on_mip():
+    """One SaturatedLinear with l=0, u=γ, applied to the labeled residual."""
+    v = _make_verifier("mip")
+    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    gamma = 0.5
+    v.prox(LabeledHingeLoss(y=np.array([1.0, -1.0, 1.0])), rhs, gamma=gamma)
+
+    satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
+    assert len(satlins) == 1
+    np.testing.assert_allclose(satlins[0].l, np.zeros(3))
+    np.testing.assert_allclose(satlins[0].u, np.full(3, gamma))
+
+
+def test_labeledhingeloss_prox_matches_closed_form():
+    """Numpy-level: branchwise check using the substitution-derived formula."""
+    rng = np.random.default_rng(0)
+    for _ in range(5):
+        n = int(rng.integers(2, 6))
+        y = rng.choice([-1.0, 1.0], size=n)
+        rhs = rng.uniform(-3.0, 3.0, size=n)
+        gamma = float(rng.uniform(0.1, 2.0))
+
+        g = LabeledHingeLoss(y=y)
+        out = g.prox(rhs, gamma=gamma)
+        # u + y * satlin(1 - y*u; 0, gamma)
+        clip = np.minimum(np.maximum(1.0 - y * rhs, 0.0), gamma)
+        expected = rhs + y * clip
+        np.testing.assert_allclose(out, expected)
+
+
+def test_labeledhingeloss_y_all_ones_matches_hingeloss():
+    """LabeledHingeLoss(y=+1) must reduce to HingeLoss exactly."""
+    rng = np.random.default_rng(1)
+    for _ in range(3):
+        n = int(rng.integers(2, 6))
+        rhs = rng.uniform(-3.0, 3.0, size=n)
+        gamma = float(rng.uniform(0.1, 2.0))
+
+        labeled = LabeledHingeLoss(y=np.ones(n)).prox(rhs, gamma=gamma)
+        unlabeled = HingeLoss().prox(rhs, gamma=gamma)
+        np.testing.assert_allclose(labeled, unlabeled)
+
+
+def test_labeledhingeloss_y_all_minus_ones_flips():
+    """LabeledHingeLoss(y=-1).prox(v) == -HingeLoss().prox(-v)."""
+    rng = np.random.default_rng(2)
+    for _ in range(3):
+        n = int(rng.integers(2, 6))
+        rhs = rng.uniform(-3.0, 3.0, size=n)
+        gamma = float(rng.uniform(0.1, 2.0))
+
+        labeled = LabeledHingeLoss(y=-np.ones(n)).prox(rhs, gamma=gamma)
+        mirror = -HingeLoss().prox(-rhs, gamma=gamma)
+        np.testing.assert_allclose(labeled, mirror)
+
+
+def test_labeledhingeloss_eval():
+    """eval is the sum of max(0, 1 - y_i x_i)."""
+    g = LabeledHingeLoss(y=np.array([1.0, -1.0, 1.0]))
+    x = np.array([0.5, -0.5, 2.0])
+    # y*x = [0.5, 0.5, 2.0]; max(0, 1 - y*x) = [0.5, 0.5, 0]
+    assert np.isclose(g.eval(x), 1.0)
+
+
+def test_labeledhingeloss_grad():
+    """grad: -y_i where y_i x_i < 1, else 0."""
+    y = np.array([1.0, -1.0, 1.0])
+    g = LabeledHingeLoss(y=y)
+    x = np.array([0.5, -0.5, 2.0])
+    # y*x = [0.5, 0.5, 2.0]; active set: [True, True, False]
+    expected = np.array([-1.0, 1.0, 0.0])
+    np.testing.assert_allclose(g.grad(x), expected)
+
+
+def test_labeledhingeloss_rejects_non_pm1_entries():
+    """y must contain only ±1 entries."""
+    with pytest.raises(ValueError, match=r"±1"):
+        LabeledHingeLoss(y=np.array([0.5, 1.0, -1.0]))
+
+
+def test_labeledhingeloss_rejects_2d_y():
+    """y must be 1-D."""
+    with pytest.raises(ValueError, match="1-D"):
+        LabeledHingeLoss(y=np.array([[1.0], [-1.0]]))
 
 
 # --- Linear ---
