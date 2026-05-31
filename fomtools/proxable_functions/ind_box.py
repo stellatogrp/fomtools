@@ -21,6 +21,10 @@ class IndBox(ProxableFunction):
     ``LinearExpression`` instances. When ``l``/``u`` are
     ``LinearExpression``s, the symbolic lowering treats them as
     parameters and uses their interval bounds for satlin propagation.
+
+    The numpy reference methods :meth:`eval` and :meth:`prox` are
+    numeric-only; passing a ``LinearExpression`` for ``l`` or ``u`` is
+    supported solely by the verification-side lowering.
     """
 
     def __init__(
@@ -36,6 +40,10 @@ class IndBox(ProxableFunction):
         r"""
         Evaluate the indicator function $I_{[l, u]}(x)$.
 
+        Numeric ``l``/``u`` only — passing a ``LinearExpression`` for
+        either bound here is supported only by the verification-side
+        lowering, not this numpy reference.
+
         Parameters
         ----------
         x : np.ndarray
@@ -45,7 +53,17 @@ class IndBox(ProxableFunction):
         -------
         float
             ``0.0`` if $l \leq x \leq u$ element-wise, ``+inf`` otherwise.
+
+        Raises
+        ------
+        TypeError
+            If either ``self.l`` or ``self.u`` is a :class:`LinearExpression`.
         """
+        if hasattr(self.l, "decomposition_dict") or hasattr(self.u, "decomposition_dict"):
+            raise TypeError(
+                "IndBox.eval requires numeric l and u; got LinearExpression. "
+                "Symbolic bounds are supported only by the verification-side lowering."
+            )
         if np.all((x >= self.l) & (x <= self.u)):
             return 0.0
         return np.inf
@@ -56,6 +74,10 @@ class IndBox(ProxableFunction):
 
         The prox of an indicator function is the projection onto its
         feasible set, independent of $\gamma$.
+
+        Numeric ``l``/``u`` only — passing a ``LinearExpression`` for
+        either bound here is supported only by the verification-side
+        lowering, not this numpy reference.
 
         Parameters
         ----------
@@ -69,7 +91,17 @@ class IndBox(ProxableFunction):
         -------
         np.ndarray
             The projection $\min(\max(\text{rhs}, l), u)$.
+
+        Raises
+        ------
+        TypeError
+            If either ``self.l`` or ``self.u`` is a :class:`LinearExpression`.
         """
+        if hasattr(self.l, "decomposition_dict") or hasattr(self.u, "decomposition_dict"):
+            raise TypeError(
+                "IndBox.prox requires numeric l and u; got LinearExpression. "
+                "Symbolic bounds are supported only by the verification-side lowering."
+            )
         return np.minimum(np.maximum(rhs, self.l), self.u)
 
     def grad(self, x: np.ndarray) -> np.ndarray:

@@ -68,7 +68,17 @@ class Quadratic(ProxableFunction):
         -------
         float
             The function value.
+
+        Raises
+        ------
+        TypeError
+            If ``self.q`` is a :class:`LinearExpression`.
         """
+        if hasattr(self.q, "decomposition_dict"):
+            raise TypeError(
+                "Quadratic.eval requires numeric q; got LinearExpression. "
+                "Symbolic q is supported only by the verification-side lowering."
+            )
         return 0.5 * float(x @ self.Q @ x) + float(np.dot(self.q, x))
 
     def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
@@ -108,5 +118,15 @@ class Quadratic(ProxableFunction):
         -------
         np.ndarray
             The gradient.
+
+        Raises
+        ------
+        TypeError
+            If ``self.q`` is a :class:`LinearExpression`.
         """
+        if hasattr(self.q, "decomposition_dict"):
+            raise TypeError(
+                "Quadratic.grad requires numeric q; got LinearExpression. "
+                "Symbolic q is supported only by the verification-side lowering."
+            )
         return self.Q @ x + self.q

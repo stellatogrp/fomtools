@@ -431,9 +431,15 @@ class StepDecomposer:
             _ = b.decomposition_dict
             b_le = b
         except AttributeError:
+            # Broadcast scalar ``b`` to length ``m``; ``(m,)`` arrays pass
+            # through unchanged (already shape-checked in ``IndAffine.__init__``).
+            # ``np.atleast_1d`` alone would leave a scalar at shape ``(1,)``,
+            # making the stacked LE of dimension ``n + 1`` instead of ``n + m``.
             b_le = LinearExpression(
                 decomposition_dict={},
-                const=np.atleast_1d(np.asarray(b, dtype=float)),
+                const=np.broadcast_to(
+                    np.asarray(b, dtype=float), (m,)
+                ).copy(),
             )
 
         # Block KKT matrix (constant; just numpy).

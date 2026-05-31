@@ -71,6 +71,16 @@ class LeastSquares(Quadratic):
         -------
         float
             The function value.
+
+        Raises
+        ------
+        TypeError
+            If ``self.b`` is a :class:`LinearExpression`.
         """
+        if hasattr(self.b, "decomposition_dict"):
+            raise TypeError(
+                "LeastSquares.eval requires numeric b; got LinearExpression. "
+                "Symbolic b is supported only by the verification-side lowering."
+            )
         r = self.A @ x - self.b
         return 0.5 * float(r @ r)

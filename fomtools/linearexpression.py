@@ -135,8 +135,8 @@ class LinearExpression:
         obj.counter = cls.counter
         obj.const = np.zeros(ndim)
         obj.is_binary = is_binary
-        obj.lb = np.zeros(ndim) if is_binary else lb
-        obj.ub = np.ones(ndim) if is_binary else ub
+        obj.lb = np.zeros(ndim) if is_binary else np.full(ndim, lb, dtype=float)
+        obj.ub = np.ones(ndim) if is_binary else np.full(ndim, ub, dtype=float)
         cls.counter += 1
         return obj
 
@@ -786,9 +786,14 @@ def solve_linexpr(M, expr: LinearExpression) -> LinearExpression:
         def solve(b):
             return np.asarray(np.linalg.solve(M, _to_dense(b)))
 
+    # Preserve coefficient rank: ``solve`` returns a 2-D ``(n, k)`` block
+    # for each 2-D leaf coefficient and a 1-D ``(n,)`` vector for the
+    # constant. ``np.squeeze`` would collapse a ``(n, 1)`` block (for
+    # 1-dim leaves) into ``(n,)``, breaking the ``a @ (ub + lb)`` matmul
+    # in ``bound_propagation``; pin the ranks instead.
     return LinearExpression(
         decomposition_dict={
-            k: np.squeeze(solve(v)) for k, v in expr.decomposition_dict.items()
+            k: np.atleast_2d(solve(v)) for k, v in expr.decomposition_dict.items()
         },
-        const=np.squeeze(solve(expr.const)),
+        const=np.atleast_1d(solve(expr.const)),
     )

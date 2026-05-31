@@ -74,7 +74,9 @@ class IndAffine(ProxableFunction):
         r"""
         Evaluate $I_{\{Ax = b\}}(x)$.
 
-        Numeric ``b`` only.
+        Numeric ``b`` only — passing a ``LinearExpression`` for ``b``
+        here is supported only by the verification-side lowering, not
+        this numpy reference.
 
         Parameters
         ----------
@@ -86,7 +88,17 @@ class IndAffine(ProxableFunction):
         float
             ``0.0`` if $Ax = b$ (within numerical tolerance), ``+inf``
             otherwise.
+
+        Raises
+        ------
+        TypeError
+            If ``self.b`` is a :class:`LinearExpression`.
         """
+        if hasattr(self.b, "decomposition_dict"):
+            raise TypeError(
+                "IndAffine.eval requires numeric b; got LinearExpression. "
+                "Symbolic b is supported only by the verification-side lowering."
+            )
         if np.allclose(self.A @ x, self.b):
             return 0.0
         return np.inf
@@ -102,7 +114,9 @@ class IndAffine(ProxableFunction):
         allowed at the numpy reference level; the verification model
         never forms it.
 
-        Numeric ``b`` only.
+        Numeric ``b`` only — passing a ``LinearExpression`` for ``b``
+        here is supported only by the verification-side lowering, not
+        this numpy reference.
 
         Parameters
         ----------
@@ -115,7 +129,17 @@ class IndAffine(ProxableFunction):
         -------
         np.ndarray
             The projection.
+
+        Raises
+        ------
+        TypeError
+            If ``self.b`` is a :class:`LinearExpression`.
         """
+        if hasattr(self.b, "decomposition_dict"):
+            raise TypeError(
+                "IndAffine.prox requires numeric b; got LinearExpression. "
+                "Symbolic b is supported only by the verification-side lowering."
+            )
         nu = np.linalg.solve(self.A @ self.A.T, self.A @ rhs - self.b)
         return rhs - self.A.T @ nu
 

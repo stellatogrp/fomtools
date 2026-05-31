@@ -537,6 +537,30 @@ def test_indaffine_introduces_two_iterates():
     assert v.iterates[-1].ndim == 2
 
 
+def test_indaffine_scalar_b_broadcasts_to_m():
+    """Regression: a Python scalar ``b`` with m > 1 must be broadcast to
+    length m before stacking. Previously ``np.atleast_1d`` produced a
+    length-1 const, the stacked LE had dim n+1, and the dual iterate ν
+    was registered with mismatched bounds (length 1 for an m-dim var).
+    """
+    v = _make_verifier("mip")
+    rhs = v.add_param(4, lb=-1.0, ub=1.0)
+    # m = 3 rows, full row rank so the block KKT is nonsingular.
+    A = np.array([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+    ])
+    v.prox(IndAffine(A=A, b=0.25), rhs)
+    # ν must be the most recently added iterate of dim m=3 with finite
+    # length-3 bounds derived from broadcasting b = 0.25.
+    nu = v.iterates[-1]
+    assert nu.ndim == 3
+    assert nu.lb.shape == (3,) and nu.ub.shape == (3,)
+    assert np.all(np.isfinite(nu.lb)) and np.all(np.isfinite(nu.ub))
+    assert np.all(nu.lb <= nu.ub)
+
+
 def test_indaffine_emits_no_step():
     """Lowering posts equality constraints, never a Step."""
     v = _make_verifier("mip")
@@ -592,6 +616,26 @@ def test_indaffine_grad_raises():
     ind = IndAffine(A=np.eye(2), b=np.zeros(2))
     with pytest.raises(NotImplementedError):
         ind.grad(np.zeros(2))
+
+
+def test_indaffine_eval_and_prox_reject_linexpr_b():
+    """Regression: ``eval`` and ``prox`` are numeric-only; a
+    ``LinearExpression`` ``b`` must raise ``TypeError`` early.
+
+    Without the guard, ``eval`` silently makes ``self.A @ x - self.b`` an
+    LE (via ``__array_priority__``) and then ``np.allclose`` / ``np.abs``
+    fails inside numpy with a confusing traceback; ``prox`` hits
+    ``np.linalg.solve(..., A @ rhs - b_LE)`` and dies on the same path.
+    """
+    v = _make_verifier("mip")
+    A = np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
+    b_le = v.add_param(2, lb=-0.5, ub=0.5)
+    ind = IndAffine(A=A, b=b_le)
+    x = np.array([0.5, 0.0, -0.5])
+    with pytest.raises(TypeError, match="LinearExpression"):
+        ind.eval(x)
+    with pytest.raises(TypeError, match="LinearExpression"):
+        ind.prox(x)
 
 
 def test_indaffine_supports_linexpr_b():
@@ -715,6 +759,35 @@ def test_indbox_array_bounds_forwarded_unchanged():
     assert len(satlins) == 1
     np.testing.assert_allclose(satlins[0].l, l)
     np.testing.assert_allclose(satlins[0].u, u)
+
+
+def test_indbox_eval_and_prox_reject_linexpr_bounds():
+    """Regression: ``eval`` and ``prox`` are numeric-only; a
+    ``LinearExpression`` ``l`` or ``u`` must raise ``TypeError`` early.
+
+    Without the guard, ``eval``'s ``x >= self.l`` returns an
+    :class:`InequalityConstraint` whose truthiness silently lies, and
+    ``prox``'s ``np.minimum(np.maximum(rhs, l_LE), u_LE)`` dies in a
+    generic ``LinearExpression`` codepath.
+    """
+    v = _make_verifier("mip")
+    l_le = v.add_param(3, lb=-1.0, ub=0.0)
+    u_le = v.add_param(3, lb=0.0, ub=1.0)
+    x = np.array([0.0, 0.0, 0.0])
+
+    # LE on l alone.
+    ind_l = IndBox(l=l_le, u=1.0)
+    with pytest.raises(TypeError, match="LinearExpression"):
+        ind_l.eval(x)
+    with pytest.raises(TypeError, match="LinearExpression"):
+        ind_l.prox(x)
+
+    # LE on u alone.
+    ind_u = IndBox(l=-1.0, u=u_le)
+    with pytest.raises(TypeError, match="LinearExpression"):
+        ind_u.eval(x)
+    with pytest.raises(TypeError, match="LinearExpression"):
+        ind_u.prox(x)
 
 
 # --- IndHalfSpace ---
@@ -1462,6 +1535,22 @@ def test_quadratic_eval_and_grad():
     np.testing.assert_allclose(f.grad(x), Q @ x + q)
 
 
+def test_quadratic_eval_and_grad_reject_linexpr_q():
+    """Regression: ``eval`` / ``grad`` are numeric-only; a ``LinearExpression``
+    ``q`` must raise ``TypeError`` early instead of producing a cryptic
+    numpy error deeper inside ``np.dot(self.q, x)`` / ``Q @ x + self.q``.
+    """
+    v = _make_verifier("mip")
+    q_le = v.add_param(2, lb=-1.0, ub=1.0)
+    Q = np.eye(2)
+    f = Quadratic(Q=Q, q=q_le)
+    x = np.array([1.0, 2.0])
+    with pytest.raises(TypeError, match="LinearExpression"):
+        f.eval(x)
+    with pytest.raises(TypeError, match="LinearExpression"):
+        f.grad(x)
+
+
 def test_quadratic_rejects_nonsquare_Q():
     """Non-square Q is invalid; raise at construction."""
     with pytest.raises(ValueError, match="square"):
@@ -1563,6 +1652,26 @@ def test_leastsquares_eval_matches_squared_norm():
     quad_only = 0.5 * float(x @ ls.Q @ x) + float(ls.q @ x)
     assert not np.isclose(ls.eval(x), quad_only)
     assert np.isclose(ls.eval(x) - quad_only, 0.5 * float(b @ b))
+
+
+def test_leastsquares_eval_and_grad_reject_linexpr_b():
+    """Regression: ``eval`` is numeric-only; a ``LinearExpression`` ``b``
+    must raise ``TypeError`` early instead of producing the cryptic
+    ``NotImplementedError`` from ``LinearExpression.__matmul__`` when
+    ``r = A @ x - self.b`` silently becomes symbolic and ``r @ r`` is
+    invoked. ``grad`` is inherited from ``Quadratic`` and protected by
+    the same guard on ``self.q`` (= ``-A.T @ b``).
+    """
+    v = _make_verifier("mip")
+    A = np.array([[1.0, 2.0], [3.0, 4.0]])
+    b_le = v.add_param(2, lb=-1.0, ub=1.0)
+    ls = LeastSquares(A=A, b=b_le)
+    x = np.array([0.5, -0.3])
+    with pytest.raises(TypeError, match="LinearExpression"):
+        ls.eval(x)
+    # grad inherits Quadratic's guard via self.q (an LE since q = -A.T @ b).
+    with pytest.raises(TypeError, match="LinearExpression"):
+        ls.grad(x)
 
 
 def test_leastsquares_grad_matches_AT_residual():
