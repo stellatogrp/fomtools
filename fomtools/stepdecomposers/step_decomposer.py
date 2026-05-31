@@ -20,7 +20,7 @@ from fomtools.proxable_functions import (
     Linear,
     NormL1,
     Quadratic,
-    SoftNonnegativePenalty,
+    SoftNonNegative,
     SqL2Norm,
     SumNegative,
     SumPositive,
@@ -681,8 +681,8 @@ class StepDecomposer:
         self.add_constraint(M @ u == rhs_shift)
         return u
 
-    def prox_softnonnegativepenalty(
-        self, prox: SoftNonnegativePenalty, rhs: LinearExpression, gamma: float = 1.0
+    def prox_softnonnegative(
+        self, prox: SoftNonNegative, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower the one-sided quadratic penalty prox to a scaled LeakyReLU,
@@ -784,7 +784,7 @@ class StepDecomposer:
         "linear": prox_linear,
         "norml1": prox_norml1,
         "quadratic": prox_quadratic,
-        "softnonnegativepenalty": prox_softnonnegativepenalty,
+        "softnonnegative": prox_softnonnegative,
         "sql2norm": prox_sql2norm,
         "sumnegative": prox_sumnegative,
         "sumpositive": prox_sumpositive,

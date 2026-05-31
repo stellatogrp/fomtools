@@ -3,7 +3,7 @@ import numpy as np
 from fomtools.proxable_functions import ProxableFunction
 
 
-class SoftNonnegativePenalty(ProxableFunction):
+class SoftNonNegative(ProxableFunction):
     r"""
     One-sided convex quadratic penalty whose proximal operator is
     (a scaled) LeakyReLU.

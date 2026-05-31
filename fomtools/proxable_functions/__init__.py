@@ -17,7 +17,7 @@ from fomtools.proxable_functions.linear import Linear
 from fomtools.proxable_functions.norm_inf import NormInf
 from fomtools.proxable_functions.norm_l1 import NormL1
 from fomtools.proxable_functions.quadratic import Quadratic
-from fomtools.proxable_functions.soft_nonnegative_penalty import SoftNonnegativePenalty
+from fomtools.proxable_functions.soft_nonnegative import SoftNonNegative
 from fomtools.proxable_functions.sq_l2_norm import SqL2Norm
 from fomtools.proxable_functions.sum_negative import SumNegative
 from fomtools.proxable_functions.sum_positive import SumPositive
