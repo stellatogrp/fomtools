@@ -78,7 +78,12 @@ class Verifier(object):
         if self.obbt_handler is not None:
             self.canonicalizer.obbt_handler = self.obbt_handler
         decomposer_cls = self._get_step_decomposer(method)
-        self.step_decomposer = decomposer_cls(self.canonicalizer, self._register_var)
+        self.step_decomposer = decomposer_cls(
+            self.canonicalizer,
+            self._register_var,
+            self.add_iterate,
+            self.add_constraint,
+        )
         self._step_proxy = _StepProxy(self)
 
     def __getitem__(self, item):
@@ -454,41 +459,43 @@ class Verifier(object):
             # 3. OBBT handler's solver
             self.obbt_handler.update_bounds(leaf_expr, new_lb, new_ub)
 
-    def prox(self, function: ProxableFunction, rhs: LinearExpression, gamma: float = 1, **kwargs):
+    def prox(
+        self,
+        function: ProxableFunction,
+        rhs: LinearExpression,
+        gamma: float = 1.0,
+    ) -> LinearExpression:
         """
-        Interface for constructing and executing proxable functions.
+        Encode a proxable function as steps + auxiliary variables.
 
-        This method centralizes the execution pipeline for all proxable
-        functions. It instantiates ``function`` with the provided
-        keyword arguments, and computes the proximal objective value
-        of the provided ``function`` at the current solution value of the
-        model.
+        Dispatches to the active step decomposer's prox registry, which
+        lowers ``function`` into one or more steps (and any auxiliary
+        variables those steps require) and returns the output expression.
 
         Parameters
         ----------
-        function: ProxableFunction
-            Proxable function class to be instantiated and appplied.
-
-        rhs: LinearExpression
-            Linear Expression whose current solution value is used as
-            the input to the proximal operator.
-
-        gamma: float, optional
-            Proximal step size. Default is ``1``.
-
-        **kwargs
-            Additional keyword arguments passed to the constructor of
-            ``function``.
+        function : ProxableFunction
+            A pre-configured proxable function instance carrying problem
+            data (e.g. ``NormL1(lambd=0.5)``, ``IndBox(l=l, u=u)``).
+        rhs : LinearExpression
+            The input expression to which the prox is applied.
+        gamma : float, default 1.0
+            The proximal step size.
 
         Returns
         -------
-        numpy.ndarray
-            The proximal objective value corresponding to the implementation of
-            ``function``.
+        LinearExpression
+            The output expression representing
+            ``prox_{gamma * function}(rhs)``.
+
+        Raises
+        ------
+        NotImplementedError
+            If the active backend's step decomposer does not have an
+            entry for the concrete type of ``function`` in its
+            ``_PROX_DECOMPOSERS`` registry.
         """
-        rhs_value = self.get_solution_value(rhs)
-        proxable_func = function(**kwargs)
-        return proxable_func.prox(rhs_value, gamma)
+        return self.step_decomposer.process_prox(function, rhs, gamma)
 
     @property
     def step(self) -> "_StepProxy":
@@ -514,10 +521,9 @@ class Verifier(object):
         Construct and execute the specified thresholding or activation step.
 
         This method centralizes the execution pipeline for all step-like
-        operators. It instantiates ``step_cls`` with the provided arguments,
-        optionally invokes the OBBT handler to refine bounds, and then
-        incorporates constraints produced by the respective step object
-        into the verification problem.
+        operators. It instantiates ``step_cls`` with the provided
+        arguments and forwards it to the step decomposer, which handles
+        OBBT bound tightening, decomposition, and canonicalization.
 
         Parameters
         ----------

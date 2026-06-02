@@ -1,7 +1,8 @@
 import numpy as np
+import pytest
 import scipy.sparse as spa
 
-from fomtools.linearexpression import LinearExpression
+from fomtools.linearexpression import LinearExpression, solve_linexpr
 from tests.conftest import TEST_EPS
 
 
@@ -271,3 +272,75 @@ def test_LinearExpression_hash():
     assert len(d) == 4
     assert d[expr1] == "expr1"
     assert d[expr2] == "expr2"
+
+
+@pytest.mark.parametrize("ndim", [1, 5])
+def test_from_int_bounds_are_arrays(ndim):
+    """``from_int`` must store ``lb``/``ub`` as 1-D arrays of length
+    ``ndim``, even when the caller passes scalar bounds (including the
+    ``±np.inf`` defaults). Scalar bounds would silently break
+    ``_interval_bound_propagation``'s ``a @ (ub + lb)`` matmul for any
+    derived expression read directly off such a leaf.
+    """
+    # Default scalar bounds (-inf, +inf) — most common case.
+    x = LinearExpression.from_int(ndim)
+    assert isinstance(x.lb, np.ndarray) and x.lb.shape == (ndim,)
+    assert isinstance(x.ub, np.ndarray) and x.ub.shape == (ndim,)
+    assert np.all(np.isneginf(x.lb)) and np.all(np.isposinf(x.ub))
+
+    # Explicit scalar bounds — must broadcast.
+    y = LinearExpression.from_int(ndim, lb=-2.0, ub=3.0)
+    assert y.lb.shape == (ndim,) and y.ub.shape == (ndim,)
+    assert np.all(y.lb == -2.0) and np.all(y.ub == 3.0)
+
+    # Binary leaf bounds were already arrays; preserve that.
+    z = LinearExpression.from_int(ndim, is_binary=True)
+    assert z.lb.shape == (ndim,) and z.ub.shape == (ndim,)
+    assert np.all(z.lb == 0.0) and np.all(z.ub == 1.0)
+
+
+@pytest.mark.parametrize("M_is_sparse", [False, True])
+def test_solve_linexpr_preserves_coefficient_rank_singleton_leaf(M_is_sparse):
+    """``solve_linexpr`` must return 2-D coefficients even when a leaf has
+    ndim=1 (coefficient block is ``(n, 1)``). A previous ``np.squeeze``
+    pass collapsed this to ``(n,)`` which silently broke the
+    ``a @ (ub + lb)`` matmul inside ``bound_propagation``.
+    """
+    np.random.seed(0)
+    n = 4
+    # Singleton leaf y: its coefficient inside any expression has shape (n, 1).
+    y = LinearExpression.from_int(1, lb=-2.0, ub=3.0)
+    coef = np.array([[1.0], [-0.5], [2.0], [0.25]])
+    expr = LinearExpression(decomposition_dict={y: coef}, const=np.zeros(n))
+
+    M = np.eye(n) + 0.1 * np.random.randn(n, n) @ np.random.randn(n, n).T
+    if M_is_sparse:
+        M = spa.csr_matrix(M)
+
+    out = solve_linexpr(M, expr)
+
+    assert out.decomposition_dict[y].ndim == 2
+    assert out.decomposition_dict[y].shape == (n, 1)
+    lb, ub = out.bound_propagation()
+    assert lb.shape == (n,)
+    assert ub.shape == (n,)
+    assert np.all(np.isfinite(lb)) and np.all(np.isfinite(ub))
+    assert np.all(lb <= ub)
+
+
+@pytest.mark.parametrize("M_is_sparse", [False, True])
+def test_solve_linexpr_preserves_const_rank_ndim_one(M_is_sparse):
+    """``solve_linexpr`` must keep a 1-D const of shape ``(1,)`` for an
+    expression of ``ndim=1`` — previously ``np.squeeze`` collapsed it to
+    a 0-D scalar, breaking ``LinearExpression.__init__`` shape checks.
+    """
+    n = 1
+    expr = LinearExpression(decomposition_dict={}, const=np.array([2.5]))
+    M = np.array([[4.0]])
+    if M_is_sparse:
+        M = spa.csr_matrix(M)
+
+    out = solve_linexpr(M, expr)
+
+    assert out.const.shape == (n,)
+    assert np.isclose(out.const[0], 0.625)

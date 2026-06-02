@@ -135,8 +135,8 @@ class LinearExpression:
         obj.counter = cls.counter
         obj.const = np.zeros(ndim)
         obj.is_binary = is_binary
-        obj.lb = np.zeros(ndim) if is_binary else lb
-        obj.ub = np.ones(ndim) if is_binary else ub
+        obj.lb = np.zeros(ndim) if is_binary else np.full(ndim, lb, dtype=float)
+        obj.ub = np.ones(ndim) if is_binary else np.full(ndim, ub, dtype=float)
         cls.counter += 1
         return obj
 
@@ -741,3 +741,59 @@ def stack(exprs: list[LinearExpression]) -> LinearExpression:
     )
     result.lb, result.ub = result.bound_propagation()
     return result
+
+
+def solve_linexpr(M, expr: LinearExpression) -> LinearExpression:
+    r"""
+    Build a ``LinearExpression`` representing :math:`M^{-1}\,\text{expr}`
+    without forming :math:`M^{-1}` explicitly.
+
+    Each leaf coefficient and the constant are computed via
+    ``np.linalg.solve(M, ...)`` (dense ``M``) or an LU-factorized
+    ``splu.solve(...)`` (sparse ``M``) — the same pattern as
+    :attr:`fomtools.steps.affine.Affine.lhs_mat_inverse`.
+
+    The returned ``LinearExpression`` is intended for **interval-propagating
+    bounds through an implicit inverse**; it should not be registered with
+    a canonicalizer (the verification model should post ``M @ u == expr``
+    instead, leaving the solve to the solver).
+
+    Parameters
+    ----------
+    M : np.ndarray or scipy.sparse matrix
+        Square invertible matrix.
+    expr : LinearExpression
+        Expression to be "left-multiplied" by ``M^{-1}``. Its
+        ``decomposition_dict`` and ``const`` are mapped through the
+        per-coefficient solve.
+
+    Returns
+    -------
+    LinearExpression
+        Throwaway expression of dimension equal to ``M.shape[0]``.
+    """
+
+    def _to_dense(b):
+        return np.asarray(b.todense()) if spa.issparse(b) else np.asarray(b)
+
+    if spa.issparse(M):
+        lu = spa.linalg.splu(M.tocsc())
+
+        def solve(b):
+            return lu.solve(_to_dense(b))
+    else:
+
+        def solve(b):
+            return np.asarray(np.linalg.solve(M, _to_dense(b)))
+
+    # Preserve coefficient rank: ``solve`` returns a 2-D ``(n, k)`` block
+    # for each 2-D leaf coefficient and a 1-D ``(n,)`` vector for the
+    # constant. ``np.squeeze`` would collapse a ``(n, 1)`` block (for
+    # 1-dim leaves) into ``(n,)``, breaking the ``a @ (ub + lb)`` matmul
+    # in ``bound_propagation``; pin the ranks instead.
+    return LinearExpression(
+        decomposition_dict={
+            k: np.atleast_2d(solve(v)) for k, v in expr.decomposition_dict.items()
+        },
+        const=np.atleast_1d(solve(expr.const)),
+    )
