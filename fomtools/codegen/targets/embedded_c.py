@@ -1,0 +1,396 @@
+"""Embedded C target: OSQP-style, statically sized, allocation- and division-free.
+
+Emits (deterministically, *not* the solver body):
+
+* ``include/fom_workspace.h`` — dims as ``#define``s + the ABI structs.
+* ``include/fom_solver.h``    — the public ``fom_setup/update_params/solve/cleanup`` ABI.
+* ``include/fom_data.h``      — extern declarations + per-matrix dim macros.
+* ``src/fom_data.c``          — all numeric coefficients as ``static const`` arrays.
+* ``test/verify_data.h``      — random parameter samples + oracle-expected solutions.
+* ``test/verify_main.c``      — runs the solver over the samples and checks them.
+* ``Makefile``                — ``make verify`` / ``make lib`` targets.
+* ``README.md``, ``SPEC.md``, ``spec.json``, ``data.npz`` (the IR), and the
+  Python wrapper (via :mod:`fomtools.codegen.wrapper`).
+
+The coding agent (or a golden fixture) supplies ``src/fom_solver.c``.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import numpy as np
+
+from fomtools.codegen import spec
+from fomtools.codegen.config import TerminationKind
+from fomtools.codegen.ir import FomIR
+from fomtools.codegen.oracle import ReferenceOracle
+from fomtools.codegen.targets.base import TargetDescriptor, strip_c_comments_and_strings
+
+
+def _fmt_float(x: float) -> str:
+    return f"{float(x):.17g}"
+
+
+def _c_array(
+    name: str, values: np.ndarray, ctype: str = "fom_float", storage: str = "static const"
+) -> str:
+    flat = np.asarray(values, dtype=float).reshape(-1)
+    body = ", ".join(_fmt_float(v) for v in flat)
+    return f"{storage} {ctype} {name}[{flat.size}] = {{{body}}};"
+
+
+def _c_extern(name: str) -> str:
+    return f"extern const fom_float {name}[];"
+
+
+class EmbeddedCTarget(TargetDescriptor):
+    name = "embedded_c"
+
+    def solver_source_path(self) -> str:
+        return "src/fom_solver.c"
+
+    def verify_command(self) -> list[str]:
+        return ["make", "verify"]
+
+    # -- scaffolding -------------------------------------------------------
+    def scaffold(self, ir: FomIR, out_dir: Path) -> None:
+        out = Path(out_dir)
+        (out / "include").mkdir(parents=True, exist_ok=True)
+        (out / "src").mkdir(parents=True, exist_ok=True)
+        (out / "test").mkdir(parents=True, exist_ok=True)
+
+        # IR spec (for the agent + harness)
+        spec.save(ir, out / "test")
+        (out / "test" / "SPEC.md").write_text(spec.render_markdown(ir))
+
+        (out / "include" / "fom_workspace.h").write_text(self._workspace_header(ir))
+        (out / "include" / "fom_solver.h").write_text(self._solver_header())
+        (out / "include" / "fom_data.h").write_text(self._data_header(ir))
+        (out / "src" / "fom_data.c").write_text(self._data_source(ir))
+        (out / "test" / "verify_data.h").write_text(self._verify_data(ir))
+        (out / "test" / "verify_main.c").write_text(self._verify_main(ir))
+        (out / "Makefile").write_text(self._makefile())
+        (out / "README.md").write_text(self._readme(ir))
+
+    # -- headers -----------------------------------------------------------
+    def _workspace_header(self, ir: FomIR) -> str:
+        c_float = self.config.c_float
+        term = ir.termination
+        tol = term.tol if term.tol is not None else 0.0
+        use_tol = 1 if term.kind == TerminationKind.INF_NORM_CHANGE else 0
+
+        lines = [
+            "#ifndef FOM_WORKSPACE_H",
+            "#define FOM_WORKSPACE_H",
+            "",
+            f"typedef {c_float} fom_float;",
+            "typedef int fom_int;",
+            "",
+            f"#define FOM_STATE_DIM {ir.state_dim}",
+            f"#define FOM_MAX_ITER {term.max_iters}",
+            f"#define FOM_TOL ((fom_float){_fmt_float(tol)})",
+            f"#define FOM_USE_TOL {use_tol}",
+            f"#define FOM_NUM_PARAMS {len(ir.params)}",
+            f"#define FOM_MAX_VEC_DIM {ir.max_rhs_dim}",
+            "",
+            "#define FOM_SOLVED 0",
+            "#define FOM_MAX_ITER_REACHED 1",
+            "",
+        ]
+        for p in ir.params:
+            lines.append(f"#define FOM_PARAM_{p.name.upper()}_DIM {p.dim}")
+        for step in ir.body:
+            lines.append(f"#define FOM_{step.name.upper()}_DIM {step.out_dim}")
+        lines.append("")
+
+        # FomSettings
+        lines += [
+            "typedef struct {",
+            "    fom_int max_iter;",
+            "    fom_float tol;",
+            "} FomSettings;",
+            "",
+        ]
+        # FomParams
+        lines.append("typedef struct {")
+        if ir.params:
+            for p in ir.params:
+                lines.append(f"    fom_float {p.name}[FOM_PARAM_{p.name.upper()}_DIM];")
+        else:
+            lines.append("    fom_int _unused;")
+        lines += ["} FomParams;", ""]
+        # FomSolution
+        lines += [
+            "typedef struct {",
+            "    fom_float x[FOM_STATE_DIM];",
+            "    fom_int iter;",
+            "    fom_float residual;",
+            "    fom_int status;",
+            "} FomSolution;",
+            "",
+        ]
+        # FomWorkspace
+        lines.append("typedef struct {")
+        lines.append("    FomSettings settings;")
+        lines.append("    FomParams params;")
+        lines.append("    FomSolution solution;")
+        lines.append("    fom_float state[FOM_STATE_DIM];")
+        lines.append("    fom_float new_state[FOM_STATE_DIM];")
+        lines.append("    fom_float acc[FOM_MAX_VEC_DIM];")
+        for step in ir.body:
+            lines.append(f"    fom_float {step.name}[FOM_{step.name.upper()}_DIM];")
+        lines += ["} FomWorkspace;", "", "#endif /* FOM_WORKSPACE_H */", ""]
+        return "\n".join(lines)
+
+    def _solver_header(self) -> str:
+        return "\n".join(
+            [
+                "#ifndef FOM_SOLVER_H",
+                "#define FOM_SOLVER_H",
+                "",
+                '#include "fom_workspace.h"',
+                "",
+                "#ifdef __cplusplus",
+                'extern "C" {',
+                "#endif",
+                "",
+                "/* Fill settings with the generated defaults (max_iter, tol). */",
+                "void fom_set_default_settings(FomSettings *settings);",
+                "",
+                "/* Initialize the workspace: copy settings and the initial state. */",
+                "void fom_setup(FomWorkspace *work, const FomSettings *settings);",
+                "",
+                "/* Copy a new parameter vector set into the workspace. */",
+                "void fom_update_params(FomWorkspace *work, const FomParams *params);",
+                "",
+                "/* Run the first-order method. Returns the status code. */",
+                "fom_int fom_solve(FomWorkspace *work);",
+                "",
+                "/* Release resources (no-op for the embedded target). */",
+                "void fom_cleanup(FomWorkspace *work);",
+                "",
+                "#ifdef __cplusplus",
+                "}",
+                "#endif",
+                "",
+                "#endif /* FOM_SOLVER_H */",
+                "",
+            ]
+        )
+
+    def _data_header(self, ir: FomIR) -> str:
+        lines = [
+            "#ifndef FOM_DATA_H",
+            "#define FOM_DATA_H",
+            "",
+            '#include "fom_workspace.h"',
+            "",
+            "/* Initial state. */",
+            "extern const fom_float FOM_STATE_INIT[FOM_STATE_DIM];",
+            "",
+        ]
+        for name, md in ir.matrices.items():
+            shape = md.shape
+            rows = shape[0]
+            cols = shape[1] if len(shape) > 1 else 1
+            lines.append(f"#define FOM_MAT_{name}_ROWS {rows}")
+            lines.append(f"#define FOM_MAT_{name}_COLS {cols}")
+            lines.append(_c_extern(f"FOM_MAT_{name}"))
+            lines.append("")
+        lines += ["#endif /* FOM_DATA_H */", ""]
+        return "\n".join(lines)
+
+    def _data_source(self, ir: FomIR) -> str:
+        lines = ['#include "fom_data.h"', ""]
+        lines.append(_c_array("FOM_STATE_INIT", ir.state.init, storage="const"))
+        lines.append("")
+        for name, md in ir.matrices.items():
+            lines.append(_c_array(f"FOM_MAT_{name}", md.array, storage="const"))
+            lines.append("")
+        return "\n".join(lines)
+
+    # -- verify ------------------------------------------------------------
+    def _sample_params(self, ir: FomIR) -> tuple[dict[str, np.ndarray], list[dict]]:
+        rng = np.random.default_rng(self.config.seed)
+        oracle = ReferenceOracle(ir)
+        samples = []
+        for _ in range(self.config.num_verify_samples):
+            pvals = {}
+            for p in ir.params:
+                lo = np.where(np.isfinite(p.lb), p.lb, -1.0)
+                hi = np.where(np.isfinite(p.ub), p.ub, 1.0)
+                pvals[p.name] = rng.uniform(lo, hi)
+            res = oracle.solve(param_values=pvals)
+            samples.append({"params": pvals, "solution": res.solution, "iters": res.iters})
+        return samples
+
+    def _verify_data(self, ir: FomIR) -> str:
+        samples = self._sample_params(ir)
+        n = len(samples)
+        lines = [
+            "#ifndef FOM_VERIFY_DATA_H",
+            "#define FOM_VERIFY_DATA_H",
+            "",
+            '#include "fom_workspace.h"',
+            "",
+            f"#define FOM_NUM_SAMPLES {n}",
+            "",
+        ]
+        for p in ir.params:
+            rows = [s["params"][p.name] for s in samples]
+            mat = np.vstack(rows) if rows else np.zeros((0, p.dim))
+            lines.append(
+                _c_array(f"FOM_VERIFY_{p.name.upper()}", mat).replace(
+                    f"[{mat.size}]", f"[{n}][FOM_PARAM_{p.name.upper()}_DIM]"
+                )
+            )
+            lines.append("")
+        expected = (
+            np.vstack([s["solution"] for s in samples]) if samples else np.zeros((0, ir.state_dim))
+        )
+        lines.append(
+            _c_array("FOM_VERIFY_EXPECTED", expected).replace(
+                f"[{expected.size}]", f"[{n}][FOM_STATE_DIM]"
+            )
+        )
+        lines.append("")
+        iters = np.array([s["iters"] for s in samples], dtype=int)
+        body = ", ".join(str(int(v)) for v in iters)
+        lines.append(f"static const fom_int FOM_VERIFY_ITERS[{n}] = {{{body}}};")
+        lines += ["", "#endif /* FOM_VERIFY_DATA_H */", ""]
+        return "\n".join(lines)
+
+    def _verify_main(self, ir: FomIR) -> str:
+        tol = self.config.tol_verify
+        update_params = []
+        for p in ir.params:
+            update_params.append(
+                f"        for (j = 0; j < FOM_PARAM_{p.name.upper()}_DIM; ++j)\n"
+                f"            params.{p.name}[j] = FOM_VERIFY_{p.name.upper()}[s][j];"
+            )
+        update_block = "\n".join(update_params)
+        return "\n".join(
+            [
+                "#include <stdio.h>",
+                "#include <math.h>",
+                '#include "fom_solver.h"',
+                '#include "verify_data.h"',
+                "",
+                "int main(void) {",
+                "    FomWorkspace work;",
+                "    FomSettings settings;",
+                "    FomParams params;",
+                "    int s, j;",
+                f"    fom_float tol = (fom_float){_fmt_float(tol)};",
+                "    fom_float worst = 0.0;",
+                "    int failures = 0;",
+                "",
+                "    fom_set_default_settings(&settings);",
+                "    fom_setup(&work, &settings);",
+                "",
+                "    for (s = 0; s < FOM_NUM_SAMPLES; ++s) {",
+                update_block,
+                "        fom_update_params(&work, &params);",
+                "        fom_solve(&work);",
+                "        fom_float err = 0.0;",
+                "        for (j = 0; j < FOM_STATE_DIM; ++j) {",
+                "            fom_float d = work.solution.x[j] - FOM_VERIFY_EXPECTED[s][j];",
+                "            if (d < 0) d = -d;",
+                "            if (d > err) err = d;",
+                "        }",
+                "        if (err > worst) worst = err;",
+                "        if (err > tol) {",
+                '            printf("sample %d: max abs error %.3e > tol %.3e\\n", s, (double)err, (double)tol);',
+                "            failures++;",
+                "        }",
+                "    }",
+                '    printf("worst max-abs error over %d samples: %.3e (tol %.3e)\\n",',
+                "           FOM_NUM_SAMPLES, (double)worst, (double)tol);",
+                "    if (failures) {",
+                '        printf("VERIFY FAILED: %d/%d samples exceed tol\\n", failures, FOM_NUM_SAMPLES);',
+                "        return 1;",
+                "    }",
+                '    printf("VERIFY OK\\n");',
+                "    return 0;",
+                "}",
+                "",
+            ]
+        )
+
+    def _makefile(self) -> str:
+        return "\n".join(
+            [
+                "CC ?= cc",
+                "CFLAGS ?= -O2 -Wall -Iinclude",
+                "SRC = src/fom_solver.c src/fom_data.c",
+                "",
+                "UNAME_S := $(shell uname -s)",
+                "ifeq ($(UNAME_S),Darwin)",
+                "LIBEXT = dylib",
+                "else",
+                "LIBEXT = so",
+                "endif",
+                "",
+                ".PHONY: verify lib clean",
+                "",
+                "verify: $(SRC) test/verify_main.c",
+                "\t$(CC) $(CFLAGS) -Itest $(SRC) test/verify_main.c -o verify_bin -lm",
+                "\t./verify_bin",
+                "",
+                "lib: $(SRC)",
+                "\t$(CC) $(CFLAGS) -shared -fPIC $(SRC) -o libfomsolver.$(LIBEXT) -lm",
+                "",
+                "clean:",
+                "\trm -f verify_bin libfomsolver.so libfomsolver.dylib",
+                "",
+            ]
+        )
+
+    def _readme(self, ir: FomIR) -> str:
+        return "\n".join(
+            [
+                f"# Generated solver: `{ir.name}` (embedded C)",
+                "",
+                "OSQP-codegen-style embedded solver for a verified first-order method.",
+                "No dynamic memory allocation; division-free.",
+                "",
+                "## Build & verify",
+                "```",
+                "make verify   # build and check against the reference oracle",
+                "make lib      # build a shared library for the Python wrapper",
+                "```",
+                "",
+                "## ABI",
+                "See `include/fom_solver.h`. Typical usage:",
+                "```c",
+                "FomWorkspace work; FomSettings s;",
+                "fom_set_default_settings(&s);",
+                "fom_setup(&work, &s);",
+                "fom_update_params(&work, &params);",
+                "fom_solve(&work);",
+                "/* work.solution.x holds the solution */",
+                "```",
+                "",
+                "`src/fom_solver.c` implements the iteration; all numeric data lives in",
+                "`src/fom_data.c`. The algorithm is specified in `test/SPEC.md`.",
+                "",
+            ]
+        )
+
+    # -- static checks -----------------------------------------------------
+    def static_checks(self, source: str) -> list[str]:
+        violations: list[str] = []
+        code = strip_c_comments_and_strings(source)
+        for fn in ("malloc", "calloc", "realloc", "free", "alloca"):
+            if re.search(rf"\b{fn}\s*\(", code):
+                violations.append(f"dynamic memory call '{fn}' is forbidden in embedded C")
+        # division-free: the folded-inverse lowering removes all division
+        if re.search(r"/(?!/)", code):  # any '/' not starting a // (already stripped)
+            if "/" in code:
+                violations.append(
+                    "division operator '/' found; embedded target must be division-free"
+                )
+        # crude VLA guard: array decl with a non-numeric, non-macro size token
+        return violations
