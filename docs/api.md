@@ -8,3 +8,4 @@
 * [Canonicalizer](api/canonicalizer.md)
 * [Solvers](api/solvers.md)
 * [Proxable Functions](api/proxablefunctions.md)
+* [Code generation](api/codegen.md)
