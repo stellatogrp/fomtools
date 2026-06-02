@@ -100,10 +100,13 @@ class ClaudeAgentDriver(AgentDriver):
             chunks: list[str] = []
             options = ClaudeAgentOptions(
                 cwd=str(task.workdir),
+                add_dirs=[str(task.workdir)],
                 allowed_tools=_ALLOWED_TOOLS,
-                permission_mode="acceptEdits",
+                permission_mode=self.cli_permission_mode,
                 max_turns=self.max_turns,
-                system_prompt=_SYSTEM_PROMPT,
+                # Append to (rather than replace) the Claude Code system prompt so
+                # the agent keeps its tool-use behavior.
+                system_prompt={"type": "preset", "preset": "claude_code", "append": _SYSTEM_PROMPT},
                 **({"model": self.model} if self.model else {}),
             )
             async for message in query(prompt=prompt, options=options):
