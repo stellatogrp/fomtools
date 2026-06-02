@@ -14,6 +14,7 @@
  */
 #include "fom_solver.h"
 #include "fom_data.h"
+#include "fom_profile.h"
 
 static void matvec_add(fom_float *out, int rows, const fom_float *M, int cols, const fom_float *v) {
     int i, j;
@@ -55,25 +56,31 @@ fom_int fom_solve(FomWorkspace *work) {
     int it, i;
 
     for (it = 0; it < work->settings.max_iter; ++it) {
-        /* t0 = M_state @ state + M_p0 @ p0 */
+        /* t0 = M_state @ state + M_p0 @ p0 (affine solve, inverse folded) */
+        FOM_PROF_BEGIN(affine);
         for (i = 0; i < FOM_T0_DIM; ++i) work->t0[i] = 0.0;
         matvec_add(work->t0, FOM_T0_DIM, FOM_MAT_t0_state, FOM_MAT_t0_state_COLS, work->state);
         matvec_add(work->t0, FOM_T0_DIM, FOM_MAT_t0_p_p0, FOM_MAT_t0_p_p0_COLS, work->params.p0);
+        FOM_PROF_END(affine);
 
         /* t1 = relu( M_state @ state + M_t0 @ t0 ) */
+        FOM_PROF_BEGIN(relu);
         for (i = 0; i < FOM_T1_DIM; ++i) work->t1[i] = 0.0;
         matvec_add(work->t1, FOM_T1_DIM, FOM_MAT_t1_state, FOM_MAT_t1_state_COLS, work->state);
         matvec_add(work->t1, FOM_T1_DIM, FOM_MAT_t1_t_t0, FOM_MAT_t1_t_t0_COLS, work->t0);
         for (i = 0; i < FOM_T1_DIM; ++i) {
             if (work->t1[i] < 0.0) work->t1[i] = 0.0;
         }
+        FOM_PROF_END(relu);
 
         /* new_state = su_state @ state + su_t_t0 @ t0 + su_t_t1 @ t1 */
+        FOM_PROF_BEGIN(state_update);
         for (i = 0; i < FOM_STATE_DIM; ++i) work->new_state[i] = 0.0;
         matvec_add(work->new_state, FOM_STATE_DIM, FOM_MAT_su_state, FOM_MAT_su_state_COLS,
                    work->state);
         matvec_add(work->new_state, FOM_STATE_DIM, FOM_MAT_su_t_t0, FOM_MAT_su_t_t0_COLS, work->t0);
         matvec_add(work->new_state, FOM_STATE_DIM, FOM_MAT_su_t_t1, FOM_MAT_su_t_t1_COLS, work->t1);
+        FOM_PROF_END(state_update);
 
         /* residual = max_abs(new_state - state) */
         fom_float res = 0.0;

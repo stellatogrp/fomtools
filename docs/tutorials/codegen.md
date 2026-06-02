@@ -86,6 +86,52 @@ solver = Solver()
 out = solver.solve(p0=b)          # {"x", "iter", "residual", "status"}
 ```
 
+## Performance: timing, profiling, and the optimization loop
+
+Pass `run_phase_b=True, profile=True` (the default for the `fomtools-codegen`
+CLI with `--driver agent`) to (a) measure the speed of the generated solver
+against the Python reference, and (b) enter an iterative, profile-guided
+optimization phase:
+
+```python
+result = vp.codegen(
+    "out/ista", next_state=next_state, config=config, name="ista",
+    run_phase_b=True, profile=True,
+)
+print(result.timing.summary())
+```
+
+After Phase A verifies, the orchestrator records a baseline (Python reference
+time, the initial generated-C time, and a profiling breakdown). Then the agent
+runs a loop: **profile → optimize the hottest region → `make verify` (correctness
+is re-checked every round) → `make bench` → repeat** until gains level off. A
+change that breaks verification is never kept, and if the whole phase leaves the
+solver regressed, the verified Phase-A solver is restored automatically.
+
+`result.timing` (a `TimingReport`) holds `python_us`, `c_initial_us`,
+`c_final_us`, the speedup factors (`speedup_codegen`, `speedup_optimization`,
+`speedup_total`), and the final `profile` breakdown, and `.summary()` formats
+them, e.g.:
+
+```
+Timing summary (per solve):
+  Python reference (before codegen):   1328.250 us
+  Generated C (initial, phase A):         1.753 us
+  Generated C (optimized, phase B):       1.640 us
+  Speedup from codegen (Py -> C):         757.7x
+  Speedup from optimization (A -> B):       1.07x
+  Total speedup (Py -> optimized C):      810.0x
+Profiling breakdown (hottest first):
+  soft_threshold              20.246 us   51.21%  (1000000 calls)
+  state_update                19.288 us   48.79%  (1000000 calls)
+```
+
+The generated directory also exposes `make bench` and `make profile` directly.
+The portable region profiler (`include/fom_profile.h`) is compiled in only for
+`make profile` (`-DFOM_PROFILE`); its `FOM_PROF_BEGIN/END` macros are no-ops in
+the shipped `make verify` / `make lib` builds, so profiling never affects the
+production solver.
+
 ## Targets
 
 `CodegenConfig` selects what to emit:

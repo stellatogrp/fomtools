@@ -19,7 +19,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(
-    r"""
+        r"""
     In this tutorial we show how to use our package to verify projected gradient descent for the nonnegative least-squares problem:
 
     \begin{array}{ll}
@@ -68,7 +68,7 @@ def _(np):
 @app.cell
 def _(A, K, Verifier, eta, m, n, x_lb, x_ub):
     solver_params = {
-        'OutputFlag': 0,
+        "OutputFlag": 0,
     }
 
     VP = Verifier(params=solver_params)
@@ -79,9 +79,9 @@ def _(A, K, Verifier, eta, m, n, x_lb, x_ub):
     z[0] = z0
 
     all_residuals = []
-    for k in range(1, K+1):
-        z[k] = VP.step.relu(z[k-1] - eta * A.T @ (A @ z[k-1] - x_param))
-        VP.set_infinity_norm_objective([z[k] - z[k-1]])
+    for k in range(1, K + 1):
+        z[k] = VP.step.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x_param))
+        VP.set_infinity_norm_objective([z[k] - z[k - 1]])
         res = VP.solve()
         all_residuals.append(res)
     return (all_residuals,)
@@ -89,10 +89,10 @@ def _(A, K, Verifier, eta, m, n, x_lb, x_ub):
 
 @app.cell
 def _(K, all_residuals, plt):
-    plt.plot(range(1, K+1), all_residuals, label='VP')
-    plt.yscale('log')
-    plt.ylabel('Worst-case fixed-point residual')
-    plt.xlabel(r'$K$')
+    plt.plot(range(1, K + 1), all_residuals, label="VP")
+    plt.yscale("log")
+    plt.ylabel("Worst-case fixed-point residual")
+    plt.xlabel(r"$K$")
     plt.legend()
     return
 
@@ -100,6 +100,7 @@ def _(K, all_residuals, plt):
 @app.cell
 def _():
     import marimo as mo
+
     return (mo,)
 
 

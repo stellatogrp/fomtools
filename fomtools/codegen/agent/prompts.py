@@ -44,19 +44,37 @@ the fastest correct implementation.
 
 
 def phase_b_instructions(ir: FomIR, target: TargetDescriptor) -> str:
-    """Performance-optimization instructions."""
+    """Iterative performance-optimization instructions (profile-guided)."""
     verify = " ".join(target.verify_command())
     src = target.solver_source_path()
     return f"""\
-The solver `{src}` already passes `{verify}`. Now optimize it for speed WITHOUT
-breaking correctness:
+The solver `{src}` already passes `{verify}`. Now make it as FAST as possible
+WITHOUT ever breaking correctness. Work as a tight, profile-guided loop:
 
-- Hoist every iteration-invariant computation out of the main loop (precompute
-  once in `fom_setup` / `fom_update_params` into workspace scratch).
-- Exploit structure in the coefficient matrices (sparsity, symmetry, identity
-  blocks) recorded in `test/spec.json`.
-- Keep the embedded constraints: no dynamic allocation, division-free.
+1. PROFILE. Run `make profile`. It prints, per instrumented region, a line
+   `PROF region=<name> total_us=<t> calls=<n> pct=<%>` sorted hottest-first, and
+   a `BENCH ... mean_us=<...>` line for the whole solve. Use this to identify the
+   current bottleneck. Wrap the hot sections of the iteration in
+   `FOM_PROF_BEGIN(name)` / `FOM_PROF_END(name)` macros (from `fom_profile.h`,
+   already included) so you get a meaningful breakdown — these are no-ops in the
+   normal build, so they cost nothing in production.
+2. OPTIMIZE the hottest region with one careful, well-understood change, e.g.:
+   - hoist iteration-invariant work out of the loop (precompute once in
+     `fom_setup` / `fom_update_params` into workspace scratch);
+   - exploit matrix structure (sparsity, symmetry, identity/zero blocks — see
+     `test/spec.json`);
+   - improve memory access / enable vectorization; reduce redundant passes.
+3. VERIFY. Run `{verify}` — it MUST still print `VERIFY OK`. If it fails, revert
+   that change and try a different one. Never keep a change that breaks
+   correctness.
+4. MEASURE. Run `make bench` and compare `mean_us` against the previous best.
+   Keep the change only if it is faster (or clearly enables a later win).
+5. Repeat from step 1 until further changes give no meaningful improvement
+   (e.g. two rounds with < ~2% gain) or the code is clearly optimal.
 
-`{verify}` must still print `VERIFY OK`. If a `make bench` target exists, use it
-to confirm you improved throughput.
+Keep the target constraints throughout (embedded: no dynamic allocation,
+division-free). When done, print a FINAL SUMMARY containing:
+- the initial vs. final whole-solve `mean_us` and the overall speedup factor;
+- the profiling breakdown of the FINAL solver (region, time, %), hottest first;
+- a short list of the optimizations you applied and why.
 """

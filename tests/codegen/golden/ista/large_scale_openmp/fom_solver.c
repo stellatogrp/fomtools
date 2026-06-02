@@ -7,6 +7,7 @@
  */
 #include "fom_solver.h"
 #include "fom_data.h"
+#include "fom_profile.h"
 
 void fom_set_default_settings(FomSettings *settings) {
     settings->max_iter = FOM_MAX_ITER;
@@ -36,6 +37,7 @@ fom_int fom_solve(FomWorkspace *work) {
     fom_float lam = FOM_T0_LAMBDA;
 
     for (it = 0; it < work->settings.max_iter; ++it) {
+        FOM_PROF_BEGIN(soft_threshold);
         #pragma omp parallel for private(j)
         for (i = 0; i < FOM_T0_DIM; ++i) {
             fom_float acc = 0.0;
@@ -53,7 +55,9 @@ fom_int fom_solve(FomWorkspace *work) {
                 work->t0[i] = 0.0;
             }
         }
+        FOM_PROF_END(soft_threshold);
 
+        FOM_PROF_BEGIN(state_update);
         #pragma omp parallel for private(j)
         for (i = 0; i < FOM_STATE_DIM; ++i) {
             fom_float acc = 0.0;
@@ -62,6 +66,7 @@ fom_int fom_solve(FomWorkspace *work) {
             }
             work->new_state[i] = acc;
         }
+        FOM_PROF_END(state_update);
 
         fom_float res = 0.0;
         for (i = 0; i < FOM_STATE_DIM; ++i) {

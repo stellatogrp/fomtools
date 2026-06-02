@@ -811,6 +811,7 @@ class Verifier(object):
         params=None,
         name="fom",
         run_phase_b=False,
+        profile=False,
     ):
         """Generate a low-level solver for the FOM recorded on this verifier.
 
@@ -835,6 +836,7 @@ class Verifier(object):
             params=params,
             name=name,
             run_phase_b=run_phase_b,
+            profile=profile,
         )
 
     def get_solution_value(self, iterate: LinearExpression) -> np.ndarray:

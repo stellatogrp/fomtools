@@ -29,6 +29,7 @@ from fomtools.codegen.config import (
 from fomtools.codegen.emit import scaffold
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.generate import CodegenResult, generate_code
+from fomtools.codegen.harness import BenchResult, ProfRegion, TimingReport
 from fomtools.codegen.ir import FomIR, NonStationaryFOMError
 from fomtools.codegen.oracle import OracleResult, ReferenceOracle, run_faithful
 
@@ -46,6 +47,9 @@ __all__ = [
     "extract_ir",
     "generate_code",
     "CodegenResult",
+    "TimingReport",
+    "BenchResult",
+    "ProfRegion",
     "FomIR",
     "NonStationaryFOMError",
     "OracleResult",

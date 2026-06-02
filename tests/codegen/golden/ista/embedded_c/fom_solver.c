@@ -16,6 +16,7 @@
  */
 #include "fom_solver.h"
 #include "fom_data.h"
+#include "fom_profile.h"
 
 void fom_set_default_settings(FomSettings *settings) {
     settings->max_iter = FOM_MAX_ITER;
@@ -49,6 +50,7 @@ fom_int fom_solve(FomWorkspace *work) {
 
     for (it = 0; it < work->settings.max_iter; ++it) {
         /* t0 = soft_threshold(At @ state + Bt @ p0) */
+        FOM_PROF_BEGIN(soft_threshold);
         for (i = 0; i < FOM_T0_DIM; ++i) {
             fom_float acc = 0.0;
             for (j = 0; j < FOM_MAT_t0_state_COLS; ++j) {
@@ -65,8 +67,10 @@ fom_int fom_solve(FomWorkspace *work) {
                 work->t0[i] = 0.0;
             }
         }
+        FOM_PROF_END(soft_threshold);
 
         /* new_state = su_t_t0 @ t0 */
+        FOM_PROF_BEGIN(state_update);
         for (i = 0; i < FOM_STATE_DIM; ++i) {
             fom_float acc = 0.0;
             for (j = 0; j < FOM_MAT_su_t_t0_COLS; ++j) {
@@ -74,6 +78,7 @@ fom_int fom_solve(FomWorkspace *work) {
             }
             work->new_state[i] = acc;
         }
+        FOM_PROF_END(state_update);
 
         /* residual = max_abs(new_state - state) */
         fom_float res = 0.0;

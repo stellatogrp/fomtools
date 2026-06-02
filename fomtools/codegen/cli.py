@@ -69,7 +69,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-iter", type=int, default=1000)
     p.add_argument("--tol", type=float, default=None, help="enable inf-norm-change termination")
     p.add_argument("--dtype", choices=["float64", "float32"], default="float64")
-    p.add_argument("--phase-b", action="store_true", help="run the performance-optimization phase")
+    p.add_argument(
+        "--phase-b",
+        dest="phase_b",
+        action="store_true",
+        default=None,
+        help="run the iterative performance-optimization phase (default: on for --driver agent)",
+    )
+    p.add_argument(
+        "--no-phase-b", dest="phase_b", action="store_false", help="skip the optimization phase"
+    )
+    p.add_argument(
+        "--no-profile", dest="profile", action="store_false", help="skip timing/profiling"
+    )
     p.add_argument("--scaffold-only", action="store_true", help="emit files but skip the agent")
     return p
 
@@ -96,6 +108,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     driver = _make_driver(args)
+    # Phase B defaults on for the real agent (the product flow) and off for the
+    # stub (which cannot meaningfully optimize), unless the user is explicit.
+    run_phase_b = args.phase_b if args.phase_b is not None else (args.driver == "agent")
     result = generate_code(
         fom["verifier"],
         fom["next_state"],
@@ -105,10 +120,13 @@ def main(argv: list[str] | None = None) -> int:
         state=fom.get("state"),
         params=fom.get("params"),
         name=fom.get("name", "fom"),
-        run_phase_b=args.phase_b,
+        run_phase_b=run_phase_b,
+        profile=args.profile,
     )
     status = "OK" if result.success else "FAILED"
     print(f"codegen {status}: {result.out_dir}")
+    if result.timing is not None:
+        print(result.timing.summary())
     if not result.success:
         sys.stderr.write(result.translate.log[-2000:] + "\n")
     return 0 if result.success else 1

@@ -54,9 +54,18 @@ class ClaudeAgentDriver(AgentDriver):
         log_parts: list[str] = []
         prompt = task.instructions
 
+        # Larger turn budget for the open-ended optimization phase.
+        max_turns = task.max_turns if task.phase == "B_optimize" else max(self.max_turns, 20)
+
         for attempt in range(self.max_attempts):
             log_parts.append(f"\n===== agent attempt {attempt + 1} =====\n")
-            agent_log = self._invoke_agent(task, prompt)
+            # The agent hitting its turn cap (or any transient error) must not crash
+            # the run: we capture it and let the authoritative verify below decide,
+            # since the agent may already have produced passing code.
+            try:
+                agent_log = self._invoke_agent(task, prompt, max_turns)
+            except Exception as exc:  # noqa: BLE001 - surface as a failed attempt
+                agent_log = f"[agent invocation raised: {exc}]"
             log_parts.append(agent_log)
 
             verify = subprocess.run(
@@ -83,15 +92,15 @@ class ClaudeAgentDriver(AgentDriver):
         return AgentResult(success=False, log="".join(log_parts), turns_used=self.max_attempts)
 
     # -- agent invocation --------------------------------------------------
-    def _invoke_agent(self, task: AgentTask, prompt: str) -> str:
+    def _invoke_agent(self, task: AgentTask, prompt: str, max_turns: int) -> str:
         if not self.prefer_cli:
             try:
-                return self._invoke_sdk(task, prompt)
+                return self._invoke_sdk(task, prompt, max_turns)
             except ImportError:
                 pass  # fall back to CLI
         return self._invoke_cli(task, prompt)
 
-    def _invoke_sdk(self, task: AgentTask, prompt: str) -> str:
+    def _invoke_sdk(self, task: AgentTask, prompt: str, max_turns: int) -> str:
         import asyncio
 
         from claude_agent_sdk import ClaudeAgentOptions, query  # may raise ImportError
@@ -103,7 +112,7 @@ class ClaudeAgentDriver(AgentDriver):
                 add_dirs=[str(task.workdir)],
                 allowed_tools=_ALLOWED_TOOLS,
                 permission_mode=self.cli_permission_mode,
-                max_turns=self.max_turns,
+                max_turns=max_turns,
                 # Append to (rather than replace) the Claude Code system prompt so
                 # the agent keeps its tool-use behavior.
                 system_prompt={"type": "preset", "preset": "claude_code", "append": _SYSTEM_PROMPT},
