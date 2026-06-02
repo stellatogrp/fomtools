@@ -37,12 +37,17 @@ class ClaudeAgentDriver(AgentDriver):
         max_attempts: int = 5,
         max_turns: int = 16,
         prefer_cli: bool = False,
+        cli_permission_mode: str = "bypassPermissions",
     ):
         self.config = config
         self.model = model
         self.max_attempts = max_attempts
         self.max_turns = max_turns
         self.prefer_cli = prefer_cli
+        # Permission mode for the CLI fallback. bypassPermissions lets the agent
+        # write files and run `make` non-interactively inside the isolated output
+        # directory.
+        self.cli_permission_mode = cli_permission_mode
 
     # -- public API --------------------------------------------------------
     def run(self, task: AgentTask) -> AgentResult:
@@ -114,16 +119,24 @@ class ClaudeAgentDriver(AgentDriver):
         return asyncio.run(_run())
 
     def _invoke_cli(self, task: AgentTask, prompt: str) -> str:
+        # Note: the `claude` CLI (>=2.x) has no --max-turns flag; in --print mode
+        # it loops internally until the task is done. We grant the file/build
+        # tools and append (not replace) the default Claude Code system prompt so
+        # it retains its tool-use behavior. The agent works inside an isolated
+        # output directory, so bypassing permission prompts is safe and required
+        # for non-interactive runs.
         cmd = [
             "claude",
             "-p",
             prompt,
+            "--add-dir",
+            str(task.workdir),
             "--allowedTools",
             *_ALLOWED_TOOLS,
             "--permission-mode",
-            "acceptEdits",
-            "--max-turns",
-            str(self.max_turns),
+            self.cli_permission_mode,
+            "--append-system-prompt",
+            _SYSTEM_PROMPT,
             "--output-format",
             "text",
         ]

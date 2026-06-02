@@ -45,6 +45,13 @@ def _c_extern(name: str) -> str:
     return f"extern const fom_float {name}[];"
 
 
+def _c_array_2d(name: str, mat: np.ndarray, decl_dims: str, ctype: str = "fom_float") -> str:
+    """Emit a 2-D ``static const`` array with proper nested braces per row."""
+    mat = np.atleast_2d(np.asarray(mat, dtype=float))
+    rows = ", ".join("{" + ", ".join(_fmt_float(v) for v in row) + "}" for row in mat)
+    return f"static const {ctype} {name}{decl_dims} = {{{rows}}};"
+
+
 class EmbeddedCTarget(TargetDescriptor):
     name = "embedded_c"
 
@@ -260,19 +267,15 @@ class EmbeddedCTarget(TargetDescriptor):
             rows = [s["params"][p.name] for s in samples]
             mat = np.vstack(rows) if rows else np.zeros((0, p.dim))
             lines.append(
-                _c_array(f"FOM_VERIFY_{p.name.upper()}", mat).replace(
-                    f"[{mat.size}]", f"[{n}][FOM_PARAM_{p.name.upper()}_DIM]"
+                _c_array_2d(
+                    f"FOM_VERIFY_{p.name.upper()}", mat, f"[{n}][FOM_PARAM_{p.name.upper()}_DIM]"
                 )
             )
             lines.append("")
         expected = (
             np.vstack([s["solution"] for s in samples]) if samples else np.zeros((0, ir.state_dim))
         )
-        lines.append(
-            _c_array("FOM_VERIFY_EXPECTED", expected).replace(
-                f"[{expected.size}]", f"[{n}][FOM_STATE_DIM]"
-            )
-        )
+        lines.append(_c_array_2d("FOM_VERIFY_EXPECTED", expected, f"[{n}][FOM_STATE_DIM]"))
         lines.append("")
         iters = np.array([s["iters"] for s in samples], dtype=int)
         body = ", ".join(str(int(v)) for v in iters)
