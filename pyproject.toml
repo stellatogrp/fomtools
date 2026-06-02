@@ -23,11 +23,19 @@ dependencies = [
        "scipy",
 ]
 
+[project.scripts]
+fomtools-codegen = "fomtools.codegen.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 
 [project.optional-dependencies]
 gpu = ["cupy-cuda12x"]
+
+# Code generation. The Claude Agent SDK is only needed to *run* the LLM coding
+# agent; extracting the IR, scaffolding, building, and the ctypes wrapper need
+# none of this (the wrapper uses the stdlib ``ctypes``).
+codegen = ["claude-agent-sdk"]
 
 dev = [
        "cvxpy",
@@ -60,6 +68,12 @@ ignore_missing_imports = true
 exclude = ["test"]
 
 [tool.setuptools_scm]
+
+[tool.pytest.ini_options]
+markers = [
+    "agent: requires the real Claude coding agent (FOMTOOLS_CODEGEN_AGENT=1); skipped in CI",
+    "requires_compiler: requires a C compiler to build generated solvers",
+]
 
 [tool.ruff]
 target-version = "py312"
