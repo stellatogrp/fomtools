@@ -24,7 +24,7 @@ import numpy as np
 
 from fomtools.codegen import spec
 from fomtools.codegen.config import TerminationKind
-from fomtools.codegen.ir import FomIR
+from fomtools.codegen.ir import ActivationKind, FomIR
 from fomtools.codegen.oracle import ReferenceOracle
 from fomtools.codegen.targets.base import TargetDescriptor, strip_c_comments_and_strings
 
@@ -199,6 +199,24 @@ class EmbeddedCTarget(TargetDescriptor):
             lines.append(f"#define FOM_MAT_{name}_COLS {cols}")
             lines.append(_c_extern(f"FOM_MAT_{name}"))
             lines.append("")
+
+        # Activation scalars (soft-threshold lambda, saturated-linear clip bounds)
+        for step in ir.body:
+            act = step.activation
+            if act.kind == ActivationKind.SOFT_THRESHOLD:
+                lines.append(
+                    f"#define FOM_{step.name.upper()}_LAMBDA ((fom_float){_fmt_float(act.lambd)})"
+                )
+            elif act.kind == ActivationKind.SATURATED_LINEAR:
+                lines.append(
+                    f"#define FOM_{step.name.upper()}_LOWER "
+                    f"((fom_float){_fmt_float(act.lower_scalar)})"
+                )
+                lines.append(
+                    f"#define FOM_{step.name.upper()}_UPPER "
+                    f"((fom_float){_fmt_float(act.upper_scalar)})"
+                )
+        lines.append("")
         lines += ["#endif /* FOM_DATA_H */", ""]
         return "\n".join(lines)
 

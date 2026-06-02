@@ -801,6 +801,42 @@ class Verifier(object):
 
         return expr
 
+    def codegen(
+        self,
+        out_dir,
+        next_state,
+        config=None,
+        driver=None,
+        state=None,
+        params=None,
+        name="fom",
+        run_phase_b=False,
+    ):
+        """Generate a low-level solver for the FOM recorded on this verifier.
+
+        Thin delegate to :func:`fomtools.codegen.generate_code`. See that
+        function for parameter semantics. ``next_state`` is the iterate
+        ``LinearExpression`` produced after exactly one iteration.
+
+        Returns
+        -------
+        CodegenResult
+            The IR, output directory, target, and agent results.
+        """
+        from fomtools.codegen import generate_code
+
+        return generate_code(
+            self,
+            next_state,
+            out_dir,
+            config=config,
+            driver=driver,
+            state=state,
+            params=params,
+            name=name,
+            run_phase_b=run_phase_b,
+        )
+
     def get_solution_value(self, iterate: LinearExpression) -> np.ndarray:
         """
         Get the solution value for the given iterate.

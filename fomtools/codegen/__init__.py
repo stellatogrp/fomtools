@@ -18,6 +18,7 @@ The public surface:
   interface.
 """
 
+from fomtools.codegen.agent import AgentDriver, AgentResult, AgentTask, StubAgentDriver
 from fomtools.codegen.config import (
     Backend,
     CodegenConfig,
@@ -25,17 +26,26 @@ from fomtools.codegen.config import (
     TerminationSpec,
     Version,
 )
+from fomtools.codegen.emit import scaffold
 from fomtools.codegen.extract import extract_ir
+from fomtools.codegen.generate import CodegenResult, generate_code
 from fomtools.codegen.ir import FomIR, NonStationaryFOMError
 from fomtools.codegen.oracle import OracleResult, ReferenceOracle, run_faithful
 
 __all__ = [
+    "AgentDriver",
+    "AgentResult",
+    "AgentTask",
+    "StubAgentDriver",
     "Backend",
     "CodegenConfig",
     "TerminationKind",
     "TerminationSpec",
     "Version",
+    "scaffold",
     "extract_ir",
+    "generate_code",
+    "CodegenResult",
     "FomIR",
     "NonStationaryFOMError",
     "OracleResult",
