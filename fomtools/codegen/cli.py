@@ -127,6 +127,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"codegen {status}: {result.out_dir}")
     if result.timing is not None:
         print(result.timing.summary())
+    if result.optimizations_md is not None:
+        print(f"optimizations recorded in {result.optimizations_md}")
+    if result.production_path is not None:
+        print(
+            f"marker-free production solver: {result.production_path} (build with `make release`)"
+        )
     if not result.success:
         sys.stderr.write(result.translate.log[-2000:] + "\n")
     return 0 if result.success else 1

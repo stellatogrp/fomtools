@@ -34,6 +34,12 @@ from fomtools.codegen.harness import (
     time_python_oracle,
 )
 from fomtools.codegen.ir import FomIR
+from fomtools.codegen.postprocess import (
+    extract_agent_notes,
+    unified_solver_diff,
+    write_optimization_report,
+    write_production_variant,
+)
 from fomtools.codegen.targets import TargetDescriptor
 
 
@@ -47,6 +53,9 @@ class CodegenResult:
     translate: AgentResult
     optimize: AgentResult | None = None
     timing: TimingReport | None = None
+    optimization_diff: str | None = None
+    optimizations_md: Path | None = None
+    production_path: Path | None = None
 
     @property
     def success(self) -> bool:
@@ -136,6 +145,8 @@ def generate_code(
 
     # --- Phase B: iterative performance optimization -------------------------
     optimize = None
+    optimization_diff = None
+    optimizations_md = None
     if run_phase_b and translate.success:
         solver_path = out_dir / target.solver_source_path()
         phase_a_source = solver_path.read_text()  # known-good fallback
@@ -172,6 +183,24 @@ def generate_code(
             except Exception:
                 pass
 
+        # Record exactly what changed (diff phase A -> final) + the agent's notes.
+        final_source = solver_path.read_text()
+        optimization_diff = unified_solver_diff(
+            phase_a_source, final_source, target.solver_source_path()
+        )
+        optimizations_md = write_optimization_report(
+            out_dir,
+            timing_summary=timing.summary() if timing is not None else "",
+            diff=optimization_diff,
+            agent_notes=extract_agent_notes(optimize.log),
+            optimize_succeeded=optimize.success,
+        )
+
+    # Always emit a clean, marker-free production copy of the final solver.
+    production_path = None
+    if translate.success:
+        production_path = write_production_variant(out_dir, target.solver_source_path())
+
     return CodegenResult(
         ir=ir,
         out_dir=out_dir,
@@ -179,4 +208,7 @@ def generate_code(
         translate=translate,
         optimize=optimize,
         timing=timing,
+        optimization_diff=optimization_diff,
+        optimizations_md=optimizations_md,
+        production_path=production_path,
     )
