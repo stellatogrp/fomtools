@@ -147,6 +147,20 @@ When Phase B runs, two extra artifacts are written:
   (which links the shared library from `release/`), or drop it in for
   `src/fom_solver.c`.
 
+## Linear solves: factorized, never inverted
+
+Affine operators (e.g. the KKT solve inside ADMM/OSQP) are **never** turned into
+a matrix inverse. At codegen time each system `M w = rhs` is factorized once —
+**sparse LDLᵀ** for symmetric systems (the ADMM/OSQP KKT is symmetric
+quasidefinite), **LU** otherwise — and the generated solver applies
+**division-free** triangular solves (the factor diagonals are stored as
+reciprocals). The factors live in `src/fom_linsolve.c` and are called as
+`fom_lin_solve_<name>(rhs, out)`; the iteration code assembles the right-hand
+side and calls them. `CodegenConfig(solve_method=...)` can force `LDLT`/`LU`;
+`CG` (an indirect method for large/GPU problems) is reserved for a future
+backend. The choice can depend on problem type and the CPU/GPU target — but a
+matrix inverse is never formed or stored.
+
 ## Targets
 
 `CodegenConfig` selects what to emit:
