@@ -59,7 +59,19 @@ class CodegenResult:
 
     @property
     def success(self) -> bool:
-        return self.translate.success and (self.optimize is None or self.optimize.success)
+        """Whether a correct, verified solver was produced.
+
+        The optimization phase never fails the run: if it does not yield a
+        faster, still-correct solver, the verified Phase A solver is shipped
+        instead. Use :attr:`optimization_kept` to see whether an optimization
+        was actually adopted.
+        """
+        return self.translate.success
+
+    @property
+    def optimization_kept(self) -> bool:
+        """True iff Phase B produced a faster, still-correct solver that was kept."""
+        return self.optimize is not None and self.optimize.success
 
 
 def _bench_mean_us(out_dir: Path) -> float | None:
@@ -67,6 +79,20 @@ def _bench_mean_us(out_dir: Path) -> float | None:
         return run_bench(out_dir).mean_us
     except Exception:
         return None
+
+
+def optimization_is_faster(
+    c_phase_b: float | None, c_phase_a: float | None, tol: float = 1.02
+) -> bool:
+    """Decide whether to keep a Phase-B solver based on head-to-head timing.
+
+    Keeps Phase B only if it is at least as fast as Phase A within a small
+    tolerance (``tol``) that absorbs benchmark noise. Returns ``False`` if either
+    measurement is missing.
+    """
+    if c_phase_b is None or c_phase_a is None:
+        return False
+    return c_phase_b <= c_phase_a * tol
 
 
 def generate_code(
@@ -161,27 +187,57 @@ def generate_code(
             bench_cmd=["make", "bench"],
         )
         optimize = driver.run(task_b)
+        phase_b_source = solver_path.read_text()
+        changed = phase_b_source != phase_a_source
+        notes: list[str] = []
 
-        # Hard correctness gate: the optimized solver must still verify. If the
-        # optimization left the code broken (or unverified), restore the
-        # known-good Phase A solver so we never ship a regressed solver.
-        recheck = build_and_verify(out_dir, target) if optimize.success else None
-        if not optimize.success or (recheck and not recheck.success):
+        # Gate 1 (correctness): the optimized solver must still verify. If it
+        # broke (or never verified), fall back to the known-good Phase A solver.
+        recheck = build_and_verify(out_dir, target) if (optimize.success and changed) else None
+        correct = bool(optimize.success and (recheck is None or recheck.success))
+        if not correct and changed:
             solver_path.write_text(phase_a_source)
-            note = "[optimization not kept; restored verified phase-A solver]"
-            extra = recheck.output if recheck else ""
-            optimize = AgentResult(
-                success=False,
-                log=optimize.log + "\n" + note + "\n" + extra,
-                turns_used=optimize.turns_used,
-            )
+            phase_b_source = phase_a_source
+            changed = False
+            notes.append("[optimization not kept: phase-B solver failed verification]")
+            if recheck and not recheck.success:
+                notes.append(recheck.output)
+
+        # Gate 2 (performance): keep a *changed* solver only if it is at least as
+        # fast as Phase A, measured head-to-head now (timings are noisy, so a
+        # small tolerance avoids discarding genuine wins). Otherwise ship the
+        # faster Phase A solver — the optimization phase never regresses speed.
+        kept = changed and correct
+        if profile and have_cc and timing is not None and changed and correct:
+            c_phase_b = _bench_mean_us(out_dir)
+            solver_path.write_text(phase_a_source)
+            c_phase_a = _bench_mean_us(out_dir)
+            if optimization_is_faster(c_phase_b, c_phase_a):
+                solver_path.write_text(phase_b_source)
+                timing.c_initial_us, timing.c_final_us = c_phase_a, c_phase_b
+            else:
+                kept = False
+                timing.c_initial_us = timing.c_final_us = c_phase_a
+                notes.append(
+                    f"[optimization not kept: phase-B build ({c_phase_b} us) was not "
+                    f"faster than phase A ({c_phase_a} us)]"
+                )
 
         if profile and have_cc and timing is not None:
-            timing.c_final_us = _bench_mean_us(out_dir)
             try:
                 timing.profile = run_profile(out_dir)
             except Exception:
                 pass
+
+        if not changed and not notes:
+            notes.append("[no source change from the optimization phase]")
+
+        optimize = AgentResult(
+            success=kept,
+            log=optimize.log + ("\n" + "\n".join(notes) if notes else ""),
+            turns_used=optimize.turns_used,
+            artifacts=[solver_path],
+        )
 
         # Record exactly what changed (diff phase A -> final) + the agent's notes.
         final_source = solver_path.read_text()

@@ -108,8 +108,10 @@ def test_phase_b_loop_records_timing_and_reverifies(tmp_path, requires_compiler)
         profile=True,
     )
     assert result.translate.success
+    assert result.success  # a verified solver was shipped regardless of optimization
     assert result.optimize is not None
-    assert result.optimize.success  # re-verify correctness gate passed
+    # The stub makes no source change, so no optimization is "kept".
+    assert not result.optimization_kept
     t = result.timing
     assert t is not None
     assert t.python_us and t.python_us > 0
@@ -121,6 +123,19 @@ def test_phase_b_loop_records_timing_and_reverifies(tmp_path, requires_compiler)
     s = t.summary()
     assert "Speedup from codegen" in s
     assert "Profiling breakdown" in s
+
+
+def test_optimization_perf_gate_logic():
+    """The keep/revert decision: keep Phase B only if not slower (within noise)."""
+    from fomtools.codegen.generate import optimization_is_faster
+
+    assert optimization_is_faster(1.0, 2.0)  # clearly faster -> keep
+    assert optimization_is_faster(2.0, 2.0)  # equal -> keep
+    assert optimization_is_faster(2.02, 2.0)  # within 2% tolerance -> keep
+    assert not optimization_is_faster(3.0, 2.0)  # slower -> revert to phase A
+    assert not optimization_is_faster(2.1, 2.0)  # >2% slower -> revert
+    assert not optimization_is_faster(None, 2.0)  # missing measurement -> revert
+    assert not optimization_is_faster(1.0, None)
 
 
 def test_timing_report_speedup_math():
