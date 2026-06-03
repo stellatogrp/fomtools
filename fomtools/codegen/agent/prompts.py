@@ -73,7 +73,11 @@ WITHOUT ever breaking correctness. Work as a tight, profile-guided loop:
    (e.g. two rounds with < ~2% gain) or the code is clearly optimal.
 
 Keep the target constraints throughout (embedded: no dynamic allocation,
-division-free). When done, print a FINAL SUMMARY containing:
+division-free). In your FINAL version, KEEP `FOM_PROF_BEGIN/END` markers around
+the main computational regions (they are no-ops in production) so that
+`make profile` still reports a per-region breakdown after optimization.
+
+When done, print a FINAL SUMMARY containing:
 - the initial vs. final whole-solve `mean_us` and the overall speedup factor;
 - the profiling breakdown of the FINAL solver (region, time, %), hottest first;
 - a short list of the optimizations you applied and why.
