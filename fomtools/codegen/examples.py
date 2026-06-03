@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import scipy.sparse as spa
 
+from fomtools.linearexpression import stack
 from fomtools.verifier import Verifier
 
 
@@ -58,7 +59,124 @@ def dr_example(*, n: int = 4, m: int = 3, seed: int = 5, K: int = 3) -> dict:
     return {"verifier": v, "next_state": z[1], "name": "dr"}
 
 
-EXAMPLES = {"ista": ista_example, "dr": dr_example}
+def _mpc_qp_data(nx: int, nu: int, N: int, seed: int):
+    """Build a model-predictive-control QP in OSQP standard form.
+
+    Returns ``P, M, l, u, KKT`` plus sizes and ADMM parameters for the QP
+    ``min 1/2 z'Pz + q'z  s.t.  l <= M z <= u`` over the stacked variable
+    ``z = [x_0..x_N, u_0..u_{N-1}]``. The initial state is baked into ``l``/``u``
+    (so they are constant); the linear cost ``q`` is left as the parameter.
+    """
+    rng = np.random.default_rng(seed)
+    # Stable-ish discrete dynamics.
+    Ad = rng.normal(size=(nx, nx))
+    Ad = 0.9 * Ad / np.max(np.abs(np.linalg.eigvals(Ad)))
+    Bd = 0.5 * rng.normal(size=(nx, nu))
+
+    Q = np.eye(nx)
+    QN = 10.0 * np.eye(nx)
+    R = 0.1 * np.eye(nu)
+    x_init = rng.uniform(-0.5, 0.5, size=nx)
+
+    nv = nx * (N + 1) + nu * N
+    uoff = nx * (N + 1)
+
+    P = np.zeros((nv, nv))
+    for t in range(N + 1):
+        P[t * nx : (t + 1) * nx, t * nx : (t + 1) * nx] = QN if t == N else Q
+    for t in range(N):
+        P[uoff + t * nu : uoff + (t + 1) * nu, uoff + t * nu : uoff + (t + 1) * nu] = R
+
+    # Equality rows: x_0 = x_init, and x_{t+1} - Ad x_t - Bd u_t = 0.
+    neq = nx * (N + 1)
+    Aeq = np.zeros((neq, nv))
+    beq = np.zeros(neq)
+    Aeq[0:nx, 0:nx] = np.eye(nx)
+    beq[0:nx] = x_init
+    for t in range(N):
+        r = nx * (t + 1)
+        Aeq[r : r + nx, (t + 1) * nx : (t + 2) * nx] = np.eye(nx)
+        Aeq[r : r + nx, t * nx : (t + 1) * nx] = -Ad
+        Aeq[r : r + nx, uoff + t * nu : uoff + (t + 1) * nu] = -Bd
+
+    # Box rows on every variable.
+    x_min, x_max, u_min, u_max = -5.0, 5.0, -1.0, 1.0
+    lb = np.empty(nv)
+    ub = np.empty(nv)
+    lb[:uoff] = x_min
+    ub[:uoff] = x_max
+    lb[uoff:] = u_min
+    ub[uoff:] = u_max
+
+    M = np.vstack([Aeq, np.eye(nv)])
+    lvec = np.hstack([beq, lb])  # equality rows: l == u == beq
+    uvec = np.hstack([beq, ub])
+    return P, M, lvec, uvec, nv, M.shape[0], x_init
+
+
+def mpc_osqp_example(
+    *,
+    nx: int = 4,
+    nu: int = 2,
+    N: int = 8,
+    seed: int = 1,
+    rho: float = 0.1,
+    sigma: float = 1e-6,
+    alpha: float = 1.6,
+) -> dict:
+    """One iteration of OSQP's ADMM for an MPC QP.
+
+    State is ``(x, z, y)`` (primal, auxiliary, dual); the parameter is the linear
+    cost ``q``. The KKT matrix is constant (fixed problem data), so its inverse
+    is folded into the generated coefficients at codegen time. The box projection
+    is a saturated-linear step; everything else is affine/linear.
+    """
+    P, M, lvec, uvec, nv, nc, x_init = _mpc_qp_data(nx, nu, N, seed)
+    KKT = np.block([[P + sigma * np.eye(nv), M.T], [M, -(1.0 / rho) * np.eye(nc)]])
+    rng = np.random.default_rng(seed + 100)
+    q_nom = 0.1 * rng.normal(size=nv)
+
+    v = Verifier(method="simulator", obbt_solver=None)
+    q = v.add_param(nv, lb=q_nom - 0.05, ub=q_nom + 0.05)
+    x = v.add_iterate(nv, lb=np.zeros(nv), ub=np.zeros(nv))
+    z = v.add_iterate(nc, lb=np.zeros(nc), ub=np.zeros(nc))
+    y = v.add_iterate(nc, lb=np.zeros(nc), ub=np.zeros(nc))
+
+    # Solve the KKT system for (x_tilde, nu_dual).
+    rhs = stack([sigma * x - q, z - (1.0 / rho) * y])
+    sol = v.step.implicit_linear(rhs, lhs_mat=KKT)
+    x_tilde = sol[:nv]
+    nu_dual = sol[nv : nv + nc]
+
+    z_tilde = z + (1.0 / rho) * (nu_dual - y)
+    proj_arg = alpha * z_tilde + (1.0 - alpha) * z + (1.0 / rho) * y
+    z_next = v.step.satlin(proj_arg, l=lvec, u=uvec)
+    x_next = alpha * x_tilde + (1.0 - alpha) * x
+    y_next = y + rho * (alpha * z_tilde + (1.0 - alpha) * z - z_next)
+
+    next_state = stack([x_next, z_next, y_next])
+    return {
+        "verifier": v,
+        "next_state": next_state,
+        "name": "mpc_osqp",
+        "data": {
+            "P": P,
+            "M": M,
+            "l": lvec,
+            "u": uvec,
+            "KKT": KKT,
+            "q_nom": q_nom,
+            "nv": nv,
+            "nc": nc,
+            "rho": rho,
+            "sigma": sigma,
+            "alpha": alpha,
+            "x_init": x_init,
+        },
+    }
+
+
+EXAMPLES = {"ista": ista_example, "dr": dr_example, "mpc": mpc_osqp_example}
 
 
 def get_example(name: str) -> dict:

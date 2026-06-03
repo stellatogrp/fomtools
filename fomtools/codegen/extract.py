@@ -112,33 +112,28 @@ def _step_source_activation(step) -> tuple[LinearExpression, ActivationOp, int]:
             return step.rhs, ActivationOp(ActivationKind.RELU), step.rhs.ndim
         return _row_slice_expr(step.rhs, proj), ActivationOp(ActivationKind.RELU), len(proj)
     if isinstance(step, SaturatedLinear):
-        lower, upper = _satlin_bounds(step)
-        return (
-            step.rhs,
-            ActivationOp(
-                ActivationKind.SATURATED_LINEAR,
-                lower_scalar=lower,
-                upper_scalar=upper,
-            ),
-            step.rhs.ndim,
-        )
+        # Bounds (scalar or vector) are finalized into IR matrices by the caller;
+        # return a placeholder activation here.
+        return step.rhs, ActivationOp(ActivationKind.SATURATED_LINEAR), step.rhs.ndim
     raise NonStationaryFOMError(f"Unsupported step type for code generation: {type(step).__name__}")
 
 
-def _satlin_bounds(step: SaturatedLinear) -> tuple[float, float]:
-    """Constant clip bounds for a saturated-linear step (MVP: scalars only)."""
+def _satlin_arrays(step: SaturatedLinear) -> tuple[np.ndarray, np.ndarray]:
+    """Constant clip bounds as full per-coordinate arrays (scalars broadcast).
+
+    Parameter-dependent (``LinearExpression``) bounds are not yet supported.
+    """
     if isinstance(step.l, LinearExpression) or isinstance(step.u, LinearExpression):
         raise NonStationaryFOMError(
             "saturated_linear with parameter-dependent (LinearExpression) bounds "
             "is not yet supported by code generation."
         )
-    lower = np.asarray(step.l, dtype=float)
-    upper = np.asarray(step.u, dtype=float)
-    if lower.size > 1 or upper.size > 1:
-        raise NonStationaryFOMError(
-            "saturated_linear with vector clip bounds is not yet supported; use scalar bounds."
-        )
-    return float(lower.reshape(-1)[0]), float(upper.reshape(-1)[0])
+    n = step.rhs.ndim
+    lower = np.asarray(step.l, dtype=float).reshape(-1)
+    upper = np.asarray(step.u, dtype=float).reshape(-1)
+    lower = np.full(n, lower[0]) if lower.size == 1 else lower
+    upper = np.full(n, upper[0]) if upper.size == 1 else upper
+    return lower, upper
 
 
 def _eval_step_fresh(step, values: dict[LinearExpression, np.ndarray]) -> np.ndarray:
@@ -163,7 +158,7 @@ def _eval_step_fresh(step, values: dict[LinearExpression, np.ndarray]) -> np.nda
             return np.maximum(0.0, rhs_val)
         return np.maximum(0.0, rhs_val[proj])
     if isinstance(step, SaturatedLinear):
-        lower, upper = _satlin_bounds(step)
+        lower, upper = _satlin_arrays(step)
         return np.minimum(np.maximum(rhs_val, lower), upper)
     raise NonStationaryFOMError(f"Unsupported step type: {type(step).__name__}")
 
@@ -310,7 +305,15 @@ def extract_ir(
         source, activation, out_dim = _step_source_activation(step)
         prefix = f"t{i}"
         lin = _build_linear_op(source, prefix, state_layout, param_map, tmp_map, matrices, out_dim)
-        # populate activation clip-bound matrices if needed (scalars handled inline)
+        # Saturated-linear clip bounds become per-coordinate IR arrays.
+        if activation.kind == ActivationKind.SATURATED_LINEAR:
+            lower, upper = _satlin_arrays(step)
+            lo_name, hi_name = f"{prefix}_lo", f"{prefix}_hi"
+            matrices[lo_name] = MatrixData(name=lo_name, array=lower)
+            matrices[hi_name] = MatrixData(name=hi_name, array=upper)
+            activation = ActivationOp(
+                kind=ActivationKind.SATURATED_LINEAR, lower=lo_name, upper=hi_name
+            )
         body.append(
             IterationStep(name=prefix, out_dim=out_dim, linear_op=lin, activation=activation)
         )

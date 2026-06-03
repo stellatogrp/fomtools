@@ -122,6 +122,58 @@ def build_dr(*, K=5, seed=5, n=4, m=3, max_iters=200, tol=None, dtype="float64")
     )
 
 
+def build_boxqp(*, n=3, seed=2, max_iters=200, tol=None, dtype="float64"):
+    """Projected-gradient on a box: ``x <- clip(x - t (P x + q), l, u)``.
+
+    Exercises the saturated-linear step with constant *vector* clip bounds.
+    """
+    rng = np.random.default_rng(seed)
+    half = rng.normal(size=(n, n))
+    P = half @ half.T + 0.1 * np.eye(n)
+    q0 = rng.normal(size=n)
+    t = 1.0 / np.max(np.real(np.linalg.eigvals(P)))
+    lo = -0.5 * np.ones(n)
+    hi = 0.5 * np.ones(n)
+    W = np.eye(n) - t * P
+
+    v = Verifier(method="simulator", obbt_solver=None)
+    q = v.add_param(n, lb=q0 - 0.5, ub=q0 + 0.5)
+    x = v.add_iterate(n, lb=0, ub=0)
+    iterates = [x]
+    for _ in range(3):
+        x = v.step.satlin(W @ x - t * q, l=lo, u=hi)
+        iterates.append(x)
+
+    kind = TerminationKind.INF_NORM_CHANGE if tol is not None else TerminationKind.MAX_ITERS
+    config = CodegenConfig(
+        termination=TerminationSpec(kind=kind, max_iters=max_iters, tol=tol), dtype=dtype
+    )
+    data = dict(P=P, q0=q0, t=t, W=W, lo=lo, hi=hi, n=n)
+    return dict(
+        verifier=v,
+        next_state=iterates[1],
+        iterates=iterates,
+        param=q,
+        config=config,
+        data=data,
+        name="boxqp",
+    )
+
+
+def boxqp_reference(data, q_val, x0, n_iters, tol=None):
+    W, t, lo, hi = data["W"], data["t"], data["lo"], data["hi"]
+    xk = np.asarray(x0, dtype=float).copy()
+    traj = [xk.copy()]
+    for _ in range(n_iters):
+        new = np.minimum(np.maximum(W @ xk - t * q_val, lo), hi)
+        resid = np.max(np.abs(new - xk))
+        xk = new
+        traj.append(xk.copy())
+        if tol is not None and resid <= tol:
+            break
+    return traj
+
+
 def dr_reference(data, q_val, x0, n_iters, tol=None):
     """Pure-NumPy Douglas-Rachford trajectory."""
     lhs, n = data["lhs"], data["n"]

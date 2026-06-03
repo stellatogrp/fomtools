@@ -210,14 +210,15 @@ class EmbeddedCTarget(TargetDescriptor):
             lines.append(_c_extern(f"FOM_MAT_{name}"))
             lines.append("")
 
-        # Activation scalars (soft-threshold lambda, saturated-linear clip bounds)
+        # Activation scalars (soft-threshold lambda; scalar saturated-linear
+        # bounds). Vector clip bounds are emitted above as FOM_MAT_* arrays.
         for step in ir.body:
             act = step.activation
             if act.kind == ActivationKind.SOFT_THRESHOLD:
                 lines.append(
                     f"#define FOM_{step.name.upper()}_LAMBDA ((fom_float){_fmt_float(act.lambd)})"
                 )
-            elif act.kind == ActivationKind.SATURATED_LINEAR:
+            elif act.kind == ActivationKind.SATURATED_LINEAR and act.lower_scalar is not None:
                 lines.append(
                     f"#define FOM_{step.name.upper()}_LOWER "
                     f"((fom_float){_fmt_float(act.lower_scalar)})"

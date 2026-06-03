@@ -233,5 +233,7 @@ def _activation_str(act: ActivationOp) -> str:
     if act.kind == ActivationKind.SOFT_THRESHOLD:
         return f"soft_threshold(., lambda={act.lambd})"
     if act.kind == ActivationKind.SATURATED_LINEAR:
-        return f"clip(., {act.lower_scalar}, {act.upper_scalar})"
+        lo = act.lower if act.lower is not None else act.lower_scalar
+        hi = act.upper if act.upper is not None else act.upper_scalar
+        return f"clip(., lower={lo}, upper={hi})  (elementwise; bounds are vectors)"
     return act.kind.value
