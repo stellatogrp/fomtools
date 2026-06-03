@@ -163,7 +163,15 @@ When Phase B runs, two extra artifacts are written:
 ```
 fomtools-codegen --example ista --out out/ista --driver agent
 fomtools-codegen --example dr   --out out/dr   --scaffold-only
+fomtools-codegen --example mpc  --out out/mpc  --driver agent   # OSQP MPC, larger
 ```
+
+The built-in `mpc` example is a model-predictive-control QP solved with **OSQP's
+ADMM** — a constant KKT solve (the inverse is folded into the coefficients at
+codegen time) followed by a box projection (saturated-linear) and the ADMM
+recombinations. It is the largest built-in example (state dimension in the
+hundreds), so it is a good showcase for the Python-vs-C and the optimization-loop
+speedups.
 
 `--scaffold-only` emits everything except the solver body (useful to inspect the
 spec and data before invoking the agent). A custom FOM can be supplied with
