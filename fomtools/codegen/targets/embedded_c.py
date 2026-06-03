@@ -45,6 +45,12 @@ def _c_extern(name: str) -> str:
     return f"extern const fom_float {name}[];"
 
 
+def _c_int_array(name: str, values, storage: str = "static const") -> str:
+    flat = np.asarray(values).reshape(-1).astype(int)
+    body = ", ".join(str(int(v)) for v in flat)
+    return f"{storage} fom_int {name}[{flat.size}] = {{{body}}};"
+
+
 def _c_array_2d(name: str, mat: np.ndarray, decl_dims: str, ctype: str = "fom_float") -> str:
     """Emit a 2-D ``static const`` array with proper nested braces per row."""
     mat = np.atleast_2d(np.asarray(mat, dtype=float))
@@ -76,6 +82,8 @@ class EmbeddedCTarget(TargetDescriptor):
         (out / "include" / "fom_solver.h").write_text(self._solver_header())
         (out / "include" / "fom_data.h").write_text(self._data_header(ir))
         (out / "include" / "fom_profile.h").write_text(self._profile_header())
+        (out / "include" / "fom_linsolve.h").write_text(self._linsolve_header(ir))
+        (out / "src" / "fom_linsolve.c").write_text(self._linsolve_source(ir))
         (out / "src" / "fom_data.c").write_text(self._data_source(ir))
         (out / "src" / "fom_profile.c").write_text(self._profile_source())
         (out / "test" / "verify_data.h").write_text(self._verify_data(ir))
@@ -239,6 +247,96 @@ class EmbeddedCTarget(TargetDescriptor):
             lines.append(_c_array(f"FOM_MAT_{name}", md.array, storage="const"))
             lines.append("")
         return "\n".join(lines)
+
+    # -- linear solves (factorizations, never inverses) --------------------
+    def _linsolve_header(self, ir: FomIR) -> str:
+        lines = [
+            "#ifndef FOM_LINSOLVE_H",
+            "#define FOM_LINSOLVE_H",
+            "",
+            '#include "fom_workspace.h"',
+            "",
+            "/* Solve M x = b for each affine operator via a precomputed sparse",
+            "   factorization (LDL^T / LU). Division-free: diagonals are stored as",
+            "   reciprocals. No matrix inverse is ever formed or used. */",
+            "",
+        ]
+        for name, fac in ir.factorizations.items():
+            lines.append(f"#define FOM_FAC_{name.upper()}_DIM {fac.dim}")
+            lines.append(
+                f"void fom_lin_solve_{name}(const fom_float *b, fom_float *x);  "
+                f"/* {fac.method.upper()}, dim {fac.dim}, nnz {fac.nnz} */"
+            )
+            lines.append("")
+        lines += ["#endif /* FOM_LINSOLVE_H */", ""]
+        return "\n".join(lines)
+
+    def _linsolve_source(self, ir: FomIR) -> str:
+        lines = ['#include "fom_linsolve.h"', ""]
+        for name, fac in ir.factorizations.items():
+            up = name.upper()
+            lines.append(f"/* ---- factorization '{name}' ({fac.method.upper()}) ---- */")
+            lines.append(_c_int_array(f"FOM_FAC_{up}_PERM", fac.perm))
+            lines.append(_c_int_array(f"FOM_FAC_{up}_L_INDPTR", fac.L.indptr))
+            lines.append(_c_int_array(f"FOM_FAC_{up}_L_INDICES", fac.L.indices))
+            lines.append(_c_array(f"FOM_FAC_{up}_L_DATA", fac.L.data))
+            if fac.method == "ldlt":
+                lines.append(_c_array(f"FOM_FAC_{up}_DINV", fac.dinv))
+            else:
+                lines.append(_c_int_array(f"FOM_FAC_{up}_U_INDPTR", fac.U.indptr))
+                lines.append(_c_int_array(f"FOM_FAC_{up}_U_INDICES", fac.U.indices))
+                lines.append(_c_array(f"FOM_FAC_{up}_U_DATA", fac.U.data))
+                lines.append(_c_array(f"FOM_FAC_{up}_UINV", fac.uinv))
+            lines.append("")
+            lines.append(self._solve_routine(name, fac))
+            lines.append("")
+        return "\n".join(lines)
+
+    def _solve_routine(self, name: str, fac) -> str:
+        up = name.upper()
+        n = f"FOM_FAC_{up}_DIM"
+        out = [
+            f"void fom_lin_solve_{name}(const fom_float *b, fom_float *x) {{",
+            f"    fom_float y[{n}];",
+            "    fom_int i, j, p, r;",
+            f"    for (i = 0; i < {n}; ++i) y[i] = b[FOM_FAC_{up}_PERM[i]];",
+            "    /* forward solve: unit lower-triangular L y = P^T b */",
+            f"    for (j = 0; j < {n}; ++j) {{",
+            f"        for (p = FOM_FAC_{up}_L_INDPTR[j]; p < FOM_FAC_{up}_L_INDPTR[j + 1]; ++p) {{",
+            f"            r = FOM_FAC_{up}_L_INDICES[p];",
+            f"            if (r != j) y[r] -= FOM_FAC_{up}_L_DATA[p] * y[j];",
+            "        }",
+            "    }",
+        ]
+        if fac.method == "ldlt":
+            out += [
+                "    /* diagonal solve (multiply by reciprocals) */",
+                f"    for (i = 0; i < {n}; ++i) y[i] *= FOM_FAC_{up}_DINV[i];",
+                "    /* backward solve: unit upper-triangular L^T x = y */",
+                f"    for (j = {n} - 1; j >= 0; --j) {{",
+                "        fom_float s = y[j];",
+                f"        for (p = FOM_FAC_{up}_L_INDPTR[j]; p < FOM_FAC_{up}_L_INDPTR[j + 1]; ++p) {{",
+                f"            r = FOM_FAC_{up}_L_INDICES[p];",
+                f"            if (r > j) s -= FOM_FAC_{up}_L_DATA[p] * x[r];",
+                "        }",
+                "        x[j] = s;",
+                "    }",
+                "}",
+            ]
+        else:
+            out += [
+                "    /* backward solve: upper-triangular U x = y (reciprocal diagonal) */",
+                f"    for (j = {n} - 1; j >= 0; --j) {{",
+                f"        fom_float xj = y[j] * FOM_FAC_{up}_UINV[j];",
+                "        x[j] = xj;",
+                f"        for (p = FOM_FAC_{up}_U_INDPTR[j]; p < FOM_FAC_{up}_U_INDPTR[j + 1]; ++p) {{",
+                f"            r = FOM_FAC_{up}_U_INDICES[p];",
+                "            if (r < j) y[r] -= FOM_FAC_" + up + "_U_DATA[p] * xj;",
+                "        }",
+                "    }",
+                "}",
+            ]
+        return "\n".join(out)
 
     # -- verify ------------------------------------------------------------
     def _sample_params(self, ir: FomIR) -> tuple[dict[str, np.ndarray], list[dict]]:
@@ -511,7 +609,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 "CC ?= cc",
                 "CFLAGS ?= -O2 -Wall -Iinclude",
                 "BENCHFLAGS ?= -O3 -Iinclude",
-                "SRC = src/fom_solver.c src/fom_data.c",
+                "SRC = src/fom_solver.c src/fom_data.c src/fom_linsolve.c",
                 "",
                 "UNAME_S := $(shell uname -s)",
                 "ifeq ($(UNAME_S),Darwin)",
@@ -527,9 +625,9 @@ class EmbeddedCTarget(TargetDescriptor):
                 "\t./verify_bin",
                 "",
                 "# Build the shared library from the marker-free production source.",
-                "release: release/fom_solver.c src/fom_data.c",
+                "release: release/fom_solver.c src/fom_data.c src/fom_linsolve.c",
                 "\t$(CC) $(CFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
-                "-o libfomsolver.$(LIBEXT) -lm",
+                "src/fom_linsolve.c -o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "bench: $(SRC) test/bench_main.c",
                 "\t$(CC) $(BENCHFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",

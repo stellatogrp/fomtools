@@ -2,18 +2,19 @@
  * Golden embedded-C solver for Douglas-Rachford-style first-order methods.
  *
  * Structure (see test/SPEC.md), two body steps + a state update:
- *   t0 = FOM_MAT_t0_state @ state + FOM_MAT_t0_p_p0 @ p0          (identity; the
- *        affine system's inverse is folded into the coefficients)
- *   t1 = relu( FOM_MAT_t1_state @ state + FOM_MAT_t1_t_t0 @ t0 )  (projection)
+ *   rhs0 = FOM_MAT_t0_state @ state + FOM_MAT_t0_p_p0 @ p0
+ *   t0   = solve(M, rhs0)  via fom_lin_solve_t0 (sparse factorization; no inverse)
+ *   t1   = relu( FOM_MAT_t1_state @ state + FOM_MAT_t1_t_t0 @ t0 )
  *   new_state = FOM_MAT_su_state @ state
  *             + FOM_MAT_su_t_t0 @ t0 + FOM_MAT_su_t_t1 @ t1
  *
- * Data-agnostic and division-free: every coefficient comes from fom_data.c.
- * Hand-written reference used to test the deterministic codegen pipeline without
- * the LLM coding agent.
+ * Data-agnostic; coefficients come from fom_data.c and the affine solve from
+ * fom_linsolve.c. Hand-written reference used to test the deterministic codegen
+ * pipeline without the LLM coding agent.
  */
 #include "fom_solver.h"
 #include "fom_data.h"
+#include "fom_linsolve.h"
 #include "fom_profile.h"
 
 static void matvec_add(fom_float *out, int rows, const fom_float *M, int cols, const fom_float *v) {
@@ -56,11 +57,12 @@ fom_int fom_solve(FomWorkspace *work) {
     int it, i;
 
     for (it = 0; it < work->settings.max_iter; ++it) {
-        /* t0 = M_state @ state + M_p0 @ p0 (affine solve, inverse folded) */
+        /* affine: assemble rhs, then solve M t0 = rhs (factorization, no inverse) */
         FOM_PROF_BEGIN(affine);
-        for (i = 0; i < FOM_T0_DIM; ++i) work->t0[i] = 0.0;
-        matvec_add(work->t0, FOM_T0_DIM, FOM_MAT_t0_state, FOM_MAT_t0_state_COLS, work->state);
-        matvec_add(work->t0, FOM_T0_DIM, FOM_MAT_t0_p_p0, FOM_MAT_t0_p_p0_COLS, work->params.p0);
+        for (i = 0; i < FOM_T0_DIM; ++i) work->acc[i] = 0.0;
+        matvec_add(work->acc, FOM_T0_DIM, FOM_MAT_t0_state, FOM_MAT_t0_state_COLS, work->state);
+        matvec_add(work->acc, FOM_T0_DIM, FOM_MAT_t0_p_p0, FOM_MAT_t0_p_p0_COLS, work->params.p0);
+        fom_lin_solve_t0(work->acc, work->t0);
         FOM_PROF_END(affine);
 
         /* t1 = relu( M_state @ state + M_t0 @ t0 ) */

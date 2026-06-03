@@ -89,8 +89,9 @@ def test_mpc_ir_structure():
     ir = extract_ir(ex["verifier"], ex["next_state"], config=CodegenConfig(), name="mpc")
     assert ir.state_dim == d["nv"] + 2 * d["nc"]
     kinds = [s.activation.kind for s in ir.body]
-    assert ActivationKind.IDENTITY in kinds  # KKT solve (folded inverse)
+    assert ActivationKind.IDENTITY in kinds  # KKT solve (factorized; no inverse)
     assert ActivationKind.SATURATED_LINEAR in kinds  # box projection
+    assert any(s.solve is not None for s in ir.body)  # affine lowered to a solve
 
 
 def test_mpc_admm_converges_to_qp_solution():
@@ -117,3 +118,65 @@ def test_mpc_admm_converges_to_qp_solution():
     prob.solve(solver=cp.CLARABEL)
     assert prob.status == "optimal"
     assert np.linalg.norm(x_admm - z.value, np.inf) < 1e-2
+
+
+# --- factorized solve: never an inverse -----------------------------------
+def test_affine_lowered_to_factorized_solve_not_inverse():
+    from fomtools.codegen.examples import mpc_osqp_example
+
+    ex = mpc_osqp_example(nx=3, nu=2, N=4)
+    ir = extract_ir(ex["verifier"], ex["next_state"], config=CodegenConfig(), name="mpc")
+    # The affine step carries a factorization and a solve, not a folded inverse.
+    affine = next(s for s in ir.body if s.solve is not None)
+    fac = ir.factorizations[affine.solve]
+    assert fac.method == "ldlt"  # symmetric KKT -> LDL^T
+    assert fac.nnz < fac.dim**2  # genuinely sparse, not a dense inverse
+    # The linear op assembles the *original* rhs (its state block is identity-like
+    # selection of the KKT rhs), never M^{-1}.
+    assert affine.activation.kind == ActivationKind.IDENTITY
+
+
+def test_emitted_linsolve_is_division_free(tmp_path):
+    from fomtools.codegen.emit import scaffold
+    from fomtools.codegen.examples import mpc_osqp_example
+    from fomtools.codegen.targets.base import strip_c_comments_and_strings
+
+    ex = mpc_osqp_example(nx=3, nu=2, N=4)
+    ir = extract_ir(ex["verifier"], ex["next_state"], config=CodegenConfig(), name="mpc")
+    scaffold(ir, tmp_path, CodegenConfig())
+    src = (tmp_path / "src" / "fom_linsolve.c").read_text()
+    code = strip_c_comments_and_strings(src)
+    assert "/" not in code  # reciprocal diagonals, no division
+    assert "fom_lin_solve_t0" in src
+    # No dense inverse is emitted anywhere.
+    for f in (tmp_path / "src").glob("*.c"):
+        assert "inv(" not in f.read_text().lower()
+
+
+def test_mpc_golden_pipeline_and_wrapper(tmp_path, requires_compiler):
+    import importlib.util
+
+    from fomtools.codegen.examples import mpc_osqp_example
+
+    golden = Path(__file__).parent / "golden" / "mpc" / "embedded_c" / "fom_solver.c"
+    ex = mpc_osqp_example(nx=3, nu=2, N=5)
+    result = generate_code(
+        ex["verifier"],
+        ex["next_state"],
+        tmp_path,
+        config=CodegenConfig(termination=TerminationSpec(max_iters=400)),
+        driver=StubAgentDriver(golden),
+        name="mpc",
+    )
+    assert result.translate.success, result.translate.log
+    assert "VERIFY OK" in result.translate.log
+
+    build_lib(tmp_path)
+    spec = importlib.util.spec_from_file_location("w_mpc", tmp_path / "python" / "fom_solver.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    solver = mod.Solver()
+    oracle = ReferenceOracle(result.ir)
+    q = ex["data"]["q_nom"]
+    out = solver.solve(p0=q)
+    assert np.allclose(out["x"], oracle.solve(param_values={"p0": q}).solution, atol=1e-6)

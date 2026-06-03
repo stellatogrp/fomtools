@@ -23,8 +23,12 @@ generated and must not be changed:
 - `include/fom_workspace.h` defines the workspace struct and dimension macros.
 - `include/fom_data.h` / `src/fom_data.c` hold ALL numeric coefficients and
   activation constants (matrices `FOM_MAT_*`, `FOM_STATE_INIT`, soft-threshold
-  `FOM_*_LAMBDA`, clip `FOM_*_LOWER/UPPER`). Do NOT hardcode numbers; read them
-  from these symbols.
+  `FOM_*_LAMBDA`, clip-bound vectors `FOM_MAT_*_lo`/`_hi`). Do NOT hardcode
+  numbers; read them from these symbols.
+- `include/fom_linsolve.h` / `src/fom_linsolve.c` provide the linear solve for
+  every affine operator: for a step that SPEC marks with a solve, assemble its
+  right-hand side from `linear_op`, then call `fom_lin_solve_<name>(rhs, out)`.
+  NEVER form, store, or use a matrix inverse — the system is already factorized.
 - The algorithm is specified in `test/SPEC.md`.
 
 Hard constraints for the embedded target:

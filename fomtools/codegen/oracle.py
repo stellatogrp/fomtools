@@ -101,7 +101,13 @@ class ReferenceOracle:
         for _ in range(term.max_iters):
             for step in ir.body:
                 lin_val = self._eval_linop(step.linear_op, sources)
-                sources[f"tmp:{step.name}"] = _apply_activation(step.activation, lin_val, ir)
+                if step.solve is not None:
+                    # Affine step: solve M x = rhs via the factorization (the
+                    # inverse is never formed), matching the emitted C exactly.
+                    val = ir.factorizations[step.solve].solve(lin_val)
+                else:
+                    val = _apply_activation(step.activation, lin_val, ir)
+                sources[f"tmp:{step.name}"] = val
             new_state = self._eval_linop(ir.state_update, sources)
             residual = float(np.max(np.abs(new_state - state))) if new_state.size else 0.0
             state = new_state

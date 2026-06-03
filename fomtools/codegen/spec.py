@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from fomtools.codegen.config import TerminationKind, TerminationSpec
+from fomtools.codegen.factorize import CSC, Factorization
 from fomtools.codegen.ir import (
     ActivationKind,
     ActivationOp,
@@ -46,11 +47,24 @@ def _activation_to_dict(act: ActivationOp) -> dict:
     }
 
 
+def _step_to_dict(s: IterationStep) -> dict:
+    return {
+        "name": s.name,
+        "out_dim": s.out_dim,
+        "linear_op": _linop_to_dict(s.linear_op),
+        "activation": _activation_to_dict(s.activation),
+        "solve": s.solve,
+    }
+
+
 def ir_to_dict(ir: FomIR) -> dict:
     """Structure-only dict (numeric arrays live in the companion npz)."""
     return {
         "name": ir.name,
         "dtype": ir.dtype,
+        "factorizations": {
+            name: {"method": fac.method, "dim": fac.dim} for name, fac in ir.factorizations.items()
+        },
         "termination": {
             "kind": ir.termination.kind.value,
             "max_iters": ir.termination.max_iters,
@@ -61,15 +75,7 @@ def ir_to_dict(ir: FomIR) -> dict:
             "dim": ir.state.dim,
             "slots": [list(s) for s in ir.state.slots],
         },
-        "body": [
-            {
-                "name": s.name,
-                "out_dim": s.out_dim,
-                "linear_op": _linop_to_dict(s.linear_op),
-                "activation": _activation_to_dict(s.activation),
-            }
-            for s in ir.body
-        ],
+        "body": [_step_to_dict(s) for s in ir.body],
         "state_update": _linop_to_dict(ir.state_update),
         "matrices": {
             name: {"shape": list(md.shape), "sparse": md.sparse_pattern is not None}
@@ -98,6 +104,14 @@ def save(ir: FomIR, directory: str | Path) -> tuple[Path, Path]:
     for p in ir.params:
         arrays[f"param_lb::{p.name}"] = p.lb
         arrays[f"param_ub::{p.name}"] = p.ub
+    for fname, fac in ir.factorizations.items():
+        arrays[f"fac::{fname}::perm"] = fac.perm
+        _save_csc(arrays, f"fac::{fname}::L", fac.L)
+        if fac.method == "ldlt":
+            arrays[f"fac::{fname}::dinv"] = fac.dinv
+        else:
+            _save_csc(arrays, f"fac::{fname}::U", fac.U)
+            arrays[f"fac::{fname}::uinv"] = fac.uinv
     np.savez(data_path, **arrays)
     return spec_path, data_path
 
@@ -140,6 +154,28 @@ def load(directory: str | Path) -> FomIR:
         tol=spec["termination"]["tol"],
     )
 
+    factorizations: dict[str, Factorization] = {}
+    for fname, meta in spec.get("factorizations", {}).items():
+        perm = npz[f"fac::{fname}::perm"]
+        L = _load_csc(npz, f"fac::{fname}::L")
+        if meta["method"] == "ldlt":
+            factorizations[fname] = Factorization(
+                method="ldlt",
+                dim=meta["dim"],
+                perm=perm,
+                L=L,
+                dinv=npz[f"fac::{fname}::dinv"],
+            )
+        else:
+            factorizations[fname] = Factorization(
+                method="lu",
+                dim=meta["dim"],
+                perm=perm,
+                L=L,
+                U=_load_csc(npz, f"fac::{fname}::U"),
+                uinv=npz[f"fac::{fname}::uinv"],
+            )
+
     return FomIR(
         params=params,
         state=state,
@@ -147,8 +183,27 @@ def load(directory: str | Path) -> FomIR:
         state_update=state_update,
         termination=term,
         matrices=matrices,
+        factorizations=factorizations,
         dtype=spec["dtype"],
         name=spec["name"],
+    )
+
+
+def _save_csc(arrays: dict, prefix: str, csc: CSC) -> None:
+    arrays[f"{prefix}::indptr"] = csc.indptr
+    arrays[f"{prefix}::indices"] = csc.indices
+    arrays[f"{prefix}::data"] = csc.data
+    arrays[f"{prefix}::shape"] = np.array([csc.n_rows, csc.n_cols])
+
+
+def _load_csc(npz, prefix: str) -> CSC:
+    shape = npz[f"{prefix}::shape"]
+    return CSC(
+        n_rows=int(shape[0]),
+        n_cols=int(shape[1]),
+        indptr=npz[f"{prefix}::indptr"],
+        indices=npz[f"{prefix}::indices"],
+        data=npz[f"{prefix}::data"],
     )
 
 
@@ -175,6 +230,7 @@ def _dict_to_step(d: dict) -> IterationStep:
         out_dim=d["out_dim"],
         linear_op=_dict_to_linop(d["linear_op"]),
         activation=act,
+        solve=d.get("solve"),
     )
 
 
@@ -202,12 +258,22 @@ def render_markdown(ir: FomIR) -> str:
         lines.append(f"- `{slot_name}`: dimension {dim}")
 
     lines += ["", "## Iteration body", ""]
-    lines.append("Each step computes `tmp = activation(linear_op)`:")
+    lines.append("Each step computes `tmp = activation(linear_op)`, except affine")
+    lines.append("steps which *solve* `M tmp = linear_op` via a precomputed")
+    lines.append("factorization (call the provided `fom_lin_solve_<name>` routine in")
+    lines.append("`fom_linsolve.c`; never form or use a matrix inverse):")
     lines.append("")
     for step in ir.body:
         lines.append(f"### `{step.name}` (dim {step.out_dim})")
-        lines.append(f"- linear_op = {_linop_str(step.linear_op)}")
-        lines.append(f"- activation = {_activation_str(step.activation)}")
+        lines.append(f"- linear_op (rhs) = {_linop_str(step.linear_op)}")
+        if step.solve is not None:
+            fac = ir.factorizations[step.solve]
+            lines.append(
+                f"- solve: `{step.name} = fom_lin_solve_{step.solve}(rhs)` "
+                f"({fac.method.upper()} factorization, dim {fac.dim}, nnz {fac.nnz})"
+            )
+        else:
+            lines.append(f"- activation = {_activation_str(step.activation)}")
         lines.append("")
 
     lines.append("## State update")

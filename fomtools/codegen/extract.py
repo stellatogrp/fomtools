@@ -18,6 +18,7 @@ import numpy as np
 import scipy.sparse as spa
 
 from fomtools.codegen.config import CodegenConfig
+from fomtools.codegen.factorize import Factorization, factorize
 from fomtools.codegen.ir import (
     ActivationKind,
     ActivationOp,
@@ -81,25 +82,16 @@ def fresh_leaf_of(step) -> LinearExpression:
     return leaves[0]
 
 
-def _minv_dense(lhs_mat) -> np.ndarray:
-    mat = (
-        np.asarray(lhs_mat.todense(), dtype=float)
-        if spa.issparse(lhs_mat)
-        else np.asarray(lhs_mat, dtype=float)
-    )
-    return np.linalg.inv(mat)
-
-
 def _step_source_activation(step) -> tuple[LinearExpression, ActivationOp, int]:
     """Reduce a step to (linear source expression, elementwise activation, out_dim).
 
-    The affine operator's inverse is folded into the linear coefficients, so its
-    activation is the identity (no division survives).
+    For an affine operator ``M w = rhs`` the source is the *right-hand side*
+    ``rhs`` (assembled in the original space); the solve against ``M`` is handled
+    separately via a factorization (never an inverse), so the activation here is
+    the identity.
     """
     if isinstance(step, Affine):
-        minv = _minv_dense(step.lhs_mat)
-        source = minv @ step.rhs
-        return source, ActivationOp(ActivationKind.IDENTITY), source.ndim
+        return step.rhs, ActivationOp(ActivationKind.IDENTITY), step.rhs.ndim
     if isinstance(step, SoftThreshold):
         return (
             step.rhs,
@@ -298,6 +290,7 @@ def extract_ir(
     param_map = {leaf: (f"p{i}", leaf.ndim) for i, leaf in enumerate(param_leaves)}
 
     matrices: dict[str, MatrixData] = {}
+    factorizations: dict[str, Factorization] = {}
     body: list[IterationStep] = []
     tmp_map: dict[LinearExpression, tuple[str, int]] = {}
 
@@ -305,6 +298,12 @@ def extract_ir(
         source, activation, out_dim = _step_source_activation(step)
         prefix = f"t{i}"
         lin = _build_linear_op(source, prefix, state_layout, param_map, tmp_map, matrices, out_dim)
+        solve_name = None
+        # Affine operator: factorize M once (never inverted); the solver applies
+        # division-free triangular solves to the assembled right-hand side.
+        if isinstance(step, Affine):
+            solve_name = prefix
+            factorizations[prefix] = factorize(step.lhs_mat, method=config.solve_method.value)
         # Saturated-linear clip bounds become per-coordinate IR arrays.
         if activation.kind == ActivationKind.SATURATED_LINEAR:
             lower, upper = _satlin_arrays(step)
@@ -315,7 +314,9 @@ def extract_ir(
                 kind=ActivationKind.SATURATED_LINEAR, lower=lo_name, upper=hi_name
             )
         body.append(
-            IterationStep(name=prefix, out_dim=out_dim, linear_op=lin, activation=activation)
+            IterationStep(
+                name=prefix, out_dim=out_dim, linear_op=lin, activation=activation, solve=solve_name
+            )
         )
         tmp_map[body_fresh[i]] = (prefix, out_dim)
 
@@ -353,6 +354,7 @@ def extract_ir(
         state_update=state_update,
         termination=config.termination,
         matrices=matrices,
+        factorizations=factorizations,
         dtype=config.dtype,
         name=name,
     )

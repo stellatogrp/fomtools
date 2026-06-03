@@ -33,6 +33,22 @@ class Backend(str, Enum):
     OPENMP = "openmp"
 
 
+class SolveMethod(str, Enum):
+    """Strategy for the affine (linear-system) step. Inverses are never formed.
+
+    ``AUTO`` picks a sparse *direct* factorization: LDL^T for symmetric systems
+    (e.g. ADMM/OSQP KKT), LU otherwise. ``LDLT`` / ``LU`` force a direct method.
+    ``CG`` (conjugate gradient) is an *indirect* strategy intended for large or
+    GPU problems where a factorization is too expensive; it is reserved for a
+    future backend.
+    """
+
+    AUTO = "auto"
+    LDLT = "ldlt"
+    LU = "lu"
+    CG = "cg"
+
+
 class TerminationKind(str, Enum):
     """How the generated solve loop decides to stop.
 
@@ -105,6 +121,7 @@ class CodegenConfig:
     version: Version = Version.EMBEDDED
     backend: Backend = Backend.C
     termination: TerminationSpec = field(default_factory=TerminationSpec)
+    solve_method: SolveMethod = SolveMethod.AUTO
     dtype: str = "float64"
     tol_verify: float = 1e-6
     allow_unroll: bool = False

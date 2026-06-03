@@ -26,13 +26,14 @@ objects collected on :class:`FomIR`; the IR proper is light and serializable.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 import numpy as np
 import scipy.sparse as spa
 
 from fomtools.codegen.config import TerminationSpec
+from fomtools.codegen.factorize import Factorization
 
 
 class NonStationaryFOMError(ValueError):
@@ -145,12 +146,19 @@ class ActivationOp:
 
 @dataclass(frozen=True)
 class IterationStep:
-    """One step of the iteration body: ``tmp = activation(linear_op(...))``."""
+    """One step of the iteration body.
+
+    Normally ``tmp = activation(linear_op(...))``. For an affine operator the
+    step instead *solves* a linear system: ``tmp = M^{-1} linear_op(...)`` via the
+    factorization named by :attr:`solve` (the activation is the identity). The
+    matrix inverse is never formed — see :mod:`fomtools.codegen.factorize`.
+    """
 
     name: str  # temporary name, e.g. "t0"
     out_dim: int
     linear_op: LinearOp
     activation: ActivationOp
+    solve: str | None = None  # name into FomIR.factorizations, or None
 
 
 @dataclass(frozen=True)
@@ -213,6 +221,7 @@ class FomIR:
     state_update: LinearOp
     termination: TerminationSpec
     matrices: dict[str, MatrixData]
+    factorizations: dict[str, Factorization] = field(default_factory=dict)
     dtype: str = "float64"
     name: str = "fom"
 
