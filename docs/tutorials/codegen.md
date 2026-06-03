@@ -132,6 +132,21 @@ The portable region profiler (`include/fom_profile.h`) is compiled in only for
 the shipped `make verify` / `make lib` builds, so profiling never affects the
 production solver.
 
+### What changed, and a marker-free production build
+
+When Phase B runs, two extra artifacts are written:
+
+- `OPTIMIZATIONS.md` — a durable record of the run: the timing summary, the
+  agent's own notes, and a **unified diff of the solver** from the initial
+  (phase A) version to the optimized one, so you can see exactly what was
+  changed. Also available programmatically as `result.optimization_diff`.
+- `release/fom_solver.c` — a **production copy with the profiling markers and
+  the `fom_profile.h` include stripped**. The markers are already no-ops outside
+  `make profile`, so this is behaviour- and performance-identical; it is just a
+  clean, dependency-free source for embedding. Build it with `make release`
+  (which links the shared library from `release/`), or drop it in for
+  `src/fom_solver.c`.
+
 ## Targets
 
 `CodegenConfig` selects what to emit:
