@@ -23,14 +23,26 @@ def test_symmetric_uses_ldlt_and_solves():
         assert np.allclose(f.solve(b), np.linalg.solve(M, b), atol=1e-9)
 
 
-def test_ldlt_reconstructs_matrix():
+def test_ldlt_reconstructs_permuted_matrix():
     M = _kkt(6, 4, 2)
     f = factorize(M)
     L = f.L.to_dense()
-    assert np.allclose(L @ np.diag(1.0 / f.dinv) @ L.T, M, atol=1e-8)
+    # L D L^T reconstructs the symmetrically permuted matrix (fill-reducing order).
+    Mp = M[np.ix_(f.perm, f.perm)]
+    assert np.allclose(L @ np.diag(1.0 / f.dinv) @ L.T, Mp, atol=1e-8)
     # L is unit lower triangular.
     assert np.allclose(np.diag(L), 1.0)
     assert np.allclose(np.triu(L, 1), 0.0)
+
+
+def test_rcm_ordering_reduces_fill():
+    # On a structured KKT, the fill-reducing order yields far fewer nonzeros
+    # than the dense lower triangle.
+    M = _kkt(20, 12, 9)
+    f = factorize(M)
+    assert f.method == "ldlt"
+    dense_tri = M.shape[0] * (M.shape[0] + 1) // 2
+    assert f.L.nnz < dense_tri
 
 
 def test_nonsymmetric_uses_lu_and_solves():

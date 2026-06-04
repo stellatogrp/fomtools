@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import numpy as np
 import scipy.linalg as sla
 import scipy.sparse as spa
+from scipy.sparse.csgraph import reverse_cuthill_mckee
 
 
 @dataclass(frozen=True)
@@ -90,14 +91,16 @@ class Factorization:
     # -- reference solve (mirrors the emitted C) ---------------------------
     def solve(self, b: np.ndarray) -> np.ndarray:
         b = np.asarray(b, dtype=float).reshape(-1)
-        rhs = b[self.perm]
+        rhs = b[self.perm]  # gather (symmetric perm for LDL^T, row perm for LU)
         Ld = self.L.to_dense()
         y = sla.solve_triangular(Ld, rhs, lower=True, unit_diagonal=True)
         if self.method == "ldlt":
             w = y * self.dinv
-            x = sla.solve_triangular(Ld.T, w, lower=False, unit_diagonal=True)
+            sol = sla.solve_triangular(Ld.T, w, lower=False, unit_diagonal=True)
+            x = np.empty_like(sol)
+            x[self.perm] = sol  # symmetric scatter
             return x
-        # lu: M = P L U  ->  x = U \ (L \ (P^T b))
+        # lu: M = P L U  ->  x = U \ (L \ (P^T b)); column order preserved.
         Ud = self.U.to_dense()
         return sla.solve_triangular(Ud, y, lower=False, unit_diagonal=False)
 
@@ -148,13 +151,17 @@ def factorize(M, method: str = "auto", symmetry_tol: float = 1e-9) -> Factorizat
         chosen = "ldlt" if is_sym else "lu"
 
     if chosen == "ldlt":
-        res = _ldlt_no_pivot(Md)
+        # Fill-reducing symmetric ordering (RCM) so the LDL^T factor stays sparse.
+        pattern = spa.csr_matrix((np.abs(Md) > 1e-12).astype(int))
+        perm = np.asarray(reverse_cuthill_mckee(pattern, symmetric_mode=True), dtype=int)
+        Mp = Md[np.ix_(perm, perm)]
+        res = _ldlt_no_pivot(Mp)
         if res is not None:
             L, d = res
             return Factorization(
                 method="ldlt",
                 dim=n,
-                perm=np.arange(n),
+                perm=perm,
                 L=CSC.from_dense(L),
                 dinv=1.0 / d,
             )

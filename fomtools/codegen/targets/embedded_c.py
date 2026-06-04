@@ -312,15 +312,15 @@ class EmbeddedCTarget(TargetDescriptor):
             out += [
                 "    /* diagonal solve (multiply by reciprocals) */",
                 f"    for (i = 0; i < {n}; ++i) y[i] *= FOM_FAC_{up}_DINV[i];",
-                "    /* backward solve: unit upper-triangular L^T x = y */",
+                "    /* backward solve in place: unit upper-triangular L^T y = y */",
                 f"    for (j = {n} - 1; j >= 0; --j) {{",
-                "        fom_float s = y[j];",
                 f"        for (p = FOM_FAC_{up}_L_INDPTR[j]; p < FOM_FAC_{up}_L_INDPTR[j + 1]; ++p) {{",
                 f"            r = FOM_FAC_{up}_L_INDICES[p];",
-                f"            if (r > j) s -= FOM_FAC_{up}_L_DATA[p] * x[r];",
+                f"            if (r > j) y[j] -= FOM_FAC_{up}_L_DATA[p] * y[r];",
                 "        }",
-                "        x[j] = s;",
                 "    }",
+                "    /* symmetric scatter: x[perm[i]] = y[i] */",
+                f"    for (i = 0; i < {n}; ++i) x[FOM_FAC_{up}_PERM[i]] = y[i];",
                 "}",
             ]
         else:
