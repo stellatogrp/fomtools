@@ -68,6 +68,10 @@ class ClaudeAgentDriver(AgentDriver):
                 agent_log = f"[agent invocation raised: {exc}]"
             log_parts.append(agent_log)
 
+            # Revert any agent edits to the immutable deterministic files before
+            # the authoritative verify (the agent may only change the solver body).
+            if task.restore_hook is not None:
+                task.restore_hook()
             verify = subprocess.run(
                 task.verify_cmd, cwd=str(task.workdir), capture_output=True, text=True
             )

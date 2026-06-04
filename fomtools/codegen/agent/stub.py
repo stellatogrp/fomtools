@@ -43,6 +43,8 @@ class StubAgentDriver(AgentDriver):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(self._source)
 
+        if task.restore_hook is not None:
+            task.restore_hook()
         proc = subprocess.run(
             task.verify_cmd,
             cwd=task.workdir,

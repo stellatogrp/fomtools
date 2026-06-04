@@ -142,6 +142,12 @@ def generate_code(
 
     from fomtools.codegen.agent.prompts import phase_a_instructions, phase_b_instructions
 
+    # The agent may edit only the solver body; restore all deterministic files
+    # (Makefile, headers, numeric data, factorized solve, sparse matvecs) before
+    # each verify so it cannot break the build infrastructure or the data.
+    def restore_deterministic_files():
+        target.scaffold(ir, out_dir)
+
     # --- Phase A: faithful translation ---------------------------------------
     task_a = AgentTask(
         workdir=out_dir,
@@ -149,6 +155,7 @@ def generate_code(
         verify_cmd=target.verify_command(),
         instructions=phase_a_instructions(ir, target),
         phase="A_translate",
+        restore_hook=restore_deterministic_files,
     )
     translate = driver.run(task_a)
 
@@ -157,6 +164,7 @@ def generate_code(
 
     # Baseline timing once a correct solver exists.
     if translate.success and profile and have_cc:
+        restore_deterministic_files()  # ensure a clean build before measuring
         sample = representative_params(ir)
         try:
             timing.python_us = time_python_oracle(ir, sample)
@@ -185,8 +193,10 @@ def generate_code(
             phase="B_optimize",
             max_turns=60,
             bench_cmd=["make", "bench"],
+            restore_hook=restore_deterministic_files,
         )
         optimize = driver.run(task_b)
+        restore_deterministic_files()  # discard any non-solver edits
         phase_b_source = solver_path.read_text()
         changed = phase_b_source != phase_a_source
         notes: list[str] = []

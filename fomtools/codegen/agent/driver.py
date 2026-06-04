@@ -9,6 +9,7 @@ the whole pipeline is testable without an LLM.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -46,6 +47,10 @@ class AgentTask:
     phase: Literal["A_translate", "B_optimize"] = "A_translate"
     max_turns: int = 40
     bench_cmd: list[str] | None = None
+    # Called before each verify to restore the deterministic files (Makefile,
+    # headers, numeric data, solve/ops): the agent may only change the solver
+    # body, so any edits it makes elsewhere are reverted.
+    restore_hook: Callable[[], None] | None = None
     extra: dict = field(default_factory=dict)
 
 

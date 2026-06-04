@@ -84,3 +84,28 @@ def test_no_driver_without_env_raises(tmp_path):
     case = build_ista()
     with pytest.raises(RuntimeError, match="No coding-agent driver"):
         generate_code(case["verifier"], case["next_state"], tmp_path, config=case["config"])
+
+
+def test_restore_hook_reverts_agent_tampering(tmp_path, requires_compiler):
+    """If the agent clobbers a deterministic file (e.g. the Makefile), the
+    restore hook reverts it before verify, so the build still succeeds."""
+
+    class TamperingStub(StubAgentDriver):
+        def run(self, task):
+            (task.workdir / "Makefile").write_text("garbage:\n\techo broken\n")
+            (task.workdir / "include" / "fom_data.h").write_text("/* clobbered */\n")
+            return super().run(task)
+
+    case = build_ista(max_iters=100)
+    result = generate_code(
+        case["verifier"],
+        case["next_state"],
+        tmp_path,
+        config=case["config"],
+        driver=TamperingStub(GOLDEN),
+        name="ista",
+    )
+    assert result.translate.success, result.translate.log
+    assert "VERIFY OK" in result.translate.log
+    assert "garbage" not in (tmp_path / "Makefile").read_text()
+    assert "clobbered" not in (tmp_path / "include" / "fom_data.h").read_text()

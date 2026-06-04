@@ -58,7 +58,10 @@ def phase_b_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     src = target.solver_source_path()
     return f"""\
 The solver `{src}` already passes `{verify}`. Now make it as FAST as possible
-WITHOUT ever breaking correctness. Work as a tight, profile-guided loop:
+WITHOUT ever breaking correctness. Edit ONLY `{src}`: the Makefile, build flags,
+headers, numeric data, `fom_linsolve.c`, and `fom_ops.c` are fixed and restored
+automatically before every check, so changes to them are discarded (don't waste
+turns editing them). Work as a tight, profile-guided loop:
 
 1. PROFILE. Run `make profile`. It prints, per instrumented region, a line
    `PROF region=<name> total_us=<t> calls=<n> pct=<%>` sorted hottest-first, and
