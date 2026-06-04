@@ -159,7 +159,17 @@ reciprocals). The factors live in `src/fom_linsolve.c` and are called as
 side and calls them. `CodegenConfig(solve_method=...)` can force `LDLT`/`LU`;
 `CG` (an indirect method for large/GPU problems) is reserved for a future
 backend. The choice can depend on problem type and the CPU/GPU target — but a
-matrix inverse is never formed or stored.
+matrix inverse is never formed or stored. The LDLᵀ factorization uses a
+fill-reducing (reverse Cuthill–McKee) ordering so the factor stays sparse (on the
+MPC KKT, 552 vs 19600 dense entries).
+
+Likewise, every `matrix @ vector` product in the iteration is emitted as a
+**sparse CSR** operation (`fom_apply_<name>` in `fom_ops.c`) when the matrix is
+structured — the OSQP/MPC selection, dynamics, and state-update blocks are highly
+sparse — and dense only when the matrix genuinely is. Together these make the
+*initial* generated solver fast natively (no reliance on the optimization phase
+to recover structure): on the MPC example the un-optimized C solver already runs
+~29× faster than the NumPy reference.
 
 ## Targets
 
