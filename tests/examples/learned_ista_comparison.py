@@ -43,7 +43,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import optax
 from PEPit import PEP
-from PEPit.functions import ConvexFunction, SmoothStronglyConvexQuadraticFunction
+from PEPit.functions import ConvexFunction, SmoothStronglyConvexFunction
 from PEPit.primitive_steps import proximal_step
 
 from fomtools.verifier import Verifier
@@ -223,7 +223,8 @@ def verify_schedule(gammas, thetas, tag):
     pep = []
     for k in range(1, K + 1):
         problem = PEP()
-        f = problem.declare_function(SmoothStronglyConvexQuadraticFunction, L=L, mu=mu)
+        # f = problem.declare_function(SmoothStronglyConvexQuadraticFunction, L=L, mu=mu)
+        f = problem.declare_function(SmoothStronglyConvexFunction, L=L, mu=mu)
         gfun = problem.declare_function(ConvexFunction)
         xstar = (f + gfun).stationary_point()
         sp = [problem.set_initial_point()]
@@ -237,7 +238,7 @@ def verify_schedule(gammas, thetas, tag):
         gk = gammas[k - 1]
         scaled = (1.0 / gk) * (sp[k] - sp[k - 1]) - (f.gradient(sp[k]) - f.gradient(sp[k - 1]))
         problem.set_performance_metric(scaled**2)
-        val = problem.solve(solver="SCS", verbose=0)
+        val = problem.solve(solver="CLARABEL", verbose=0)
         pep.append(np.nan if (val is None or not np.isfinite(val)) else np.sqrt(max(val, 0.0)))
         print(f"   k={k:2d}  PEP={pep[-1]:.4f}", flush=True)
     return np.asarray(mip), np.asarray(sample), np.asarray(pep)
