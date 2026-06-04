@@ -57,14 +57,20 @@ def _step_to_dict(s: IterationStep) -> dict:
     }
 
 
+def _fac_meta(fac: Factorization) -> dict:
+    meta = {"method": fac.method, "dim": fac.dim}
+    if fac.method == "cg":
+        meta["cg_tol"] = fac.cg_tol
+        meta["cg_max_iter"] = fac.cg_max_iter
+    return meta
+
+
 def ir_to_dict(ir: FomIR) -> dict:
     """Structure-only dict (numeric arrays live in the companion npz)."""
     return {
         "name": ir.name,
         "dtype": ir.dtype,
-        "factorizations": {
-            name: {"method": fac.method, "dim": fac.dim} for name, fac in ir.factorizations.items()
-        },
+        "factorizations": {name: _fac_meta(fac) for name, fac in ir.factorizations.items()},
         "termination": {
             "kind": ir.termination.kind.value,
             "max_iters": ir.termination.max_iters,
@@ -106,6 +112,10 @@ def save(ir: FomIR, directory: str | Path) -> tuple[Path, Path]:
         arrays[f"param_ub::{p.name}"] = p.ub
     for fname, fac in ir.factorizations.items():
         arrays[f"fac::{fname}::perm"] = fac.perm
+        if fac.method == "cg":
+            _save_csc(arrays, f"fac::{fname}::A", fac.A)
+            arrays[f"fac::{fname}::minv"] = fac.minv
+            continue
         _save_csc(arrays, f"fac::{fname}::L", fac.L)
         if fac.method == "ldlt":
             arrays[f"fac::{fname}::dinv"] = fac.dinv
@@ -157,6 +167,17 @@ def load(directory: str | Path) -> FomIR:
     factorizations: dict[str, Factorization] = {}
     for fname, meta in spec.get("factorizations", {}).items():
         perm = npz[f"fac::{fname}::perm"]
+        if meta["method"] == "cg":
+            factorizations[fname] = Factorization(
+                method="cg",
+                dim=meta["dim"],
+                perm=perm,
+                A=_load_csc(npz, f"fac::{fname}::A"),
+                minv=npz[f"fac::{fname}::minv"],
+                cg_tol=meta["cg_tol"],
+                cg_max_iter=meta["cg_max_iter"],
+            )
+            continue
         L = _load_csc(npz, f"fac::{fname}::L")
         if meta["method"] == "ldlt":
             factorizations[fname] = Factorization(
@@ -259,9 +280,12 @@ def render_markdown(ir: FomIR) -> str:
 
     lines += ["", "## Iteration body", ""]
     lines.append("Each step computes `tmp = activation(linear_op)`, except affine")
-    lines.append("steps which *solve* `M tmp = linear_op` via a precomputed")
-    lines.append("factorization (call the provided `fom_lin_solve_<name>` routine in")
-    lines.append("`fom_linsolve.c`; never form or use a matrix inverse).")
+    lines.append("steps which *solve* `M tmp = linear_op`. Always call the provided")
+    lines.append("`fom_lin_solve_<name>` routine in `fom_linsolve.c`; never form or use")
+    lines.append("a matrix inverse. The routine uses either a precomputed sparse direct")
+    lines.append("factorization (LDL^T / LU) or, for CG, preconditioned conjugate")
+    lines.append("gradient (sparse matrix-vector products, no factorization) — the")
+    lines.append("calling convention is identical either way.")
     lines.append("")
     lines.append("Compute every `matrix @ source` via the accumulating helpers in")
     lines.append("`fom_ops.c`: zero the output, then call `fom_apply_<matrix>(source, out)`")
@@ -273,9 +297,14 @@ def render_markdown(ir: FomIR) -> str:
         lines.append(f"- linear_op (rhs) = {_linop_str(step.linear_op)}")
         if step.solve is not None:
             fac = ir.factorizations[step.solve]
+            kind = (
+                "CG, preconditioned conjugate gradient"
+                if fac.method == "cg"
+                else f"{fac.method.upper()} factorization"
+            )
             lines.append(
                 f"- solve: `{step.name} = fom_lin_solve_{step.solve}(rhs)` "
-                f"({fac.method.upper()} factorization, dim {fac.dim}, nnz {fac.nnz})"
+                f"({kind}, dim {fac.dim}, nnz {fac.nnz})"
             )
         else:
             lines.append(f"- activation = {_activation_str(step.activation)}")

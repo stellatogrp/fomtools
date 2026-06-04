@@ -10,8 +10,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from fomtools.codegen import StubAgentDriver, generate_code
-from fomtools.codegen.config import Backend, CodegenConfig, TerminationSpec, Version
+from fomtools.codegen import ReferenceOracle, StubAgentDriver, generate_code
+from fomtools.codegen.config import (
+    Backend,
+    CodegenConfig,
+    SolveMethod,
+    TerminationSpec,
+    Version,
+)
 from fomtools.codegen.emit import scaffold
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.targets import get_target
@@ -19,6 +25,7 @@ from fomtools.codegen.targets import get_target
 GOLDEN_ROOT = Path(__file__).parent / "golden" / "ista"
 OPENMP_GOLDEN = GOLDEN_ROOT / "large_scale_openmp" / "fom_solver.c"
 CUDA_GOLDEN = GOLDEN_ROOT / "large_scale_cuda" / "fom_solver.cu"
+CG_OPENMP_GOLDEN = Path(__file__).parent / "golden" / "cgqp" / "large_scale_openmp" / "fom_solver.c"
 
 
 def _openmp_config(max_iters=200):
@@ -40,6 +47,19 @@ def _cuda_config(max_iters=200):
 def test_embedded_cuda_combo_rejected():
     with pytest.raises(ValueError):
         CodegenConfig(version=Version.EMBEDDED, backend=Backend.CUDA)
+
+
+def test_cg_embedded_combo_rejected():
+    # CG needs runtime division; the embedded target is division-free.
+    with pytest.raises(ValueError, match="CG"):
+        CodegenConfig(version=Version.EMBEDDED, solve_method=SolveMethod.CG)
+
+
+def test_cg_large_scale_combo_allowed():
+    cfg = CodegenConfig(
+        version=Version.LARGE_SCALE, backend=Backend.OPENMP, solve_method=SolveMethod.CG
+    )
+    assert cfg.solve_method == SolveMethod.CG
 
 
 def test_openmp_scaffold(tmp_path):
@@ -103,6 +123,47 @@ def test_cuda_compile_check(tmp_path):
         name="ista",
     )
     assert result.translate.success, result.translate.log
+
+
+def test_cg_scaffold_emits_pcg_solver(tmp_path):
+    # No compiler needed: check the CG linear-solve emission deterministically.
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg()
+    ir = extract_ir(case["verifier"], case["next_state"], config=case["config"], name="cgqp")
+    assert ir.factorizations["t0"].method == "cg"
+    scaffold(ir, tmp_path, case["config"])
+    linsolve = (tmp_path / "src" / "fom_linsolve.c").read_text()
+    # The emitted solve is conjugate gradient: matrix + Jacobi preconditioner,
+    # not L/U triangular factors, and no inverse.
+    assert "conjugate gradient" in linsolve
+    assert "FOM_FAC_T0_A_ROWPTR" in linsolve  # sparse CSR system matrix
+    assert "FOM_FAC_T0_MINV" in linsolve  # diagonal preconditioner
+    assert "FOM_FAC_T0_L_DATA" not in linsolve  # no triangular factor
+    assert "void fom_lin_solve_t0(" in linsolve
+    # SPEC documents the CG solve for the agent.
+    assert "conjugate gradient" in (tmp_path / "test" / "SPEC.md").read_text()
+
+
+def test_cg_openmp_golden_verifies(tmp_path, requires_compiler):
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg(max_iters=80)
+    result = generate_code(
+        case["verifier"],
+        case["next_state"],
+        tmp_path,
+        config=case["config"],
+        driver=StubAgentDriver(CG_OPENMP_GOLDEN),
+        name="cgqp",
+    )
+    assert result.translate.success, result.translate.log
+    assert "VERIFY OK" in result.translate.log
+    # The CG solver matches the reference oracle (which itself runs PCG).
+    oracle = ReferenceOracle(result.ir)
+    qval = np.full(case["data"]["n"], 0.25)
+    expected = oracle.solve(param_values={"p0": qval})
+    assert expected.solution.shape == (case["data"]["n"],)
 
 
 def test_openmp_wrapper_matches_oracle(tmp_path, requires_compiler):

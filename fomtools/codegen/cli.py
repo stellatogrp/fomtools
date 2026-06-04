@@ -15,6 +15,7 @@ from pathlib import Path
 from fomtools.codegen.config import (
     Backend,
     CodegenConfig,
+    SolveMethod,
     TerminationKind,
     TerminationSpec,
     Version,
@@ -38,6 +39,7 @@ def _build_config(args) -> CodegenConfig:
         version=Version(args.version),
         backend=Backend(args.backend),
         termination=TerminationSpec(kind=kind, max_iters=args.max_iter, tol=args.tol),
+        solve_method=SolveMethod(args.solve_method),
         dtype=args.dtype,
     )
 
@@ -66,6 +68,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--golden", help="known-good solver source (for --driver stub)")
     p.add_argument("--version", choices=[v.value for v in Version], default="embedded")
     p.add_argument("--backend", choices=[b.value for b in Backend], default="c")
+    p.add_argument(
+        "--solve-method",
+        choices=[m.value for m in SolveMethod],
+        default="auto",
+        help="affine linear-solve strategy: auto/ldlt/lu (direct) or cg "
+        "(indirect, large-scale only; requires an SPD system)",
+    )
     p.add_argument("--max-iter", type=int, default=1000)
     p.add_argument("--tol", type=float, default=None, help="enable inf-norm-change termination")
     p.add_argument("--dtype", choices=["float64", "float32"], default="float64")

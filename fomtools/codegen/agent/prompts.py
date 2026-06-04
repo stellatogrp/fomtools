@@ -28,7 +28,8 @@ generated and must not be changed:
 - `include/fom_linsolve.h` / `src/fom_linsolve.c` provide the linear solve for
   every affine operator: for a step that SPEC marks with a solve, assemble its
   right-hand side from `linear_op`, then call `fom_lin_solve_<name>(rhs, out)`.
-  NEVER form, store, or use a matrix inverse — the system is already factorized.
+  NEVER form, store, or use a matrix inverse — the solve is already implemented
+  for you (a precomputed sparse factorization, or conjugate gradient).
 - `include/fom_ops.h` / `src/fom_ops.c` provide every matrix-vector product as an
   accumulating helper `fom_apply_<matrix>(source, out)` (out += M @ source),
   implemented sparse (CSR) where the matrix is structured. Assemble each

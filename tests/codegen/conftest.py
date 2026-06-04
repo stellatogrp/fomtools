@@ -11,7 +11,14 @@ import numpy as np
 import pytest
 import scipy.sparse as spa
 
-from fomtools.codegen.config import CodegenConfig, TerminationKind, TerminationSpec
+from fomtools.codegen.config import (
+    Backend,
+    CodegenConfig,
+    SolveMethod,
+    TerminationKind,
+    TerminationSpec,
+    Version,
+)
 from fomtools.verifier import Verifier
 
 
@@ -172,6 +179,48 @@ def boxqp_reference(data, q_val, x0, n_iters, tol=None):
         if tol is not None and resid <= tol:
             break
     return traj
+
+
+# --------------------------------------------------------------------------
+# SPD linear-solve FOM for the CG (indirect) backend
+# --------------------------------------------------------------------------
+def build_spd_cg(*, n=5, seed=3, max_iters=100, dtype="float64"):
+    """A FOM whose body is a single SPD linear solve: ``x <- solve(M, x + q)``.
+
+    With ``M`` symmetric positive-definite and ``eig(M) > 1`` the outer map is a
+    contraction (stable over many iterations). The affine solve is the natural
+    place to exercise the CG (indirect) backend, which requires an SPD system.
+    Configured for the large-scale OpenMP target with ``solve_method=CG``.
+    """
+    rng = np.random.default_rng(seed)
+    half = rng.normal(size=(n, n))
+    M = half @ half.T + 2.0 * np.eye(n)  # SPD, eigenvalues >= 2
+
+    v = Verifier(method="simulator", obbt_solver=None)
+    q = v.add_param(n, lb=-np.ones(n), ub=np.ones(n))
+    x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    iterates = [x]
+    for _ in range(3):
+        x = v.step.implicit_linear(x + q, lhs_mat=M)
+        iterates.append(x)
+
+    config = CodegenConfig(
+        version=Version.LARGE_SCALE,
+        backend=Backend.OPENMP,
+        solve_method=SolveMethod.CG,
+        termination=TerminationSpec(max_iters=max_iters),
+        dtype=dtype,
+    )
+    data = dict(M=M, n=n)
+    return dict(
+        verifier=v,
+        next_state=iterates[1],
+        iterates=iterates,
+        param=q,
+        config=config,
+        data=data,
+        name="cgqp",
+    )
 
 
 def dr_reference(data, q_val, x0, n_iters, tol=None):

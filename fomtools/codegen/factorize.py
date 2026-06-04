@@ -8,12 +8,18 @@ applies division-free triangular solves:
   systems that arise in ADMM/OSQP and for SPD systems),
 * otherwise   -> **LU** with partial pivoting.
 
-The factors are stored sparsely (CSC) and the diagonal is stored as
+The (direct) factors are stored sparsely (CSC) and the diagonal is stored as
 **reciprocals**, so the emitted forward/backward substitution uses only
 multiply-add — no division — matching the embedded target's constraints.
 
-Indirect methods (e.g. conjugate gradient) are a natural future strategy for
-large/GPU problems; see :class:`fomtools.codegen.config.SolveMethod`.
+For large-scale / GPU problems an *indirect* strategy is also available:
+**preconditioned conjugate gradient** (``method="cg"``). It never factorizes and
+never inverts — it stores the (symmetric positive-definite) system matrix
+sparsely (CSC) plus a diagonal Jacobi preconditioner (held as reciprocals,
+computed once offline) and reaches the solution through repeated sparse
+matrix-vector products. CG needs a few scalar divisions per iteration, so it is
+reserved for the large-scale targets (the embedded target stays division-free);
+see :class:`fomtools.codegen.config.SolveMethod`.
 """
 
 from __future__ import annotations
@@ -55,42 +61,64 @@ class CSC:
 
 @dataclass(frozen=True)
 class Factorization:
-    """A factorization of a square matrix, used to solve ``M x = b``.
+    """A reusable solver for ``M x = b`` — direct (LDL^T / LU) or indirect (CG).
+
+    A matrix inverse is never formed in any branch.
 
     Attributes
     ----------
     method:
-        ``"ldlt"`` or ``"lu"``.
+        ``"ldlt"``, ``"lu"`` (direct factorizations) or ``"cg"`` (preconditioned
+        conjugate gradient, indirect).
     dim:
         System dimension.
     perm:
         Row permutation applied to the right-hand side (``b' = b[perm]``). For
-        natural-ordering LDL^T this is the identity.
+        natural-ordering LDL^T and for CG this is the identity.
     L:
-        Unit lower-triangular factor (CSC).
+        Unit lower-triangular factor (CSC) — direct methods only.
     dinv:
         Reciprocals of the LDL^T diagonal (``ldlt`` only).
     U:
         Upper-triangular factor (CSC) (``lu`` only).
     uinv:
         Reciprocals of ``diag(U)`` (``lu`` only).
+    A:
+        The symmetric positive-definite system matrix (CSC) — ``cg`` only;
+        applied as repeated sparse matrix-vector products, never factorized.
+    minv:
+        Diagonal Jacobi preconditioner held as reciprocals of ``diag(M)``
+        (computed once offline) — ``cg`` only. A diagonal scaling, not a matrix
+        inverse.
+    cg_tol:
+        Relative residual tolerance for the CG stopping test (``cg`` only).
+    cg_max_iter:
+        Hard iteration cap for CG (``cg`` only).
     """
 
     method: str
     dim: int
     perm: np.ndarray
-    L: CSC
+    L: CSC | None = None
     dinv: np.ndarray | None = None
     U: CSC | None = None
     uinv: np.ndarray | None = None
+    A: CSC | None = None
+    minv: np.ndarray | None = None
+    cg_tol: float = 1e-12
+    cg_max_iter: int = 0
 
     @property
     def nnz(self) -> int:
+        if self.method == "cg":
+            return self.A.nnz
         return self.L.nnz + (self.U.nnz if self.U is not None else 0)
 
     # -- reference solve (mirrors the emitted C) ---------------------------
     def solve(self, b: np.ndarray) -> np.ndarray:
         b = np.asarray(b, dtype=float).reshape(-1)
+        if self.method == "cg":
+            return _pcg_solve(self.A.to_dense(), self.minv, b, self.cg_tol, self.cg_max_iter)
         rhs = b[self.perm]  # gather (symmetric perm for LDL^T, row perm for LU)
         Ld = self.L.to_dense()
         y = sla.solve_triangular(Ld, rhs, lower=True, unit_diagonal=True)
@@ -103,6 +131,46 @@ class Factorization:
         # lu: M = P L U  ->  x = U \ (L \ (P^T b)); column order preserved.
         Ud = self.U.to_dense()
         return sla.solve_triangular(Ud, y, lower=False, unit_diagonal=False)
+
+
+def _pcg_solve(
+    A: np.ndarray, minv: np.ndarray, b: np.ndarray, tol: float, max_iter: int
+) -> np.ndarray:
+    """Jacobi-preconditioned conjugate gradient for SPD ``A x = b``.
+
+    Pure-NumPy reference that mirrors the emitted C **exactly** (same iteration,
+    same stopping test ``r·r <= tol^2 (b·b)``) so the two agree to well within
+    the verify tolerance. Starts from ``x = 0`` (hence the initial residual is
+    ``b``). Never forms an inverse — only matrix-vector products and a diagonal
+    scaling by the precomputed reciprocals ``minv``.
+    """
+    n = b.shape[0]
+    x = np.zeros(n)
+    bb = float(b @ b)
+    if bb == 0.0:
+        return x
+    thresh = tol * tol * bb
+    r = b.copy()
+    z = minv * r
+    p = z.copy()
+    rz = float(r @ z)
+    for _ in range(max_iter):
+        Ap = A @ p
+        pAp = float(p @ Ap)
+        if pAp == 0.0:
+            break
+        alpha = rz / pAp
+        x = x + alpha * p
+        r = r - alpha * Ap
+        rr = float(r @ r)
+        if rr <= thresh:
+            break
+        z = minv * r
+        rz_new = float(r @ z)
+        beta = rz_new / rz
+        p = z + beta * p
+        rz = rz_new
+    return x
 
 
 def _ldlt_no_pivot(M: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
@@ -131,21 +199,23 @@ def factorize(M, method: str = "auto", symmetry_tol: float = 1e-9) -> Factorizat
     M:
         Square matrix (dense ndarray or scipy sparse).
     method:
-        ``"auto"`` (LDL^T if symmetric else LU), ``"ldlt"``, or ``"lu"``.
+        ``"auto"`` (LDL^T if symmetric else LU), ``"ldlt"``, ``"lu"``, or
+        ``"cg"`` (preconditioned conjugate gradient; requires a symmetric
+        positive-definite ``M``, intended for large-scale / GPU targets).
     """
     Md = np.asarray(M.todense(), dtype=float) if spa.issparse(M) else np.asarray(M, dtype=float)
     n = Md.shape[0]
     if Md.shape[0] != Md.shape[1]:
         raise ValueError("factorize requires a square matrix")
 
-    if method == "cg":
-        raise NotImplementedError(
-            "CG (indirect) solve is reserved for a future backend; use 'auto', 'ldlt', or 'lu'."
-        )
-    if method not in ("auto", "ldlt", "lu"):
+    if method not in ("auto", "ldlt", "lu", "cg"):
         raise ValueError(f"unknown solve method {method!r}")
 
     is_sym = np.allclose(Md, Md.T, atol=symmetry_tol)
+
+    if method == "cg":
+        return _cg_factorization(Md, n, is_sym)
+
     chosen = method
     if method == "auto":
         chosen = "ldlt" if is_sym else "lu"
@@ -178,4 +248,39 @@ def factorize(M, method: str = "auto", symmetry_tol: float = 1e-9) -> Factorizat
         L=CSC.from_dense(L),
         U=CSC.from_dense(U),
         uinv=1.0 / np.diag(U),
+    )
+
+
+def _cg_factorization(Md: np.ndarray, n: int, is_sym: bool) -> Factorization:
+    """Build a CG (indirect) solver for a symmetric positive-definite matrix.
+
+    Stores the matrix sparsely for repeated matrix-vector products and a
+    diagonal Jacobi preconditioner as reciprocals — never an inverse. CG only
+    converges on SPD systems, so symmetry and positive-definiteness are checked
+    up front with a clear error pointing at the direct fallbacks otherwise.
+    """
+    if not is_sym:
+        raise ValueError(
+            "CG requires a symmetric matrix; this system is nonsymmetric. "
+            "Use solve_method='lu' (direct) instead."
+        )
+    try:
+        np.linalg.cholesky(Md)  # cheap SPD certificate (offline only)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(
+            "CG requires a symmetric positive-definite matrix; this system is not "
+            "positive-definite (e.g. a quasidefinite ADMM/OSQP KKT matrix). Use "
+            "solve_method='ldlt' (direct) for symmetric-indefinite systems."
+        ) from exc
+    diag = np.diag(Md)
+    return Factorization(
+        method="cg",
+        dim=n,
+        perm=np.arange(n),
+        A=CSC.from_dense(Md),
+        minv=1.0 / diag,  # diagonal Jacobi preconditioner (reciprocals)
+        cg_tol=1e-12,
+        # SPD CG converges in <= n steps in exact arithmetic; allow headroom for
+        # finite precision while the relative-residual test stops it much earlier.
+        cg_max_iter=2 * n + 50,
     )

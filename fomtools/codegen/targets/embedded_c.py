@@ -364,9 +364,11 @@ class EmbeddedCTarget(TargetDescriptor):
             "",
             '#include "fom_workspace.h"',
             "",
-            "/* Solve M x = b for each affine operator via a precomputed sparse",
-            "   factorization (LDL^T / LU). Division-free: diagonals are stored as",
-            "   reciprocals. No matrix inverse is ever formed or used. */",
+            "/* Solve M x = b for each affine operator. Direct methods (LDL^T / LU)",
+            "   apply a precomputed sparse factorization and are division-free",
+            "   (diagonals stored as reciprocals); the CG method runs preconditioned",
+            "   conjugate gradient (sparse matvecs + a diagonal preconditioner). No",
+            "   matrix inverse is ever formed or used. */",
             "",
         ]
         for name, fac in ir.factorizations.items():
@@ -383,6 +385,19 @@ class EmbeddedCTarget(TargetDescriptor):
         lines = ['#include "fom_linsolve.h"', ""]
         for name, fac in ir.factorizations.items():
             up = name.upper()
+            if fac.method == "cg":
+                lines.append(
+                    f"/* ---- solve '{name}' (CG, preconditioned conjugate gradient) ---- */"
+                )
+                rowptr, colidx, vals = _csr_from_dense(fac.A.to_dense())
+                lines.append(_c_int_array(f"FOM_FAC_{up}_A_ROWPTR", rowptr))
+                lines.append(_c_int_array(f"FOM_FAC_{up}_A_COLIDX", colidx))
+                lines.append(_c_array(f"FOM_FAC_{up}_A_VALS", vals))
+                lines.append(_c_array(f"FOM_FAC_{up}_MINV", fac.minv))
+                lines.append("")
+                lines.append(self._cg_routine(name, fac))
+                lines.append("")
+                continue
             lines.append(f"/* ---- factorization '{name}' ({fac.method.upper()}) ---- */")
             lines.append(_c_int_array(f"FOM_FAC_{up}_PERM", fac.perm))
             lines.append(_c_int_array(f"FOM_FAC_{up}_L_INDPTR", fac.L.indptr))
@@ -445,6 +460,68 @@ class EmbeddedCTarget(TargetDescriptor):
                 "}",
             ]
         return "\n".join(out)
+
+    def _cg_routine(self, name: str, fac) -> str:
+        """Emit a self-contained Jacobi-preconditioned CG solve.
+
+        Mirrors :func:`fomtools.codegen.factorize._pcg_solve` exactly (same
+        iteration, same stopping test ``r·r <= tol^2 (b·b)``). Uses an internal
+        sparse (CSR) matrix-vector product against the stored SPD matrix; never
+        forms a factorization or inverse. Division is used for the CG scalars,
+        which is why CG is reserved for the large-scale (non-embedded) targets.
+        """
+        up = name.upper()
+        n = f"FOM_FAC_{up}_DIM"
+        tol2 = _fmt_float(fac.cg_tol * fac.cg_tol)
+        maxit = int(fac.cg_max_iter)
+        return "\n".join(
+            [
+                f"void fom_lin_solve_{name}(const fom_float *b, fom_float *x) {{",
+                f"    fom_float r[{n}], z[{n}], p[{n}], Ap[{n}];",
+                "    fom_float bb = 0.0, thresh, rz = 0.0, rz_new, pAp, alpha, beta, s, rr;",
+                "    fom_int i, k, it;",
+                "    /* x <- 0; bb = b.b; the initial residual r = b - A x = b */",
+                f"    for (i = 0; i < {n}; ++i) {{ x[i] = 0.0; bb += b[i] * b[i]; }}",
+                "    if (bb == 0.0) return;",
+                f"    thresh = (fom_float){tol2} * bb;",
+                "    /* r = b; z = Minv .* r; p = z; rz = r.z */",
+                f"    for (i = 0; i < {n}; ++i) {{",
+                "        r[i] = b[i];",
+                f"        z[i] = FOM_FAC_{up}_MINV[i] * r[i];",
+                "        p[i] = z[i];",
+                "        rz += r[i] * z[i];",
+                "    }",
+                f"    for (it = 0; it < {maxit}; ++it) {{",
+                "        /* Ap = A @ p  (sparse CSR matvec) */",
+                f"        for (i = 0; i < {n}; ++i) {{",
+                "            s = 0.0;",
+                f"            for (k = FOM_FAC_{up}_A_ROWPTR[i]; k < FOM_FAC_{up}_A_ROWPTR[i + 1]; ++k)",
+                f"                s += FOM_FAC_{up}_A_VALS[k] * p[FOM_FAC_{up}_A_COLIDX[k]];",
+                "            Ap[i] = s;",
+                "        }",
+                "        pAp = 0.0;",
+                f"        for (i = 0; i < {n}; ++i) pAp += p[i] * Ap[i];",
+                "        if (pAp == 0.0) break;",
+                "        alpha = rz / pAp;",
+                "        rr = 0.0;",
+                f"        for (i = 0; i < {n}; ++i) {{",
+                "            x[i] += alpha * p[i];",
+                "            r[i] -= alpha * Ap[i];",
+                "            rr += r[i] * r[i];",
+                "        }",
+                "        if (rr <= thresh) break;",
+                "        rz_new = 0.0;",
+                f"        for (i = 0; i < {n}; ++i) {{",
+                f"            z[i] = FOM_FAC_{up}_MINV[i] * r[i];",
+                "            rz_new += r[i] * z[i];",
+                "        }",
+                "        beta = rz_new / rz;",
+                f"        for (i = 0; i < {n}; ++i) p[i] = z[i] + beta * p[i];",
+                "        rz = rz_new;",
+                "    }",
+                "}",
+            ]
+        )
 
     # -- verify ------------------------------------------------------------
     def _sample_params(self, ir: FomIR) -> tuple[dict[str, np.ndarray], list[dict]]:

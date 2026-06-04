@@ -176,7 +176,34 @@ def mpc_osqp_example(
     }
 
 
-EXAMPLES = {"ista": ista_example, "dr": dr_example, "mpc": mpc_osqp_example}
+def cg_qp_example(*, n: int = 6, seed: int = 3) -> dict:
+    """A symmetric positive-definite linear-solve FOM: ``x <- solve(M, x + q)``.
+
+    The affine system ``M`` is SPD, so its solve can use the *indirect* CG
+    backend (``solve_method=CG``) on the large-scale targets, or a sparse direct
+    factorization on the embedded target — the generated calling convention is
+    identical. ``eig(M) >= 2`` makes the outer map a contraction (stable).
+    """
+    rng = np.random.default_rng(seed)
+    half = rng.normal(size=(n, n))
+    M = half @ half.T + 2.0 * np.eye(n)
+
+    v = Verifier(method="simulator", obbt_solver=None)
+    q = v.add_param(n, lb=-np.ones(n), ub=np.ones(n))
+    x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    iterates = [x]
+    for _ in range(3):
+        x = v.step.implicit_linear(x + q, lhs_mat=M)
+        iterates.append(x)
+    return {"verifier": v, "next_state": iterates[1], "name": "cgqp"}
+
+
+EXAMPLES = {
+    "ista": ista_example,
+    "dr": dr_example,
+    "mpc": mpc_osqp_example,
+    "cgqp": cg_qp_example,
+}
 
 
 def get_example(name: str) -> dict:

@@ -38,9 +38,12 @@ class SolveMethod(str, Enum):
 
     ``AUTO`` picks a sparse *direct* factorization: LDL^T for symmetric systems
     (e.g. ADMM/OSQP KKT), LU otherwise. ``LDLT`` / ``LU`` force a direct method.
-    ``CG`` (conjugate gradient) is an *indirect* strategy intended for large or
-    GPU problems where a factorization is too expensive; it is reserved for a
-    future backend.
+    ``CG`` (preconditioned conjugate gradient) is an *indirect* strategy for
+    large / GPU problems where a factorization is too expensive: it never
+    factorizes or inverts, reaching the solution through sparse matrix-vector
+    products. It requires a symmetric positive-definite system and a few scalar
+    divisions per iteration, so it is only available for the large-scale version
+    (the embedded target is division-free).
     """
 
     AUTO = "auto"
@@ -134,6 +137,12 @@ class CodegenConfig:
         if self.version == Version.EMBEDDED and self.backend != Backend.C:
             raise ValueError(
                 f"embedded version only supports the C backend; got backend={self.backend.value!r}"
+            )
+        if self.solve_method == SolveMethod.CG and self.version == Version.EMBEDDED:
+            raise ValueError(
+                "the CG (indirect) solve method needs runtime division and is only available "
+                "for the large-scale version; the embedded target is division-free. Use "
+                "solve_method=AUTO/LDLT/LU for the embedded version."
             )
         if self.tol_verify <= 0:
             raise ValueError("tol_verify must be positive")
