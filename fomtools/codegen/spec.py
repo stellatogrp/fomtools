@@ -261,7 +261,12 @@ def render_markdown(ir: FomIR) -> str:
     lines.append("Each step computes `tmp = activation(linear_op)`, except affine")
     lines.append("steps which *solve* `M tmp = linear_op` via a precomputed")
     lines.append("factorization (call the provided `fom_lin_solve_<name>` routine in")
-    lines.append("`fom_linsolve.c`; never form or use a matrix inverse):")
+    lines.append("`fom_linsolve.c`; never form or use a matrix inverse).")
+    lines.append("")
+    lines.append("Compute every `matrix @ source` via the accumulating helpers in")
+    lines.append("`fom_ops.c`: zero the output, then call `fom_apply_<matrix>(source, out)`")
+    lines.append("for each term (these are sparse CSR where the matrix is structured, so")
+    lines.append("do not write your own dense matrix-vector loops):")
     lines.append("")
     for step in ir.body:
         lines.append(f"### `{step.name}` (dim {step.out_dim})")

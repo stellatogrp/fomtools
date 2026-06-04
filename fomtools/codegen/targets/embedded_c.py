@@ -51,6 +51,45 @@ def _c_int_array(name: str, values, storage: str = "static const") -> str:
     return f"{storage} fom_int {name}[{flat.size}] = {{{body}}};"
 
 
+def _csr_from_dense(A: np.ndarray, tol: float = 1e-12):
+    """Return (rowptr, colidx, vals) CSR arrays of a dense matrix."""
+    A = np.atleast_2d(np.asarray(A, dtype=float))
+    rows, cols = A.shape
+    rowptr = [0]
+    colidx: list[int] = []
+    vals: list[float] = []
+    for i in range(rows):
+        for j in range(cols):
+            if abs(A[i, j]) > tol:
+                colidx.append(j)
+                vals.append(A[i, j])
+        rowptr.append(len(colidx))
+    return rowptr, colidx, vals
+
+
+def _matvec_matrix_names(ir: FomIR) -> list[str]:
+    """Names of matrices used as ``matrix @ source`` in any linear op."""
+    names: list[str] = []
+    seen = set()
+    ops = [s.linear_op for s in ir.body] + [ir.state_update]
+    for op in ops:
+        for term in op.terms:
+            if term.matrix not in seen:
+                seen.add(term.matrix)
+                names.append(term.matrix)
+    return names
+
+
+def _is_csr(md) -> bool:
+    """Emit a matrix as sparse CSR when it is large and structurally sparse."""
+    shape = md.shape
+    rows = shape[0]
+    cols = shape[1] if len(shape) > 1 else 1
+    size = rows * cols
+    nnz = int(np.count_nonzero(np.abs(md.array) > 1e-12))
+    return size >= 16 and 2 * nnz < size
+
+
 def _c_array_2d(name: str, mat: np.ndarray, decl_dims: str, ctype: str = "fom_float") -> str:
     """Emit a 2-D ``static const`` array with proper nested braces per row."""
     mat = np.atleast_2d(np.asarray(mat, dtype=float))
@@ -84,6 +123,8 @@ class EmbeddedCTarget(TargetDescriptor):
         (out / "include" / "fom_profile.h").write_text(self._profile_header())
         (out / "include" / "fom_linsolve.h").write_text(self._linsolve_header(ir))
         (out / "src" / "fom_linsolve.c").write_text(self._linsolve_source(ir))
+        (out / "include" / "fom_ops.h").write_text(self._ops_header(ir))
+        (out / "src" / "fom_ops.c").write_text(self._ops_source(ir))
         (out / "src" / "fom_data.c").write_text(self._data_source(ir))
         (out / "src" / "fom_profile.c").write_text(self._profile_source())
         (out / "test" / "verify_data.h").write_text(self._verify_data(ir))
@@ -209,7 +250,10 @@ class EmbeddedCTarget(TargetDescriptor):
             "extern const fom_float FOM_STATE_INIT[FOM_STATE_DIM];",
             "",
         ]
+        csr = {n for n in _matvec_matrix_names(ir) if _is_csr(ir.matrices[n])}
         for name, md in ir.matrices.items():
+            if name in csr:
+                continue  # sparse matvec matrices live in fom_ops.c as CSR
             shape = md.shape
             rows = shape[0]
             cols = shape[1] if len(shape) > 1 else 1
@@ -240,12 +284,76 @@ class EmbeddedCTarget(TargetDescriptor):
         return "\n".join(lines)
 
     def _data_source(self, ir: FomIR) -> str:
+        csr = {n for n in _matvec_matrix_names(ir) if _is_csr(ir.matrices[n])}
         lines = ['#include "fom_data.h"', ""]
         lines.append(_c_array("FOM_STATE_INIT", ir.state.init, storage="const"))
         lines.append("")
         for name, md in ir.matrices.items():
+            if name in csr:
+                continue  # emitted as CSR in fom_ops.c
             lines.append(_c_array(f"FOM_MAT_{name}", md.array, storage="const"))
             lines.append("")
+        return "\n".join(lines)
+
+    # -- matrix-vector products (sparse CSR where structured) --------------
+    def _ops_header(self, ir: FomIR) -> str:
+        lines = [
+            "#ifndef FOM_OPS_H",
+            "#define FOM_OPS_H",
+            "",
+            '#include "fom_workspace.h"',
+            "",
+            "/* out += M @ x for each linear-op matrix M (CSR if structurally",
+            "   sparse, dense otherwise). Accumulating: zero `out` first. */",
+            "",
+        ]
+        for name in _matvec_matrix_names(ir):
+            md = ir.matrices[name]
+            kind = "CSR" if _is_csr(md) else "dense"
+            lines.append(
+                f"void fom_apply_{name}(const fom_float *x, fom_float *out);  "
+                f"/* {kind} {md.shape[0]}x{md.shape[1] if len(md.shape) > 1 else 1} */"
+            )
+        lines += ["", "#endif /* FOM_OPS_H */", ""]
+        return "\n".join(lines)
+
+    def _ops_source(self, ir: FomIR) -> str:
+        lines = ['#include "fom_ops.h"', '#include "fom_data.h"', ""]
+        for name in _matvec_matrix_names(ir):
+            md = ir.matrices[name]
+            shape = md.shape
+            rows = shape[0]
+            cols = shape[1] if len(shape) > 1 else 1
+            up = name.upper()
+            if _is_csr(md):
+                rowptr, colidx, vals = _csr_from_dense(md.array)
+                lines.append(_c_int_array(f"FOM_OP_{up}_ROWPTR", rowptr))
+                lines.append(_c_int_array(f"FOM_OP_{up}_COLIDX", colidx))
+                lines.append(_c_array(f"FOM_OP_{up}_VALS", vals))
+                lines += [
+                    f"void fom_apply_{name}(const fom_float *x, fom_float *out) {{",
+                    "    fom_int i, p;",
+                    f"    for (i = 0; i < {rows}; ++i) {{",
+                    "        fom_float s = 0.0;",
+                    f"        for (p = FOM_OP_{up}_ROWPTR[i]; p < FOM_OP_{up}_ROWPTR[i + 1]; ++p) "
+                    f"s += FOM_OP_{up}_VALS[p] * x[FOM_OP_{up}_COLIDX[p]];",
+                    "        out[i] += s;",
+                    "    }",
+                    "}",
+                    "",
+                ]
+            else:
+                lines += [
+                    f"void fom_apply_{name}(const fom_float *x, fom_float *out) {{",
+                    "    fom_int i, j;",
+                    f"    for (i = 0; i < {rows}; ++i) {{",
+                    "        fom_float s = 0.0;",
+                    f"        for (j = 0; j < {cols}; ++j) s += FOM_MAT_{name}[i * {cols} + j] * x[j];",
+                    "        out[i] += s;",
+                    "    }",
+                    "}",
+                    "",
+                ]
         return "\n".join(lines)
 
     # -- linear solves (factorizations, never inverses) --------------------
@@ -609,7 +717,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 "CC ?= cc",
                 "CFLAGS ?= -O2 -Wall -Iinclude",
                 "BENCHFLAGS ?= -O3 -Iinclude",
-                "SRC = src/fom_solver.c src/fom_data.c src/fom_linsolve.c",
+                "SRC = src/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c",
                 "",
                 "UNAME_S := $(shell uname -s)",
                 "ifeq ($(UNAME_S),Darwin)",
@@ -625,9 +733,9 @@ class EmbeddedCTarget(TargetDescriptor):
                 "\t./verify_bin",
                 "",
                 "# Build the shared library from the marker-free production source.",
-                "release: release/fom_solver.c src/fom_data.c src/fom_linsolve.c",
+                "release: release/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c",
                 "\t$(CC) $(CFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
-                "src/fom_linsolve.c -o libfomsolver.$(LIBEXT) -lm",
+                "src/fom_linsolve.c src/fom_ops.c -o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "bench: $(SRC) test/bench_main.c",
                 "\t$(CC) $(BENCHFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",

@@ -29,6 +29,11 @@ generated and must not be changed:
   every affine operator: for a step that SPEC marks with a solve, assemble its
   right-hand side from `linear_op`, then call `fom_lin_solve_<name>(rhs, out)`.
   NEVER form, store, or use a matrix inverse — the system is already factorized.
+- `include/fom_ops.h` / `src/fom_ops.c` provide every matrix-vector product as an
+  accumulating helper `fom_apply_<matrix>(source, out)` (out += M @ source),
+  implemented sparse (CSR) where the matrix is structured. Assemble each
+  `linear_op` by zeroing the output and calling these — do NOT write your own
+  dense matvec loops, and do not hardcode the matrices.
 - The algorithm is specified in `test/SPEC.md`.
 
 Hard constraints for the embedded target:

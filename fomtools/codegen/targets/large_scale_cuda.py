@@ -35,13 +35,15 @@ class CudaTarget(EmbeddedCTarget):
                 ".PHONY: compile verify lib clean",
                 "",
                 "# Compile-check: build the verify binary (no GPU run).",
-                "compile: src/fom_solver.cu src/fom_data.c src/fom_linsolve.c test/verify_main.c",
+                "compile: src/fom_solver.cu src/fom_data.c src/fom_linsolve.c src/fom_ops.c "
+                "test/verify_main.c",
                 "\t$(NVCC) $(NVCCFLAGS) -c src/fom_solver.cu -o fom_solver.o",
                 "\t$(CC) $(CFLAGS) -c src/fom_data.c -o fom_data.o",
                 "\t$(CC) $(CFLAGS) -c src/fom_linsolve.c -o fom_linsolve.o",
+                "\t$(CC) $(CFLAGS) -c src/fom_ops.c -o fom_ops.o",
                 "\t$(CC) $(CFLAGS) -c test/verify_main.c -o verify_main.o",
-                "\t$(NVCC) $(NVCCFLAGS) fom_solver.o fom_data.o fom_linsolve.o verify_main.o "
-                "-o verify_bin",
+                "\t$(NVCC) $(NVCCFLAGS) fom_solver.o fom_data.o fom_linsolve.o fom_ops.o "
+                "verify_main.o -o verify_bin",
                 "",
                 "# Run-verification (requires a GPU).",
                 "verify: compile",

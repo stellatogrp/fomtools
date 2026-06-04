@@ -2,29 +2,20 @@
  * Golden embedded-C solver for OSQP-style ADMM (MPC QP).
  *
  * Structure (see test/SPEC.md):
- *   rhs0 = FOM_MAT_t0_state @ state + FOM_MAT_t0_p_p0 @ p0
+ *   rhs0 = t0_state @ state + t0_p_p0 @ p0
  *   t0   = solve(KKT, rhs0)  via fom_lin_solve_t0 (sparse LDL^T; no inverse)
- *   t1   = clip(FOM_MAT_t1_state @ state + FOM_MAT_t1_t_t0 @ t0,
- *               FOM_MAT_t1_lo, FOM_MAT_t1_hi)                 (box projection)
- *   new_state = FOM_MAT_su_state @ state
- *             + FOM_MAT_su_t_t0 @ t0 + FOM_MAT_su_t_t1 @ t1
+ *   t1   = clip(t1_state @ state + t1_t_t0 @ t0, t1_lo, t1_hi)   (box projection)
+ *   new_state = su_state @ state + su_t_t0 @ t0 + su_t_t1 @ t1
  *
- * Data-agnostic; the KKT solve comes from fom_linsolve.c. Hand-written reference
- * exercising the factorized affine solve at MPC scale.
+ * All matrix-vector products go through the sparse-aware fom_apply_* routines
+ * (CSR for the structured OSQP matrices), and the KKT solve through
+ * fom_linsolve.c. No matrix inverse, no dense matvec of a sparse matrix.
  */
 #include "fom_solver.h"
 #include "fom_data.h"
 #include "fom_linsolve.h"
+#include "fom_ops.h"
 #include "fom_profile.h"
-
-static void matvec_add(fom_float *out, int rows, const fom_float *M, int cols, const fom_float *v) {
-    int i, j;
-    for (i = 0; i < rows; ++i) {
-        fom_float acc = 0.0;
-        for (j = 0; j < cols; ++j) acc += M[i * cols + j] * v[j];
-        out[i] += acc;
-    }
-}
 
 void fom_set_default_settings(FomSettings *settings) {
     settings->max_iter = FOM_MAX_ITER;
@@ -56,16 +47,16 @@ fom_int fom_solve(FomWorkspace *work) {
         /* affine KKT solve */
         FOM_PROF_BEGIN(kkt_solve);
         for (i = 0; i < FOM_T0_DIM; ++i) work->acc[i] = 0.0;
-        matvec_add(work->acc, FOM_T0_DIM, FOM_MAT_t0_state, FOM_MAT_t0_state_COLS, work->state);
-        matvec_add(work->acc, FOM_T0_DIM, FOM_MAT_t0_p_p0, FOM_MAT_t0_p_p0_COLS, work->params.p0);
+        fom_apply_t0_state(work->state, work->acc);
+        fom_apply_t0_p_p0(work->params.p0, work->acc);
         fom_lin_solve_t0(work->acc, work->t0);
         FOM_PROF_END(kkt_solve);
 
         /* box projection */
         FOM_PROF_BEGIN(project);
         for (i = 0; i < FOM_T1_DIM; ++i) work->t1[i] = 0.0;
-        matvec_add(work->t1, FOM_T1_DIM, FOM_MAT_t1_state, FOM_MAT_t1_state_COLS, work->state);
-        matvec_add(work->t1, FOM_T1_DIM, FOM_MAT_t1_t_t0, FOM_MAT_t1_t_t0_COLS, work->t0);
+        fom_apply_t1_state(work->state, work->t1);
+        fom_apply_t1_t_t0(work->t0, work->t1);
         for (i = 0; i < FOM_T1_DIM; ++i) {
             if (work->t1[i] < FOM_MAT_t1_lo[i]) work->t1[i] = FOM_MAT_t1_lo[i];
             if (work->t1[i] > FOM_MAT_t1_hi[i]) work->t1[i] = FOM_MAT_t1_hi[i];
@@ -75,10 +66,9 @@ fom_int fom_solve(FomWorkspace *work) {
         /* state update */
         FOM_PROF_BEGIN(state_update);
         for (i = 0; i < FOM_STATE_DIM; ++i) work->new_state[i] = 0.0;
-        matvec_add(work->new_state, FOM_STATE_DIM, FOM_MAT_su_state, FOM_MAT_su_state_COLS,
-                   work->state);
-        matvec_add(work->new_state, FOM_STATE_DIM, FOM_MAT_su_t_t0, FOM_MAT_su_t_t0_COLS, work->t0);
-        matvec_add(work->new_state, FOM_STATE_DIM, FOM_MAT_su_t_t1, FOM_MAT_su_t_t1_COLS, work->t1);
+        fom_apply_su_state(work->state, work->new_state);
+        fom_apply_su_t_t0(work->t0, work->new_state);
+        fom_apply_su_t_t1(work->t1, work->new_state);
         FOM_PROF_END(state_update);
 
         fom_float res = 0.0;
