@@ -287,23 +287,20 @@ plt.rcParams["text.latex.preamble"] = (
 )
 
 ks = np.arange(1, K + 1)
-fig, axes = plt.subplots(
-    2, 2, figsize=(16, 11), sharex="col", sharey="row", gridspec_kw={"height_ratios": [2, 1]}
-)
 
-
-def draw(ax, mip, sample, pep, title):  # top row: worst-case residual vs k  (paper VP/SM style)
-    if np.isfinite(pep).any():
-        ax.plot(ks, pep, "-", color="C2", lw=3, label=r"PEP")  # SDP-PEP -> green, solid
-    ax.plot(ks, mip, "-", color="C0", lw=3, label=r"MIP")  # VP -> blue, solid
-    ax.plot(ks, sample, "-", color="C3", lw=3, label=r"Sample")  # SM -> red, solid
-    ax.set_yscale("log")
-    ax.set_title(title)
-    ax.grid(True, which="major", alpha=0.25)
+# Bartolomeo macOS palette (~/Library/Colors/Bartolomeo.clr): "Red" / "Red transparent"
+BART_RED = (0.5020, 0.0000, 0.2510)
 
 
 def bars(ax, gammas):  # bottom row: the actual step sizes used, per iteration
-    ax.bar(ks, gammas * L, width=0.72, color="C0", edgecolor="white")
+    ax.bar(
+        ks,
+        gammas * L,
+        width=0.72,
+        facecolor=(*BART_RED, 0.20),  # "Red transparent" fill
+        edgecolor=BART_RED,  # "Red" border
+        linewidth=2.0,
+    )
     ax.axhline(2.0, color="0.35", ls="--", lw=2.5)  # 2/L stability limit
     ax.text(
         0.985,
@@ -320,15 +317,33 @@ def bars(ax, gammas):  # bottom row: the actual step sizes used, per iteration
     ax.grid(True, axis="y", alpha=0.25)
 
 
-draw(axes[0, 0], mip_v, sam_v, pep_v, r"ISTA")
-draw(axes[0, 1], mip_l, sam_l, pep_l, r"Learned ISTA")
-bars(axes[1, 0], gammas_vanilla)
-bars(axes[1, 1], gammas_learned)
-axes[0, 0].set_ylabel(r"Worst-case scaled fixed-point residual", fontsize=23)
-axes[1, 0].set_ylabel(r"Step size")
-axes[0, 0].legend(fontsize=24, framealpha=0.9, loc="upper right")
-fig.tight_layout()
+def make_figure(show_pep, out_path):
+    fig, axes = plt.subplots(
+        2, 2, figsize=(16, 11), sharex="col", sharey="row", gridspec_kw={"height_ratios": [2, 1]}
+    )
 
-out = os.path.join(os.path.dirname(__file__), "learned_ista_comparison.pdf")
-fig.savefig(out, bbox_inches="tight")
-print(f"\nSaved figure to {out}")
+    def draw(ax, mip, sample, pep, title):  # top row: worst-case residual vs k (paper VP/SM)
+        if show_pep and np.isfinite(pep).any():
+            ax.plot(ks, pep, "-", color="C2", lw=3, label=r"PEP")  # SDP-PEP -> green, solid
+        ax.plot(ks, mip, "-", color="C0", lw=3, label=r"Verification Problem")  # VP, blue
+        ax.plot(ks, sample, "-", color="C3", lw=3, label=r"Sample Maximum")  # SM, red
+        ax.set_yscale("log")
+        ax.set_title(title)
+        ax.grid(True, which="major", alpha=0.25)
+
+    draw(axes[0, 0], mip_v, sam_v, pep_v, r"ISTA")
+    draw(axes[0, 1], mip_l, sam_l, pep_l, r"Learned ISTA")
+    bars(axes[1, 0], gammas_vanilla)
+    bars(axes[1, 1], gammas_learned)
+    axes[0, 0].set_ylabel(r"Worst-case scaled fixed-point residual", fontsize=23)
+    axes[1, 0].set_ylabel(r"Step size")
+    axes[0, 0].legend(fontsize=22, framealpha=0.9, loc="upper right")
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved figure to {out_path}")
+
+
+_here = os.path.dirname(__file__)
+make_figure(True, os.path.join(_here, "learned_ista_comparison_pep.pdf"))
+make_figure(False, os.path.join(_here, "learned_ista_comparison_nopep.pdf"))
