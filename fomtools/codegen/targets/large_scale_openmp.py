@@ -21,6 +21,11 @@ from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
 class OpenMpTarget(EmbeddedCTarget):
     name = "large_scale_openmp"
 
+    #: Emit OpenMP pragmas on the data-parallel loops (matrix-vector products and
+    #: the CG kernels). Guarded by ``#ifdef _OPENMP``, so the default serial build
+    #: is unaffected and threading is enabled only with ``OMPFLAGS=-fopenmp``.
+    parallel = True
+
     def static_checks(self, source: str) -> list[str]:
         # Large-scale targets are not bound by the embedded no-malloc /
         # division-free invariants.
@@ -85,8 +90,16 @@ class OpenMpTarget(EmbeddedCTarget):
                 "make lib OMPFLAGS=-fopenmp      # shared library for the Python wrapper",
                 "```",
                 "",
-                "`src/fom_solver.c` implements the iteration with OpenMP pragmas; all",
-                "numeric data lives in `src/fom_data.c`. See `test/SPEC.md`.",
+                "The matrix-vector products (`fom_ops.c`) and the conjugate-gradient",
+                "solve (`fom_linsolve.c`, when `solve_method=cg`) carry OpenMP pragmas on",
+                "their data-parallel loops, guarded by `#ifdef _OPENMP`: the default",
+                "serial build ignores them, and `OMPFLAGS=-fopenmp` turns threading on.",
+                "The triangular solves of the direct (LDL^T / LU) factorizations are",
+                "inherently sequential and run single-threaded.",
+                "",
+                "`src/fom_solver.c` implements the iteration (the agent may add further",
+                "OpenMP pragmas); all numeric data lives in `src/fom_data.c`. See",
+                "`test/SPEC.md`.",
                 "",
             ]
         )

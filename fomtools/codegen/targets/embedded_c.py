@@ -100,6 +100,25 @@ def _c_array_2d(name: str, mat: np.ndarray, decl_dims: str, ctype: str = "fom_fl
 class EmbeddedCTarget(TargetDescriptor):
     name = "embedded_c"
 
+    #: Annotate data-parallel loops (matrix-vector products and the CG kernels)
+    #: with optional OpenMP pragmas. Off for the embedded target (kept simple and
+    #: serial); large-scale CPU targets switch it on. The triangular solves of the
+    #: direct factorizations are inherently sequential and are never annotated.
+    parallel = False
+
+    def _omp_for(self, clause: str = "", indent: str = "    ") -> list[str]:
+        """Lines for an optional ``#pragma omp parallel for``.
+
+        Returns nothing unless the target opts into parallelism. The pragma is
+        guarded by ``#ifdef _OPENMP`` so the default (serial) build compiles it
+        away without an unknown-pragma warning, and it only becomes active when
+        the user builds with ``OMPFLAGS=-fopenmp`` — i.e. threading is optional.
+        """
+        if not self.parallel:
+            return []
+        pragma = "#pragma omp parallel for" + (f" {clause}" if clause else "")
+        return [f"{indent}#ifdef _OPENMP", f"{indent}{pragma}", f"{indent}#endif"]
+
     def solver_source_path(self) -> str:
         return "src/fom_solver.c"
 
@@ -333,6 +352,10 @@ class EmbeddedCTarget(TargetDescriptor):
                 lines += [
                     f"void fom_apply_{name}(const fom_float *x, fom_float *out) {{",
                     "    fom_int i, p;",
+                ]
+                # Rows are independent (each writes a distinct out[i]) -> parallel.
+                lines += self._omp_for("private(p)")
+                lines += [
                     f"    for (i = 0; i < {rows}; ++i) {{",
                     "        fom_float s = 0.0;",
                     f"        for (p = FOM_OP_{up}_ROWPTR[i]; p < FOM_OP_{up}_ROWPTR[i + 1]; ++p) "
@@ -346,6 +369,9 @@ class EmbeddedCTarget(TargetDescriptor):
                 lines += [
                     f"void fom_apply_{name}(const fom_float *x, fom_float *out) {{",
                     "    fom_int i, j;",
+                ]
+                lines += self._omp_for("private(j)")
+                lines += [
                     f"    for (i = 0; i < {rows}; ++i) {{",
                     "        fom_float s = 0.0;",
                     f"        for (j = 0; j < {cols}; ++j) s += FOM_MAT_{name}[i * {cols} + j] * x[j];",
@@ -474,54 +500,76 @@ class EmbeddedCTarget(TargetDescriptor):
         n = f"FOM_FAC_{up}_DIM"
         tol2 = _fmt_float(fac.cg_tol * fac.cg_tol)
         maxit = int(fac.cg_max_iter)
-        return "\n".join(
-            [
-                f"void fom_lin_solve_{name}(const fom_float *b, fom_float *x) {{",
-                f"    fom_float r[{n}], z[{n}], p[{n}], Ap[{n}];",
-                "    fom_float bb = 0.0, thresh, rz = 0.0, rz_new, pAp, alpha, beta, s, rr;",
-                "    fom_int i, k, it;",
-                "    /* x <- 0; bb = b.b; the initial residual r = b - A x = b */",
-                f"    for (i = 0; i < {n}; ++i) {{ x[i] = 0.0; bb += b[i] * b[i]; }}",
-                "    if (bb == 0.0) return;",
-                f"    thresh = (fom_float){tol2} * bb;",
-                "    /* r = b; z = Minv .* r; p = z; rz = r.z */",
-                f"    for (i = 0; i < {n}; ++i) {{",
-                "        r[i] = b[i];",
-                f"        z[i] = FOM_FAC_{up}_MINV[i] * r[i];",
-                "        p[i] = z[i];",
-                "        rz += r[i] * z[i];",
-                "    }",
-                f"    for (it = 0; it < {maxit}; ++it) {{",
-                "        /* Ap = A @ p  (sparse CSR matvec) */",
-                f"        for (i = 0; i < {n}; ++i) {{",
-                "            s = 0.0;",
-                f"            for (k = FOM_FAC_{up}_A_ROWPTR[i]; k < FOM_FAC_{up}_A_ROWPTR[i + 1]; ++k)",
-                f"                s += FOM_FAC_{up}_A_VALS[k] * p[FOM_FAC_{up}_A_COLIDX[k]];",
-                "            Ap[i] = s;",
-                "        }",
-                "        pAp = 0.0;",
-                f"        for (i = 0; i < {n}; ++i) pAp += p[i] * Ap[i];",
-                "        if (pAp == 0.0) break;",
-                "        alpha = rz / pAp;",
-                "        rr = 0.0;",
-                f"        for (i = 0; i < {n}; ++i) {{",
-                "            x[i] += alpha * p[i];",
-                "            r[i] -= alpha * Ap[i];",
-                "            rr += r[i] * r[i];",
-                "        }",
-                "        if (rr <= thresh) break;",
-                "        rz_new = 0.0;",
-                f"        for (i = 0; i < {n}; ++i) {{",
-                f"            z[i] = FOM_FAC_{up}_MINV[i] * r[i];",
-                "            rz_new += r[i] * z[i];",
-                "        }",
-                "        beta = rz_new / rz;",
-                f"        for (i = 0; i < {n}; ++i) p[i] = z[i] + beta * p[i];",
-                "        rz = rz_new;",
-                "    }",
-                "}",
-            ]
-        )
+        out = [
+            f"void fom_lin_solve_{name}(const fom_float *b, fom_float *x) {{",
+            f"    fom_float r[{n}], z[{n}], p[{n}], Ap[{n}];",
+            "    fom_float bb = 0.0, thresh, rz = 0.0, rz_new, pAp, alpha, beta, s, rr;",
+            "    fom_int i, k, it;",
+            "    /* x <- 0; bb = b.b; the initial residual r = b - A x = b. Every CG",
+            "       kernel below (matvec, dot product, vector update) is data-parallel;",
+            "       only the outer iteration is sequential. */",
+        ]
+        out += self._omp_for("reduction(+ : bb)")
+        out += [
+            f"    for (i = 0; i < {n}; ++i) {{ x[i] = 0.0; bb += b[i] * b[i]; }}",
+            "    if (bb == 0.0) return;",
+            f"    thresh = (fom_float){tol2} * bb;",
+            "    /* r = b; z = Minv .* r; p = z; rz = r.z */",
+        ]
+        out += self._omp_for("reduction(+ : rz)")
+        out += [
+            f"    for (i = 0; i < {n}; ++i) {{",
+            "        r[i] = b[i];",
+            f"        z[i] = FOM_FAC_{up}_MINV[i] * r[i];",
+            "        p[i] = z[i];",
+            "        rz += r[i] * z[i];",
+            "    }",
+            f"    for (it = 0; it < {maxit}; ++it) {{",
+            "        /* Ap = A @ p  (sparse CSR matvec) */",
+        ]
+        out += self._omp_for("private(k, s)", indent="        ")
+        out += [
+            f"        for (i = 0; i < {n}; ++i) {{",
+            "            s = 0.0;",
+            f"            for (k = FOM_FAC_{up}_A_ROWPTR[i]; k < FOM_FAC_{up}_A_ROWPTR[i + 1]; ++k)",
+            f"                s += FOM_FAC_{up}_A_VALS[k] * p[FOM_FAC_{up}_A_COLIDX[k]];",
+            "            Ap[i] = s;",
+            "        }",
+            "        pAp = 0.0;",
+        ]
+        out += self._omp_for("reduction(+ : pAp)", indent="        ")
+        out += [
+            f"        for (i = 0; i < {n}; ++i) pAp += p[i] * Ap[i];",
+            "        if (pAp == 0.0) break;",
+            "        alpha = rz / pAp;",
+            "        rr = 0.0;",
+        ]
+        out += self._omp_for("reduction(+ : rr)", indent="        ")
+        out += [
+            f"        for (i = 0; i < {n}; ++i) {{",
+            "            x[i] += alpha * p[i];",
+            "            r[i] -= alpha * Ap[i];",
+            "            rr += r[i] * r[i];",
+            "        }",
+            "        if (rr <= thresh) break;",
+            "        rz_new = 0.0;",
+        ]
+        out += self._omp_for("reduction(+ : rz_new)", indent="        ")
+        out += [
+            f"        for (i = 0; i < {n}; ++i) {{",
+            f"            z[i] = FOM_FAC_{up}_MINV[i] * r[i];",
+            "            rz_new += r[i] * z[i];",
+            "        }",
+            "        beta = rz_new / rz;",
+        ]
+        out += self._omp_for(indent="        ")
+        out += [
+            f"        for (i = 0; i < {n}; ++i) p[i] = z[i] + beta * p[i];",
+            "        rz = rz_new;",
+            "    }",
+            "}",
+        ]
+        return "\n".join(out)
 
     # -- verify ------------------------------------------------------------
     def _sample_params(self, ir: FomIR) -> tuple[dict[str, np.ndarray], list[dict]]:

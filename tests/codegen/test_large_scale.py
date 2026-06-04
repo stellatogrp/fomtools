@@ -5,6 +5,8 @@ CUDA is compile-checked only and skipped without ``nvcc`` (no GPU in CI).
 """
 
 import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +28,33 @@ GOLDEN_ROOT = Path(__file__).parent / "golden" / "ista"
 OPENMP_GOLDEN = GOLDEN_ROOT / "large_scale_openmp" / "fom_solver.c"
 CUDA_GOLDEN = GOLDEN_ROOT / "large_scale_cuda" / "fom_solver.cu"
 CG_OPENMP_GOLDEN = Path(__file__).parent / "golden" / "cgqp" / "large_scale_openmp" / "fom_solver.c"
+
+
+def _openmp_available() -> bool:
+    """True if the default C compiler can build and link an ``-fopenmp`` program.
+
+    Apple clang ships without libomp, so ``-fopenmp`` fails there; CI (gcc) has
+    it. Threaded-build tests probe this and skip when it is unavailable.
+    """
+    cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+    if cc is None:
+        return False
+    with tempfile.TemporaryDirectory() as d:
+        src = Path(d) / "probe.c"
+        src.write_text(
+            "#include <omp.h>\n"
+            "int main(void){int s=0;\n"
+            "#pragma omp parallel for reduction(+:s)\n"
+            "for(int i=0;i<128;i++)s+=i;return s>0?0:1;}\n"
+        )
+        try:
+            r = subprocess.run(
+                [cc, "-fopenmp", str(src), "-o", str(Path(d) / "probe")],
+                capture_output=True,
+            )
+        except OSError:
+            return False
+    return r.returncode == 0
 
 
 def _openmp_config(max_iters=200):
@@ -164,6 +193,51 @@ def test_cg_openmp_golden_verifies(tmp_path, requires_compiler):
     qval = np.full(case["data"]["n"], 0.25)
     expected = oracle.solve(param_values={"p0": qval})
     assert expected.solution.shape == (case["data"]["n"],)
+
+
+@pytest.mark.skipif(not _openmp_available(), reason="compiler has no working -fopenmp")
+def test_openmp_threaded_build_verifies(tmp_path):
+    # Matvec pragmas: build the ISTA OpenMP golden *with threads* and verify.
+    from tests.codegen.conftest import build_ista
+
+    case = build_ista()
+    result = generate_code(
+        case["verifier"],
+        case["next_state"],
+        tmp_path,
+        config=_openmp_config(),
+        driver=StubAgentDriver(OPENMP_GOLDEN),
+        name="ista",
+    )
+    assert result.translate.success, result.translate.log
+    proc = subprocess.run(
+        ["make", "verify", "OMPFLAGS=-fopenmp"], cwd=tmp_path, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "VERIFY OK" in proc.stdout
+
+
+@pytest.mark.skipif(not _openmp_available(), reason="compiler has no working -fopenmp")
+def test_cg_threaded_build_verifies(tmp_path):
+    # CG kernels (matvec + dot reductions + axpy): threaded build must still
+    # match the oracle (floating-point reduction reorder stays well within tol).
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg(max_iters=80)
+    result = generate_code(
+        case["verifier"],
+        case["next_state"],
+        tmp_path,
+        config=case["config"],
+        driver=StubAgentDriver(CG_OPENMP_GOLDEN),
+        name="cgqp",
+    )
+    assert result.translate.success, result.translate.log
+    proc = subprocess.run(
+        ["make", "verify", "OMPFLAGS=-fopenmp"], cwd=tmp_path, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "VERIFY OK" in proc.stdout
 
 
 def test_openmp_wrapper_matches_oracle(tmp_path, requires_compiler):
