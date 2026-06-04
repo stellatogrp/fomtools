@@ -19,6 +19,7 @@ from fomtools.codegen.config import (
     TerminationSpec,
     Version,
 )
+from fomtools.linearexpression import stack
 from fomtools.verifier import Verifier
 
 
@@ -165,6 +166,79 @@ def build_boxqp(*, n=3, seed=2, max_iters=200, tol=None, dtype="float64"):
         data=data,
         name="boxqp",
     )
+
+
+# --------------------------------------------------------------------------
+# PDHG (Chambolle-Pock) for a linear program  (no restarts)
+# --------------------------------------------------------------------------
+def build_pdhg_lp(*, n=3, m=2, seed=7, max_iters=200, tol=None, dtype="float64"):
+    r"""Plain PDHG for the LP ``min c'x  s.t.  A x >= b,  l <= x <= u``.
+
+    Primal-dual (saddle) form ``min_{l<=x<=u} max_{y>=0} c'x + y'(b - A x)``;
+    one PDHG iteration (primal step, then dual step with primal extrapolation):
+
+        x+   = clip(x - tau (c - A' y), l, u)            # box projection (satlin)
+        xbar = 2 x+ - x
+        y+   = relu(y + sigma (b - A xbar))              # y >= 0 projection (relu)
+
+    Pure first-order: matrix-vector products + projections, no linear solve.
+    The objective ``c`` is the solve-time parameter; ``A, b, l, u`` are fixed.
+    """
+    rng = np.random.default_rng(seed)
+    A = rng.normal(size=(m, n))
+    x_feas = rng.uniform(-0.5, 0.5, size=n)  # feasible point inside the box
+    b = A @ x_feas - 0.5  # slack >= 0, so A x_feas >= b (feasible, bounded LP)
+    c_nom = rng.normal(size=n)
+    lo, hi = -np.ones(n), np.ones(n)
+    normA = float(np.sqrt(np.max(np.real(np.linalg.eigvals(A.T @ A)))))
+    tau = sigma = 0.9 / normA  # tau*sigma*||A||^2 < 1 (PDHG step-size condition)
+
+    v = Verifier(method="simulator", obbt_solver=None)
+    c = v.add_param(n, lb=c_nom - 0.1, ub=c_nom + 0.1)
+    x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    y = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
+    iterates = [stack([x, y])]
+    for _ in range(3):
+        x_next = v.step.satlin(x - tau * c + tau * (A.T @ y), l=lo, u=hi)
+        xbar = 2 * x_next - x
+        y_next = v.step.relu(y + sigma * b - sigma * (A @ xbar))
+        x, y = x_next, y_next
+        iterates.append(stack([x, y]))
+
+    kind = TerminationKind.INF_NORM_CHANGE if tol is not None else TerminationKind.MAX_ITERS
+    config = CodegenConfig(
+        termination=TerminationSpec(kind=kind, max_iters=max_iters, tol=tol), dtype=dtype
+    )
+    data = dict(A=A, b=b, c_nom=c_nom, lo=lo, hi=hi, tau=tau, sigma=sigma, n=n, m=m)
+    return dict(
+        verifier=v,
+        next_state=iterates[1],
+        iterates=iterates,
+        param=c,
+        config=config,
+        data=data,
+        name="pdhg_lp",
+    )
+
+
+def pdhg_lp_reference(data, c_val, xy0, n_iters, tol=None):
+    """Pure-NumPy PDHG-LP trajectory (matches the FOM built by build_pdhg_lp)."""
+    A, b, lo, hi = data["A"], data["b"], data["lo"], data["hi"]
+    tau, sigma, n = data["tau"], data["sigma"], data["n"]
+    xy = np.asarray(xy0, dtype=float).copy()
+    x, y = xy[:n].copy(), xy[n:].copy()
+    traj = [np.concatenate([x, y])]
+    for _ in range(n_iters):
+        x_new = np.minimum(np.maximum(x - tau * (c_val - A.T @ y), lo), hi)
+        xbar = 2 * x_new - x
+        y_new = np.maximum(0.0, y + sigma * (b - A @ xbar))
+        new = np.concatenate([x_new, y_new])
+        resid = np.max(np.abs(new - np.concatenate([x, y])))
+        x, y = x_new, y_new
+        traj.append(new)
+        if tol is not None and resid <= tol:
+            break
+    return traj
 
 
 def boxqp_reference(data, q_val, x0, n_iters, tol=None):

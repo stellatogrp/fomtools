@@ -198,11 +198,48 @@ def cg_qp_example(*, n: int = 6, seed: int = 3) -> dict:
     return {"verifier": v, "next_state": iterates[1], "name": "cgqp"}
 
 
+def pdhg_lp_example(*, n: int = 4, m: int = 3, seed: int = 7) -> dict:
+    r"""Plain PDHG (Chambolle-Pock) for an LP — no restarts.
+
+    Solves ``min c'x  s.t.  A x >= b,  l <= x <= u`` via the saddle problem
+    ``min_{l<=x<=u} max_{y>=0} c'x + y'(b - A x)``. One PDHG iteration (primal
+    box projection, then dual nonnegative projection with primal extrapolation):
+
+        x+   = clip(x - tau (c - A' y), l, u)
+        y+   = relu(y + sigma (b - A (2 x+ - x)))
+
+    Pure first-order: matrix-vector products + projections, no linear solve. The
+    objective ``c`` is the solve-time parameter; ``A, b, l, u`` are fixed. This
+    is the LP base of PDLP-style solvers, in its plain (restart-free) form.
+    """
+    rng = np.random.default_rng(seed)
+    A = rng.normal(size=(m, n))
+    x_feas = rng.uniform(-0.5, 0.5, size=n)
+    b = A @ x_feas - 0.5  # feasible: A x_feas >= b
+    c_nom = rng.normal(size=n)
+    lo, hi = -np.ones(n), np.ones(n)
+    normA = float(np.sqrt(np.max(np.real(np.linalg.eigvals(A.T @ A)))))
+    tau = sigma = 0.9 / normA
+
+    v = Verifier(method="simulator", obbt_solver=None)
+    c = v.add_param(n, lb=c_nom - 0.1, ub=c_nom + 0.1)
+    x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    y = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
+    iters = [stack([x, y])]
+    for _ in range(3):
+        x_next = v.step.satlin(x - tau * c + tau * (A.T @ y), l=lo, u=hi)
+        y_next = v.step.relu(y + sigma * b - sigma * (A @ (2 * x_next - x)))
+        x, y = x_next, y_next
+        iters.append(stack([x, y]))
+    return {"verifier": v, "next_state": iters[1], "name": "pdhg_lp"}
+
+
 EXAMPLES = {
     "ista": ista_example,
     "dr": dr_example,
     "mpc": mpc_osqp_example,
     "cgqp": cg_qp_example,
+    "pdhg_lp": pdhg_lp_example,
 }
 
 
