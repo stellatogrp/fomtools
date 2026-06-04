@@ -35,12 +35,16 @@ Run:
 
 import os
 
+import cvxpy as cp
 import gurobipy as gp
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import optax
+from PEPit import PEP
+from PEPit.functions import ConvexFunction, SmoothStronglyConvexQuadraticFunction
+from PEPit.primitive_steps import proximal_step
 
 from fomtools.verifier import Verifier
 
@@ -69,7 +73,9 @@ x_cloud = D @ z_star + np.random.normal(scale=1e-2, size=(m, 500))
 x_lb, x_ub = np.min(x_cloud, axis=1), np.max(x_cloud, axis=1)
 
 M = D.T @ D
-L = float(np.linalg.eigvalsh(M)[-1])
+eig = np.linalg.eigvalsh(M)
+L = float(eig[-1])
+mu = float(max(eig[0], 0.0))  # min curvature (0 here: m < n => D^T D rank-deficient)
 eta = 1.0 / L  # vanilla step
 EYE = np.eye(n)
 
@@ -91,6 +97,18 @@ thetas_vanilla = lambd * gammas_vanilla
 N_box = 4000
 np.random.seed(1)
 X_box = np.random.uniform(x_lb, x_ub, size=(N_box, m))
+
+# PEP radius R = max_x ||s0 - s*(x)|| over the (sampled) verified set, for the PEP initial
+# condition ||s0 - s*||^2 <= R^2.  s*(x) is the Lasso solution; estimated on box samples.
+_scp = cp.Variable(n)
+_xcp = cp.Parameter(m)
+_lasso = cp.Problem(cp.Minimize(0.5 * cp.sum_squares(D @ _scp - _xcp) + lambd * cp.norm1(_scp)))
+R = 0.0
+for _xi in X_box[:400]:
+    _xcp.value = _xi
+    _lasso.solve(solver=cp.CLARABEL)
+    R = max(R, float(np.linalg.norm(_scp.value)))
+print(f"PEP radius R = {R:.4f},  L = {L:.4f},  mu = {mu:.4g}", flush=True)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # L2O: learn time-varying step-sizes gamma_k (no momentum, threshold coupled).
@@ -195,13 +213,49 @@ def verify_schedule(gammas, thetas, tag):
     vps = Verifier(method="simulator")
     build(vps, vps.add_param(ndim=m, lb=x_lb, ub=x_ub, samples=X_box), set_obj=True)
     sample = np.asarray(vps.solve()).max(axis=0)
-    return np.asarray(mip), np.asarray(sample)
+
+    # --- PEP: SDP worst-case bound on the SAME scaled KKT residual, using the actual gamma_k.
+    # Dimension-free (worst case over all L-smooth convex f with the given step sequence): it
+    # does NOT know D's spectrum, so it is loose vs the MIP -- especially for the long learned
+    # steps.  Quadratic f model makes grad f(s^k)-grad f(s^{k-1}) = M(s^k-s^{k-1}) exact, so
+    # H_k(s^k-s^{k-1}) = (1/gamma_k)(s^k-s^{k-1}) - (grad f(s^k)-grad f(s^{k-1})).
+    print(f"[{tag}] PEP ...", flush=True)
+    pep = []
+    for k in range(1, K + 1):
+        problem = PEP()
+        f = problem.declare_function(SmoothStronglyConvexQuadraticFunction, L=L, mu=mu)
+        gfun = problem.declare_function(ConvexFunction)
+        xstar = (f + gfun).stationary_point()
+        sp = [problem.set_initial_point()]
+        problem.set_initial_condition((sp[0] - xstar) ** 2 <= R**2)
+        for j in range(k):
+            y = sp[j] - gammas[j] * f.gradient(sp[j])
+            snext, _, _ = proximal_step(
+                y, gfun, gammas[j]
+            )  # prox step = gamma_j (coupled threshold)
+            sp.append(snext)
+        gk = gammas[k - 1]
+        scaled = (1.0 / gk) * (sp[k] - sp[k - 1]) - (f.gradient(sp[k]) - f.gradient(sp[k - 1]))
+        problem.set_performance_metric(scaled**2)
+        val = problem.solve(solver="SCS", verbose=0)
+        pep.append(np.nan if (val is None or not np.isfinite(val)) else np.sqrt(max(val, 0.0)))
+        print(f"   k={k:2d}  PEP={pep[-1]:.4f}", flush=True)
+    return np.asarray(mip), np.asarray(sample), np.asarray(pep)
 
 
 CACHE = os.path.join(os.path.dirname(__file__), "learned_ista_comparison_data.npz")
-mip_v, sam_v = verify_schedule(gammas_vanilla, thetas_vanilla, "ISTA")
-mip_l, sam_l = verify_schedule(gammas_learned, thetas_learned, "Learned ISTA")
-np.savez(CACHE, mip_v=mip_v, sam_v=sam_v, mip_l=mip_l, sam_l=sam_l, gammas_learned=gammas_learned)
+mip_v, sam_v, pep_v = verify_schedule(gammas_vanilla, thetas_vanilla, "ISTA")
+mip_l, sam_l, pep_l = verify_schedule(gammas_learned, thetas_learned, "Learned ISTA")
+np.savez(
+    CACHE,
+    mip_v=mip_v,
+    sam_v=sam_v,
+    pep_v=pep_v,
+    mip_l=mip_l,
+    sam_l=sam_l,
+    pep_l=pep_l,
+    gammas_learned=gammas_learned,
+)
 
 print(
     "\nordering Sample<=MIP  ISTA:",
@@ -237,7 +291,9 @@ fig, axes = plt.subplots(
 )
 
 
-def draw(ax, mip, sample, title):  # top row: worst-case residual vs k  (paper VP/SM style)
+def draw(ax, mip, sample, pep, title):  # top row: worst-case residual vs k  (paper VP/SM style)
+    if np.isfinite(pep).any():
+        ax.plot(ks, pep, "-", color="C2", lw=3, label=r"PEP")  # SDP-PEP -> green, solid
     ax.plot(ks, mip, "-", color="C0", lw=3, label=r"MIP")  # VP -> blue, solid
     ax.plot(ks, sample, "-", color="C3", lw=3, label=r"Sample")  # SM -> red, solid
     ax.set_yscale("log")
@@ -263,8 +319,8 @@ def bars(ax, gammas):  # bottom row: the actual step sizes used, per iteration
     ax.grid(True, axis="y", alpha=0.25)
 
 
-draw(axes[0, 0], mip_v, sam_v, r"ISTA")
-draw(axes[0, 1], mip_l, sam_l, r"Learned ISTA")
+draw(axes[0, 0], mip_v, sam_v, pep_v, r"ISTA")
+draw(axes[0, 1], mip_l, sam_l, pep_l, r"Learned ISTA")
 bars(axes[1, 0], gammas_vanilla)
 bars(axes[1, 1], gammas_learned)
 axes[0, 0].set_ylabel(r"Worst-case scaled fixed-point residual", fontsize=23)
