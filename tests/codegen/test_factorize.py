@@ -154,3 +154,60 @@ def test_cg_accepts_sparse_input():
     f = factorize(spa.csc_matrix(M), method="cg")
     b = np.ones(8)
     assert np.allclose(f.solve(b), np.linalg.solve(M, b), atol=1e-8)
+
+
+# -- non-quasidefinite robustness (LDL^T is not always right) ------------------
+def test_zero_diagonal_indefinite_falls_back_to_lu():
+    # Symmetric, indefinite, nonsingular, all-zero diagonal: no-pivot LDL^T hits a
+    # zero pivot immediately, so AUTO must fall back to pivoted LU.
+    M = np.array([[0.0, 1.0], [1.0, 0.0]])
+    f = factorize(M)
+    assert f.method == "lu"
+    b = np.array([2.0, 3.0])
+    assert np.allclose(f.solve(b), np.linalg.solve(M, b), atol=1e-12)
+
+
+def test_h_zero_kkt_not_quasidefinite_uses_lu():
+    # KKT [[0, A^T],[A, 0]] with A square nonsingular: symmetric indefinite, not
+    # quasidefinite -> LU, solved accurately.
+    rng = np.random.default_rng(1)
+    A = rng.normal(size=(4, 4))
+    K = np.block([[np.zeros((4, 4)), A.T], [A, np.zeros((4, 4))]])
+    f = factorize(K)
+    assert f.method == "lu"
+    b = np.arange(1, 9, dtype=float)
+    assert np.allclose(f.solve(b), np.linalg.solve(K, b), atol=1e-9)
+
+
+def test_singular_matrix_raises():
+    # A singular system has no solve; factorize must reject it cleanly rather
+    # than silently produce an infinite reciprocal pivot.
+    rng = np.random.default_rng(0)
+    A = rng.normal(size=(2, 3))  # 5x5 KKT with a 1-dim null space
+    S = np.block([[np.zeros((3, 3)), A.T], [A, np.zeros((2, 2))]])
+    with pytest.raises(ValueError, match="singular"):
+        factorize(S)
+
+
+def test_unstable_no_pivot_ldlt_falls_back_via_backward_error(monkeypatch):
+    # Defeat the fill-reducing reordering (which would otherwise move the bad
+    # pivot away) so the no-pivot LDL^T genuinely loses accuracy; the backward-
+    # error gate must then reject it and AUTO must use pivoted LU.
+    import fomtools.codegen.factorize as fz
+
+    monkeypatch.setattr(fz, "reverse_cuthill_mckee", lambda pat, **k: np.arange(pat.shape[0]))
+    M = np.array([[1e-11, 1.0, 0.5], [1.0, 1.0, 2.0], [0.5, 2.0, -1.0]])
+    # no-pivot LDL^T on M proceeds but is inaccurate (backward error ~ 4e-6).
+    L, d = fz._ldlt_no_pivot(M)
+    assert fz._ldlt_backward_error(L, d, M) > 1e-7
+    f = factorize(M)  # AUTO
+    assert f.method == "lu"  # gate rejected the inaccurate LDL^T
+    b = np.array([1.0, 2.0, 3.0])
+    assert np.allclose(f.solve(b), np.linalg.solve(M, b), atol=1e-9)
+
+
+def test_forced_ldlt_on_non_quasidefinite_raises():
+    # Forcing LDL^T on a zero-diagonal indefinite system is not viable.
+    M = np.array([[0.0, 1.0], [1.0, 0.0]])
+    with pytest.raises(ValueError, match="not numerically viable|quasidefinite"):
+        factorize(M, method="ldlt")

@@ -4,9 +4,15 @@ Code generation must **never** form a matrix inverse. Instead, each affine
 operator ``M w = rhs`` is factorized once, offline, and the generated solver
 applies division-free triangular solves:
 
-* symmetric ``M`` -> **LDL^T** (no pivoting; valid for the quasidefinite KKT
-  systems that arise in ADMM/OSQP and for SPD systems),
-* otherwise   -> **LU** with partial pivoting.
+* symmetric ``M`` -> **LDL^T** (no pivoting) — but *only* when it factorizes
+  accurately. This is guaranteed for SPD and **quasidefinite** systems (the
+  ``[[H, A^T], [A, -G]]`` KKT systems with ``H, G`` positive-definite that arise
+  in ADMM/OSQP), which are strongly factorizable. A general symmetric-indefinite
+  matrix that is *not* quasidefinite can hit a zero pivot (detected) or a tiny
+  pivot that silently destroys accuracy (caught by a backward-error check); in
+  either case ``auto`` falls back to pivoted LU.
+* otherwise   -> **LU** with partial pivoting (backward stable for any
+  nonsingular matrix; a singular system is rejected with a clear error).
 
 The (direct) factors are stored sparsely (CSC) and the diagonal is stored as
 **reciprocals**, so the emitted forward/backward substitution uses only
@@ -30,6 +36,12 @@ import numpy as np
 import scipy.linalg as sla
 import scipy.sparse as spa
 from scipy.sparse.csgraph import reverse_cuthill_mckee
+
+#: Relative backward-error threshold above which a no-pivot LDL^T factorization is
+#: rejected (and a pivoted LU used instead). SPD / quasidefinite systems factor to
+#: ~machine precision; a much larger residual signals element growth from a small
+#: pivot on a general symmetric-indefinite matrix.
+_LDLT_RTOL = 1e-9
 
 
 @dataclass(frozen=True)
@@ -191,6 +203,20 @@ def _ldlt_no_pivot(M: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
     return L, d
 
 
+def _ldlt_backward_error(L: np.ndarray, d: np.ndarray, M: np.ndarray) -> float:
+    """Relative backward error ``||L diag(d) L^T - M|| / max(1, ||M||)``.
+
+    No-pivot LDL^T is unconditionally stable only for SPD and *quasidefinite*
+    matrices. For a general symmetric-indefinite matrix a small (but non-zero)
+    pivot causes element growth that silently destroys accuracy; this measures
+    it so the caller can reject the factorization and use a pivoted method.
+    """
+    if not (np.all(np.isfinite(L)) and np.all(np.isfinite(d))):
+        return np.inf
+    recon = (L * d) @ L.T  # L diag(d) L^T
+    return float(np.linalg.norm(recon - M) / max(1.0, np.linalg.norm(M)))
+
+
 def factorize(M, method: str = "auto", symmetry_tol: float = 1e-9) -> Factorization:
     """Factorize a square matrix ``M`` for repeated solves — never inverted.
 
@@ -226,7 +252,12 @@ def factorize(M, method: str = "auto", symmetry_tol: float = 1e-9) -> Factorizat
         perm = np.asarray(reverse_cuthill_mckee(pattern, symmetric_mode=True), dtype=int)
         Mp = Md[np.ix_(perm, perm)]
         res = _ldlt_no_pivot(Mp)
-        if res is not None:
+        # Keep LDL^T only when it actually factorizes Mp accurately. No-pivot
+        # LDL^T is guaranteed stable for SPD / quasidefinite systems but can
+        # silently lose accuracy on a general symmetric-indefinite matrix (small
+        # pivot -> element growth); in that case fall back to pivoted LU rather
+        # than emit a factorization that solves the wrong system.
+        if res is not None and _ldlt_backward_error(res[0], res[1], Mp) <= _LDLT_RTOL:
             L, d = res
             return Factorization(
                 method="ldlt",
@@ -235,11 +266,25 @@ def factorize(M, method: str = "auto", symmetry_tol: float = 1e-9) -> Factorizat
                 L=CSC.from_dense(L),
                 dinv=1.0 / d,
             )
-        # Fall back to LU if LDL^T without pivoting is not viable.
-        chosen = "lu"
+        if method == "ldlt":
+            # User forced LDL^T but it is not numerically viable here.
+            raise ValueError(
+                "LDL^T without pivoting is not numerically viable for this matrix "
+                "(it is symmetric-indefinite but not quasidefinite). Use "
+                "solve_method='auto' or 'lu' for a pivoted direct factorization."
+            )
+        chosen = "lu"  # auto: silently use the robust pivoted method
 
-    # LU with partial pivoting: M = P L U.
+    # LU with partial pivoting: M = P L U (backward stable for any nonsingular M).
     P, L, U = sla.lu(Md)
+    diag_u = np.diag(U)
+    scale = max(1.0, float(np.max(np.abs(diag_u))) if diag_u.size else 1.0)
+    if diag_u.size == 0 or np.min(np.abs(diag_u)) <= 1e-12 * scale:
+        raise ValueError(
+            "matrix is singular or numerically rank-deficient; cannot build a "
+            "linear solve for it (no inverse is ever formed). Check the affine operator "
+            "(e.g. add a small regularization term to make the system nonsingular)."
+        )
     perm = np.argmax(P, axis=0)  # (P^T b)_i = b[perm_i]
     return Factorization(
         method="lu",
@@ -247,7 +292,7 @@ def factorize(M, method: str = "auto", symmetry_tol: float = 1e-9) -> Factorizat
         perm=perm,
         L=CSC.from_dense(L),
         U=CSC.from_dense(U),
-        uinv=1.0 / np.diag(U),
+        uinv=1.0 / diag_u,
     )
 
 

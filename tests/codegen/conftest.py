@@ -169,6 +169,49 @@ def build_boxqp(*, n=3, seed=2, max_iters=200, tol=None, dtype="float64"):
 
 
 # --------------------------------------------------------------------------
+# Symmetric-indefinite (NOT quasidefinite) KKT solve  ->  pivoted LU
+# --------------------------------------------------------------------------
+def build_indefinite_kkt(*, n=3, seed=4, max_iters=60, tol=None, dtype="float64"):
+    r"""A FOM with an affine solve on a symmetric-indefinite, *non*-quasidefinite
+    matrix ``K = [[0, A^T], [A, 0]]`` (zero (1,1) block, ``A`` square nonsingular).
+
+    ``K`` is symmetric but has an all-zero diagonal, so no-pivot LDL^T breaks down
+    on the very first pivot: code generation must (and does) fall back to a
+    pivoted LU factorization. Singular values of ``A`` are kept in ``[1.5, 3]`` so
+    ``K^{-1}`` is a contraction and the iteration ``x <- solve(K, x + q)`` stays
+    bounded.
+    """
+    rng = np.random.default_rng(seed)
+    U, _, Vt = np.linalg.svd(rng.normal(size=(n, n)))
+    s = rng.uniform(1.5, 3.0, size=n)  # sigma(A) > 1  ->  |eig(K)| > 1
+    A = U @ np.diag(s) @ Vt
+    K = np.block([[np.zeros((n, n)), A.T], [A, np.zeros((n, n))]])
+
+    v = Verifier(method="simulator", obbt_solver=None)
+    q = v.add_param(2 * n, lb=-np.ones(2 * n), ub=np.ones(2 * n))
+    x = v.add_iterate(2 * n, lb=np.zeros(2 * n), ub=np.zeros(2 * n))
+    iterates = [x]
+    for _ in range(3):
+        x = v.step.implicit_linear(x + q, lhs_mat=K)
+        iterates.append(x)
+
+    kind = TerminationKind.INF_NORM_CHANGE if tol is not None else TerminationKind.MAX_ITERS
+    config = CodegenConfig(
+        termination=TerminationSpec(kind=kind, max_iters=max_iters, tol=tol), dtype=dtype
+    )
+    data = dict(K=K, A=A, n=2 * n)
+    return dict(
+        verifier=v,
+        next_state=iterates[1],
+        iterates=iterates,
+        param=q,
+        config=config,
+        data=data,
+        name="indef_kkt",
+    )
+
+
+# --------------------------------------------------------------------------
 # PDHG (Chambolle-Pock) for a linear program  (no restarts)
 # --------------------------------------------------------------------------
 def build_pdhg_lp(*, n=3, m=2, seed=7, max_iters=200, tol=None, dtype="float64"):

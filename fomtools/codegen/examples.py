@@ -234,12 +234,37 @@ def pdhg_lp_example(*, n: int = 4, m: int = 3, seed: int = 7) -> dict:
     return {"verifier": v, "next_state": iters[1], "name": "pdhg_lp"}
 
 
+def indefinite_kkt_example(*, n: int = 4, seed: int = 4) -> dict:
+    r"""An affine solve on a symmetric-INDEFINITE, non-quasidefinite KKT system.
+
+    ``K = [[0, A^T], [A, 0]]`` (zero (1,1) block, ``A`` square nonsingular) is
+    symmetric but has an all-zero diagonal, so no-pivot LDL^T breaks down: code
+    generation falls back to a pivoted **LU** factorization (never an inverse).
+    Singular values of ``A`` are kept in ``[1.5, 3]`` so ``x <- solve(K, x + q)``
+    is a contraction. This is the example for "the system is not quasidefinite".
+    """
+    rng = np.random.default_rng(seed)
+    U, _, Vt = np.linalg.svd(rng.normal(size=(n, n)))
+    A = U @ np.diag(rng.uniform(1.5, 3.0, size=n)) @ Vt
+    K = np.block([[np.zeros((n, n)), A.T], [A, np.zeros((n, n))]])
+
+    v = Verifier(method="simulator", obbt_solver=None)
+    q = v.add_param(2 * n, lb=-np.ones(2 * n), ub=np.ones(2 * n))
+    x = v.add_iterate(2 * n, lb=np.zeros(2 * n), ub=np.zeros(2 * n))
+    iters = [x]
+    for _ in range(3):
+        x = v.step.implicit_linear(x + q, lhs_mat=K)
+        iters.append(x)
+    return {"verifier": v, "next_state": iters[1], "name": "indef_kkt"}
+
+
 EXAMPLES = {
     "ista": ista_example,
     "dr": dr_example,
     "mpc": mpc_osqp_example,
     "cgqp": cg_qp_example,
     "pdhg_lp": pdhg_lp_example,
+    "indef_kkt": indefinite_kkt_example,
 }
 
 
