@@ -68,6 +68,9 @@ class SDP(Canonicalizer):
         solver="clarabel",
         rlt_cuts=False,
         triangle_cuts=False,
+        ineq_product_cuts=True,
+        ineq_box_cuts=True,
+        ineq_square_cuts=True,
     ):
         """
         Initialize the SDP canonicalizer.
@@ -85,6 +88,16 @@ class SDP(Canonicalizer):
         triangle_cuts : bool, default=False
             If True, add lifted triangle cuts for ReLU steps with mixed-bound
             output dimensions to tighten the relaxation.
+        ineq_product_cuts : bool, default=True
+            For each inequality constraint ``Ax + b <= 0``, add the off-diagonal
+            products ``g_i g_j >= 0`` (valid since each ``g_i <= 0``).
+        ineq_box_cuts : bool, default=True
+            For each inequality constraint, add the RLT products of the constraint
+            with the variable box bounds (``g_i (x_p - l_p) <= 0`` and
+            ``g_i (u_p - x_p) <= 0``).
+        ineq_square_cuts : bool, default=True
+            For each inequality constraint, add the self-square upper bound
+            ``g_i^2 <= g_i_lower * g_i`` using a propagated lower bound on ``g_i``.
         """
         super(SDP, self).__init__(solver_params, solver)
         self.solver_name = solver.lower()  # Store for dispatch
@@ -100,10 +113,14 @@ class SDP(Canonicalizer):
 
         self.rlt_cuts = rlt_cuts
         self.triangle_cuts = triangle_cuts
+        self.ineq_product_cuts = ineq_product_cuts
+        self.ineq_box_cuts = ineq_box_cuts
+        self.ineq_square_cuts = ineq_square_cuts
         self._cuts_dirty = True
         self._cut_ineq_matrices = []
         self._cut_bineq_upperbounds = []
         self._relu_steps = []  # registry for triangle cuts
+        self._ineq_constraints = []  # registry for inequality-constraint cuts
 
         self.C_obj = None
         self._objective_spec = None
@@ -293,11 +310,15 @@ class SDP(Canonicalizer):
         new_canon.bound_constraint_indices = self.bound_constraint_indices.copy()
         new_canon.rlt_cuts = self.rlt_cuts
         new_canon.triangle_cuts = self.triangle_cuts
+        new_canon.ineq_product_cuts = self.ineq_product_cuts
+        new_canon.ineq_box_cuts = self.ineq_box_cuts
+        new_canon.ineq_square_cuts = self.ineq_square_cuts
         # Cuts get rebuilt from current state on the copy's first solve.
         new_canon._cuts_dirty = True
         new_canon._cut_ineq_matrices = []
         new_canon._cut_bineq_upperbounds = []
         new_canon._relu_steps = list(self._relu_steps)  # shallow: Relu objs are shared
+        new_canon._ineq_constraints = list(self._ineq_constraints)  # shallow: constraints shared
         new_canon.C_obj = self.C_obj.copy() if self.C_obj is not None else None
         new_canon.obbt_handler = self.obbt_handler
         new_canon._objective_spec = self._objective_spec
@@ -373,18 +394,42 @@ class SDP(Canonicalizer):
 
     def _add_inequality_constraint_impl(self, constraint: Constraint) -> None:
         """
-        Add an inequality constraint.
+        Add an inequality constraint ``Ax + b <= 0`` and register it for cuts.
 
-        For Ax + b <= 0, adds:
-        1. Linear constraint in lifted form
-        2. Optionally, RLT quadratic constraint (weak strengthening)
+        Adds the base linear constraint ``a_i^T x <= -b_i`` per row (lifted into
+        ``Aineq_matrices`` / ``bineq_upperbounds``) and a PSD cone over ``{0} ∪ x``
+        so the quadratic block is constrained (matching the equality impl). The
+        constraint is also recorded in ``self._ineq_constraints`` so the lazy cut
+        builder can emit the optional RLT strengthenings (cuts 1/2/3) gated by the
+        ``ineq_*_cuts`` flags; those are (re)built in ``_rebuild_cuts_if_dirty``.
 
         Parameters
         ----------
         constraint : Constraint
             An inequality constraint (operator "<=").
         """
-        raise NotImplementedError
+        A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(constraint.lhs)
+        b_vec = constraint.lhs.const
+
+        m, _n = A_mat.shape
+        curr_prob_dim = self.get_sdp_var_dim()
+
+        # Linear: X[0, x_indices] (row=True, then symmetrize handles X[x, 0]).
+        x_idx_ranges_1d = process_1d_ranges(x_idx_bounds, row=True)
+
+        for i in range(m):
+            # a_i^T x <= -b_i
+            M_lin = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
+            M_lin[x_idx_ranges_1d] = A_mat[i, :]
+            self.Aineq_matrices.append(symmetrize(M_lin.tocsc()))
+            self.bineq_upperbounds.append(-b_vec[i])
+
+        # PSD cone for {0} ∪ x_indices (also marks _cuts_dirty via add_psd_cone_indices).
+        self.add_psd_cone_indices(x_idx_bounds)
+
+        # Register for lazy cut generation (cuts depend on current bounds).
+        self._ineq_constraints.append(constraint)
+        self._cuts_dirty = True
 
     def add_psd_cone_indices(self, new_indices):
         """
@@ -844,8 +889,8 @@ class SDP(Canonicalizer):
         ``_cut_ineq_matrices`` / ``_cut_bineq_upperbounds``, which are
         concatenated with the regular ineq block at solve time.
 
-        When both ``rlt_cuts`` and ``triangle_cuts`` are False this is
-        effectively a no-op (cut lists stay empty).
+        When all cut flags are False (or there are no registered inequality
+        constraints) this is effectively a no-op (cut lists stay empty).
         """
         if not self._cuts_dirty:
             return
@@ -862,7 +907,96 @@ class SDP(Canonicalizer):
             if self.triangle_cuts:
                 self._build_triangle_cuts()
 
+        if self._ineq_constraints and (
+            self.ineq_product_cuts or self.ineq_box_cuts or self.ineq_square_cuts
+        ):
+            self._build_ineq_cuts()
+
         self._cuts_dirty = False
+
+    def _build_ineq_cuts(self) -> None:
+        r"""
+        Append RLT-style strengthening cuts for every registered inequality
+        constraint ``Ax + b <= 0``.
+
+        For each row ``g_i = a_i^T x + b_i <= 0`` with homogenized coefficient
+        vector ``c_i = [b_i; a_i]`` (so ``g_i = c_i^T w`` and
+        ``g_i g_j = c_i^T X c_j`` is linear in the lifted ``X``), emit the cuts
+        enabled by the ``ineq_*_cuts`` flags:
+
+        - ``ineq_product_cuts``: ``g_i g_j >= 0`` for ``i < j`` (the diagonal
+          ``g_i^2 >= 0`` is implied by ``X ⪰ 0`` and is skipped).
+        - ``ineq_box_cuts``: ``g_i (x_p - l_p) <= 0`` and ``g_i (u_p - x_p) <= 0``
+          for each variable index ``p`` appearing in the constraint.
+        - ``ineq_square_cuts``: ``g_i^2 <= g_i_lower * g_i`` using a propagated
+          lower bound ``g_i_lower`` on ``g_i`` (analog of the per-variable box
+          product in :meth:`add_var`, generalized from ``e_i`` to ``c_i``).
+
+        Bounds are read fresh from ``_build_sdp_idx_bounds`` / ``bound_propagation``
+        each rebuild so the cuts track leaf tightening (cf. ``_build_triangle_cuts``).
+        Cuts are appended to ``_cut_ineq_matrices`` / ``_cut_bineq_upperbounds`` in
+        the ``<A, X> <= b`` convention; a ``>= 0`` cut is pushed as ``-sym(M) <= 0``.
+        """
+        sdp_idx_bounds = self._build_sdp_idx_bounds()
+        n_dim = self.get_sdp_var_dim()
+
+        for constraint in self._ineq_constraints:
+            A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(constraint.lhs)
+            b_vec = np.asarray(constraint.lhs.const).flatten()
+            m = A_mat.shape[0]
+
+            # Compact index layout over {0} ∪ x for outer-product scatter.
+            all_idx_bounds = [(0, 1)] + x_idx_bounds
+            idx_2d = process_2d_ranges(all_idx_bounds, all_idx_bounds)
+            # SDP indices of the x-block in compact order (compact pos k -> k+1).
+            x_sdp_indices = [idx for (s, e) in x_idx_bounds for idx in range(s, e)]
+
+            # c_i = [b_i, a_i] in compact ordering matching all_idx_bounds.
+            c_list = [
+                np.concatenate([[b_vec[i]], np.asarray(A_mat[i, :]).flatten()]) for i in range(m)
+            ]
+
+            if self.ineq_square_cuts:
+                # g_i_lower <= g_i <= 0; use the propagated lower bound on g.
+                g_lb, _g_ub = constraint.lhs.bound_propagation()
+
+            for i in range(m):
+                c_i = c_list[i]
+
+                # Cut (3): g_i^2 <= g_i_lower * g_i  ->  c_i c_i^T - g_lb*(c_i e0^T) <= 0.
+                if self.ineq_square_cuts:
+                    Mc = np.outer(c_i, c_i)
+                    Mc[:, 0] -= float(g_lb[i]) * c_i
+                    M = spa.lil_matrix((n_dim, n_dim))
+                    M[idx_2d] = Mc
+                    self._cut_ineq_matrices.append(symmetrize(M.tocsc()))
+                    self._cut_bineq_upperbounds.append(0.0)
+
+                # Cut (1): g_i g_j >= 0 for i < j  ->  -sym(c_i c_j^T) <= 0.
+                if self.ineq_product_cuts:
+                    for j in range(i + 1, m):
+                        Mc = np.outer(c_i, c_list[j])
+                        M = spa.lil_matrix((n_dim, n_dim))
+                        M[idx_2d] = Mc
+                        self._cut_ineq_matrices.append(-symmetrize(M.tocsc()))
+                        self._cut_bineq_upperbounds.append(0.0)
+
+                # Cut (2): g_i (x_p - l_p) <= 0 and g_i (u_p - x_p) <= 0.
+                if self.ineq_box_cuts:
+                    for k, p in enumerate(x_sdp_indices):
+                        l_p, u_p = sdp_idx_bounds[p]
+                        # compact position of x index p is k + 1
+                        d_lower = np.zeros_like(c_i)
+                        d_lower[k + 1] = 1.0
+                        d_lower[0] = -l_p
+                        d_upper = np.zeros_like(c_i)
+                        d_upper[k + 1] = -1.0
+                        d_upper[0] = u_p
+                        for d in (d_lower, d_upper):
+                            M = spa.lil_matrix((n_dim, n_dim))
+                            M[idx_2d] = np.outer(c_i, d)
+                            self._cut_ineq_matrices.append(symmetrize(M.tocsc()))
+                            self._cut_bineq_upperbounds.append(0.0)
 
     def _build_rlt_cuts(self, sdp_idx_bounds: dict) -> None:
         """

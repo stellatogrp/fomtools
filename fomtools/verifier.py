@@ -41,6 +41,9 @@ class Verifier(object):
         params=None,
         rlt_cuts=False,
         triangle_cuts=False,
+        ineq_product_cuts=True,
+        ineq_box_cuts=True,
+        ineq_square_cuts=True,
     ):
         """
         Initialize a Verifier instance.
@@ -65,6 +68,15 @@ class Verifier(object):
             SDP-only: when True, add lifted triangle cuts for mixed-bound
             ReLU outputs (paper §4.5 eq 25/26). No effect for
             ``method != "sdp"``.
+        ineq_product_cuts : bool, default True
+            SDP-only: add off-diagonal products ``g_i g_j >= 0`` for each
+            inequality constraint ``Ax + b <= 0``. No effect for ``method != "sdp"``.
+        ineq_box_cuts : bool, default True
+            SDP-only: add RLT products of each inequality constraint with the
+            variable box bounds. No effect for ``method != "sdp"``.
+        ineq_square_cuts : bool, default True
+            SDP-only: add the self-square upper bound ``g_i^2 <= g_i_lower * g_i``
+            for each inequality constraint. No effect for ``method != "sdp"``.
         """
         self.theory_func = theory_func
         self.iterates = []
@@ -77,6 +89,9 @@ class Verifier(object):
             solver,
             rlt_cuts=rlt_cuts,
             triangle_cuts=triangle_cuts,
+            ineq_product_cuts=ineq_product_cuts,
+            ineq_box_cuts=ineq_box_cuts,
+            ineq_square_cuts=ineq_square_cuts,
         )
         self.obbt_handler = OBBTHandler(solver=obbt_solver) if obbt_solver else None
         self.use_obbt_handler = True if obbt_solver else False
@@ -140,6 +155,9 @@ class Verifier(object):
         solver: dict,
         rlt_cuts: bool = False,
         triangle_cuts: bool = False,
+        ineq_product_cuts: bool = True,
+        ineq_box_cuts: bool = True,
+        ineq_square_cuts: bool = True,
     ):
         """
          Return an initialized instance for the requested method.
@@ -201,6 +219,9 @@ class Verifier(object):
                     solver=solver,
                     rlt_cuts=rlt_cuts,
                     triangle_cuts=triangle_cuts,
+                    ineq_product_cuts=ineq_product_cuts,
+                    ineq_box_cuts=ineq_box_cuts,
+                    ineq_square_cuts=ineq_square_cuts,
                 )
             case "simulator":
                 return Simulator()
