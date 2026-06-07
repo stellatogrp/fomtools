@@ -4,7 +4,7 @@ import numpy as np
 
 from fomtools import LinearExpression
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
-from fomtools.constraint import Constraint
+from fomtools.constraint import ComplementarityConstraint, Constraint
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 
@@ -65,7 +65,66 @@ class MIP(Canonicalizer):
         -------
         None
         """
+        if isinstance(constraint, ComplementarityConstraint):
+            self.add_constraints(self._build_complementarity_constraints(constraint))
+            return
         self.solver.add_constr(constraint)
+
+    def _build_complementarity_constraints(
+        self, constraint: ComplementarityConstraint
+    ) -> List[Constraint]:
+        r"""
+        Build the big-M MIP formulation of an elementwise complementarity constraint.
+
+        For ``e1 ⊥ e2`` (both ``>= 0``), each coordinate ``i`` gets a fresh binary
+        ``z`` and, with finite big-M values ``M1 = e1.ub[i]`` and ``M2 = e2.ub[i]``:
+
+        $$
+            e_{1,i} \ge 0,\quad e_{2,i} \ge 0,\quad
+            e_{1,i} \le M_{1}\,z,\quad e_{2,i} \le M_{2}\,(1 - z).
+        $$
+
+        ``z = 1`` forces ``e2[i] = 0``; ``z = 0`` forces ``e1[i] = 0``. This mirrors the
+        ReLU big-M idiom in :meth:`_build_relu_constraints`.
+
+        Parameters
+        ----------
+        constraint : ComplementarityConstraint
+            The complementarity constraint to encode.
+
+        Returns
+        -------
+        List[Constraint]
+            The linear (and binary-coupled) constraints encoding the relation.
+
+        Raises
+        ------
+        ValueError
+            If either expression has a non-finite upper bound, so big-M is undefined.
+        """
+        e1, e2 = constraint.expr1, constraint.expr2
+        M1 = np.asarray(e1.ub, dtype=float)
+        M2 = np.asarray(e2.ub, dtype=float)
+        if not (np.all(np.isfinite(M1)) and np.all(np.isfinite(M2))):
+            raise ValueError(
+                "Complementarity big-M encoding requires finite upper bounds on both "
+                "expressions. Provide explicit variable bounds or enable OBBT."
+            )
+
+        constraints = []
+        for i in range(constraint.ndim):
+            _e1 = e1[i]
+            _e2 = e2[i]
+            z = LinearExpression.from_int(_e1.ndim, is_binary=True)  # scalar binary
+            constraints.extend(
+                [
+                    _e1 >= 0,
+                    _e2 >= 0,
+                    _e1 <= M1[i] * z,
+                    _e2 <= M2[i] * (1 - z),
+                ]
+            )
+        return constraints
 
     def add_constraints(self, constraints: List[Constraint]) -> None:
         """

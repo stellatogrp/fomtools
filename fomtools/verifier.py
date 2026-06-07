@@ -8,7 +8,12 @@ from fomtools.canonicalizers.mip import MIP
 from fomtools.canonicalizers.obbt_handler import OBBTHandler
 from fomtools.canonicalizers.sdp import SDP
 from fomtools.canonicalizers.simulator import Simulator
-from fomtools.constraint import Constraint, is_binary_free
+from fomtools.constraint import (
+    ComplementarityConstraint,
+    Constraint,
+    complementarity,
+    is_binary_free,
+)
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
@@ -413,12 +418,36 @@ class Verifier(object):
         -------
         None
         """
-        # Only forward binary-free constraints to the OBBT handler so its model
-        # stays a pure LP (binary leaves would otherwise be relaxed silently).
-        if self.use_obbt_handler and is_binary_free(constr):
+        # Only forward LINEAR, binary-free constraints to the OBBT handler so its
+        # model stays a pure LP. Binary leaves would otherwise be relaxed silently,
+        # and non-convex constraints (e.g. complementarity, is_linear=False) cannot
+        # be represented in the LP at all.
+        if self.use_obbt_handler and getattr(constr, "is_linear", True) and is_binary_free(constr):
             self.obbt_handler.add_constraint(constr)
             self._tighten_constraint_bounds(constr)
         self.canonicalizer.add_constraint(constr)
+
+    def complementarity(
+        self, expr1: LinearExpression, expr2: LinearExpression
+    ) -> ComplementarityConstraint:
+        """
+        Build an elementwise complementarity constraint between two expressions.
+
+        Asserts ``expr1 >= 0``, ``expr2 >= 0`` and ``expr1[i] * expr2[i] == 0`` for
+        all ``i`` (at most one side nonzero per coordinate). Pass the returned object
+        to :meth:`add_constraint`.
+
+        Parameters
+        ----------
+        expr1, expr2 : LinearExpression
+            The two expressions to place in complementarity. Must have equal ``ndim``.
+
+        Returns
+        -------
+        ComplementarityConstraint
+            The constraint object.
+        """
+        return complementarity(expr1, expr2)
 
     def _tighten_constraint_bounds(self, constr: Constraint) -> None:
         """
