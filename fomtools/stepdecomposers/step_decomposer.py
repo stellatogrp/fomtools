@@ -29,7 +29,9 @@ from fomtools.proxable_functions import (
     SqL2Norm,
     SumNegative,
     SumPositive,
+    TotalVariation1D,
 )
+from fomtools.proxable_functions.total_variation_1d import diff_matrix
 from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
 from fomtools.steps.step import Step
 
@@ -899,6 +901,61 @@ class StepDecomposer:
         proj = self.prox_indballl1(IndBallL1(radius), rhs)
         return rhs - proj
 
+    def prox_totalvariation1d(
+        self, prox: TotalVariation1D, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower the 1-D total-variation prox (fused lasso) via its KKT system.
+
+        For :math:`\min_x \tfrac12\|x-\text{rhs}\|^2 + \tau\|Dx\|_1` (``τ = γλ``, ``D`` the
+        first-difference operator), with equality multiplier ``u`` and the split
+        ``Dx = z⁺ - z⁻`` (``z⁺,z⁻ ≥ 0``):
+
+        .. math::
+            x = \text{rhs} - D^\top u,\quad Dx = z^+ - z^-,\quad
+            0 \le (\tau - u) \perp z^+ \ge 0,\quad 0 \le (\tau + u) \perp z^- \ge 0.
+
+        The complementarities' nonnegativity sides encode the dual box ``-τ ≤ u ≤ τ``, so all
+        bounds are derived from the data (no user ``dual_ub``): ``u ∈ [-τ, τ]`` and ``z⁺/z⁻``
+        bounded by the range of ``Dx``. ``λ`` may be a scalar or a dim-1 LinearExpression.
+
+        Parameters
+        ----------
+        prox : TotalVariation1D
+            Carries the weight ``lambd`` (scalar or dim-1 LinearExpression).
+        rhs : LinearExpression
+            The input signal being smoothed.
+        gamma : float, default 1.0
+            Step size.
+
+        Returns
+        -------
+        LinearExpression
+            The proximal point ``x = rhs - Dᵀu`` of dimension ``n``.
+        """
+        n = rhs.ndim
+        if n < 2:
+            return rhs  # TV of a scalar is 0 -> identity
+        m = n - 1
+        D = diff_matrix(n)
+
+        # τ = γλ as a dim-m LinearExpression (uniform for scalar & parameter λ).
+        lambd_le = self._lift_to_le(prox.lambd, 1)
+        tau = gamma * (np.ones((m, 1)) @ lambd_le)
+        tau_max = float((gamma * lambd_le).bound_propagation()[1][0])
+
+        u = self.add_iterate(m, lb=np.full(m, -tau_max), ub=np.full(m, tau_max))
+
+        x = rhs - D.T @ u  # primal (expression, returned)
+        z_lb, z_ub = (D @ x).bound_propagation()
+        zp = self.add_iterate(m, lb=np.zeros(m), ub=np.maximum(0.0, z_ub))
+        zm = self.add_iterate(m, lb=np.zeros(m), ub=np.maximum(0.0, -z_lb))
+
+        self.add_constraint(D @ x == zp - zm)  # z = Dx split
+        self.add_constraint(complementarity(tau - u, zp))  # u <= τ and (τ-u) ⊥ z+
+        self.add_constraint(complementarity(tau + u, zm))  # u >= -τ and (τ+u) ⊥ z-
+        return x
+
     def prox_quadratic(
         self, prox: Quadratic, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -1048,4 +1105,5 @@ class StepDecomposer:
         "sql2norm": prox_sql2norm,
         "sumnegative": prox_sumnegative,
         "sumpositive": prox_sumpositive,
+        "totalvariation1d": prox_totalvariation1d,
     }
