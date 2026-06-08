@@ -107,8 +107,9 @@ class MIP(Canonicalizer):
         # (e.g. ``b - A @ u``), not just leaf variables: a composite's ``.ub`` is the
         # list of its leaves' bounds, whereas bound_propagation returns the elementwise
         # upper bound of the expression itself.
-        _, M1 = e1.bound_propagation()
-        _, M2 = e2.bound_propagation()
+        with np.errstate(invalid="ignore"):  # inf - inf when an input is unbounded
+            _, M1 = e1.bound_propagation()
+            _, M2 = e2.bound_propagation()
         if not (np.all(np.isfinite(M1)) and np.all(np.isfinite(M2))):
             raise ValueError(
                 "Complementarity big-M encoding requires finite upper bounds on both "

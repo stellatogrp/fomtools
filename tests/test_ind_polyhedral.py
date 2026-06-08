@@ -112,12 +112,85 @@ def test_simulator_not_supported():
         v.prox(IndPolyhedral(np.array([[1.0, 1.0]]), np.array([0.5]), dual_ub=10.0), rhs)
 
 
-def test_sdp_complementarity_not_yet_supported():
-    """SDP complementarity is planned for step 5; surface a clear error for now."""
+# --- SDP backend (complementarity encoding) --------------------------------
+
+# (A, b, x0, dual_ub) cases reused across SDP tests.
+_SDP_CASES = [
+    (np.array([[1.0, 1.0]]), np.array([0.5]), np.array([1.0, 1.0]), 10.0),  # half-space
+    (*_box(2, -np.ones(2), np.ones(2)), np.array([2.0, -3.0]), 10.0),  # box
+    (
+        np.array([[1.0, 0.0], [0.0, 1.0], [-1.0, -1.0]]),
+        np.array([1.0, 1.0, -0.5]),
+        np.array([3.0, 3.0]),
+        20.0,
+    ),  # triangle
+]
+
+
+def test_sdp_complementarity_solves():
+    """IndPolyhedral now solves on the SDP backend (no NotImplementedError)."""
     v = _make_verifier("sdp")
     rhs = v.add_param(2, lb=-1.0, ub=1.0)
-    with pytest.raises(NotImplementedError, match="SDP"):
-        v.prox(IndPolyhedral(np.array([[1.0, 1.0]]), np.array([0.5]), dual_ub=10.0), rhs)
+    u = v.prox(IndPolyhedral(np.array([[1.0, 1.0]]), np.array([0.5]), dual_ub=10.0), rhs)
+    v.set_objective_norm(u, 2)
+    assert np.isfinite(v.solve())
+
+
+@pytest.mark.parametrize("A, b, x0, dual_ub", _SDP_CASES)
+def test_sdp_projection_tight_at_fixed_point(A, b, x0, dual_ub):
+    """At a fixed rhs, max ||u||^2 over the relaxed KKT equals ||proj(x0)||^2.
+
+    SDP has no primal value extraction, so we assert via the objective bound; the
+    relaxation is empirically tight for these projection instances.
+    """
+    v = _make_verifier("sdp")
+    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed rhs
+    u = v.prox(IndPolyhedral(A, b, dual_ub=dual_ub), x)
+    v.set_objective_norm(u, 2)
+    obj = v.solve()
+    proj = IndPolyhedral(A, b).prox(x0)
+    np.testing.assert_allclose(obj, float(proj @ proj), atol=1e-3)
+
+
+def test_sdp_bound_vs_mip_over_box():
+    """SDP relaxation is a valid bound on the MIP over a box of rhs.
+
+    MIP inf-norm <= sqrt(SDP two-norm), since ||.||_inf <= ||.||_2.
+    """
+    A = np.array([[1.0, 1.0]])
+    b = np.array([0.5])
+    rhs_lb, rhs_ub = -np.ones(2), np.ones(2)
+
+    vm = _make_verifier("mip", obbt="gurobi")
+    xm = vm.add_param(2, lb=rhs_lb, ub=rhs_ub)
+    um = vm.prox(IndPolyhedral(A, b, dual_ub=10.0), xm)
+    vm.set_objective_norm([um], np.inf)
+    mip_inf = vm.solve()
+
+    vs = _make_verifier("sdp")
+    xs = vs.add_param(2, lb=rhs_lb, ub=rhs_ub)
+    us = vs.prox(IndPolyhedral(A, b, dual_ub=10.0), xs)
+    vs.set_objective_norm(us, 2)
+    sdp_two = np.sqrt(vs.solve())
+
+    assert np.isfinite(mip_inf)
+    assert mip_inf <= sdp_two + TEST_EPS, f"MIP inf {mip_inf} should be <= SDP two {sdp_two}"
+
+
+def test_sdp_disjoint_guard():
+    """Complementarity between expressions sharing variables raises on SDP."""
+    v = _make_verifier("sdp")
+    x = v.add_iterate(2, lb=0.0, ub=1.0)
+    with pytest.raises(NotImplementedError, match="sharing variables"):
+        v.add_constraint(v.complementarity(x, x))
+
+
+def test_sdp_requires_finite_dual_ub():
+    """SDP needs finite bounds at registration; dual_ub=None makes lambda unbounded."""
+    v = _make_verifier("sdp")
+    rhs = v.add_param(2, lb=-1.0, ub=1.0)
+    with pytest.raises(NotImplementedError, match="[Ii]nfinite"):
+        v.prox(IndPolyhedral(np.array([[1.0, 1.0]]), np.array([0.5])), rhs)  # dual_ub=None
 
 
 def test_complementarity_composite_slack_bound():

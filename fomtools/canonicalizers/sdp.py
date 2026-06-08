@@ -344,10 +344,7 @@ class SDP(Canonicalizer):
             case "<=":
                 self._add_inequality_constraint_impl(constraint)
             case "complementarity":
-                raise NotImplementedError(
-                    "Complementarity constraints are not yet supported on the SDP backend "
-                    "(planned: step 5). Use method='mip' for now."
-                )
+                self._add_complementarity_constraint_impl(constraint)
             case _:
                 raise ValueError(f"Unknown constraint operator: {constraint.operator}")
 
@@ -435,6 +432,59 @@ class SDP(Canonicalizer):
         # Register for lazy cut generation (cuts depend on current bounds).
         self._ineq_constraints.append(constraint)
         self._cuts_dirty = True
+
+    def _add_complementarity_constraint_impl(self, constraint) -> None:
+        r"""
+        Encode elementwise complementarity ``e1 ⊥ e2`` (both ``>= 0``) in the lifted SDP.
+
+        With homogenized coefficient vectors ``c1_i`` / ``c2_i`` (so ``e1_i = c1_i^T w``,
+        ``e2_i = c2_i^T w``), the product ``e1_i e2_i = c1_i^T X c2_i`` is linear in ``X``.
+        For each row ``i`` this adds the equality ``<sym(c1_i c2_i^T), X> = 0`` (the
+        cross-product generalization of the equality strengthening in
+        :meth:`_add_equality_constraint_impl`), the nonnegativities ``e1 >= 0`` and
+        ``e2 >= 0`` (via :meth:`_add_inequality_constraint_impl`), and a PSD cone over
+        ``{0} ∪ vars(e1) ∪ vars(e2)`` so the bilinear entries are constrained.
+
+        Parameters
+        ----------
+        constraint : ComplementarityConstraint
+            Carries ``expr1`` / ``expr2`` (each a length-``ndim`` LinearExpression).
+        """
+        e1, e2 = constraint.expr1, constraint.expr2
+        A1, idx1 = self.linexpr_to_Amat_and_bounds(e1)
+        A2, idx2 = self.linexpr_to_Amat_and_bounds(e2)
+        b1 = np.asarray(e1.const).flatten()
+        b2 = np.asarray(e2.const).flatten()
+
+        # The compact outer-product scatter assumes the two expressions reference
+        # disjoint variables (true for λ ⊥ (b−Au): λ and u are distinct leaves).
+        # Overlapping leaves would double-index the block; guard rather than mis-encode.
+        if set(idx1) & set(idx2):
+            raise NotImplementedError(
+                "SDP complementarity between expressions sharing variables is not supported."
+            )
+
+        n1 = sum(e - s for (s, e) in idx1)
+        n2 = sum(e - s for (s, e) in idx2)
+        curr = self.get_sdp_var_dim()
+        # Compact layout over [const, e1 vars, e2 vars].
+        all_idx_bounds = [(0, 1)] + idx1 + idx2
+        idx_2d = process_2d_ranges(all_idx_bounds, all_idx_bounds)
+
+        for i in range(constraint.ndim):
+            c1 = np.concatenate([[b1[i]], np.asarray(A1[i, :]).flatten(), np.zeros(n2)])
+            c2 = np.concatenate([[b2[i]], np.zeros(n1), np.asarray(A2[i, :]).flatten()])
+            M = spa.lil_matrix((curr, curr))
+            M[idx_2d] = np.outer(c1, c2)
+            self.Aeq_matrices.append(symmetrize(M.tocsc()))
+            self.beq_consts.append(0)
+
+        # Nonnegativity of both sides (``e1 >= 0`` -> ``-e1 <= 0``).
+        self._add_inequality_constraint_impl(e1 >= 0)
+        self._add_inequality_constraint_impl(e2 >= 0)
+
+        # Constrain the bilinear entries.
+        self.add_psd_cone_indices(idx1 + idx2)
 
     def add_psd_cone_indices(self, new_indices):
         """
