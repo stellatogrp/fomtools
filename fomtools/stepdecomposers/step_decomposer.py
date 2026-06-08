@@ -11,6 +11,7 @@ from fomtools.proxable_functions import (
     HingeLoss,
     HuberLoss,
     IndAffine,
+    IndBallL1,
     IndBallLinf,
     IndBox,
     IndHalfSpace,
@@ -540,6 +541,76 @@ class StepDecomposer:
         self.add_constraint(complementarity(lam, b_le - A @ u))
         return u
 
+    def prox_indballl1(
+        self, prox: IndBallL1, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower the :math:`\ell_1`-ball indicator prox onto the lifted KKT system.
+
+        Projection onto :math:`\{u : \|u\|_1 \le r\}` is the QP
+        :math:`\min_{u,t} \tfrac12\|u-\text{rhs}\|^2` s.t. :math:`-t \le u \le t`,
+        :math:`\mathbf{1}^\top t \le r`. With multipliers :math:`\alpha` (``u <= t``),
+        :math:`\beta` (``-u <= t``), :math:`\mu` (``1^T t <= r``):
+
+        .. math::
+            u = \text{rhs} - \alpha + \beta,\quad \alpha + \beta = \mu\mathbf{1},\\
+            0 \le \alpha \perp (t - u) \ge 0,\ \
+            0 \le \beta \perp (t + u) \ge 0,\ \
+            0 \le \mu \perp (r - \mathbf{1}^\top t) \ge 0.
+
+        ``u`` and ``t`` are registered as explicit iterates so each complementarity's two
+        arguments reference disjoint leaves (required by the SDP encoding). The dual upper
+        bound is auto-derived from the input box (``mu = theta <= max_i|x_i|`` and
+        ``alpha_i, beta_i <= mu``), independent of ``r``; ``prox.dual_ub`` overrides it.
+
+        Parameters
+        ----------
+        prox : IndBallL1
+            Carries the radius ``r`` (scalar or dim-1 LinearExpression) and ``dual_ub``.
+        rhs : LinearExpression
+            The point being projected.
+        gamma : float, default 1.0
+            Step size (irrelevant for an indicator).
+
+        Returns
+        -------
+        LinearExpression
+            The primal projection ``u`` of dimension ``n``.
+        """
+        n = rhs.ndim
+
+        # Lift r to a dim-1 LinearExpression (constant if numeric, pass-through if param).
+        r = prox.r
+        if hasattr(r, "decomposition_dict"):
+            r_le = r
+        else:
+            r_le = LinearExpression(decomposition_dict={}, const=np.array([float(r)]))
+        r_ub = float(r_le.bound_propagation()[1][0])  # max radius -> static upper bound on t
+
+        # Auto dual bound from the input box (independent of r); override via prox.dual_ub.
+        rhs_lb, rhs_ub = rhs.bound_propagation()
+        M = float(max(np.max(np.abs(rhs_lb)), np.max(np.abs(rhs_ub))))
+        dub = M if prox.dual_ub is None else float(prox.dual_ub)
+
+        alpha = self.add_iterate(n, lb=np.zeros(n), ub=np.full(n, dub))
+        beta = self.add_iterate(n, lb=np.zeros(n), ub=np.full(n, dub))
+        mu = self.add_iterate(1, lb=np.zeros(1), ub=np.full(1, dub))
+        t = self.add_iterate(n, lb=np.zeros(n), ub=np.full(n, r_ub))  # 0 <= t, 1^T t <= r
+
+        # ``u`` explicit so each complementarity's two args reference disjoint leaves.
+        u_lb, u_ub = (rhs - alpha + beta).bound_propagation()
+        u = self.add_iterate(n, lb=u_lb, ub=u_ub)
+
+        ones_col = np.ones((n, 1))  # broadcast mu (dim 1) -> dim n
+        ones_row = np.ones((1, n))  # sum_i t -> dim 1
+
+        self.add_constraint(u == rhs - alpha + beta)  # stationarity wrt u
+        self.add_constraint(alpha + beta == ones_col @ mu)  # stationarity wrt t
+        self.add_constraint(complementarity(alpha, t - u))
+        self.add_constraint(complementarity(beta, t + u))
+        self.add_constraint(complementarity(mu, r_le - ones_row @ t))
+        return u
+
     def prox_indballlinf(
         self, prox: IndBallLinf, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -848,6 +919,7 @@ class StepDecomposer:
         "hingeloss": prox_hingeloss,
         "huberloss": prox_huberloss,
         "indaffine": prox_indaffine,
+        "indballl1": prox_indballl1,
         "indballlinf": prox_indballlinf,
         "indbox": prox_indbox,
         "indhalfspace": prox_indhalfspace,
