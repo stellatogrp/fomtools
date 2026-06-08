@@ -38,8 +38,13 @@ def test_prox_moreau_identity():
         v = rng.normal(scale=2.0, size=5)
         lam = rng.uniform(0.2, 1.5)
         g = rng.uniform(0.3, 2.0)
+        # Both sides are independent cvxpy solves, so the error budget is ~2x a single
+        # solve; add a relative tolerance (cvxpy accuracy is relative) for large entries.
         np.testing.assert_allclose(
-            NormInf(lam).prox(v, gamma=g), v - IndBallL1(g * lam).prox(v), atol=PROX_ATOL
+            NormInf(lam).prox(v, gamma=g),
+            v - IndBallL1(g * lam).prox(v),
+            rtol=PROX_ATOL,
+            atol=PROX_ATOL,
         )
 
 
