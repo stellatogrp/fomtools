@@ -21,6 +21,7 @@ from fomtools.proxable_functions import (
     IndPolyhedral,
     LabeledHingeLoss,
     Linear,
+    NormInf,
     NormL1,
     Quadratic,
     SoftNonNegative,
@@ -789,6 +790,31 @@ class StepDecomposer:
         step = SoftThreshold(rhs=rhs, lambd=prox.lambd * gamma)
         return self.process_step(step)
 
+    def prox_norminf(
+        self, prox: NormInf, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower the :math:`\ell_\infty`-norm prox via Moreau decomposition:
+
+        $$
+            \operatorname{prox}_{\gamma\lambda\|\cdot\|_\infty}(v)
+            = v - \operatorname{proj}_{\{\|\cdot\|_1 \le \gamma\lambda\}}(v).
+        $$
+
+        Reuses :meth:`prox_indballl1` for the ℓ1-ball projection (radius ``γλ``), so the
+        KKT + complementarity encoding, the auto-derived dual bound, and both the MIP and
+        SDP backends are inherited. ``gamma * prox.lambd`` is a scalar when ``λ`` is a
+        scalar and a dim-1 ``LinearExpression`` when ``λ`` is a parameter; ``IndBallL1``
+        accepts both.
+
+        Backend-independent: registered on the base class so all step decomposers inherit
+        it (the Simulator overrides it to defer, since it calls ``prox_indballl1`` — an
+        implicit-iterate prox — directly).
+        """
+        radius = gamma * prox.lambd
+        proj = self.prox_indballl1(IndBallL1(radius), rhs)
+        return rhs - proj
+
     def prox_quadratic(
         self, prox: Quadratic, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -930,6 +956,7 @@ class StepDecomposer:
         "labeledhingeloss": prox_labeledhingeloss,
         "leastsquares": prox_quadratic,
         "linear": prox_linear,
+        "norminf": prox_norminf,
         "norml1": prox_norml1,
         "quadratic": prox_quadratic,
         "softnonnegative": prox_softnonnegative,
