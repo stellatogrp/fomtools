@@ -71,7 +71,7 @@ class Constraint:
         self, lhs: "LinearExpression", rhs: Union["LinearExpression", np.ndarray, list], operator
     ):
         """
-        Initize an instance of `Constraint` class.
+        Initialize an instance of `Constraint` class.
 
         Parameters
         ----------
@@ -156,7 +156,7 @@ class EqualityConstraint(Constraint):
 
     def __init__(self, lhs, rhs):
         """
-        Initize an instance of :class:`InequalityConstraint` class.
+        Initialize an instance of :class:`EqualityConstraint` class.
 
         Parameters
         ----------
@@ -201,7 +201,7 @@ class InequalityConstraint(Constraint):
 
     def __init__(self, lhs, rhs):
         """
-        Initize an instance of `InequalityConstraint` class.
+        Initialize an instance of `InequalityConstraint` class.
 
         Parameters
         ----------

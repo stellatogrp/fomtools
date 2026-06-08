@@ -141,3 +141,48 @@ def test_linear_constraint_still_tightens_with_obbt(vp):
 
     assert np.isfinite(result)
     assert result <= 10 + TEST_EPS
+
+
+# --- SDP backend (directly exercises _add_complementarity_constraint_impl) ---
+
+
+def test_complementarity_sdp_valid_bound_vs_mip(vp_sdp):
+    """
+    The generic complementarity primitive on SDP is a valid relaxation of the MIP.
+
+    ``a ⊥ b`` with ``a, b in [0, 2]``, maximizing the norm of ``a + b``. The SDP encoding
+    relaxes the bilinear ``a_i b_i = 0`` (lifted product + nonnegativity + PSD cone), so it
+    yields a valid bound: ``mip_inf <= sqrt(sdp_two)`` (since ``||.||_inf <= ||.||_2``).
+    Exercises ``_add_complementarity_constraint_impl`` end-to-end, decoupled from any prox.
+    """
+    n = 3
+    sdp_solver = vp_sdp.canonicalizer.solver_name
+
+    vm = Verifier(method="mip", solver="gurobi", obbt_solver=None, params={"OutputFlag": 0})
+    am = vm.add_iterate(n, lb=0, ub=2)
+    bm = vm.add_iterate(n, lb=0, ub=2)
+    vm.add_constraint(vm.complementarity(am, bm))
+    vm.set_objective_norm([am + bm], np.inf)
+    mip_inf = vm.solve()
+
+    vs = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
+    a = vs.add_iterate(n, lb=0, ub=2)
+    b = vs.add_iterate(n, lb=0, ub=2)
+    vs.add_constraint(vs.complementarity(a, b))
+    vs.set_objective_norm(a + b, 2)
+    sdp_two = np.sqrt(vs.solve())
+
+    assert np.isfinite(mip_inf)
+    assert mip_inf <= sdp_two + TEST_EPS, f"MIP inf {mip_inf} should be <= SDP two {sdp_two}"
+
+
+def test_complementarity_sdp_disjoint_guard(vp_sdp):
+    """
+    SDP complementarity between expressions sharing variables raises (the disjoint guard).
+
+    Tests the guard at the primitive level: ``x ⊥ x`` shares the leaf ``x``, which the
+    lifted outer-product scatter cannot encode.
+    """
+    x = vp_sdp.add_iterate(2, lb=0, ub=1)
+    with pytest.raises(NotImplementedError, match="sharing variables"):
+        vp_sdp.add_constraint(vp_sdp.complementarity(x, x))

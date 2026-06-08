@@ -6,7 +6,7 @@ import pytest
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import IndSimplex
 from fomtools.verifier import Verifier
-from tests.conftest import TEST_EPS
+from tests.conftest import PROX_ATOL, TEST_EPS
 
 
 def _make_verifier(method: str, obbt: str | None = None) -> Verifier:
@@ -45,7 +45,7 @@ def test_constructor_rejects_nonpositive_a():
 def test_prox_on_simplex_is_identity():
     n, a = 4, 1.0
     x = np.full(n, a / n)
-    np.testing.assert_allclose(IndSimplex(a).prox(x), x, atol=1e-6)
+    np.testing.assert_allclose(IndSimplex(a).prox(x), x, atol=PROX_ATOL)
 
 
 def test_prox_matches_relu_threshold():
@@ -54,8 +54,8 @@ def test_prox_matches_relu_threshold():
         x = rng.normal(scale=2.0, size=5)
         a = rng.uniform(0.5, 2.0)
         p = IndSimplex(a).prox(x)
-        np.testing.assert_allclose(p, _proj_simplex_ref(x, a), atol=1e-4)
-        assert np.all(p >= -1e-7) and abs(np.sum(p) - a) < 1e-4
+        np.testing.assert_allclose(p, _proj_simplex_ref(x, a), atol=PROX_ATOL)
+        assert np.all(p >= -PROX_ATOL) and abs(np.sum(p) - a) < PROX_ATOL
 
 
 # --- decomposer / verification ----------------------------------------------
@@ -83,7 +83,7 @@ def test_mip_projection_matches_numeric(x0, a):
     u = v.prox(IndSimplex(a), x)
     v.set_objective_norm([u], np.inf)
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), IndSimplex(a).prox(x0), atol=1e-4)
+    np.testing.assert_allclose(v.get_solution_value(u), IndSimplex(a).prox(x0), atol=PROX_ATOL)
 
 
 def test_param_a():
@@ -96,7 +96,7 @@ def test_param_a():
     u = v.prox(IndSimplex(a_param), x)
     v.set_objective_norm([u], np.inf)
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), IndSimplex(a0).prox(x0), atol=1e-4)
+    np.testing.assert_allclose(v.get_solution_value(u), IndSimplex(a0).prox(x0), atol=PROX_ATOL)
 
 
 @pytest.mark.parametrize(

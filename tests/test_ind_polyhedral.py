@@ -6,7 +6,7 @@ import pytest
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import IndPolyhedral
 from fomtools.verifier import Verifier
-from tests.conftest import TEST_EPS
+from tests.conftest import PROX_ATOL, TEST_EPS
 
 
 def _make_verifier(method: str, obbt: str | None = None) -> Verifier:
@@ -37,7 +37,7 @@ def test_prox_matches_clip_for_box():
     rng = np.random.default_rng(0)
     for _ in range(5):
         x = rng.normal(scale=3.0, size=n)
-        np.testing.assert_allclose(IndPolyhedral(A, b).prox(x), np.clip(x, lb, ub), atol=1e-6)
+        np.testing.assert_allclose(IndPolyhedral(A, b).prox(x), np.clip(x, lb, ub), atol=PROX_ATOL)
 
 
 def test_prox_halfspace_closed_form():
@@ -49,7 +49,7 @@ def test_prox_halfspace_closed_form():
     for _ in range(5):
         x = rng.normal(size=3)
         expected = x - max(0.0, (a @ x - b0)) / (a @ a) * a
-        np.testing.assert_allclose(IndPolyhedral(A, b).prox(x), expected, atol=1e-6)
+        np.testing.assert_allclose(IndPolyhedral(A, b).prox(x), expected, atol=PROX_ATOL)
 
 
 def test_constructor_dim_mismatch():
@@ -92,7 +92,7 @@ def test_mip_projection_matches_numeric(A, b, x0, dual_ub):
     v.set_objective_norm([u], np.inf)
     v.solve()
     got = v.get_solution_value(u)
-    np.testing.assert_allclose(got, IndPolyhedral(A, b).prox(x0), atol=1e-4)
+    np.testing.assert_allclose(got, IndPolyhedral(A, b).prox(x0), atol=PROX_ATOL)
 
 
 @pytest.mark.parametrize("method", ["mip", "sdp"])

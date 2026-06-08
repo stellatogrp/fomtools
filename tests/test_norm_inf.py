@@ -6,7 +6,7 @@ import pytest
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import IndBallL1, NormInf
 from fomtools.verifier import Verifier
-from tests.conftest import TEST_EPS
+from tests.conftest import PROX_ATOL, TEST_EPS
 
 
 def _make_verifier(method: str, obbt: str | None = None) -> Verifier:
@@ -39,14 +39,14 @@ def test_prox_moreau_identity():
         lam = rng.uniform(0.2, 1.5)
         g = rng.uniform(0.3, 2.0)
         np.testing.assert_allclose(
-            NormInf(lam).prox(v, gamma=g), v - IndBallL1(g * lam).prox(v), atol=1e-4
+            NormInf(lam).prox(v, gamma=g), v - IndBallL1(g * lam).prox(v), atol=PROX_ATOL
         )
 
 
 def test_prox_extremes():
     v = np.array([3.0, 0.0, 0.0])
-    np.testing.assert_allclose(NormInf(100.0).prox(v), np.zeros(3), atol=1e-4)  # huge -> 0
-    np.testing.assert_allclose(NormInf(0.0).prox(v), v, atol=1e-6)  # lambda 0 -> identity
+    np.testing.assert_allclose(NormInf(100.0).prox(v), np.zeros(3), atol=PROX_ATOL)  # huge -> 0
+    np.testing.assert_allclose(NormInf(0.0).prox(v), v, atol=PROX_ATOL)  # lambda 0 -> identity
 
 
 # --- decomposer / verification ----------------------------------------------
@@ -73,7 +73,9 @@ def test_mip_matches_numeric(x0, lam, g):
     out = v.prox(NormInf(lam), x, gamma=g)
     v.set_objective_norm([out], np.inf)
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(out), NormInf(lam).prox(x0, gamma=g), atol=1e-4)
+    np.testing.assert_allclose(
+        v.get_solution_value(out), NormInf(lam).prox(x0, gamma=g), atol=PROX_ATOL
+    )
 
 
 def test_param_lambd():
@@ -86,7 +88,7 @@ def test_param_lambd():
     out = v.prox(NormInf(lam_param), x)
     v.set_objective_norm([out], np.inf)
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(out), NormInf(lam0).prox(x0), atol=1e-4)
+    np.testing.assert_allclose(v.get_solution_value(out), NormInf(lam0).prox(x0), atol=PROX_ATOL)
 
 
 @pytest.mark.parametrize(
@@ -141,7 +143,7 @@ def test_dual_ub_stored_and_forwarded():
     out = v.prox(NormInf(1.0, dual_ub=10.0), x)  # explicit (valid) override
     v.set_objective_norm([out], np.inf)
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(out), NormInf(1.0).prox(x0), atol=1e-4)
+    np.testing.assert_allclose(v.get_solution_value(out), NormInf(1.0).prox(x0), atol=PROX_ATOL)
 
 
 def test_simulator_not_supported():

@@ -6,7 +6,7 @@ import pytest
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import IndBallL1
 from fomtools.verifier import Verifier
-from tests.conftest import TEST_EPS
+from tests.conftest import PROX_ATOL, TEST_EPS
 
 
 def _make_verifier(method: str, obbt: str | None = None) -> Verifier:
@@ -40,7 +40,7 @@ def _proj_l1_ref(x, r):
 
 def test_prox_inside_ball_is_identity():
     x = np.array([0.2, -0.1, 0.05])
-    np.testing.assert_allclose(IndBallL1(1.0).prox(x), x, atol=1e-6)
+    np.testing.assert_allclose(IndBallL1(1.0).prox(x), x, atol=PROX_ATOL)
 
 
 def test_prox_matches_soft_threshold():
@@ -49,8 +49,8 @@ def test_prox_matches_soft_threshold():
     for _ in range(8):
         x = rng.normal(scale=2.0, size=5)
         p = IndBallL1(r).prox(x)
-        np.testing.assert_allclose(p, _proj_l1_ref(x, r), atol=1e-4)
-        assert abs(np.sum(np.abs(p)) - r) < 1e-4  # projection lands on the boundary
+        np.testing.assert_allclose(p, _proj_l1_ref(x, r), atol=PROX_ATOL)
+        assert abs(np.sum(np.abs(p)) - r) < PROX_ATOL  # projection lands on the boundary
 
 
 def test_constructor_rejects_negative_r():
@@ -83,7 +83,7 @@ def test_mip_projection_matches_numeric(x0, r):
     u = v.prox(IndBallL1(r), x)  # dual_ub auto-derived
     v.set_objective_norm([u], np.inf)
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), IndBallL1(r).prox(x0), atol=1e-4)
+    np.testing.assert_allclose(v.get_solution_value(u), IndBallL1(r).prox(x0), atol=PROX_ATOL)
 
 
 def test_param_radius():
@@ -96,7 +96,7 @@ def test_param_radius():
     u = v.prox(IndBallL1(r_param), x)
     v.set_objective_norm([u], np.inf)
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), IndBallL1(r0).prox(x0), atol=1e-4)
+    np.testing.assert_allclose(v.get_solution_value(u), IndBallL1(r0).prox(x0), atol=PROX_ATOL)
 
 
 @pytest.mark.parametrize(

@@ -1,7 +1,14 @@
+import warnings
+
 import cvxpy as cp
 import numpy as np
 
 from fomtools.proxable_functions import ProxableFunction
+
+_SHORT_SIGNAL_MSG = (
+    "TotalVariation1D received a length-{n} signal (< 2): total variation is identically "
+    "zero, so the prox is the identity (returns the input unchanged)."
+)
 
 
 def diff_matrix(n: int) -> np.ndarray:
@@ -75,6 +82,7 @@ class TotalVariation1D(ProxableFunction):
         rhs = np.asarray(rhs, dtype=float)
         n = rhs.shape[0]
         if n < 2:
+            warnings.warn(_SHORT_SIGNAL_MSG.format(n=n), UserWarning, stacklevel=2)
             return rhs.copy()  # TV of a scalar is 0 -> identity
         x = cp.Variable(n)
         tau = gamma * self._lambd_value()

@@ -1,4 +1,5 @@
 import logging
+import warnings
 from typing import Callable, ClassVar
 
 import numpy as np
@@ -31,7 +32,7 @@ from fomtools.proxable_functions import (
     SumPositive,
     TotalVariation1D,
 )
-from fomtools.proxable_functions.total_variation_1d import diff_matrix
+from fomtools.proxable_functions.total_variation_1d import _SHORT_SIGNAL_MSG, diff_matrix
 from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
 from fomtools.steps.step import Step
 
@@ -940,6 +941,7 @@ class StepDecomposer:
         """
         n = rhs.ndim
         if n < 2:
+            warnings.warn(_SHORT_SIGNAL_MSG.format(n=n), UserWarning, stacklevel=2)
             return rhs  # TV of a scalar is 0 -> identity
         m = n - 1
         D = diff_matrix(n)

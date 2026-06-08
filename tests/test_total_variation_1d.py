@@ -8,7 +8,7 @@ from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import TotalVariation1D
 from fomtools.proxable_functions.total_variation_1d import diff_matrix
 from fomtools.verifier import Verifier
-from tests.conftest import TEST_EPS
+from tests.conftest import PROX_ATOL, TEST_EPS
 
 
 def _make_verifier(method: str, obbt: str | None = None) -> Verifier:
@@ -44,11 +44,25 @@ def test_eval():
 
 def test_prox_constant_signal_identity():
     v = np.full(5, 0.7)
-    np.testing.assert_allclose(TotalVariation1D(0.8).prox(v), v, atol=1e-6)
+    np.testing.assert_allclose(TotalVariation1D(0.8).prox(v), v, atol=PROX_ATOL)
 
 
 def test_prox_scalar_identity():
-    np.testing.assert_allclose(TotalVariation1D(1.0).prox(np.array([2.5])), np.array([2.5]))
+    """Length < 2 -> zero TV -> identity, with a UserWarning."""
+    with pytest.warns(UserWarning, match="total variation is identically"):
+        out = TotalVariation1D(1.0).prox(np.array([2.5]))
+    np.testing.assert_allclose(out, np.array([2.5]))
+
+
+def test_decomposer_warns_on_short_signal():
+    """The verification lowering also warns (and is the identity) for length < 2."""
+    v = _make_verifier("mip", obbt="gurobi")
+    x = v.add_param(1, lb=np.array([2.5]), ub=np.array([2.5]))
+    with pytest.warns(UserWarning, match="total variation is identically"):
+        out = v.prox(TotalVariation1D(1.0), x)
+    v.set_objective_norm([out], np.inf)
+    v.solve()
+    np.testing.assert_allclose(v.get_solution_value(out), np.array([2.5]), atol=PROX_ATOL)
 
 
 def test_prox_matches_dual_box_qp():
@@ -59,8 +73,8 @@ def test_prox_matches_dual_box_qp():
         lam = rng.uniform(0.2, 1.5)
         g = rng.uniform(0.3, 2.0)
         p = TotalVariation1D(lam).prox(v, gamma=g)
-        np.testing.assert_allclose(p, _tv_prox_dual(v, g * lam), atol=1e-4)
-        assert np.sum(np.abs(np.diff(p))) <= np.sum(np.abs(np.diff(v))) + 1e-6
+        np.testing.assert_allclose(p, _tv_prox_dual(v, g * lam), atol=PROX_ATOL)
+        assert np.sum(np.abs(np.diff(p))) <= np.sum(np.abs(np.diff(v))) + PROX_ATOL
 
 
 # --- decomposer / verification ----------------------------------------------
@@ -89,7 +103,7 @@ def test_mip_matches_numeric(x0, lam, g):
     v.set_objective_norm([out], np.inf)
     v.solve()
     np.testing.assert_allclose(
-        v.get_solution_value(out), TotalVariation1D(lam).prox(x0, gamma=g), atol=1e-4
+        v.get_solution_value(out), TotalVariation1D(lam).prox(x0, gamma=g), atol=PROX_ATOL
     )
 
 
@@ -104,7 +118,7 @@ def test_param_lambd():
     v.set_objective_norm([out], np.inf)
     v.solve()
     np.testing.assert_allclose(
-        v.get_solution_value(out), TotalVariation1D(lam0).prox(x0), atol=1e-4
+        v.get_solution_value(out), TotalVariation1D(lam0).prox(x0), atol=PROX_ATOL
     )
 
 
