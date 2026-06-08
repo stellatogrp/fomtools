@@ -103,8 +103,12 @@ class MIP(Canonicalizer):
             If either expression has a non-finite upper bound, so big-M is undefined.
         """
         e1, e2 = constraint.expr1, constraint.expr2
-        M1 = np.asarray(e1.ub, dtype=float)
-        M2 = np.asarray(e2.ub, dtype=float)
+        # Use bound_propagation so the big-M is correct for composite expressions
+        # (e.g. ``b - A @ u``), not just leaf variables: a composite's ``.ub`` is the
+        # list of its leaves' bounds, whereas bound_propagation returns the elementwise
+        # upper bound of the expression itself.
+        _, M1 = e1.bound_propagation()
+        _, M2 = e2.bound_propagation()
         if not (np.all(np.isfinite(M1)) and np.all(np.isfinite(M2))):
             raise ValueError(
                 "Complementarity big-M encoding requires finite upper bounds on both "

@@ -40,4 +40,5 @@ class SimulatorStepDecomposer(StepDecomposer):
         "quadratic": _implicit_iterate_not_supported,
         "leastsquares": _implicit_iterate_not_supported,
         "indaffine": _implicit_iterate_not_supported,
+        "indpolyhedral": _implicit_iterate_not_supported,
     }

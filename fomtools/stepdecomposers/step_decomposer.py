@@ -4,6 +4,7 @@ from typing import Callable, ClassVar
 import numpy as np
 import scipy.sparse as spa
 
+from fomtools.constraint import complementarity
 from fomtools.linearexpression import LinearExpression, solve_linexpr, stack
 from fomtools.proxable_functions import (
     ElasticNet,
@@ -16,6 +17,7 @@ from fomtools.proxable_functions import (
     IndNonNegative,
     IndNonPositive,
     IndPoint,
+    IndPolyhedral,
     LabeledHingeLoss,
     Linear,
     NormL1,
@@ -465,6 +467,79 @@ class StepDecomposer:
         self.add_constraint(A @ u == b)
         return u
 
+    def prox_indpolyhedral(
+        self, prox: IndPolyhedral, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower the polyhedral-set indicator prox onto its KKT system.
+
+        For :math:`\operatorname{proj}_{\{Au \le b\}}(\text{rhs})` the KKT system is
+
+        .. math::
+            u = \text{rhs} - A^\top \lambda \quad\text{(stationarity)},\\
+            Au \le b \quad\text{(primal feasibility)},\\
+            0 \le \lambda \perp (b - Au) \ge 0 \quad\text{(complementary slackness)}.
+
+        The complementarity constraint already encodes :math:`\lambda \ge 0` and
+        :math:`Au \le b`; the explicit ``A u <= b`` is added redundantly because, being
+        *linear*, it is visible to the OBBT LP and bounds ``u`` within the polytope. The
+        linear rows are posted before the (non-convex) complementarity so OBBT tightens
+        ``u``/``lambda`` first — the MIP big-M then reads finite bounds.
+
+        Parameters
+        ----------
+        prox : IndPolyhedral
+            The polyhedral indicator carrying ``A``, ``b`` and an optional ``dual_ub``.
+        rhs : LinearExpression
+            The point being projected.
+        gamma : float, default 1.0
+            Step size (irrelevant for an indicator).
+
+        Returns
+        -------
+        LinearExpression
+            The primal projection ``u`` of dimension ``n``.
+        """
+        A, m, n = prox.A, prox.m, prox.n
+
+        # Lift ``b`` to a LinearExpression (pass-through if already an LE param).
+        b = prox.b
+        try:
+            _ = b.decomposition_dict
+            b_le = b
+        except AttributeError:
+            b_le = LinearExpression(
+                decomposition_dict={},
+                const=np.broadcast_to(np.asarray(b, dtype=float), (m,)).copy(),
+            )
+
+        # Dual upper bound: finite when the user supplies ``dual_ub``. The complementarity
+        # is dropped by the OBBT LP, so for projection problems OBBT cannot infer a finite
+        # bound on ``lambda`` on its own (the LP-relaxed dual is unbounded); a finite
+        # ``dual_ub`` is what makes the big-M encoding well-posed. OBBT tightens further.
+        if prox.dual_ub is None:
+            lam_ub = np.full(m, np.inf)
+        else:
+            lam_ub = np.broadcast_to(np.asarray(prox.dual_ub, dtype=float), (m,)).copy()
+
+        lam = self.add_iterate(m, lb=np.zeros(m), ub=lam_ub)
+
+        # Derive ``u`` bounds from stationarity ``u = rhs - A^T lambda`` via interval
+        # propagation on the already-bounded ``rhs`` and ``lambda`` (mirrors prox_indaffine).
+        # When ``dual_ub`` is None, ``lambda`` is unbounded and interval arithmetic yields
+        # NaN (inf - inf); map those back to +/-inf so ``u`` registers (MIP) and the
+        # complementarity builder raises its clear finite-bound error downstream.
+        with np.errstate(invalid="ignore"):  # inf - inf when dual_ub is None
+            u_lb, u_ub = (rhs - A.T @ lam).bound_propagation()
+        u_lb = np.where(np.isfinite(u_lb), u_lb, -np.inf)
+        u_ub = np.where(np.isfinite(u_ub), u_ub, np.inf)
+        u = self.add_iterate(n, lb=u_lb, ub=u_ub)
+
+        self.add_constraint(u + A.T @ lam == rhs)
+        self.add_constraint(A @ u <= b_le)
+        self.add_constraint(complementarity(lam, b_le - A @ u))
+        return u
+
     def prox_indballlinf(
         self, prox: IndBallLinf, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
@@ -779,6 +854,7 @@ class StepDecomposer:
         "indnonnegative": prox_indnonnegative,
         "indnonpositive": prox_indnonpositive,
         "indpoint": prox_indpoint,
+        "indpolyhedral": prox_indpolyhedral,
         "labeledhingeloss": prox_labeledhingeloss,
         "leastsquares": prox_quadratic,
         "linear": prox_linear,

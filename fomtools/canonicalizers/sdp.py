@@ -343,6 +343,11 @@ class SDP(Canonicalizer):
                 self._add_equality_constraint_impl(constraint)
             case "<=":
                 self._add_inequality_constraint_impl(constraint)
+            case "complementarity":
+                raise NotImplementedError(
+                    "Complementarity constraints are not yet supported on the SDP backend "
+                    "(planned: step 5). Use method='mip' for now."
+                )
             case _:
                 raise ValueError(f"Unknown constraint operator: {constraint.operator}")
 
