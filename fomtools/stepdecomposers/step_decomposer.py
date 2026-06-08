@@ -559,13 +559,14 @@ class StepDecomposer:
         r"""
         Lower the polyhedral-set indicator prox :math:`\operatorname{proj}_{\{Au \le b\}}`
         via :meth:`_prox_polyhedral_kkt` (inequality-only). The complementarity big-M needs
-        a finite bound on ``lambda``; the user supplies it via ``prox.dual_ub`` (the
-        LP-relaxed dual of a general polytope is unbounded, so OBBT alone cannot infer one).
+        a finite bound on ``lambda``; the user must supply it via ``prox.dual_ub`` (the
+        LP-relaxed dual of a general polytope is unbounded, so it cannot be auto-derived).
+        Raises ``ValueError`` eagerly if ``dual_ub`` is ``None``.
 
         Parameters
         ----------
         prox : IndPolyhedral
-            The polyhedral indicator carrying ``A``, ``b`` and an optional ``dual_ub``.
+            The polyhedral indicator carrying ``A``, ``b`` and a required ``dual_ub``.
         rhs : LinearExpression
             The point being projected.
         gamma : float, default 1.0
@@ -577,12 +578,14 @@ class StepDecomposer:
             The primal projection ``u``.
         """
         A, m = prox.A, prox.m
+        if prox.dual_ub is None:
+            raise ValueError(
+                "IndPolyhedral requires a finite `dual_ub`: the dual of a general polyhedron "
+                "is not auto-boundable (its LP relaxation is unbounded). Construct it as "
+                "IndPolyhedral(A, b, dual_ub=<finite bound on the optimal multipliers>)."
+            )
         b_le = self._lift_to_le(prox.b, m)
-        lam_ub = (
-            np.full(m, np.inf)
-            if prox.dual_ub is None
-            else np.broadcast_to(np.asarray(prox.dual_ub, dtype=float), (m,)).copy()
-        )
+        lam_ub = np.broadcast_to(np.asarray(prox.dual_ub, dtype=float), (m,)).copy()
         return self._prox_polyhedral_kkt(rhs, A, b_le, lam_ub)
 
     def prox_indsimplex(
@@ -620,7 +623,9 @@ class StepDecomposer:
 
         rhs_lb, rhs_ub = rhs.bound_propagation()
         lo, hi = float(np.min(rhs_lb)), float(np.max(rhs_ub))
-        lam_ub = np.full(n, hi - lo)  # lambda_i = (nu - x_i)_+ <= max x - min x
+        # Per-component: lambda_i = (nu - x_i)_+ <= hi - rhs_lb[i] (nu <= max_j x_j <= hi),
+        # tighter than the global hi - lo for heterogeneous boxes.
+        lam_ub = hi - rhs_lb
         nu_bounds = (np.array([lo - a_max]), np.array([hi]))  # nu = tau in [min x - a, max x]
 
         A = -np.eye(n)
@@ -898,7 +903,7 @@ class StepDecomposer:
         implicit-iterate prox — directly).
         """
         radius = gamma * prox.lambd
-        proj = self.prox_indballl1(IndBallL1(radius), rhs)
+        proj = self.prox_indballl1(IndBallL1(radius, dual_ub=prox.dual_ub), rhs)
         return rhs - proj
 
     def prox_totalvariation1d(

@@ -25,9 +25,14 @@ class NormInf(ProxableFunction):
     lambd : float or LinearExpression
         Non-negative scalar weight (the :math:`\ell_\infty` norm is not separable, so a
         single scalar), or a dim-1 ``LinearExpression`` parameter.
+    dual_ub : None, float, or np.ndarray, optional
+        Upper bound forwarded to the underlying ℓ1-ball projection's dual (the prox is
+        ``v - proj_{||.||_1 <= gamma*lambda}(v)`` by Moreau). ``None`` (default) lets
+        ``IndBallL1`` auto-derive a valid bound from the input box; supply a value to
+        override it when the auto bound is loose (e.g. large asymmetric inputs).
     """
 
-    def __init__(self, lambd=1.0):
+    def __init__(self, lambd=1.0, dual_ub=None):
         super().__init__()
         if hasattr(lambd, "decomposition_dict"):  # dim-1 LinearExpression parameter
             if lambd.ndim != 1:
@@ -35,6 +40,7 @@ class NormInf(ProxableFunction):
         elif lambd < 0:
             raise ValueError("lambd must be non-negative")
         self.lambd = lambd
+        self.dual_ub = dual_ub
 
     def _lambd_value(self) -> float:
         """Concrete scalar weight (a parameter uses its stored constant value)."""

@@ -128,6 +128,22 @@ def test_sdp_bound_vs_mip_over_box():
     assert mip_inf <= sdp_two + TEST_EPS
 
 
+def test_dual_ub_stored_and_forwarded():
+    """NormInf accepts dual_ub, stores it, and the lowering still matches the numeric prox.
+
+    dual_ub overrides the auto-derived bound of the underlying ℓ1-ball projection.
+    """
+    assert NormInf(1.0, dual_ub=7.5).dual_ub == 7.5
+
+    x0 = np.array([3.0, 0.0, 0.0])
+    v = _make_verifier("mip", obbt="gurobi")
+    x = v.add_param(3, lb=x0, ub=x0)
+    out = v.prox(NormInf(1.0, dual_ub=10.0), x)  # explicit (valid) override
+    v.set_objective_norm([out], np.inf)
+    v.solve()
+    np.testing.assert_allclose(v.get_solution_value(out), NormInf(1.0).prox(x0), atol=1e-4)
+
+
 def test_simulator_not_supported():
     v = _make_verifier("simulator")
     rhs = v.add_param(3, lb=-1.0, ub=1.0)

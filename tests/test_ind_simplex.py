@@ -134,6 +134,22 @@ def test_sdp_bound_vs_mip_over_box():
     assert mip_inf <= sdp_two + TEST_EPS
 
 
+def test_lam_ub_per_component():
+    """The dual bound is per-component (hi - rhs_lb), tighter than the global hi - lo."""
+    rhs_lb = np.array([-1.0, 0.0, 2.0])
+    rhs_ub = np.array([1.0, 3.0, 5.0])
+    v = _make_verifier("mip", obbt=None)
+    x = v.add_param(3, lb=rhs_lb, ub=rhs_ub)
+    v.prox(IndSimplex(1.0), x)
+
+    hi, lo = float(np.max(rhs_ub)), float(np.min(rhs_lb))
+    expected = hi - rhs_lb  # [6, 5, 3]
+    # The lambda iterate is the dim-3 nonnegative dual registered before u; match by ub.
+    lam_ubs = [it.ub for it in v.iterates if it.ndim == 3 and np.allclose(it.lb, 0.0)]
+    assert any(np.allclose(ub, expected) for ub in lam_ubs), lam_ubs
+    assert np.all(expected <= hi - lo + 1e-9)  # tighter than (or equal to) the old global bound
+
+
 def test_simulator_not_supported():
     v = _make_verifier("simulator")
     rhs = v.add_param(3, lb=-1.0, ub=1.0)

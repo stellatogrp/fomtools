@@ -95,13 +95,18 @@ def test_mip_projection_matches_numeric(A, b, x0, dual_ub):
     np.testing.assert_allclose(got, IndPolyhedral(A, b).prox(x0), atol=1e-4)
 
 
-def test_mip_without_dual_ub_raises():
-    """Without a finite dual bound the big-M complementarity cannot be built."""
+@pytest.mark.parametrize("method", ["mip", "sdp"])
+def test_without_dual_ub_raises(method):
+    """Without dual_ub, lowering raises eagerly with a clear, prox-attributed error.
+
+    The general-polyhedron dual is not auto-boundable, so this must fail on both backends
+    (not via the downstream complementarity/SDP infinite-bound error).
+    """
     A, b = _box(2, -np.ones(2), np.ones(2))
-    v = _make_verifier("mip", obbt="gurobi")
+    v = _make_verifier(method, obbt="gurobi" if method == "mip" else None)
     x = v.add_param(2, lb=np.array([2.0, -3.0]), ub=np.array([2.0, -3.0]))
-    with pytest.raises(ValueError, match="finite upper bounds"):
-        v.prox(IndPolyhedral(A, b), x)  # dual_ub=None -> lambda unbounded
+    with pytest.raises(ValueError, match="dual_ub"):
+        v.prox(IndPolyhedral(A, b), x)  # dual_ub=None
 
 
 def test_simulator_not_supported():
@@ -183,14 +188,6 @@ def test_sdp_disjoint_guard():
     x = v.add_iterate(2, lb=0.0, ub=1.0)
     with pytest.raises(NotImplementedError, match="sharing variables"):
         v.add_constraint(v.complementarity(x, x))
-
-
-def test_sdp_requires_finite_dual_ub():
-    """SDP needs finite bounds at registration; dual_ub=None makes lambda unbounded."""
-    v = _make_verifier("sdp")
-    rhs = v.add_param(2, lb=-1.0, ub=1.0)
-    with pytest.raises(NotImplementedError, match="[Ii]nfinite"):
-        v.prox(IndPolyhedral(np.array([[1.0, 1.0]]), np.array([0.5])), rhs)  # dual_ub=None
 
 
 def test_complementarity_composite_slack_bound():

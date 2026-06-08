@@ -120,7 +120,7 @@ class SDP(Canonicalizer):
         self._cut_ineq_matrices = []
         self._cut_bineq_upperbounds = []
         self._relu_steps = []  # registry for triangle cuts
-        self._ineq_constraints = []  # registry for inequality-constraint cuts
+        self._ineq_constraints = []  # (constraint, add_product_cuts) for inequality cuts
 
         self.C_obj = None
         self._objective_spec = None
@@ -318,7 +318,7 @@ class SDP(Canonicalizer):
         new_canon._cut_ineq_matrices = []
         new_canon._cut_bineq_upperbounds = []
         new_canon._relu_steps = list(self._relu_steps)  # shallow: Relu objs are shared
-        new_canon._ineq_constraints = list(self._ineq_constraints)  # shallow: constraints shared
+        new_canon._ineq_constraints = list(self._ineq_constraints)  # shallow: (constr, flag) tuples
         new_canon.C_obj = self.C_obj.copy() if self.C_obj is not None else None
         new_canon.obbt_handler = self.obbt_handler
         new_canon._objective_spec = self._objective_spec
@@ -394,21 +394,48 @@ class SDP(Canonicalizer):
         # PSD cone for {0} ∪ x_indices (also marks _cuts_dirty via add_psd_cone_indices)
         self.add_psd_cone_indices(x_idx_bounds)
 
-    def _add_inequality_constraint_impl(self, constraint: Constraint) -> None:
+    def _add_inequality_constraint_impl(
+        self, constraint: Constraint, add_product_cuts: bool = True
+    ) -> None:
         """
-        Add an inequality constraint ``Ax + b <= 0`` and register it for cuts.
+        Add an inequality constraint ``Ax + b <= 0`` and register it for RLT cuts.
 
         Adds the base linear constraint ``a_i^T x <= -b_i`` per row (lifted into
         ``Aineq_matrices`` / ``bineq_upperbounds``) and a PSD cone over ``{0} ∪ x``
         so the quadratic block is constrained (matching the equality impl). The
-        constraint is also recorded in ``self._ineq_constraints`` so the lazy cut
-        builder can emit the optional RLT strengthenings (cuts 1/2/3) gated by the
-        ``ineq_*_cuts`` flags; those are (re)built in ``_rebuild_cuts_if_dirty``.
+        constraint is recorded in ``self._ineq_constraints`` so the lazy cut builder
+        can emit the optional RLT strengthenings gated by the ``ineq_*_cuts`` flags;
+        those are (re)built in ``_rebuild_cuts_if_dirty``.
 
         Parameters
         ----------
         constraint : Constraint
             An inequality constraint (operator "<=").
+        add_product_cuts : bool, default True
+            Whether the **product cuts** (``g_i g_j >= 0`` for ``i < j``, the
+            ``ineq_product_cuts`` family) may be emitted for this constraint. The box
+            and square cut families are always eligible (subject to their global flags);
+            only the cross-product family is gated here.
+
+            Set ``False`` for the **nonnegativity sides of a complementarity constraint**
+            (``e1 >= 0`` / ``e2 >= 0`` emitted by
+            :meth:`_add_complementarity_constraint_impl`). Rationale:
+
+            - The product family is ``O(m^2)`` per constraint — the dominant cut cost —
+              and each complementarity adds two such sides, so leaving it on multiplies
+              the cut count for multi-complementarity proxes (``IndBallL1``, ``TV1D``).
+            - Empirically these product cuts add **no** tightening on those sides: the box
+              and square cuts already drive the relaxation to the same value (e.g.
+              ``IndBallL1`` stays exact at a fixed point with product cuts off but box/
+              square on). Keeping box/square is what preserves tightness.
+            - For ``IndPolyhedral`` the ``e2 = b - A u >= 0`` side also duplicates the
+              explicitly-posted ``A u <= b``; dropping its product cuts removes that
+              duplication too.
+
+            The genuine problem inequalities (e.g. the explicit ``A u <= b``) are added
+            with the default ``True`` and keep generating product cuts — those *do*
+            tighten (the ``IndPolyhedral`` 4.0 -> 0.25 test relies on them), so the family
+            is gated per-constraint rather than globally.
         """
         A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(constraint.lhs)
         b_vec = constraint.lhs.const
@@ -429,8 +456,10 @@ class SDP(Canonicalizer):
         # PSD cone for {0} ∪ x_indices (also marks _cuts_dirty via add_psd_cone_indices).
         self.add_psd_cone_indices(x_idx_bounds)
 
-        # Register for lazy cut generation (cuts depend on current bounds).
-        self._ineq_constraints.append(constraint)
+        # Register for lazy cut generation. The per-constraint ``add_product_cuts`` flag is
+        # stored alongside so the builder can skip only the (expensive) product family for
+        # complementarity nonnegativity sides while still emitting box/square cuts.
+        self._ineq_constraints.append((constraint, add_product_cuts))
         self._cuts_dirty = True
 
     def _add_complementarity_constraint_impl(self, constraint) -> None:
@@ -459,7 +488,9 @@ class SDP(Canonicalizer):
         # The compact outer-product scatter assumes the two expressions reference
         # disjoint variables (true for λ ⊥ (b−Au): λ and u are distinct leaves).
         # Overlapping leaves would double-index the block; guard rather than mis-encode.
-        if set(idx1) & set(idx2):
+        # Compare the underlying leaf variables directly (decomposition_dict keys), not the
+        # (start, end) index ranges.
+        if set(e1.decomposition_dict) & set(e2.decomposition_dict):
             raise NotImplementedError(
                 "SDP complementarity between expressions sharing variables is not supported."
             )
@@ -479,9 +510,11 @@ class SDP(Canonicalizer):
             self.Aeq_matrices.append(symmetrize(M.tocsc()))
             self.beq_consts.append(0)
 
-        # Nonnegativity of both sides (``e1 >= 0`` -> ``-e1 <= 0``).
-        self._add_inequality_constraint_impl(e1 >= 0)
-        self._add_inequality_constraint_impl(e2 >= 0)
+        # Nonnegativity of both sides (``e1 >= 0`` -> ``-e1 <= 0``). Skip the (O(m^2),
+        # tightening-neutral) product-cut family on these sides; box/square cuts still
+        # apply and are what preserve tightness (see ``add_product_cuts``).
+        self._add_inequality_constraint_impl(e1 >= 0, add_product_cuts=False)
+        self._add_inequality_constraint_impl(e2 >= 0, add_product_cuts=False)
 
         # Constrain the bilinear entries.
         self.add_psd_cone_indices(idx1 + idx2)
@@ -995,7 +1028,7 @@ class SDP(Canonicalizer):
         sdp_idx_bounds = self._build_sdp_idx_bounds()
         n_dim = self.get_sdp_var_dim()
 
-        for constraint in self._ineq_constraints:
+        for constraint, product_cuts_ok in self._ineq_constraints:
             A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(constraint.lhs)
             b_vec = np.asarray(constraint.lhs.const).flatten()
             m = A_mat.shape[0]
@@ -1028,7 +1061,9 @@ class SDP(Canonicalizer):
                     self._cut_bineq_upperbounds.append(0.0)
 
                 # Cut (1): g_i g_j >= 0 for i < j  ->  -sym(c_i c_j^T) <= 0.
-                if self.ineq_product_cuts:
+                # Per-constraint ``product_cuts_ok`` skips this O(m^2) family for
+                # complementarity nonnegativity sides (see ``add_product_cuts``).
+                if self.ineq_product_cuts and product_cuts_ok:
                     for j in range(i + 1, m):
                         Mc = np.outer(c_i, c_list[j])
                         M = spa.lil_matrix((n_dim, n_dim))
