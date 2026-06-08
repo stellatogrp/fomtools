@@ -19,6 +19,7 @@ from fomtools.proxable_functions import (
     IndNonPositive,
     IndPoint,
     IndPolyhedral,
+    IndSimplex,
     LabeledHingeLoss,
     Linear,
     NormInf,
@@ -469,24 +470,95 @@ class StepDecomposer:
         self.add_constraint(A @ u == b)
         return u
 
+    def _lift_to_le(self, value, dim: int) -> LinearExpression:
+        """
+        Lift a scalar/array to a constant ``LinearExpression``; pass LE params through.
+
+        Parameters
+        ----------
+        value : float, np.ndarray, or LinearExpression
+            The right-hand side value to lift.
+        dim : int
+            Target dimension for scalar/array broadcasting.
+        """
+        if hasattr(value, "decomposition_dict"):
+            return value
+        return LinearExpression(
+            decomposition_dict={},
+            const=np.broadcast_to(np.asarray(value, dtype=float), (dim,)).copy(),
+        )
+
+    def _prox_polyhedral_kkt(
+        self, rhs, A, b_le, lam_ub, C=None, d_le=None, nu_bounds=None
+    ) -> LinearExpression:
+        r"""
+        Shared KKT lowering for projection onto ``{Au <= b}`` and an optional ``{Cu = d}``.
+
+        Encodes the convex-QP KKT system
+
+        .. math::
+            u = \text{rhs} - A^\top \lambda - C^\top \nu,\quad \lambda \ge 0,\quad
+            Au \le b,\quad 0 \le \lambda \perp (b - Au) \ge 0,\quad [Cu = d],
+
+        with :math:`\nu` a free equality multiplier. The explicit ``A u <= b`` is redundant
+        with the complementarity's slack-nonnegativity but, being linear, is visible to the
+        OBBT LP (bounds ``u``). The linear rows precede the (non-convex) complementarity so
+        OBBT tightens ``u``/``lambda`` first.
+
+        Parameters
+        ----------
+        rhs : LinearExpression
+            The point being projected.
+        A : np.ndarray
+            Inequality matrix, shape ``(m, n)``.
+        b_le : LinearExpression
+            Inequality right-hand side, dim ``m``.
+        lam_ub : np.ndarray
+            Finite upper bound(s) on the inequality dual ``lambda``, shape ``(m,)`` (may be
+            ``inf`` — then the complementarity builder raises a clear finite-bound error).
+        C : np.ndarray, optional
+            Equality matrix, shape ``(p, n)``. ``None`` for inequality-only.
+        d_le : LinearExpression, optional
+            Equality right-hand side, dim ``p``.
+        nu_bounds : tuple[np.ndarray, np.ndarray], optional
+            ``(lb, ub)`` for the free equality multiplier ``nu``; required when ``C`` is given.
+
+        Returns
+        -------
+        LinearExpression
+            The primal projection ``u`` of dimension ``n``.
+        """
+        m, n = A.shape
+        lam = self.add_iterate(m, lb=np.zeros(m), ub=lam_ub)
+        stat = rhs - A.T @ lam
+        if C is not None:
+            nu = self.add_iterate(C.shape[0], lb=nu_bounds[0], ub=nu_bounds[1])
+            stat = stat - C.T @ nu
+
+        # u bounds via interval propagation on the (bounded) duals + rhs. When lambda is
+        # unbounded (dual_ub None) interval arithmetic yields NaN (inf - inf); map to +/-inf
+        # so u registers (MIP) and the complementarity builder raises its finite-bound error.
+        with np.errstate(invalid="ignore"):
+            u_lb, u_ub = stat.bound_propagation()
+        u_lb = np.where(np.isfinite(u_lb), u_lb, -np.inf)
+        u_ub = np.where(np.isfinite(u_ub), u_ub, np.inf)
+        u = self.add_iterate(n, lb=u_lb, ub=u_ub)
+
+        self.add_constraint(u == stat)  # stationarity
+        self.add_constraint(A @ u <= b_le)  # primal feasibility (OBBT-visible)
+        self.add_constraint(complementarity(lam, b_le - A @ u))
+        if C is not None:
+            self.add_constraint(C @ u == d_le)  # equality (free nu)
+        return u
+
     def prox_indpolyhedral(
         self, prox: IndPolyhedral, rhs: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
-        Lower the polyhedral-set indicator prox onto its KKT system.
-
-        For :math:`\operatorname{proj}_{\{Au \le b\}}(\text{rhs})` the KKT system is
-
-        .. math::
-            u = \text{rhs} - A^\top \lambda \quad\text{(stationarity)},\\
-            Au \le b \quad\text{(primal feasibility)},\\
-            0 \le \lambda \perp (b - Au) \ge 0 \quad\text{(complementary slackness)}.
-
-        The complementarity constraint already encodes :math:`\lambda \ge 0` and
-        :math:`Au \le b`; the explicit ``A u <= b`` is added redundantly because, being
-        *linear*, it is visible to the OBBT LP and bounds ``u`` within the polytope. The
-        linear rows are posted before the (non-convex) complementarity so OBBT tightens
-        ``u``/``lambda`` first — the MIP big-M then reads finite bounds.
+        Lower the polyhedral-set indicator prox :math:`\operatorname{proj}_{\{Au \le b\}}`
+        via :meth:`_prox_polyhedral_kkt` (inequality-only). The complementarity big-M needs
+        a finite bound on ``lambda``; the user supplies it via ``prox.dual_ub`` (the
+        LP-relaxed dual of a general polytope is unbounded, so OBBT alone cannot infer one).
 
         Parameters
         ----------
@@ -500,47 +572,59 @@ class StepDecomposer:
         Returns
         -------
         LinearExpression
+            The primal projection ``u``.
+        """
+        A, m = prox.A, prox.m
+        b_le = self._lift_to_le(prox.b, m)
+        lam_ub = (
+            np.full(m, np.inf)
+            if prox.dual_ub is None
+            else np.broadcast_to(np.asarray(prox.dual_ub, dtype=float), (m,)).copy()
+        )
+        return self._prox_polyhedral_kkt(rhs, A, b_le, lam_ub)
+
+    def prox_indsimplex(
+        self, prox: IndSimplex, rhs: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        r"""
+        Lower the simplex indicator prox :math:`\operatorname{proj}_{\{u \ge 0,\ 1^\top u = a\}}`
+        as the mixed polyhedron ``{Au <= b, Cu = d}`` with ``A = -I``, ``b = 0``, ``C = 1^T``,
+        ``d = a``, via :meth:`_prox_polyhedral_kkt`.
+
+        The simplex is bounded, so the duals are bounded and derived analytically from the
+        input box (no user ``dual_ub``): with ``u_i = (x_i - nu)_+`` and ``lambda_i =
+        (nu - x_i)_+``,
+
+        - ``lambda_i <= max_i x_i - min_i x_i`` over the box, and
+        - ``nu`` (the relu threshold) ``in [min(rhs_lb) - a_max, max(rhs_ub)]``.
+
+        Parameters
+        ----------
+        prox : IndSimplex
+            The simplex indicator carrying the sum ``a`` (scalar or dim-1 LinearExpression).
+        rhs : LinearExpression
+            The point being projected.
+        gamma : float, default 1.0
+            Step size (irrelevant for an indicator).
+
+        Returns
+        -------
+        LinearExpression
             The primal projection ``u`` of dimension ``n``.
         """
-        A, m, n = prox.A, prox.m, prox.n
+        n = rhs.ndim
+        a_le = self._lift_to_le(prox.a, 1)
+        a_max = float(a_le.bound_propagation()[1][0])
 
-        # Lift ``b`` to a LinearExpression (pass-through if already an LE param).
-        b = prox.b
-        try:
-            _ = b.decomposition_dict
-            b_le = b
-        except AttributeError:
-            b_le = LinearExpression(
-                decomposition_dict={},
-                const=np.broadcast_to(np.asarray(b, dtype=float), (m,)).copy(),
-            )
+        rhs_lb, rhs_ub = rhs.bound_propagation()
+        lo, hi = float(np.min(rhs_lb)), float(np.max(rhs_ub))
+        lam_ub = np.full(n, hi - lo)  # lambda_i = (nu - x_i)_+ <= max x - min x
+        nu_bounds = (np.array([lo - a_max]), np.array([hi]))  # nu = tau in [min x - a, max x]
 
-        # Dual upper bound: finite when the user supplies ``dual_ub``. The complementarity
-        # is dropped by the OBBT LP, so for projection problems OBBT cannot infer a finite
-        # bound on ``lambda`` on its own (the LP-relaxed dual is unbounded); a finite
-        # ``dual_ub`` is what makes the big-M encoding well-posed. OBBT tightens further.
-        if prox.dual_ub is None:
-            lam_ub = np.full(m, np.inf)
-        else:
-            lam_ub = np.broadcast_to(np.asarray(prox.dual_ub, dtype=float), (m,)).copy()
-
-        lam = self.add_iterate(m, lb=np.zeros(m), ub=lam_ub)
-
-        # Derive ``u`` bounds from stationarity ``u = rhs - A^T lambda`` via interval
-        # propagation on the already-bounded ``rhs`` and ``lambda`` (mirrors prox_indaffine).
-        # When ``dual_ub`` is None, ``lambda`` is unbounded and interval arithmetic yields
-        # NaN (inf - inf); map those back to +/-inf so ``u`` registers (MIP) and the
-        # complementarity builder raises its clear finite-bound error downstream.
-        with np.errstate(invalid="ignore"):  # inf - inf when dual_ub is None
-            u_lb, u_ub = (rhs - A.T @ lam).bound_propagation()
-        u_lb = np.where(np.isfinite(u_lb), u_lb, -np.inf)
-        u_ub = np.where(np.isfinite(u_ub), u_ub, np.inf)
-        u = self.add_iterate(n, lb=u_lb, ub=u_ub)
-
-        self.add_constraint(u + A.T @ lam == rhs)
-        self.add_constraint(A @ u <= b_le)
-        self.add_constraint(complementarity(lam, b_le - A @ u))
-        return u
+        A = -np.eye(n)
+        b_le = self._lift_to_le(0.0, n)  # u >= 0  (-u <= 0)
+        C = np.ones((1, n))
+        return self._prox_polyhedral_kkt(rhs, A, b_le, lam_ub, C=C, d_le=a_le, nu_bounds=nu_bounds)
 
     def prox_indballl1(
         self, prox: IndBallL1, rhs: LinearExpression, gamma: float = 1.0
@@ -953,6 +1037,7 @@ class StepDecomposer:
         "indnonpositive": prox_indnonpositive,
         "indpoint": prox_indpoint,
         "indpolyhedral": prox_indpolyhedral,
+        "indsimplex": prox_indsimplex,
         "labeledhingeloss": prox_labeledhingeloss,
         "leastsquares": prox_quadratic,
         "linear": prox_linear,
