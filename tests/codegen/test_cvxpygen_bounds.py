@@ -22,10 +22,7 @@ def test_interval_matvec_matches_corner_enumeration():
 
     # Affine map: extrema are attained at box corners.
     corners = np.array(
-        [
-            M @ np.where(mask, ub, lb)
-            for mask in itertools.product([False, True], repeat=cols)
-        ]
+        [M @ np.where(mask, ub, lb) for mask in itertools.product([False, True], repeat=cols)]
     )
     np.testing.assert_allclose(lo, corners.min(axis=0), atol=1e-12)
     np.testing.assert_allclose(hi, corners.max(axis=0), atol=1e-12)

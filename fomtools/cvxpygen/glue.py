@@ -19,6 +19,7 @@ from pathlib import Path
 from fomtools.cvxpygen.builders import FomSpec
 from fomtools.cvxpygen.qpdata import QPData
 
+
 def _piece_dims(qp: QPData) -> dict[str, tuple[str, int, int]]:
     """Map each canonical piece to (Canon_Params member, offset, length)."""
     return {
@@ -174,6 +175,4 @@ def write_solver_cmake_stub(solver_code_dir: str | Path) -> None:
     parent scope, so the stub itself carries no build logic.
     """
     path = Path(solver_code_dir) / "CMakeLists.txt"
-    path.write_text(
-        "# fomtools solver sources — populated by CVXPYgen (write_canon_cmake)\n"
-    )
+    path.write_text("# fomtools solver sources — populated by CVXPYgen (write_canon_cmake)\n")

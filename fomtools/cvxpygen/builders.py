@@ -111,9 +111,7 @@ def build_admm_qp(
     rho_inv = 1.0 / rho_vec
     Rinv = spa.diags(rho_inv)
     R = spa.diags(rho_vec)
-    kkt = spa.bmat(
-        [[qp.P + sigma * spa.eye(n), qp.A.T], [qp.A, -Rinv]], format="csc"
-    )
+    kkt = spa.bmat([[qp.P + sigma * spa.eye(n), qp.A.T], [qp.A, -Rinv]], format="csc")
 
     v = Verifier(method="simulator", obbt_solver=None)
     exprs, param_copy = _add_params(v, qp, ("q", "b", "u_ineq"))

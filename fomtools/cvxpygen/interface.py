@@ -159,9 +159,7 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
                 "data is double precision)"
             )
 
-        qp = extract_qp_data(
-            canon, param_bounds=opts.param_bounds, bound_margin=opts.bound_margin
-        )
+        qp = extract_qp_data(canon, param_bounds=opts.param_bounds, bound_margin=opts.bound_margin)
         spec = resolve_builder(opts.fom)(qp, **opts.fom_options)
         if not spec.param_copy:
             raise ValueError(

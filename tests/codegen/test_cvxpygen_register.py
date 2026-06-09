@@ -68,16 +68,29 @@ def test_seam_canary():
     assert Generator._resolve_solver(stand_in, problem=None) == ("FOMTOOLS", 0)
 
     # Canonical data fields consumed by qpdata.extract_qp_data.
-    for fld in ("p", "p_id_to_mapping", "p_id_to_changes", "p_id_to_size", "nonzero_d",
-                "is_maximization"):
+    for fld in (
+        "p",
+        "p_id_to_mapping",
+        "p_id_to_changes",
+        "p_id_to_size",
+        "nonzero_d",
+        "is_maximization",
+    ):
         assert fld in ParameterCanon.__dataclass_fields__, fld
     for fld in ("flat_usp", "col_to_name_usp", "name_to_size_usp", "name_to_shape", "names"):
         assert fld in ParameterInfo.__dataclass_fields__, fld
 
     # Writer conventions the bridge depends on.
     assert hasattr(utils, "write_canon_cmake")
-    for fld in ("objective_value", "iterations", "status", "primal_residual",
-                "dual_residual", "primal_solution", "dual_solution"):
+    for fld in (
+        "objective_value",
+        "iterations",
+        "status",
+        "primal_residual",
+        "dual_residual",
+        "primal_solution",
+        "dual_solution",
+    ):
         assert fld in WorkspacePointerInfo.__dataclass_fields__, fld
     for fld in ("type", "default", "enabled"):
         assert fld in Setting.__dataclass_fields__, fld

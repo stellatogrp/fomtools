@@ -112,8 +112,7 @@ def user_bounds_vector(
             hi = np.broadcast_to(np.asarray(hi, dtype=float), shape).flatten(order="F")
             if lo.size != size or hi.size != size:
                 raise ValueError(
-                    f"bounds for parameter {name!r} have size {lo.size}/{hi.size}, "
-                    f"expected {size}"
+                    f"bounds for parameter {name!r} have size {lo.size}/{hi.size}, expected {size}"
                 )
             if np.any(lo > hi):
                 raise ValueError(f"bounds for parameter {name!r} have lb > ub")
@@ -140,9 +139,7 @@ def _parametric_rows(mapping: spa.spmatrix) -> np.ndarray:
     return np.diff(M.indptr) > 0
 
 
-def extract_qp_data(
-    canon, param_bounds: dict | None = None, bound_margin: float = 1.0
-) -> QPData:
+def extract_qp_data(canon, param_bounds: dict | None = None, bound_margin: float = 1.0) -> QPData:
     """Extract :class:`QPData` from a cvxpygen ``Canon`` (OSQP canonical form)."""
     pc = canon.parameter_canon
     pi = canon.parameter_info
