@@ -37,6 +37,11 @@ gpu = ["cupy-cuda12x"]
 # none of this (the wrapper uses the stdlib ``ctypes``).
 codegen = ["claude-agent-sdk"]
 
+# CVXPYgen integration (fomtools.cvxpygen): model in CVXPY, canonicalize with
+# CVXPYgen's generated C code, solve with a fomtools-generated embedded FOM.
+# Pinned to the cvxpygen 1.x internal API (solver-interface seam).
+cvxpygen = ["cvxpy", "cvxpygen>=1.0,<2", "osqp"]
+
 dev = [
        "cvxpy",
        "pytest",
