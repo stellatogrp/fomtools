@@ -157,7 +157,10 @@ class EmbeddedCTarget(TargetDescriptor):
         c_float = self.config.c_float
         term = ir.termination
         tol = term.tol if term.tol is not None else 0.0
-        use_tol = 1 if term.kind == TerminationKind.INF_NORM_CHANGE else 0
+        check = term.check_termination
+        # check_termination == 0 disables checking entirely (OSQP semantics);
+        # the macro is clamped to >= 1 so `% FOM_CHECK_TERMINATION` is safe.
+        use_tol = 1 if (term.kind == TerminationKind.INF_NORM_CHANGE and check > 0) else 0
 
         lines = [
             "#ifndef FOM_WORKSPACE_H",
@@ -170,6 +173,7 @@ class EmbeddedCTarget(TargetDescriptor):
             f"#define FOM_MAX_ITER {term.max_iters}",
             f"#define FOM_TOL ((fom_float){_fmt_float(tol)})",
             f"#define FOM_USE_TOL {use_tol}",
+            f"#define FOM_CHECK_TERMINATION {max(check, 1)}",
             f"#define FOM_NUM_PARAMS {len(ir.params)}",
             f"#define FOM_MAX_VEC_DIM {ir.max_rhs_dim}",
             "",

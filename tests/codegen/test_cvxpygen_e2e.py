@@ -40,6 +40,40 @@ def _build_problem():
 
 
 @pytest.mark.requires_compiler
+@pytest.mark.parametrize("check_termination", [1, 8])
+def test_generated_solver_verifies_with_tol_termination(
+    requires_compiler, tmp_path, monkeypatch, check_termination
+):
+    """The golden body's interval-N termination must match the oracle exactly.
+
+    Runs codegen + the C verification harness (StubAgentDriver golden) with
+    tolerance-based termination at different check intervals; wrapper=False
+    skips the slow CMake/pybind11 build.
+    """
+    from fomtools.codegen.config import TerminationKind
+
+    monkeypatch.chdir(tmp_path)
+    problem, q, x = _build_problem()
+    result = generate_solver(
+        problem,
+        "cpg_tol",
+        fom="admm",
+        param_bounds={q: (-1.0, 1.0)},
+        config=CodegenConfig(
+            termination=TerminationSpec(
+                kind=TerminationKind.INF_NORM_CHANGE,
+                max_iters=4000,
+                tol=1e-9,
+                check_termination=check_termination,
+            )
+        ),
+        driver=StubAgentDriver(GOLDEN),
+        wrapper=False,
+    )
+    assert result.success
+
+
+@pytest.mark.requires_compiler
 def test_generate_solver_end_to_end(requires_compiler, tmp_path, monkeypatch):
     if shutil.which("cmake") is None:
         pytest.skip("cmake not available")

@@ -75,6 +75,7 @@ def ir_to_dict(ir: FomIR) -> dict:
             "kind": ir.termination.kind.value,
             "max_iters": ir.termination.max_iters,
             "tol": ir.termination.tol,
+            "check_termination": ir.termination.check_termination,
         },
         "params": [{"name": p.name, "dim": p.dim} for p in ir.params],
         "state": {
@@ -162,6 +163,7 @@ def load(directory: str | Path) -> FomIR:
         kind=TerminationKind(spec["termination"]["kind"]),
         max_iters=spec["termination"]["max_iters"],
         tol=spec["termination"]["tol"],
+        check_termination=spec["termination"].get("check_termination", 1),
     )
 
     factorizations: dict[str, Factorization] = {}
@@ -265,7 +267,8 @@ def render_markdown(ir: FomIR) -> str:
         f"- dtype: `{ir.dtype}`",
         f"- state dimension: {ir.state.dim}",
         f"- termination: {ir.termination.kind.value} "
-        f"(max_iters={ir.termination.max_iters}, tol={ir.termination.tol})",
+        f"(max_iters={ir.termination.max_iters}, tol={ir.termination.tol}, "
+        f"check_termination={ir.termination.check_termination})",
         "",
         "## Parameters (supplied at solve time)",
     ]
@@ -315,6 +318,15 @@ def render_markdown(ir: FomIR) -> str:
     lines.append("")
     lines.append("Residual = `max_abs(new_state - state)`.")
     lines.append("")
+    if ir.termination.kind == TerminationKind.INF_NORM_CHANGE and ir.termination.check_termination:
+        lines.append(
+            "Termination: evaluate the residual and exit early (status `FOM_SOLVED`) only "
+            "on iterations where `(it + 1) % FOM_CHECK_TERMINATION == 0` and "
+            "`residual <= tol`; on other iterations skip the residual entirely (plain "
+            "state copy). `FOM_USE_TOL`, `FOM_CHECK_TERMINATION`, and `FOM_TOL` are "
+            "defined in `fom_workspace.h`."
+        )
+        lines.append("")
     lines.append("All matrices/consts are provided numerically in `data.npz` / `fom_data.c`.")
     return "\n".join(lines)
 

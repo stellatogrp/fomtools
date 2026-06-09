@@ -107,7 +107,9 @@ out_qp/
 In C, `cpg_update_<param>(...)` then `cpg_solve()` runs the canonicalization
 update and the embedded FOM; results land in `CPG_Result` as with any CVXPYgen
 solver. `cpg_set_solver_max_iter(...)` and `cpg_set_solver_tol(...)` adjust
-the FOM termination at runtime.
+the FOM termination at runtime; the check interval
+(`TerminationSpec(check_termination=...)`, OSQP-style: every N iterations,
+0 = disabled) is fixed at code-generation time.
 
 ## Limitations (v1)
 

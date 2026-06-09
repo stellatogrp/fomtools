@@ -97,8 +97,12 @@ class ReferenceOracle:
         trajectory = [state.copy()]
         residuals: list[float] = []
         term = ir.termination
+        # Early exit only on "check" iterations: every `check_termination`
+        # iterations (0 disables checking), mirroring the generated C exactly.
+        check = term.check_termination
+        use_tol = term.kind == TerminationKind.INF_NORM_CHANGE and check > 0
         iters = 0
-        for _ in range(term.max_iters):
+        for it in range(term.max_iters):
             for step in ir.body:
                 lin_val = self._eval_linop(step.linear_op, sources)
                 if step.solve is not None:
@@ -115,7 +119,7 @@ class ReferenceOracle:
             trajectory.append(state.copy())
             residuals.append(residual)
             iters += 1
-            if term.kind == TerminationKind.INF_NORM_CHANGE and residual <= term.tol:
+            if use_tol and (it + 1) % check == 0 and residual <= term.tol:
                 break
 
         return OracleResult(

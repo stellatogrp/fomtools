@@ -70,19 +70,26 @@ fom_int fom_solve(FomWorkspace *work) {
         fom_apply_su_t_t1(work->t1, work->new_state);
         FOM_PROF_END(state_update);
 
-        fom_float res = 0.0;
-        for (i = 0; i < FOM_STATE_DIM; ++i) {
-            fom_float d = work->new_state[i] - work->state[i];
-            if (d < 0.0) d = -d;
-            if (d > res) res = d;
-            work->state[i] = work->new_state[i];
-        }
-        work->solution.iter = it + 1;
-        work->solution.residual = res;
-        if (FOM_USE_TOL && res <= work->settings.tol) {
-            for (i = 0; i < FOM_STATE_DIM; ++i) work->solution.x[i] = work->state[i];
-            work->solution.status = FOM_SOLVED;
-            return FOM_SOLVED;
+        /* residual + termination check only every FOM_CHECK_TERMINATION
+           iterations (the residual is skipped entirely in between) */
+        if (FOM_USE_TOL && ((it + 1) % FOM_CHECK_TERMINATION == 0)) {
+            fom_float res = 0.0;
+            for (i = 0; i < FOM_STATE_DIM; ++i) {
+                fom_float d = work->new_state[i] - work->state[i];
+                if (d < 0.0) d = -d;
+                if (d > res) res = d;
+                work->state[i] = work->new_state[i];
+            }
+            work->solution.iter = it + 1;
+            work->solution.residual = res;
+            if (res <= work->settings.tol) {
+                for (i = 0; i < FOM_STATE_DIM; ++i) work->solution.x[i] = work->state[i];
+                work->solution.status = FOM_SOLVED;
+                return FOM_SOLVED;
+            }
+        } else {
+            for (i = 0; i < FOM_STATE_DIM; ++i) work->state[i] = work->new_state[i];
+            work->solution.iter = it + 1;
         }
     }
     for (i = 0; i < FOM_STATE_DIM; ++i) work->solution.x[i] = work->state[i];

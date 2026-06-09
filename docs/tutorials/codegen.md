@@ -47,6 +47,15 @@ result = vp.codegen("out/ista", next_state=next_state, config=config, name="ista
 assert result.success
 ```
 
+`TerminationSpec` also takes `check_termination` (mirroring OSQP's setting):
+the residual is computed and tested only every `check_termination` iterations,
+and `0` disables early exit entirely. The default is 1 — the generated check is
+an infinity norm fused into the state copy, measured at 1–2.5% of iteration
+time for direct-method FOMs, and checking less often overshoots the stopping
+point by up to `check_termination - 1` full iterations. Raise it only for
+matrix-free methods on large problems, where a single iteration is cheap
+relative to a pass over the state.
+
 This requires a coding agent. Enable the real Claude Agent SDK driver with
 `FOMTOOLS_CODEGEN_AGENT=1` (needs authentication), or pass an explicit driver
 (for example a `StubAgentDriver` wrapping a known-good source) for fully
