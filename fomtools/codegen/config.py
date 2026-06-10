@@ -8,8 +8,10 @@ touching the algorithm-specific intermediate representation, which lives in
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Version(str, Enum):
@@ -64,8 +66,7 @@ class TerminationKind(str, Enum):
     INF_NORM_CHANGE = "inf_norm_change"
 
 
-@dataclass(frozen=True)
-class TerminationSpec:
+class TerminationSpec(BaseModel):
     """Termination criterion for the generated solve loop.
 
     Parameters
@@ -90,26 +91,25 @@ class TerminationSpec:
         where iterations are cheap. Ignored for ``MAX_ITERS``.
     """
 
+    model_config = ConfigDict(frozen=True)
+
     kind: TerminationKind = TerminationKind.MAX_ITERS
-    max_iters: int = 1000
-    tol: float | None = None
-    check_termination: int = 1
+    max_iters: int = Field(ge=1, default=1000, description="Hard upper bound on iterations.")
+    tol: float | None = Field(
+        default=None, description="Tolerance for the ``INF_NORM_CHANGE`` criterion."
+    )
+    check_termination: int = Field(
+        ge=0, default=1, description="How often the ``INF_NORM_CHANGE`` criterion is evaluated."
+    )
 
-    def __post_init__(self) -> None:
-        if self.max_iters <= 0:
-            raise ValueError(f"max_iters must be positive, got {self.max_iters}")
-        if self.check_termination < 0:
-            raise ValueError(
-                f"check_termination must be >= 0 (0 disables checking), "
-                f"got {self.check_termination}"
-            )
-        if self.kind == TerminationKind.INF_NORM_CHANGE:
-            if self.tol is None or self.tol <= 0:
-                raise ValueError("tol must be a positive float for the inf_norm_change criterion")
+    @model_validator(mode="after")
+    def _check_tol(self) -> "TerminationSpec":
+        if self.kind == TerminationKind.INF_NORM_CHANGE and (self.tol is None or self.tol <= 0):
+            raise ValueError("tol must be a positive float for the inf_norm_change criterion")
+        return self
 
 
-@dataclass(frozen=True)
-class CodegenConfig:
+class CodegenConfig(BaseModel):
     """Top-level knobs controlling a code-generation run.
 
     Parameters
@@ -139,17 +139,22 @@ class CodegenConfig:
 
     version: Version = Version.EMBEDDED
     backend: Backend = Backend.C
-    termination: TerminationSpec = field(default_factory=TerminationSpec)
+    termination: TerminationSpec = Field(default_factory=TerminationSpec)
     solve_method: SolveMethod = SolveMethod.AUTO
-    dtype: str = "float64"
-    tol_verify: float = 1e-6
+    dtype: Literal["float64", "float32"] = "float64"
+    tol_verify: float = Field(
+        gt=0,
+        default=1e-6,
+        description="Tolerance used by the equivalence harness when comparing generated-code.",
+    )
     allow_unroll: bool = False
     num_verify_samples: int = 8
     seed: int = 0
 
-    def __post_init__(self) -> None:
-        if self.dtype not in ("float64", "float32"):
-            raise ValueError(f"dtype must be 'float64' or 'float32', got {self.dtype!r}")
+    model_config = ConfigDict(frozen=True)
+
+    @model_validator(mode="after")
+    def _check_version_constraints(self) -> "CodegenConfig":
         if self.version == Version.EMBEDDED and self.backend != Backend.C:
             raise ValueError(
                 f"embedded version only supports the C backend; got backend={self.backend.value!r}"
@@ -160,8 +165,7 @@ class CodegenConfig:
                 "for the large-scale version; the embedded target is division-free. Use "
                 "solve_method=AUTO/LDLT/LU for the embedded version."
             )
-        if self.tol_verify <= 0:
-            raise ValueError("tol_verify must be positive")
+        return self
 
     @property
     def c_float(self) -> str:
