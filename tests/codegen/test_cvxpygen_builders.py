@@ -17,11 +17,7 @@ from fomtools.codegen.oracle import ReferenceOracle  # noqa: E402
 from fomtools.cvxpygen.builders import build_admm_qp, build_pdhg_lp, resolve_builder  # noqa: E402
 from fomtools.cvxpygen.qpdata import extract_qp_data  # noqa: E402
 
-
-def _canonicalize(problem):
-    from cvxpygen.canonicalizer import Canonicalizer
-
-    return Canonicalizer(solver="OSQP").canonicalize(problem)
+from .conftest import cvxpygen_canonicalize  # noqa: E402
 
 
 def _run_fom(spec, qp, max_iters):
@@ -60,7 +56,7 @@ def _parametric_qp(seed=0, n=4, m_eq=2):
 
 def test_admm_matches_cvxpy_qp():
     problem, q, beq, x = _parametric_qp()
-    canon, _ = _canonicalize(problem)
+    canon, _ = cvxpygen_canonicalize(problem)
     qp = extract_qp_data(canon, param_bounds={q: (-1.0, 1.0), beq: (-2.0, 2.0)})
     spec = build_admm_qp(qp)
 
@@ -86,7 +82,7 @@ def test_admm_constant_data_qp():
         cp.Minimize(0.5 * cp.sum_squares(x) + np.ones(n) @ x),
         [A @ x == beq, x <= 2.0, -2.0 <= x],
     )
-    canon, _ = _canonicalize(problem)
+    canon, _ = cvxpygen_canonicalize(problem)
     qp = extract_qp_data(canon, param_bounds={beq: (-1.0, 1.0)})
     assert qp.param_dependent == {"b"}
     spec = build_admm_qp(qp)
@@ -106,7 +102,7 @@ def test_admm_parametric_inequality_rhs():
     q_const = rng.standard_normal(n)
     x = cp.Variable(n)
     problem = cp.Problem(cp.Minimize(0.5 * cp.sum_squares(x) + q_const @ x), [G @ x <= h])
-    canon, _ = _canonicalize(problem)
+    canon, _ = cvxpygen_canonicalize(problem)
     qp = extract_qp_data(canon, param_bounds={h: (0.5, 1.0)})
     assert "u_ineq" in qp.param_dependent
     spec = build_admm_qp(qp)
@@ -127,7 +123,7 @@ def test_pdhg_matches_cvxpy_lp():
         cp.Minimize(c @ x),
         [A @ x == A @ rng.uniform(-0.2, 0.2, size=n), x <= 1.0, -1.0 <= x],
     )
-    canon, _ = _canonicalize(problem)
+    canon, _ = cvxpygen_canonicalize(problem)
     qp = extract_qp_data(canon, param_bounds={c: (-2.0, 2.0)})
     spec = build_pdhg_lp(qp)
 
@@ -138,7 +134,7 @@ def test_pdhg_matches_cvxpy_lp():
 
 def test_pdhg_rejects_qp():
     problem, q, beq, _ = _parametric_qp()
-    canon, _ = _canonicalize(problem)
+    canon, _ = cvxpygen_canonicalize(problem)
     qp = extract_qp_data(canon, param_bounds={q: (-1, 1), beq: (-1, 1)})
     with pytest.raises(ValueError, match="zero quadratic term"):
         build_pdhg_lp(qp)

@@ -1,6 +1,7 @@
 """Canonical QP data extraction and parameter-bound propagation.
 
-CVXPYgen canonicalizes a parametric CVXPY problem to the OSQP standard form
+CVXPYgen canonicalizes a parametric CVXPY problem to the QP standard form
+(named ``'OSQP'`` in its solver registry)
 
     minimize    0.5 x'Px + q'x + d
     subject to  l <= Ax <= u
@@ -29,7 +30,7 @@ CVXPYGEN_INF = 1e30
 
 @dataclass(frozen=True)
 class QPData:
-    """Snapshot of a canonicalized parametric QP in OSQP standard form.
+    """Snapshot of a canonicalized parametric QP in the standard form above.
 
     ``q`` (linear cost), ``b`` (equality right-hand sides, the first ``n_eq``
     entries of canonical ``l``/``u``) and ``u_ineq`` (inequality upper bounds,
@@ -140,7 +141,7 @@ def _parametric_rows(mapping: spa.spmatrix) -> np.ndarray:
 
 
 def extract_qp_data(canon, param_bounds: dict | None = None, bound_margin: float = 1.0) -> QPData:
-    """Extract :class:`QPData` from a cvxpygen ``Canon`` (OSQP canonical form)."""
+    """Extract :class:`QPData` from a cvxpygen ``Canon`` (QP canonical form)."""
     pc = canon.parameter_canon
     pi = canon.parameter_info
 
@@ -174,17 +175,17 @@ def extract_qp_data(canon, param_bounds: dict | None = None, bound_margin: float
         raise AssertionError("canonical eq rows have l != u; cvxpygen convention changed?")
 
     b = u_full[:n_eq].copy()
-    u_ineq = u_full[n_eq:].copy()
     if not np.all(np.isfinite(b)):
         raise AssertionError("equality right-hand sides contain infinities")
-    # Match the generated C data (cvxpygen's replace_inf convention).
-    u_ineq = np.clip(u_ineq, -CVXPYGEN_INF, CVXPYGEN_INF)
+    # Match the generated C data (cvxpygen clamps infinities to +/-1e30).
+    u_ineq = np.clip(u_full[n_eq:], -CVXPYGEN_INF, CVXPYGEN_INF)
 
     # Which pieces depend on user parameters, row by row.
     param_dependent = set()
     if pc.p_id_to_changes.get("q"):
         param_dependent.add("q")
     map_u = pc.p_id_to_mapping.get("u")
+    map_u = spa.csr_matrix(map_u) if map_u is not None else None
     u_rows = _parametric_rows(map_u) if map_u is not None else np.zeros(m, dtype=bool)
     if pc.p_id_to_changes.get("l") or np.any(u_rows[:n_eq]):
         param_dependent.add("b")
@@ -198,9 +199,9 @@ def extract_qp_data(canon, param_bounds: dict | None = None, bound_margin: float
             bounds["q"] = interval_matvec(pc.p_id_to_mapping["q"], user_lb, user_ub)
         if "b" in param_dependent:
             # The 'u' map covers all m rows; its first n_eq rows are the eq values.
-            bounds["b"] = interval_matvec(spa.csr_matrix(map_u)[:n_eq], user_lb, user_ub)
+            bounds["b"] = interval_matvec(map_u[:n_eq], user_lb, user_ub)
         if "u_ineq" in param_dependent:
-            lo, hi = interval_matvec(spa.csr_matrix(map_u)[n_eq:], user_lb, user_ub)
+            lo, hi = interval_matvec(map_u[n_eq:], user_lb, user_ub)
             if not (np.all(np.isfinite(lo)) and np.all(np.isfinite(hi))):
                 raise ValueError(
                     "parametric inequality upper bounds have infinite propagated bounds; "

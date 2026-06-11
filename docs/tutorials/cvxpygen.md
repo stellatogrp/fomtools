@@ -7,7 +7,7 @@ embedded C project in which
 
 - **CVXPYgen** generates the fast canonicalization code — updating a CVXPY
   `Parameter` triggers only the sparse affine update of the canonical QP data
-  (`P, q, A, l, u`), exactly as it does for its OSQP backend, and
+  (`P, q, A, l, u`), exactly as it does for its other solver backends, and
 - **FOMTools** generates the solver — a verified, statically allocated,
   division-free embedded C implementation of the chosen FOM, produced by the
   LLM coding agent and checked against the Python reference oracle.
@@ -66,7 +66,7 @@ Note: use a *relative* `code_dir` — CVXPYgen registers the wrapper by importin
 
 ## Choosing the first-order method
 
-- `fom="admm"` (default): OSQP-style ADMM. One sparse LDL^T factorization of
+- `fom="admm"` (default): ADMM. One sparse LDL^T factorization of
   the KKT matrix is computed at generation time; each iteration is a
   triangular solve plus a projection. Works for any QP. Options (via
   `fom_options=...`): `rho`, `sigma`, `alpha`, `rho_eq_scale`.
@@ -108,7 +108,7 @@ In C, `cpg_update_<param>(...)` then `cpg_solve()` runs the canonicalization
 update and the embedded FOM; results land in `CPG_Result` as with any CVXPYgen
 solver. `cpg_set_solver_max_iter(...)` and `cpg_set_solver_tol(...)` adjust
 the FOM termination at runtime; the check interval
-(`TerminationSpec(check_termination=...)`, OSQP-style: every N iterations,
+(`TerminationSpec(check_termination=...)`: check every N iterations,
 0 = disabled) is fixed at code-generation time.
 
 ## Limitations (v1)
@@ -118,9 +118,9 @@ the FOM termination at runtime; the check interval
   raise `NotImplementedError` (FOMTools bakes matrices into the generated
   code).
 - Embedded C target only (`Version.EMBEDDED`, `Backend.C`, `float64`).
-- One solver instance per binary (the bridge globals are unprefixed, like
-  CVXPYgen's OSQP backend).
+- One solver instance per binary (the bridge globals are unprefixed, as in
+  CVXPYgen's statically-allocated backends).
 - The reported primal/dual residuals are both the FOM termination metric
-  `||x_k - x_{k-1}||_inf`, not OSQP-style residuals.
+  `||x_k - x_{k-1}||_inf`, not primal/dual constraint-violation residuals.
 - Each `cpg_solve()` cold-starts the FOM from its initial state
   (`fom_update_params` resets the iterate).

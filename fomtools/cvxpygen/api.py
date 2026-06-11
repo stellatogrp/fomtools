@@ -31,7 +31,7 @@ def generate_solver(
 ) -> CodegenResult:
     """Generate an embedded solver for a parametric CVXPY problem.
 
-    CVXPYgen canonicalizes ``problem`` to the OSQP standard form and emits the
+    CVXPYgen canonicalizes ``problem`` to the QP standard form and emits the
     fast parameter-update / canonicalization C code; fomtools generates the
     embedded first-order solver for the chosen FOM. The result is a standard
     CVXPYgen ``code_dir`` (CMake project, ``cpg_solve``, Python wrapper), with

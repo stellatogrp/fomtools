@@ -6,7 +6,7 @@ records one iteration of a first-order method in a fomtools
 code generator and the C bridge consume. Built-in builders:
 
 ``admm``
-    OSQP-style ADMM (KKT solve + projection). Default; handles any QP.
+    ADMM (KKT solve + projection). Default; handles any QP.
 ``pdhg``
     PDHG / Chambolle-Pock (matrix-vector products only, no linear solve).
     Requires a zero quadratic term (LP).
@@ -62,16 +62,21 @@ class FomSpec:
     params: tuple[LinearExpression, ...]
 
 
-def _add_params(v: Verifier, qp: QPData, pieces: tuple[str, ...]) -> tuple[dict, tuple[str, ...]]:
+#: The canonical vector pieces a FOM consumes, in FomParams field order.
+PIECES = ("q", "b", "u_ineq")
+
+
+def _add_params(v: Verifier, qp: QPData) -> tuple[dict, tuple[str, ...]]:
     """Add runtime parameters for the parametric pieces; bake constants.
 
-    Returns ``(exprs, param_copy)`` where ``exprs`` maps each piece name to a
-    ``LinearExpression`` parameter or a constant numpy vector.
+    Returns ``(exprs, param_copy)`` where ``exprs`` maps each piece in
+    :data:`PIECES` to a ``LinearExpression`` parameter or a constant numpy
+    vector, and ``param_copy`` lists the parametric ones in add order.
     """
     values = {"q": qp.q, "b": qp.b, "u_ineq": qp.u_ineq}
     exprs: dict[str, LinearExpression | np.ndarray] = {}
     param_copy: list[str] = []
-    for piece in pieces:
+    for piece in PIECES:
         if piece in qp.param_dependent:
             lb, ub = qp.bounds[piece]
             exprs[piece] = v.add_param(values[piece].size, lb=lb, ub=ub)
@@ -94,13 +99,14 @@ def build_admm_qp(
     alpha: float = 1.6,
     rho_eq_scale: float = 1e3,
 ) -> FomSpec:
-    """One iteration of OSQP-style ADMM for the canonical QP.
+    """One iteration of ADMM for the canonical QP (KKT solve + projection).
 
     State is ``(x, z, y)`` (primal, auxiliary, dual). The KKT matrix
     ``[[P + sigma I, A'], [A, -diag(1/rho_vec)]]`` is constant, so its
     factorization is computed at code-generation time; ``rho`` is boosted by
-    ``rho_eq_scale`` on equality rows, mirroring OSQP. The dual iterate ``y``
-    is exactly the dual of the canonical form (CVXPY's OSQP dual).
+    ``rho_eq_scale`` on equality rows (the parameter defaults follow OSQP).
+    The dual iterate ``y`` is exactly the dual of the canonical form, so
+    CVXPY's duals are recovered from it directly.
     """
     n, m, n_eq = qp.n, qp.m, qp.n_eq
     if m == 0:
@@ -114,7 +120,7 @@ def build_admm_qp(
     kkt = spa.bmat([[qp.P + sigma * spa.eye(n), qp.A.T], [qp.A, -Rinv]], format="csc")
 
     v = Verifier(method="simulator", obbt_solver=None)
-    exprs, param_copy = _add_params(v, qp, ("q", "b", "u_ineq"))
+    exprs, param_copy = _add_params(v, qp)
     q_e, b_e, u_e = exprs["q"], exprs["b"], exprs["u_ineq"]
 
     x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
@@ -122,7 +128,7 @@ def build_admm_qp(
     y = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
 
     rhs = stack([sigma * x - q_e, z - Rinv @ y])
-    sol = v.step.implicit_linear(rhs, lhs_mat=kkt.todense())
+    sol = v.step.implicit_linear(rhs, lhs_mat=kkt)
     x_tilde = sol[:n]
     nu = sol[n : n + m]
 
@@ -138,7 +144,7 @@ def build_admm_qp(
     if m - n_eq > 0:
         w = proj_arg[n_eq:m]
         parts.append(w - v.step.relu(w - u_e))
-    z_next = parts[0] if len(parts) == 1 else stack(parts)
+    z_next = stack(parts)
 
     x_next = alpha * x_tilde + (1.0 - alpha) * x
     y_next = y + R @ (alpha * z_tilde + (1.0 - alpha) * z - z_next)
@@ -180,7 +186,7 @@ def build_pdhg_lp(qp: QPData, *, step_scale: float = 0.9) -> FomSpec:
     tau = sig = step_scale / norm_A
 
     v = Verifier(method="simulator", obbt_solver=None)
-    exprs, param_copy = _add_params(v, qp, ("q", "b", "u_ineq"))
+    exprs, param_copy = _add_params(v, qp)
     q_e, b_e, u_e = exprs["q"], exprs["b"], exprs["u_ineq"]
 
     x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
@@ -199,7 +205,7 @@ def build_pdhg_lp(qp: QPData, *, step_scale: float = 0.9) -> FomSpec:
         v_in = v_arg[n_eq:m]
         # proj onto (-inf, u]: w - relu(w - u)  =>  y+ = sig * relu(v/sig - u).
         parts.append(sig * v.step.relu((1.0 / sig) * v_in - u_e))
-    y_next = parts[0] if len(parts) == 1 else stack(parts)
+    y_next = stack(parts)
 
     next_state = stack([x_next, y_next])
     return FomSpec(

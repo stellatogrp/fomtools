@@ -16,7 +16,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from fomtools.codegen.config import TerminationKind
 from fomtools.codegen.extract import (
     _eval_step_fresh,
     eval_expr,
@@ -100,7 +99,7 @@ class ReferenceOracle:
         # Early exit only on "check" iterations: every `check_termination`
         # iterations (0 disables checking), mirroring the generated C exactly.
         check = term.check_termination
-        use_tol = term.kind == TerminationKind.INF_NORM_CHANGE and check > 0
+        use_tol = term.uses_tolerance
         iters = 0
         for it in range(term.max_iters):
             for step in ir.body:

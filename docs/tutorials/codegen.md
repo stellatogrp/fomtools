@@ -47,7 +47,7 @@ result = vp.codegen("out/ista", next_state=next_state, config=config, name="ista
 assert result.success
 ```
 
-`TerminationSpec` also takes `check_termination` (mirroring OSQP's setting):
+`TerminationSpec` also takes `check_termination` (named after OSQP's setting):
 the residual is computed and tested only every `check_termination` iterations,
 and `0` disables early exit entirely. The default is 1 — the generated check is
 an infinity norm fused into the state copy, measured at 1–2.5% of iteration

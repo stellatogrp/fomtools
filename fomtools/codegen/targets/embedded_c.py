@@ -23,7 +23,6 @@ from pathlib import Path
 import numpy as np
 
 from fomtools.codegen import spec
-from fomtools.codegen.config import TerminationKind
 from fomtools.codegen.ir import ActivationKind, FomIR
 from fomtools.codegen.oracle import ReferenceOracle
 from fomtools.codegen.targets.base import TargetDescriptor, strip_c_comments_and_strings
@@ -157,10 +156,9 @@ class EmbeddedCTarget(TargetDescriptor):
         c_float = self.config.c_float
         term = ir.termination
         tol = term.tol if term.tol is not None else 0.0
-        check = term.check_termination
-        # check_termination == 0 disables checking entirely (OSQP semantics);
-        # the macro is clamped to >= 1 so `% FOM_CHECK_TERMINATION` is safe.
-        use_tol = 1 if (term.kind == TerminationKind.INF_NORM_CHANGE and check > 0) else 0
+        # The macro is clamped to >= 1 so `% FOM_CHECK_TERMINATION` is safe
+        # even when checking is disabled (check_termination == 0).
+        use_tol = 1 if term.uses_tolerance else 0
 
         lines = [
             "#ifndef FOM_WORKSPACE_H",
@@ -173,7 +171,7 @@ class EmbeddedCTarget(TargetDescriptor):
             f"#define FOM_MAX_ITER {term.max_iters}",
             f"#define FOM_TOL ((fom_float){_fmt_float(tol)})",
             f"#define FOM_USE_TOL {use_tol}",
-            f"#define FOM_CHECK_TERMINATION {max(check, 1)}",
+            f"#define FOM_CHECK_TERMINATION {max(term.check_termination, 1)}",
             f"#define FOM_NUM_PARAMS {len(ir.params)}",
             f"#define FOM_MAX_VEC_DIM {ir.max_rhs_dim}",
             "",

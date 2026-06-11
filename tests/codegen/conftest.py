@@ -356,3 +356,14 @@ def dr_reference(data, q_val, x0, n_iters, tol=None):
         if tol is not None and resid <= tol:
             break
     return traj
+
+
+# --------------------------------------------------------------------------
+# cvxpygen integration helpers (cvxpygen imported lazily: the tests using
+# this are gated by pytest.importorskip("cvxpygen"))
+# --------------------------------------------------------------------------
+def cvxpygen_canonicalize(problem):
+    """Canonicalize a CVXPY problem to cvxpygen's QP form: (canon, interface)."""
+    from cvxpygen.canonicalizer import Canonicalizer
+
+    return Canonicalizer(solver="OSQP").canonicalize(problem)

@@ -1,8 +1,8 @@
 """The cvxpygen solver interface for fomtools-generated FOM solvers.
 
 :class:`FomtoolsInterface` plugs into cvxpygen as the solver named
-``'FOMTOOLS'``: it reuses cvxpygen's OSQP QP canonicalization
-(``cvxpy_solver_name = 'OSQP'``) and, in :meth:`generate_code`, runs the
+``'FOMTOOLS'``: it reuses cvxpygen's QP canonicalization (registered there
+under ``cvxpy_solver_name = 'OSQP'``) and, in :meth:`generate_code`, runs the
 fomtools code generator to produce the embedded solver inside cvxpygen's
 ``c/solver_code/`` directory, plus the C bridge from
 :mod:`fomtools.cvxpygen.glue`.
@@ -78,6 +78,12 @@ def take_stashed_result() -> CodegenResult | None:
     return _RESULT.get()
 
 
+def _current_options() -> FomtoolsOptions:
+    """Options for the active generation run (defaults when cvxpygen is driven
+    directly via ``cpg.generate_code(..., solver='FOMTOOLS')``)."""
+    return _OPTIONS.get() or FomtoolsOptions()
+
+
 class FomtoolsInterface(QPCanonMixin, SolverInterface):
     """cvxpygen solver interface backed by the fomtools code generator."""
 
@@ -132,7 +138,7 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
     docu = "https://github.com/stellatogrp/fomtools"
 
     def __init__(self, data, p_prob, enable_settings):
-        opts = _OPTIONS.get() or FomtoolsOptions()
+        opts = _current_options()
         term = opts.config.termination
         # Instance-level settings so defaults reflect the actual configuration.
         self.stgs = {
@@ -146,7 +152,7 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
     ) -> None:
         if gradient:
             raise NotImplementedError("gradient code generation is not supported for FOMTOOLS")
-        opts = _OPTIONS.get() or FomtoolsOptions()
+        opts = _current_options()
         config = opts.config
         if config.version != Version.EMBEDDED or config.backend != Backend.C:
             raise NotImplementedError(

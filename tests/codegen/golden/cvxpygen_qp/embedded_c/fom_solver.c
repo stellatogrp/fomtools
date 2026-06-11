@@ -1,6 +1,6 @@
 /*
  * Golden embedded-C solver for the cvxpygen integration test QP
- * (OSQP-style ADMM built by fomtools.cvxpygen.builders.build_admm_qp).
+ * (ADMM built by fomtools.cvxpygen.builders.build_admm_qp).
  *
  * Structure (see test/SPEC.md):
  *   rhs0 = t0_state @ state + t0_p_p0 @ p0

@@ -2,7 +2,7 @@
 
 Models a small MPC QP in CVXPY (parametric initial state entering the equality
 right-hand sides, parametric linear cost) and generates a single embedded C
-project: CVXPYgen canonicalization + a fomtools OSQP-style ADMM solver.
+project: CVXPYgen canonicalization + a fomtools ADMM solver.
 
 Requires `pip install 'fomtools[cvxpygen]'` and a coding-agent driver
 (FOMTOOLS_CODEGEN_AGENT=1 for the Claude agent).

@@ -79,15 +79,15 @@ class TerminationSpec:
         Tolerance for the ``INF_NORM_CHANGE`` criterion. Ignored for
         ``MAX_ITERS``. Must be positive when the criterion uses it.
     check_termination:
-        How often the ``INF_NORM_CHANGE`` criterion is evaluated, mirroring
-        OSQP's setting of the same name: ``N`` checks every ``N`` iterations
+        How often the ``INF_NORM_CHANGE`` criterion is evaluated (the name and
+        semantics follow OSQP's setting): ``N`` checks every ``N`` iterations
         (residual computed only then), ``0`` disables checking entirely (the
         loop runs ``max_iters``; equivalent to ``MAX_ITERS`` but keeps the
-        criterion recorded). The default is 1 — unlike OSQP's 25 — because the
-        generated check is an infinity norm fused into the state copy
-        (measured 1-2.5% of iteration time for direct-method FOMs), not extra
-        residual matvecs; raise it for matrix-free methods on large problems
-        where iterations are cheap. Ignored for ``MAX_ITERS``.
+        criterion recorded). The default is 1 because the generated check is an
+        infinity norm fused into the state copy (measured 1-2.5% of iteration
+        time for direct-method FOMs), not extra residual matvecs; raise it for
+        matrix-free methods on large problems where iterations are cheap.
+        Ignored for ``MAX_ITERS``.
     """
 
     kind: TerminationKind = TerminationKind.MAX_ITERS
@@ -106,6 +106,16 @@ class TerminationSpec:
         if self.kind == TerminationKind.INF_NORM_CHANGE:
             if self.tol is None or self.tol <= 0:
                 raise ValueError("tol must be a positive float for the inf_norm_change criterion")
+
+    @property
+    def uses_tolerance(self) -> bool:
+        """Whether the loop checks the tolerance criterion at all.
+
+        Single source of truth shared by the emitted header (``FOM_USE_TOL``)
+        and the reference oracle, so the generated code and the verification
+        ground truth can never disagree on when early exit is possible.
+        """
+        return self.kind == TerminationKind.INF_NORM_CHANGE and self.check_termination > 0
 
 
 @dataclass(frozen=True)
