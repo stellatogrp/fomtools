@@ -162,26 +162,19 @@ def _dependency_cone(steps, next_state_leaves: set[LinearExpression]):
     rhs, collecting every step needed to compute one iteration. Returns the
     steps ordered by their position in ``steps``.
     """
-    producer: dict[LinearExpression, object] = {}
-    for step in steps:
-        producer[fresh_leaf_of(step)] = step
-
+    producer = {fresh_leaf_of(step): step for step in steps}
     needed: set[int] = set()
-    step_index = {id(step): i for i, step in enumerate(steps)}
-    worklist = list(next_state_leaves)
-    seen_leaves: set[LinearExpression] = set()
-    while worklist:
-        leaf = worklist.pop()
-        if leaf in seen_leaves:
-            continue
-        seen_leaves.add(leaf)
-        step = producer.get(leaf)
-        if step is None:
-            continue  # external leaf (state or param)
-        needed.add(step_index[id(step)])
-        worklist.extend(step.rhs.decomposition_dict.keys())
+    worklist = set(next_state_leaves)
 
-    return [steps[i] for i in sorted(needed)]
+    while worklist:
+        step = producer.get(worklist.pop())
+        if step is None or id(step) in needed:
+            continue
+        needed.add(id(step))
+        worklist.update(step.rhs.leaves)
+
+    return [step for step in steps if id(step) in needed]
+
 
 
 def _as_list(x) -> list:
@@ -199,42 +192,27 @@ def resolve_structure(verifier, next_state, state=None, params=None):
     constitutes one iteration. Returns ``(next_state_exprs, body_steps,
     body_fresh, state_leaves, param_leaves)``.
     """
-    next_state_exprs = _as_list(next_state)
-    if not next_state_exprs:
+    if not next_state:
         raise ValueError("next_state must be provided (the iterate after one iteration).")
 
-    body_steps = _dependency_cone(verifier.steps, _next_state_leaves(next_state_exprs))
+    next_state_exprs = _as_list(next_state)
+
+    body_steps = _dependency_cone(verifier.steps, set.union(*[expr.leaves for expr in next_state_exprs]))
     if not body_steps:
         raise NonStationaryFOMError(
             "next_state does not depend on any recorded step; nothing to generate."
         )
 
     body_fresh = [fresh_leaf_of(s) for s in body_steps]
-    body_fresh_set = set(body_fresh)
 
-    external: list[LinearExpression] = []
-    seen: set[LinearExpression] = set()
-    for step in body_steps:
-        for leaf in step.rhs.decomposition_dict.keys():
-            if leaf not in body_fresh_set and leaf not in seen:
-                seen.add(leaf)
-                external.append(leaf)
-    for expr in next_state_exprs:
-        for leaf in expr.decomposition_dict.keys():
-            if leaf not in body_fresh_set and leaf not in seen:
-                seen.add(leaf)
-                external.append(leaf)
+    body_leaves = set(leaf for step in body_steps for leaf in step.rhs.leaves)
+    next_state_leaves= set(leaf for expr in next_state_exprs for leaf in expr.leaves)
+    external = (body_leaves | next_state_leaves) - set(body_fresh)
 
-    iterate_set = set(verifier.iterates)
-    if state is None:
-        state_leaves = [leaf for leaf in external if leaf in iterate_set]
-    else:
-        state_leaves = _as_list(state)
+
+    state_leaves = external & set(verifier.iterates) if state is None else _as_list(state)
     state_set = set(state_leaves)
-    if params is None:
-        param_leaves = [leaf for leaf in external if leaf not in state_set]
-    else:
-        param_leaves = _as_list(params)
+    param_leaves = list(external - state_set) if params is None else _as_list(params)
 
     _validate_classification(external, state_set, set(param_leaves))
     return next_state_exprs, body_steps, body_fresh, state_leaves, param_leaves
@@ -360,13 +338,6 @@ def extract_ir(
     )
 
 
-def _next_state_leaves(next_state_exprs) -> set[LinearExpression]:
-    leaves: set[LinearExpression] = set()
-    for expr in next_state_exprs:
-        leaves.update(expr.decomposition_dict.keys())
-    return leaves
-
-
 def _validate_classification(external, state_set, param_set) -> None:
     for leaf in external:
         in_state = leaf in state_set
@@ -393,8 +364,23 @@ def _initial_state(state_layout) -> np.ndarray:
         pos += dim
     return init
 
+def _build_block_steps(param_map, expr, prefix, type):
+    matrices = {}
+    terms = []
+    for leaf, (name, _) in param_map.items():
+        coeff = expr.decomposition_dict.get(leaf)
+        if coeff is None:
+            continue
+        dense = _densify(coeff)
+        if not np.any(dense):
+            continue
+        mname = f"{prefix}_{'t' if type == 'tmp' else 'p'}_{name}"
+        matrices[mname] = MatrixData.from_coeff(mname, coeff)
+        terms.append(Term(source=f"{type}:{name}", matrix=mname))
 
-def _build_linear_op(expr, prefix, state_layout, param_map, tmp_map, matrices, out_dim) -> LinearOp:
+    return matrices, terms
+
+def  _build_linear_op(expr, prefix, state_layout, param_map, tmp_map, matrices, out_dim) -> LinearOp:
     terms: list[Term] = []
 
     # state block: horizontal concat over state slots (zero-fill missing leaves)
@@ -413,29 +399,10 @@ def _build_linear_op(expr, prefix, state_layout, param_map, tmp_map, matrices, o
         matrices[mname] = MatrixData(name=mname, array=mat)
         terms.append(Term(source="state", matrix=mname))
 
-    # parameter blocks
-    for leaf, (pname, _) in param_map.items():
-        coeff = expr.decomposition_dict.get(leaf)
-        if coeff is None:
-            continue
-        dense = _densify(coeff)
-        if not np.any(dense):
-            continue
-        mname = f"{prefix}_p_{pname}"
-        matrices[mname] = MatrixData.from_coeff(mname, coeff)
-        terms.append(Term(source=f"param:{pname}", matrix=mname))
-
-    # temporary blocks (earlier body steps)
-    for leaf, (tname, _) in tmp_map.items():
-        coeff = expr.decomposition_dict.get(leaf)
-        if coeff is None:
-            continue
-        dense = _densify(coeff)
-        if not np.any(dense):
-            continue
-        mname = f"{prefix}_t_{tname}"
-        matrices[mname] = MatrixData.from_coeff(mname, coeff)
-        terms.append(Term(source=f"tmp:{tname}", matrix=mname))
+    p_matrices, p_terms = _build_block_steps(param_map, expr, prefix, 'param')
+    t_matrices, t_terms = _build_block_steps(tmp_map, expr, prefix, 'tmp')
+    matrices |= p_matrices | t_matrices
+    terms.extend(list(p_terms) + list(t_terms))
 
     const_name = None
     const_vec = np.asarray(expr.const, dtype=float).reshape(-1)
