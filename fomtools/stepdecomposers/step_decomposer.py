@@ -39,6 +39,32 @@ from fomtools.steps.step import Step
 log = logging.getLogger(__name__)
 
 
+def _is_identity_matrix(P) -> bool:
+    """True if ``P`` is ``None`` or (numerically) the identity (dense or sparse)."""
+    if P is None:
+        return True
+    n = P.shape[0]
+    if spa.issparse(P):
+        diff = P - spa.eye(n, format="csr")
+        return diff.nnz == 0 or float(np.abs(diff).max()) <= 1e-12
+    return np.allclose(np.asarray(P, dtype=float), np.eye(n))
+
+
+def _finite_bounds(expr: LinearExpression) -> tuple[np.ndarray, np.ndarray]:
+    """Interval-propagate ``expr`` bounds, mapping non-finite entries to +/- inf.
+
+    Unbounded duals (e.g. a free ``nu`` with +/- inf bounds) make interval
+    arithmetic yield ``inf - inf = NaN``; map those back to +/- inf so the leaf
+    still registers and any downstream complementarity raises a clean finite-bound
+    error rather than propagating NaN.
+    """
+    with np.errstate(invalid="ignore"):
+        lb, ub = expr.bound_propagation()
+    lb = np.where(np.isfinite(lb), lb, -np.inf)
+    ub = np.where(np.isfinite(ub), ub, np.inf)
+    return lb, ub
+
+
 class StepDecomposer:
     """
     Base class for step decomposition and prox lowering.
@@ -184,14 +210,11 @@ class StepDecomposer:
         proxer = self._PROX_DECOMPOSERS.get(type(prox_function).__name__.lower())
         if proxer is None:
             raise NotImplementedError(
-                f"{self.__class__.__name__} does not support "
-                f"{type(prox_function).__name__}"
+                f"{self.__class__.__name__} does not support {type(prox_function).__name__}"
             )
         return proxer(self, prox_function, rhs, gamma)
 
-    def _decompose_saturatedlinear_to_relus(
-        self, step: SaturatedLinear
-    ) -> LinearExpression:
+    def _decompose_saturatedlinear_to_relus(self, step: SaturatedLinear) -> LinearExpression:
         """
         Decompose saturated linear into ReLU operations.
 
@@ -345,9 +368,7 @@ class StepDecomposer:
         ``_DECOMPOSERS``); the $1/(1 + 2\beta\gamma)$ factor applies
         analytically to the resulting composite ``LinearExpression``.
         """
-        soft = self.process_step(
-            SoftThreshold(rhs=rhs, lambd=prox.alpha * gamma)
-        )
+        soft = self.process_step(SoftThreshold(rhs=rhs, lambd=prox.alpha * gamma))
         return soft / (1.0 + 2.0 * prox.beta * gamma)
 
     def prox_hingeloss(
@@ -445,22 +466,20 @@ class StepDecomposer:
             # making the stacked LE of dimension ``n + 1`` instead of ``n + m``.
             b_le = LinearExpression(
                 decomposition_dict={},
-                const=np.broadcast_to(
-                    np.asarray(b, dtype=float), (m,)
-                ).copy(),
+                const=np.broadcast_to(np.asarray(b, dtype=float), (m,)).copy(),
             )
 
         # Block KKT matrix (constant; just numpy).
-        M_block = np.block([
-            [np.eye(n), A.T],
-            [A, np.zeros((m, m))],
-        ])
+        M_block = np.block(
+            [
+                [np.eye(n), A.T],
+                [A, np.zeros((m, m))],
+            ]
+        )
 
         # Throwaway LE representing M_block^{-1} @ [rhs; b]; never registered.
         stacked_rhs_LE = stack([rhs, b_le])
-        combined_lb, combined_ub = solve_linexpr(
-            M_block, stacked_rhs_LE
-        ).bound_propagation()
+        combined_lb, combined_ub = solve_linexpr(M_block, stacked_rhs_LE).bound_propagation()
         u_lb, u_ub = combined_lb[:n], combined_ub[:n]
         nu_lb, nu_ub = combined_lb[n:], combined_ub[n:]
 
@@ -491,22 +510,126 @@ class StepDecomposer:
             const=np.broadcast_to(np.asarray(value, dtype=float), (dim,)).copy(),
         )
 
+    def _qp_kkt(
+        self,
+        *,
+        lin_term: LinearExpression,
+        P=None,
+        is_lp: bool = False,
+        A_eq=None,
+        b_eq=None,
+        C_ineq=None,
+        d_ineq=None,
+        lam_ub=None,
+        nu_bounds=None,
+        primal_bounds=None,
+    ) -> LinearExpression:
+        r"""
+        Shared KKT lowering for the convex QP
+        :math:`\min_x \tfrac12 x^\top P x + q^\top x` s.t. :math:`A_{eq} x = b_{eq}`,
+        :math:`C_{ineq} x \le d_{ineq}`.
+
+        Posts the KKT system
+
+        .. math::
+            P x + q + A_{eq}^\top \nu + C_{ineq}^\top \lambda = 0,\quad
+            A_{eq} x = b_{eq},\quad C_{ineq} x \le d_{ineq},\quad
+            0 \le \lambda \perp (d_{ineq} - C_{ineq} x) \ge 0,
+
+        with :math:`\nu` free and :math:`\lambda \ge 0`. The linear rows precede the
+        (non-convex) complementarity so OBBT tightens ``x``/``lambda`` first. ``P``
+        may be ``None``/identity (stationarity becomes ``x = -(q + ...)``), a general
+        PSD matrix (``P @ x == -(q + ...)``), or all-zero for an LP
+        (``is_lp=True``: stationarity is the dual-only equality and ``x`` is pinned by
+        feasibility + complementarity).
+
+        Parameters
+        ----------
+        lin_term : LinearExpression
+            The linear cost ``q`` (dim ``n``); for a projection pass ``-rhs``.
+        P : np.ndarray or scipy.sparse, optional
+            The PSD quadratic term. ``None`` or identity uses the ``x = -(...)`` form.
+        is_lp : bool, default False
+            If ``True``, ``P = 0``: stationarity does not define ``x``.
+        A_eq, b_eq : optional
+            Equality matrix ``(p, n)`` and right-hand side (dim ``p``).
+        C_ineq, d_ineq : optional
+            Inequality matrix ``(m, n)`` and right-hand side (dim ``m``).
+        lam_ub : np.ndarray, optional
+            Finite upper bound(s) on the inequality dual ``lambda``, shape ``(m,)``.
+        nu_bounds : tuple[np.ndarray, np.ndarray], optional
+            ``(lb, ub)`` on the free equality multiplier ``nu``; ``None`` -> +/- inf.
+        primal_bounds : tuple[np.ndarray, np.ndarray], optional
+            ``(lb, ub)`` on ``x``; required for singular ``P``/LP when OBBT cannot bound it.
+
+        Returns
+        -------
+        LinearExpression
+            The primal solution ``x`` of dimension ``n``.
+        """
+        n = lin_term.ndim
+        stat = lin_term  # accumulates q + C^T lam + A^T nu
+        lam = None
+        if C_ineq is not None:
+            m = C_ineq.shape[0]
+            lam = self.add_iterate(m, lb=np.zeros(m), ub=lam_ub)
+            stat = stat + C_ineq.T @ lam
+        if A_eq is not None:
+            p = A_eq.shape[0]
+            if nu_bounds is None:
+                nu_lb, nu_ub = np.full(p, -np.inf), np.full(p, np.inf)
+            else:
+                nu_lb, nu_ub = nu_bounds
+            nu = self.add_iterate(p, lb=nu_lb, ub=nu_ub)
+            stat = stat + A_eq.T @ nu
+
+        identity = _is_identity_matrix(P)
+
+        # Primal bounds for the fresh iterate ``x``.
+        if primal_bounds is not None:
+            x_lb, x_ub = primal_bounds
+        elif is_lp:
+            # P = 0: stationarity does not pin x; rely on primal_bounds/OBBT.
+            x_lb, x_ub = np.full(n, -np.inf), np.full(n, np.inf)
+        elif identity:
+            x_lb, x_ub = _finite_bounds(-stat)  # x == -stat
+        else:
+            try:
+                x_lb, x_ub = _finite_bounds(solve_linexpr(P, -stat))  # P x == -stat (PD)
+            except Exception as exc:
+                raise ValueError(
+                    "Could not derive primal bounds for a non-identity P (it may be "
+                    "singular); pass primal_bounds=(lb, ub) to QuadraticProgram."
+                ) from exc
+        x = self.add_iterate(n, lb=x_lb, ub=x_ub)
+
+        # Stationarity row.
+        if is_lp:
+            self.add_constraint(stat == 0)  # dual-only equality (no x)
+        elif identity:
+            self.add_constraint(x == -stat)
+        else:
+            self.add_constraint(P @ x == -stat)  # P @ x: __rmatmul__, sparse-ok
+
+        # Primal feasibility (linear, OBBT-visible) before the complementarity.
+        if A_eq is not None:
+            self.add_constraint(A_eq @ x == b_eq)
+        if C_ineq is not None:
+            self.add_constraint(C_ineq @ x <= d_ineq)
+            self.add_constraint(complementarity(lam, d_ineq - C_ineq @ x))
+        return x
+
     def _prox_polyhedral_kkt(
         self, rhs, A, b_le, lam_ub, C=None, d_le=None, nu_bounds=None
     ) -> LinearExpression:
         r"""
-        Shared KKT lowering for projection onto ``{Au <= b}`` and an optional ``{Cu = d}``.
+        Projection onto ``{Au <= b}`` and an optional ``{Cu = d}``, as the QP
+        ``min (1/2)||u - rhs||^2`` over that polyhedron. A thin wrapper over
+        :meth:`_qp_kkt` with ``P = I`` and ``q = -rhs``.
 
-        Encodes the convex-QP KKT system
-
-        .. math::
-            u = \text{rhs} - A^\top \lambda - C^\top \nu,\quad \lambda \ge 0,\quad
-            Au \le b,\quad 0 \le \lambda \perp (b - Au) \ge 0,\quad [Cu = d],
-
-        with :math:`\nu` a free equality multiplier. The explicit ``A u <= b`` is redundant
-        with the complementarity's slack-nonnegativity but, being linear, is visible to the
-        OBBT LP (bounds ``u``). The linear rows precede the (non-convex) complementarity so
-        OBBT tightens ``u``/``lambda`` first.
+        Note the naming inversion preserved for the existing callers: here ``A`` is the
+        **inequality** matrix and ``C`` the **equality** matrix (the opposite of the
+        general-QP ``A_eq``/``C_ineq`` convention used by :meth:`_qp_kkt`).
 
         Parameters
         ----------
@@ -517,8 +640,7 @@ class StepDecomposer:
         b_le : LinearExpression
             Inequality right-hand side, dim ``m``.
         lam_ub : np.ndarray
-            Finite upper bound(s) on the inequality dual ``lambda``, shape ``(m,)`` (may be
-            ``inf`` — then the complementarity builder raises a clear finite-bound error).
+            Finite upper bound(s) on the inequality dual ``lambda``, shape ``(m,)``.
         C : np.ndarray, optional
             Equality matrix, shape ``(p, n)``. ``None`` for inequality-only.
         d_le : LinearExpression, optional
@@ -531,28 +653,61 @@ class StepDecomposer:
         LinearExpression
             The primal projection ``u`` of dimension ``n``.
         """
-        m, n = A.shape
-        lam = self.add_iterate(m, lb=np.zeros(m), ub=lam_ub)
-        stat = rhs - A.T @ lam
-        if C is not None:
-            nu = self.add_iterate(C.shape[0], lb=nu_bounds[0], ub=nu_bounds[1])
-            stat = stat - C.T @ nu
+        return self._qp_kkt(
+            lin_term=-rhs,
+            P=None,
+            C_ineq=A,
+            d_ineq=b_le,
+            lam_ub=lam_ub,
+            A_eq=C,
+            b_eq=d_le,
+            nu_bounds=nu_bounds,
+        )
 
-        # u bounds via interval propagation on the (bounded) duals + rhs. When lambda is
-        # unbounded (dual_ub None) interval arithmetic yields NaN (inf - inf); map to +/-inf
-        # so u registers (MIP) and the complementarity builder raises its finite-bound error.
-        with np.errstate(invalid="ignore"):
-            u_lb, u_ub = stat.bound_propagation()
-        u_lb = np.where(np.isfinite(u_lb), u_lb, -np.inf)
-        u_ub = np.where(np.isfinite(u_ub), u_ub, np.inf)
-        u = self.add_iterate(n, lb=u_lb, ub=u_ub)
+    def decompose_quadraticprogram(self, step) -> LinearExpression:
+        r"""
+        Lower a :class:`QuadraticProgram` / :class:`LinearProgram` step to its KKT
+        system via :meth:`_qp_kkt`.
 
-        self.add_constraint(u == stat)  # stationarity
-        self.add_constraint(A @ u <= b_le)  # primal feasibility (OBBT-visible)
-        self.add_constraint(complementarity(lam, b_le - A @ u))
-        if C is not None:
-            self.add_constraint(C @ u == d_le)  # equality (free nu)
-        return u
+        ``q`` defaults to ``-step.rhs`` (projection convenience) when ``None``;
+        ``b`` and ``d`` are lifted to ``LinearExpression`` via :meth:`_lift_to_le`
+        (numeric or parameter, uniformly). Raises ``ValueError`` eagerly if the QP has
+        inequality constraints but no finite ``dual_ub`` (the inequality dual is not
+        auto-boundable). Registered in the MIP and SDP ``_DECOMPOSERS`` under both
+        ``"quadraticprogram"`` and ``"linearprogram"``.
+        """
+        q = step.q if step.q is not None else -step.rhs
+        q_le = self._lift_to_le(q, step.n)
+
+        A_eq, b_eq = step.A, None
+        if A_eq is not None:
+            b_eq = self._lift_to_le(step.b, A_eq.shape[0])
+
+        C_ineq, d_ineq, lam_ub = step.C, None, None
+        if C_ineq is not None:
+            if step.dual_ub is None:
+                raise ValueError(
+                    "QuadraticProgram/LinearProgram with inequality constraints requires a "
+                    "finite `dual_ub` on the inequality multipliers (the dual is not "
+                    "auto-boundable). Construct it with dual_ub=<finite bound>."
+                )
+            d_ineq = self._lift_to_le(step.d, C_ineq.shape[0])
+            lam_ub = np.broadcast_to(
+                np.asarray(step.dual_ub, dtype=float), (C_ineq.shape[0],)
+            ).copy()
+
+        return self._qp_kkt(
+            lin_term=q_le,
+            P=step.P,
+            is_lp=getattr(step, "is_lp", False),
+            A_eq=A_eq,
+            b_eq=b_eq,
+            C_ineq=C_ineq,
+            d_ineq=d_ineq,
+            lam_ub=lam_ub,
+            nu_bounds=step.nu_bounds,
+            primal_bounds=step.primal_bounds,
+        )
 
     def prox_indpolyhedral(
         self, prox: IndPolyhedral, rhs: LinearExpression, gamma: float = 1.0

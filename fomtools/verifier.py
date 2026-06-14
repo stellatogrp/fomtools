@@ -19,7 +19,14 @@ from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
 from fomtools.stepdecomposers.simulator_step_decomposer import SimulatorStepDecomposer
-from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
+from fomtools.steps import (
+    Affine,
+    LinearProgram,
+    QuadraticProgram,
+    Relu,
+    SaturatedLinear,
+    SoftThreshold,
+)
 
 log = logging.getLogger(__name__)
 
@@ -204,8 +211,7 @@ class Verifier(object):
             if triangle_cuts:
                 enabled.append("triangle_cuts")
             warnings.warn(
-                f"{', '.join(enabled)} is SDP-only and will be ignored for "
-                f"method={method!r}.",
+                f"{', '.join(enabled)} is SDP-only and will be ignored for method={method!r}.",
                 UserWarning,
                 stacklevel=3,
             )
@@ -547,6 +553,105 @@ class Verifier(object):
         """
         return self.step_decomposer.process_prox(function, rhs, gamma)
 
+    def quadratic_program(
+        self,
+        P,
+        q=None,
+        A=None,
+        b=None,
+        C=None,
+        d=None,
+        dual_ub=None,
+        primal_bounds=None,
+        nu_bounds=None,
+        rhs: LinearExpression = None,
+        relax_binary_vars: bool = False,
+    ) -> LinearExpression:
+        r"""
+        Encode the solution of an arbitrary convex QP as a step.
+
+        Solves (in the verification model, via the KKT + complementarity system)
+
+        .. math::
+            x^\star = \arg\min_x \tfrac12 x^\top P x + q^\top x
+            \quad\text{s.t.}\quad A x = b,\; C x \le d,
+
+        where ``P`` is symmetric PSD (dense or scipy.sparse) and ``q``, ``b``, ``d``
+        may be numeric or :class:`LinearExpression` parameters. Unlike ``run_step``,
+        this takes the parametric inputs directly (a QP has up to three) rather than a
+        single positional ``rhs``; the ``LinearExpression`` inputs already carry their
+        dependence on prior iterates.
+
+        Parameters
+        ----------
+        P, q, A, b, C, d, dual_ub, primal_bounds, nu_bounds, rhs, relax_binary_vars
+            See :class:`fomtools.steps.QuadraticProgram`. ``dual_ub`` is required when
+            inequality constraints ``C`` are present.
+
+        Returns
+        -------
+        LinearExpression
+            The primal solution ``x``.
+        """
+        step = QuadraticProgram(
+            P=P,
+            q=q,
+            A=A,
+            b=b,
+            C=C,
+            d=d,
+            dual_ub=dual_ub,
+            primal_bounds=primal_bounds,
+            nu_bounds=nu_bounds,
+            rhs=rhs,
+            relax_binary_vars=relax_binary_vars,
+        )
+        # Composite step: the decomposer creates the primal x via add_iterate (already
+        # tracked in self.iterates) and returns it; just record the step itself.
+        x = self.step_decomposer.process_step(step)
+        self.steps.append(step)
+        return x
+
+    def linear_program(
+        self,
+        q,
+        A=None,
+        b=None,
+        C=None,
+        d=None,
+        dual_ub=None,
+        primal_bounds=None,
+        nu_bounds=None,
+        rhs: LinearExpression = None,
+        relax_binary_vars: bool = False,
+    ) -> LinearExpression:
+        r"""
+        Encode the solution of a linear program (:class:`QuadraticProgram` with
+        ``P = 0``) as a step:
+
+        .. math::
+            x^\star = \arg\min_x q^\top x \quad\text{s.t.}\quad A x = b,\; C x \le d.
+
+        See :meth:`quadratic_program`. ``q`` is required and its dimension sizes the LP;
+        finite primal bounds must come from ``primal_bounds`` or OBBT (stationarity does
+        not pin ``x`` when ``P = 0``).
+        """
+        step = LinearProgram(
+            q=q,
+            A=A,
+            b=b,
+            C=C,
+            d=d,
+            dual_ub=dual_ub,
+            primal_bounds=primal_bounds,
+            nu_bounds=nu_bounds,
+            rhs=rhs,
+            relax_binary_vars=relax_binary_vars,
+        )
+        x = self.step_decomposer.process_step(step)
+        self.steps.append(step)
+        return x
+
     @property
     def step(self) -> "_StepProxy":
         """
@@ -600,8 +705,12 @@ class Verifier(object):
         lhs = self.step_decomposer.process_step(step)
         self.steps.append(step)
 
-        # Track lhs as iterate only if it's a leaf variable
-        if lhs.is_leaf:
+        # Track lhs as iterate only if it's a fresh leaf variable. Use identity
+        # comparison (not ``in``): LinearExpression.__eq__ builds a Constraint, so a
+        # membership test would not behave as expected. Composite KKT-style steps
+        # (e.g. QuadraticProgram) return a leaf already registered via add_iterate;
+        # the guard avoids a double-append in that case.
+        if lhs.is_leaf and not any(lhs is it for it in self.iterates):
             self.iterates.append(lhs)
 
         return lhs
@@ -657,9 +766,7 @@ class Verifier(object):
         # bound tightening benefits from it as well.
         if self.use_obbt_handler:
             theory_cuts = [target_expr >= lb - C, target_expr <= ub + C]
-            self.obbt_handler.add_constraints(
-                [c for c in theory_cuts if is_binary_free(c)]
-            )
+            self.obbt_handler.add_constraints([c for c in theory_cuts if is_binary_free(c)])
         return improv_frac
 
     def set_zero_objective(self):
