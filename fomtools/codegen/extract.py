@@ -155,6 +155,18 @@ def _eval_step_fresh(step, values: dict[LinearExpression, np.ndarray]) -> np.nda
     raise NonStationaryFOMError(f"Unsupported step type: {type(step).__name__}")
 
 
+#: Relative-residual CG stopping tolerance per dtype. ``1e-12`` is unreachable in
+#: single precision (float32 bottoms out near ``1e-7`` relative residual), so the
+#: emitted f32 CG would otherwise spin to its iteration cap while the float64
+#: oracle stops early — a convergence-level mismatch on top of rounding. ``1e-6``
+#: is the natural single-precision target: both stop at the same residual level.
+_CG_TOL_BY_DTYPE = {"float64": 1e-12, "float32": 1e-6}
+
+
+def _cg_tol_for_dtype(dtype: str) -> float:
+    return _CG_TOL_BY_DTYPE.get(dtype, 1e-12)
+
+
 def _resolve_solve_method(lhs_mat, config: CodegenConfig) -> str:
     """Pick the concrete solve method for an affine operator ``lhs_mat w = rhs``.
 
@@ -327,7 +339,9 @@ def extract_ir(
         if isinstance(step, Affine):
             solve_name = prefix
             method = _resolve_solve_method(step.lhs_mat, config)
-            factorizations[prefix] = factorize(step.lhs_mat, method=method)
+            factorizations[prefix] = factorize(
+                step.lhs_mat, method=method, cg_tol=_cg_tol_for_dtype(config.dtype)
+            )
         # Saturated-linear clip bounds become per-coordinate IR arrays.
         if activation.kind == ActivationKind.SATURATED_LINEAR:
             lower, upper = _satlin_arrays(step)

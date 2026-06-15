@@ -54,7 +54,8 @@ Everything described lives on git branch **`codegen`** (pushed to
   first; the `test_cuda_*_compile_check` tests turn into real `VERIFY OK` runs there.
 - AUTO now upgrades large SPD systems to **CG** on CUDA (work item C, below) —
   but the size threshold default (256) is a guess; re-tune with real GPU timings.
-- No cuSPARSE/cuBLAS; no float32 path exercised on hardware.
+- No cuSPARSE/cuBLAS. float32 path is implemented and CPU-verified (item E,
+  including f32 CG) but not yet exercised on GPU hardware.
 
 ---
 
@@ -318,9 +319,26 @@ FP-reduction tolerance note in §3.2 (esp. once float32 (E) lands — 1e-6 may b
 tight for f32 CG). Examples are still tiny (verification-sized); "GPU scale" is
 item (F).
 
-**(E) float32 path.** `CodegenConfig(dtype="float32")` sets `fom_float=float`.
-GPUs prefer it. Re-check `tol_verify` (1e-6 may be tight for f32 CG; loosen for
-f32 or tighten cg_tol). Large-scale GPU is the intended home for f32.
+**(E) [DONE] float32 path.** `CodegenConfig(dtype="float32")` sets
+`fom_float=float`. The dtype is target-independent, so the whole f32 pipeline —
+including the iterative CG solve — is verified **on the CPU** (embedded + OpenMP
+emit `typedef float fom_float` too); no GPU needed for this part. Two tolerances
+are now dtype-aware:
+- `tol_verify` defaults by dtype (1e-6 float64, **1e-4 float32**) via a config
+  before-validator; an explicit value still overrides. Single precision carries
+  ~1e-7 relative error, so 1e-6 is too tight a gate (measured worst-case f32
+  error: ISTA 3e-8, CG 1.2e-7 — comfortable under 1e-4, with margin for
+  larger/worse-conditioned problems).
+- CG `cg_tol` is raised to **1e-6 for float32** (`extract._cg_tol_for_dtype`,
+  threaded through `factorize(..., cg_tol=...)`): 1e-12 is below single-precision
+  reach, so the f32 CG would otherwise spin to its iteration cap while the
+  float64 oracle stops early. At 1e-6 both stop at the same residual level.
+  (This is the "tighten cg_tol" knob from the original note, resolved to the
+  reachable single-precision target rather than a smaller unreachable one.)
+Tested in `tests/codegen/test_float32.py` (config defaults, the float-typedef
+emission, and end-to-end ISTA-embedded + CG-OpenMP `VERIFY OK` runs).
+Remaining: exercise f32 *on GPU hardware* (item D) — it may behave slightly
+differently than the CPU f32 build, and re-confirm the 1e-4 gate there.
 
 **(F) Scale the examples.** The built-in examples are tiny (verification-sized).
 For GPU you want large instances (e.g. `mpc_osqp_example(nx, nu, N)` big, or a

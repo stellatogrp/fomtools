@@ -13,6 +13,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+#: Verify-tolerance default per dtype. Single precision (~1e-7 relative error)
+#: needs a looser equivalence gate than double; see ``CodegenConfig.tol_verify``.
+_TOL_VERIFY_DEFAULTS = {"float64": 1e-6, "float32": 1e-4}
+
 
 class Version(str, Enum):
     """Which flavour of solver to emit.
@@ -134,7 +138,9 @@ class CodegenConfig(BaseModel):
         ``"float32"``). Large-scale GPU backends commonly prefer ``float32``.
     tol_verify:
         Tolerance used by the equivalence harness when comparing generated-code
-        output against the Python reference oracle.
+        output against the Python reference oracle. When left unset it defaults
+        by dtype (1e-6 for float64, 1e-4 for float32, since single precision
+        cannot meet a 1e-6 gate); set it explicitly to override.
     allow_unroll:
         When extraction cannot roll the recorded steps into a stationary loop
         body (e.g. iteration-dependent step sizes), emit a straight-line,
@@ -155,10 +161,15 @@ class CodegenConfig(BaseModel):
     termination: TerminationSpec = Field(default_factory=TerminationSpec)
     solve_method: SolveMethod = SolveMethod.AUTO
     dtype: Literal["float64", "float32"] = "float64"
-    tol_verify: float = Field(
-        gt=0,
-        default=1e-6,
-        description="Tolerance used by the equivalence harness when comparing generated-code.",
+    tol_verify: float | None = Field(
+        default=None,
+        description=(
+            "Tolerance used by the equivalence harness when comparing generated "
+            "code against the reference oracle. Defaults by dtype when left unset: "
+            "1e-6 for float64, 1e-4 for float32 (single precision carries ~1e-7 "
+            "relative error, which 1e-6 is too tight to absorb — especially for "
+            "iterative CG). Set explicitly to override."
+        ),
     )
     allow_unroll: bool = False
     num_verify_samples: int = 8
@@ -176,6 +187,21 @@ class CodegenConfig(BaseModel):
     )
 
     model_config = ConfigDict(frozen=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_tol_verify(cls, data):
+        # Fill the dtype-dependent tol_verify default when the user left it unset.
+        if isinstance(data, dict) and data.get("tol_verify") is None:
+            dtype = data.get("dtype", "float64")
+            data["tol_verify"] = _TOL_VERIFY_DEFAULTS.get(dtype, 1e-6)
+        return data
+
+    @model_validator(mode="after")
+    def _check_tol_verify(self) -> "CodegenConfig":
+        if self.tol_verify is None or self.tol_verify <= 0:
+            raise ValueError("tol_verify must be a positive float")
+        return self
 
     @model_validator(mode="after")
     def _check_version_constraints(self) -> "CodegenConfig":
