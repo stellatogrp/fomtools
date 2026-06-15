@@ -29,19 +29,30 @@ Everything described lives on git branch **`codegen`** (pushed to
 - Examples: `ista`, `dr`, `boxqp`, `mpc` (OSQP-ADMM), `cgqp` (CG), `pdhg_lp`
   (PDHG-for-LP, no restarts), `indef_kkt` (symmetric-indefinite → LU).
 
-**Left (your GPU job):**
-- The **CUDA target is compile-check-only** and the `.cu` solver body is written
-  ad-hoc by the LLM agent (dense matvecs, per-iteration H2D/D2H copies). There are
-  **no deterministically-emitted GPU kernels** for the matvecs or the CG solve,
-  unlike `fom_ops.c` / `fom_linsolve.c` on the CPU side.
-- Real on-GPU verification + benchmarking (CI has no GPU, so it never ran).
-- AUTO does not yet pick **CG** for large SPD systems on GPU (the right default).
-- No device-resident state across iterations; no cuSPARSE/cuBLAS; no float32 path
-  exercised on hardware.
+**Done since (work item A, implemented on `aa/codegen_refactor`, not yet GPU-run):**
+- **Deterministic CUDA kernels** are now emitted: `CudaTarget` overrides
+  `_ops_source`/`_linsolve_source` to write `src/fom_ops.cu` (per-matrix
+  CSR/dense matvec kernels, one thread per row, data in `__device__ const`
+  arrays) and `src/fom_linsolve.cu` (device-resident Jacobi-PCG mirroring
+  `factorize._pcg_solve`; direct LDLᵀ/LU stay host-side behind a device-pointer
+  staging wrapper). Hand kernels, no cuSPARSE/cuBLAS (no handles/link deps;
+  library backing is a possible later optimization). Fixed-grid block-reduction
+  dots. **ABI unchanged but all `fom_apply_*`/`fom_lin_solve_*` pointers are
+  DEVICE pointers on this target** (documented in the emitted headers and in
+  `CudaTarget.agent_notes()`, which is appended to the agent prompts).
+- `fom_data.h`/`fom_ops.h`/`fom_linsolve.h` now carry `extern "C"` guards
+  (the old CUDA link would have failed on C++ name mangling).
+- Goldens rewritten: `golden/ista/large_scale_cuda/fom_solver.cu` (device-resident
+  state, pointer swap, residual reduction on device) + new
+  `golden/cgqp/large_scale_cuda/fom_solver.cu` (device CG showcase).
+- CUDA Makefile compiles the `.cu` helpers with nvcc and has a `bench` target.
 
-The single most valuable thing to build first: **deterministic CUDA kernels for
-the CSR SpMV and the CG iteration**, mirroring what `fom_ops.c`/`fom_linsolve.c`
-do on CPU, so the agent only writes the orchestration in `fom_solver.cu`.
+**Left (your GPU job):**
+- Real on-GPU verification + benchmarking (CI has no GPU, so it never ran).
+  Compile-check of the new emission has NOT run anywhere yet (no nvcc on the
+  dev machine) — run `pytest tests/codegen -q` on the GPU box first.
+- AUTO does not yet pick **CG** for large SPD systems on GPU (the right default).
+- No cuSPARSE/cuBLAS; no float32 path exercised on hardware.
 
 ---
 
@@ -240,17 +251,18 @@ reference that the emitted C mirrors **exactly**.
 `targets/__init__.py: get_target(config)` maps version+backend →
 {EmbeddedCTarget, OpenMpTarget, CudaTarget}.
 
-**Current CUDA reality** (see `tests/codegen/golden/ista/large_scale_cuda/fom_solver.cu`):
-the agent wrote naive `__global__` kernels doing **dense** `At[i*n+j]*state[j]`
-matvecs, copies state H2D/D2H **every iteration**, and computes the residual on
-the host. It compiles; it has never been run on a GPU here. This is the baseline
-to improve.
+**Current CUDA reality** (see `tests/codegen/golden/ista/large_scale_cuda/fom_solver.cu`
+and `.../cgqp/large_scale_cuda/fom_solver.cu`): the goldens now orchestrate the
+deterministic device helpers — device-resident state across the whole loop
+(pointer swap), `fom_apply_*` kernel launches, an activation kernel, and a
+max-|diff| residual reduction on device. Never compiled or run on a GPU yet
+(no nvcc here): compile-check + run-verify them on the cluster first.
 
 ---
 
 ## 8. GPU work list (prioritized)
 
-**(A) Deterministically emit CUDA kernels for the matvecs and CG.** Mirror
+**(A) [DONE — see §0] Deterministically emit CUDA kernels for the matvecs and CG.** Mirror
 `_ops_source` and `_cg_routine`. Two viable designs:
    1. *Library-backed*: emit CSR descriptors and call **cuSPARSE** SpMV +
       **cuBLAS** dot/axpy for CG. Cleanest, fastest to get right. The CSR arrays
@@ -262,11 +274,13 @@ to improve.
    body calls `fom_apply_*` / `fom_lin_solve_*` device wrappers — keeping the ABI
    identical so the agent's `.cu` orchestration stays simple and method-agnostic.
 
-**(B) Keep state on the device across iterations.** The golden copies every
-iteration — kill that. Allocate device buffers in `fom_setup`, copy params in
-`fom_update_params`, run the whole loop on-device, copy the solution out once in
-`fom_solve` end. Do the residual/termination reduction on device (or every K
-iters) to avoid per-iter D2H.
+**(B) [DONE in the goldens + agent prompt; verify on hardware] Keep state on the
+device across iterations.** The rewritten goldens allocate device buffers in
+`fom_setup`, upload state/params once per solve, swap device pointers instead of
+copying, reduce the residual on device, and copy the solution out once at the
+end; `CudaTarget.agent_notes()` instructs the live agent to do the same. Remaining:
+confirm on hardware, and consider reducing the residual only every
+`FOM_CHECK_TERMINATION` iters for large problems (goldens reduce every iter).
 
 **(C) Make AUTO choose CG for large SPD systems on CUDA.** CG is the GPU-friendly
 method (all data-parallel); direct triangular solves are sequential. The enum +

@@ -45,6 +45,22 @@ class TargetDescriptor(ABC):
     def solver_source_path(self) -> str:
         """Relative path (within ``out_dir``) of the agent-written solver."""
 
+    def ops_source_path(self) -> str:
+        """Relative path of the deterministic matrix-vector product source."""
+        return "src/fom_ops.c"
+
+    def linsolve_source_path(self) -> str:
+        """Relative path of the deterministic linear-solve source."""
+        return "src/fom_linsolve.c"
+
+    def agent_notes(self) -> str:
+        """Target-specific guidance appended to the coding-agent prompts.
+
+        Default: none. Targets whose helpers deviate from the host-C semantics
+        (e.g. CUDA, where ``fom_apply_*`` takes device pointers) override this.
+        """
+        return ""
+
     def static_checks(self, source: str) -> list[str]:
         """Return a list of invariant violations in ``source`` (empty = OK).
 

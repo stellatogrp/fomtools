@@ -141,9 +141,9 @@ class EmbeddedCTarget(TargetDescriptor):
         (out / "include" / "fom_data.h").write_text(self._data_header(ir))
         (out / "include" / "fom_profile.h").write_text(self._profile_header())
         (out / "include" / "fom_linsolve.h").write_text(self._linsolve_header(ir))
-        (out / "src" / "fom_linsolve.c").write_text(self._linsolve_source(ir))
+        (out / self.linsolve_source_path()).write_text(self._linsolve_source(ir))
         (out / "include" / "fom_ops.h").write_text(self._ops_header(ir))
-        (out / "src" / "fom_ops.c").write_text(self._ops_source(ir))
+        (out / self.ops_source_path()).write_text(self._ops_source(ir))
         (out / "src" / "fom_data.c").write_text(self._data_source(ir))
         (out / "src" / "fom_profile.c").write_text(self._profile_source())
         (out / "test" / "verify_data.h").write_text(self._verify_data(ir))
@@ -269,6 +269,10 @@ class EmbeddedCTarget(TargetDescriptor):
             "",
             '#include "fom_workspace.h"',
             "",
+            "#ifdef __cplusplus",
+            'extern "C" {',
+            "#endif",
+            "",
             "/* Initial state. */",
             "extern const fom_float FOM_STATE_INIT[FOM_STATE_DIM];",
             "",
@@ -303,7 +307,7 @@ class EmbeddedCTarget(TargetDescriptor):
                     f"((fom_float){_fmt_float(act.upper_scalar)})"
                 )
         lines.append("")
-        lines += ["#endif /* FOM_DATA_H */", ""]
+        lines += ["#ifdef __cplusplus", "}", "#endif", "", "#endif /* FOM_DATA_H */", ""]
         return "\n".join(lines)
 
     def _data_source(self, ir: FomIR) -> str:
@@ -326,6 +330,10 @@ class EmbeddedCTarget(TargetDescriptor):
             "",
             '#include "fom_workspace.h"',
             "",
+            "#ifdef __cplusplus",
+            'extern "C" {',
+            "#endif",
+            "",
             "/* out += M @ x for each linear-op matrix M (CSR if structurally",
             "   sparse, dense otherwise). Accumulating: zero `out` first. */",
             "",
@@ -337,7 +345,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 f"void fom_apply_{name}(const fom_float *x, fom_float *out);  "
                 f"/* {kind} {md.shape[0]}x{md.shape[1] if len(md.shape) > 1 else 1} */"
             )
-        lines += ["", "#endif /* FOM_OPS_H */", ""]
+        lines += ["", "#ifdef __cplusplus", "}", "#endif", "", "#endif /* FOM_OPS_H */", ""]
         return "\n".join(lines)
 
     def _ops_source(self, ir: FomIR) -> str:
@@ -394,6 +402,10 @@ class EmbeddedCTarget(TargetDescriptor):
             "",
             '#include "fom_workspace.h"',
             "",
+            "#ifdef __cplusplus",
+            'extern "C" {',
+            "#endif",
+            "",
             "/* Solve M x = b for each affine operator. Direct methods (LDL^T / LU)",
             "   apply a precomputed sparse factorization and are division-free",
             "   (diagonals stored as reciprocals); the CG method runs preconditioned",
@@ -408,7 +420,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 f"/* {fac.method.upper()}, dim {fac.dim}, nnz {fac.nnz} */"
             )
             lines.append("")
-        lines += ["#endif /* FOM_LINSOLVE_H */", ""]
+        lines += ["#ifdef __cplusplus", "}", "#endif", "", "#endif /* FOM_LINSOLVE_H */", ""]
         return "\n".join(lines)
 
     def _linsolve_source(self, ir: FomIR) -> str:
@@ -445,11 +457,15 @@ class EmbeddedCTarget(TargetDescriptor):
             lines.append("")
         return "\n".join(lines)
 
-    def _solve_routine(self, name: str, fac) -> str:
+    def _solve_routine(
+        self, name: str, fac, func_name: str | None = None, storage: str = ""
+    ) -> str:
         up = name.upper()
         n = f"FOM_FAC_{up}_DIM"
+        fname = func_name or f"fom_lin_solve_{name}"
+        prefix = f"{storage} " if storage else ""
         out = [
-            f"void fom_lin_solve_{name}(const fom_float *b, fom_float *x) {{",
+            f"{prefix}void {fname}(const fom_float *b, fom_float *x) {{",
             f"    fom_float y[{n}];",
             "    fom_int i, j, p, r;",
             f"    for (i = 0; i < {n}; ++i) y[i] = b[FOM_FAC_{up}_PERM[i]];",

@@ -28,6 +28,7 @@ GOLDEN_ROOT = Path(__file__).parent / "golden" / "ista"
 OPENMP_GOLDEN = GOLDEN_ROOT / "large_scale_openmp" / "fom_solver.c"
 CUDA_GOLDEN = GOLDEN_ROOT / "large_scale_cuda" / "fom_solver.cu"
 CG_OPENMP_GOLDEN = Path(__file__).parent / "golden" / "cgqp" / "large_scale_openmp" / "fom_solver.c"
+CUDA_CG_GOLDEN = Path(__file__).parent / "golden" / "cgqp" / "large_scale_cuda" / "fom_solver.cu"
 
 
 def _openmp_available() -> bool:
@@ -69,6 +70,15 @@ def _cuda_config(max_iters=200):
     return CodegenConfig(
         version=Version.LARGE_SCALE,
         backend=Backend.CUDA,
+        termination=TerminationSpec(max_iters=max_iters),
+    )
+
+
+def _cuda_cg_config(max_iters=100):
+    return CodegenConfig(
+        version=Version.LARGE_SCALE,
+        backend=Backend.CUDA,
+        solve_method=SolveMethod.CG,
         termination=TerminationSpec(max_iters=max_iters),
     )
 
@@ -136,6 +146,77 @@ def test_openmp_relaxed_static_checks():
     assert (
         target.static_checks("void f(void){ double *p = malloc(8); double y = p[0] / 2.0; }") == []
     )
+
+
+def test_cuda_scaffold_emits_device_ops(tmp_path):
+    # The matvec helpers are deterministic CUDA kernels behind the CPU ABI
+    # (device pointers); data is baked into device memory, no runtime upload.
+    from tests.codegen.conftest import build_ista
+
+    case = build_ista()
+    ir = extract_ir(case["verifier"], case["next_state"], config=_cuda_config(), name="ista")
+    scaffold(ir, tmp_path, _cuda_config())
+    ops = (tmp_path / "src" / "fom_ops.cu").read_text()
+    assert "__global__ void fom_apply_t0_state_kern" in ops
+    assert 'extern "C" void fom_apply_t0_state(' in ops
+    assert "__device__" in ops
+    assert not (tmp_path / "src" / "fom_ops.c").exists()
+    assert (tmp_path / "src" / "fom_linsolve.cu").exists()
+    # device-pointer semantics are documented in the header the agent reads
+    assert "DEVICE" in (tmp_path / "include" / "fom_ops.h").read_text()
+    mk = (tmp_path / "Makefile").read_text()
+    assert "src/fom_ops.cu" in mk and "src/fom_linsolve.cu" in mk
+
+
+def test_cuda_cg_scaffold_emits_device_cg(tmp_path):
+    # CG is all-data-parallel: the whole solve (SpMV + dots + axpy) is emitted
+    # as device kernels mirroring factorize._pcg_solve.
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg()
+    cfg = _cuda_cg_config()
+    ir = extract_ir(case["verifier"], case["next_state"], config=cfg, name="cgqp")
+    assert ir.factorizations["t0"].method == "cg"
+    scaffold(ir, tmp_path, cfg)
+    lin = (tmp_path / "src" / "fom_linsolve.cu").read_text()
+    assert "__global__ void fom_cg_t0_spmv_kern" in lin  # device CSR SpMV
+    assert "fom_dot_kern" in lin  # reduction kernels
+    assert "FOM_FAC_T0_MINV" in lin  # Jacobi preconditioner (reciprocals)
+    assert 'extern "C" void fom_lin_solve_t0(' in lin
+    assert "FOM_FAC_T0_L_DATA" not in lin  # no triangular factor, no inverse
+
+
+def test_cuda_direct_solve_stays_on_host(tmp_path):
+    # Triangular solves have loop-carried dependencies: the LU solve runs on
+    # the host behind a device-pointer staging wrapper.
+    from tests.codegen.conftest import build_dr
+
+    case = build_dr()
+    cfg = _cuda_config()
+    ir = extract_ir(case["verifier"], case["next_state"], config=cfg, name="dr")
+    [(name, fac)] = list(ir.factorizations.items())
+    assert fac.method == "lu"
+    scaffold(ir, tmp_path, cfg)
+    lin = (tmp_path / "src" / "fom_linsolve.cu").read_text()
+    assert f"static void fom_lin_solve_{name}_host(" in lin
+    assert f'extern "C" void fom_lin_solve_{name}(' in lin
+    assert "cudaMemcpyDeviceToHost" in lin and "cudaMemcpyHostToDevice" in lin
+
+
+@pytest.mark.skipif(not shutil.which("nvcc"), reason="no CUDA toolkit (nvcc) available")
+def test_cuda_cg_compile_check(tmp_path):
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg()
+    result = generate_code(
+        case["verifier"],
+        case["next_state"],
+        tmp_path,
+        config=_cuda_cg_config(),
+        driver=StubAgentDriver(CUDA_CG_GOLDEN),
+        name="cgqp",
+    )
+    assert result.translate.success, result.translate.log
 
 
 @pytest.mark.skipif(not shutil.which("nvcc"), reason="no CUDA toolkit (nvcc) available")

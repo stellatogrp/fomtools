@@ -592,10 +592,6 @@ class LinearExpression:
         """
         return InequalityConstraint(-self, -rhs)
 
-    @property
-    def leaves(self):
-        return set(self.decomposition_dict.keys())
-
     def update_bounds(self, lb: np.ndarray, ub: np.ndarray) -> None:
         """Update lower and upper bounds of the `LinearExpression` objects."""
         self.lb = np.maximum(self.lb, lb)
