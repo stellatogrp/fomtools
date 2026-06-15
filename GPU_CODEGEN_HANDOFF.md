@@ -48,9 +48,10 @@ Everything described lives on git branch **`codegen`** (pushed to
 - CUDA Makefile compiles the `.cu` helpers with nvcc and has a `bench` target.
 
 **Left (your GPU job):**
-- Real on-GPU verification + benchmarking (CI has no GPU, so it never ran).
-  Compile-check of the new emission has NOT run anywhere yet (no nvcc on the
-  dev machine) — run `pytest tests/codegen -q` on the GPU box first.
+- Real on-GPU verification + benchmarking. The wiring is done (verify auto-runs
+  on a GPU box; see item D), but nothing has been compiled or run under `nvcc`
+  yet — no nvcc on the dev machine. Run `pytest tests/codegen -q` on the GPU box
+  first; the `test_cuda_*_compile_check` tests turn into real `VERIFY OK` runs there.
 - AUTO now upgrades large SPD systems to **CG** on CUDA (work item C, below) —
   but the size threshold default (256) is a guess; re-tune with real GPU timings.
 - No cuSPARSE/cuBLAS; no float32 path exercised on hardware.
@@ -298,10 +299,24 @@ for an indirect GPU solve, not done here. Documented on `SolveMethod` /
 explicit-bypass). Note: the *threshold default (256)* is an unvalidated guess —
 re-tune once (D) gives real GPU timings for the CG-vs-direct crossover.
 
-**(D) Real GPU verification + benchmarking.** Flip `CudaTarget.verify_command` to
-`["make","verify"]` on the cluster; confirm `VERIFY OK` against the oracle for
-ista/pdhg_lp/cgqp at GPU scale. Add a `make bench` path. Watch the FP-reduction
-tolerance note in §3.2.
+**(D) [PARTLY DONE — needs a GPU to finish] Real GPU verification + benchmarking.**
+Wired up so it "just works" on the cluster, but never run on hardware here:
+- `CudaTarget.verify_command()` now **auto-detects**: returns `["make","verify"]`
+  (build + run vs the oracle) when a GPU is usable — `nvcc` + `nvidia-smi`
+  reporting a device, or `FOMTOOLS_CUDA_RUN=1` to force it — else `["make",
+  "compile"]` (CI/dev compile-check). So on a GPU box the existing
+  `test_cuda_*_compile_check` tests auto-upgrade into real `VERIFY OK` runs;
+  no code edit needed. `FOMTOOLS_CUDA_RUN=0` forces compile-only.
+- `make bench` path added; the `compile` target now builds **both** verify_bin
+  and bench_bin so a compile-check also covers the benchmark harness.
+- CUDA goldens now exist for all three named examples: **ista**, **cgqp** (CG),
+  and **pdhg_lp** (new here — pure-matvec satlin+relu, uploads the clip bounds /
+  dual constant to the device in `fom_setup`).
+Remaining (GPU box only): actually run `pytest tests/codegen -q` with `nvcc`+GPU,
+confirm `VERIFY OK` for ista/pdhg_lp/cgqp, run `make bench`, and watch the
+FP-reduction tolerance note in §3.2 (esp. once float32 (E) lands — 1e-6 may be
+tight for f32 CG). Examples are still tiny (verification-sized); "GPU scale" is
+item (F).
 
 **(E) float32 path.** `CodegenConfig(dtype="float32")` sets `fom_float=float`.
 GPUs prefer it. Re-check `tol_verify` (1e-6 may be tight for f32 CG; loosen for

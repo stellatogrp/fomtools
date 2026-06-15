@@ -29,6 +29,9 @@ OPENMP_GOLDEN = GOLDEN_ROOT / "large_scale_openmp" / "fom_solver.c"
 CUDA_GOLDEN = GOLDEN_ROOT / "large_scale_cuda" / "fom_solver.cu"
 CG_OPENMP_GOLDEN = Path(__file__).parent / "golden" / "cgqp" / "large_scale_openmp" / "fom_solver.c"
 CUDA_CG_GOLDEN = Path(__file__).parent / "golden" / "cgqp" / "large_scale_cuda" / "fom_solver.cu"
+CUDA_PDHG_GOLDEN = (
+    Path(__file__).parent / "golden" / "pdhg_lp" / "large_scale_cuda" / "fom_solver.cu"
+)
 
 
 def _openmp_available() -> bool:
@@ -270,6 +273,65 @@ def test_cuda_direct_solve_stays_on_host(tmp_path):
     assert f"static void fom_lin_solve_{name}_host(" in lin
     assert f'extern "C" void fom_lin_solve_{name}(' in lin
     assert "cudaMemcpyDeviceToHost" in lin and "cudaMemcpyHostToDevice" in lin
+
+
+def test_cuda_verify_command_compile_only_without_gpu(monkeypatch):
+    # FOMTOOLS_CUDA_RUN=0 forces compile-check (the CI/dev default behavior).
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "0")
+    target = get_target(_cuda_config())
+    assert target.verify_command() == ["make", "compile"]
+
+
+def test_cuda_verify_command_runs_when_forced(monkeypatch):
+    # FOMTOOLS_CUDA_RUN=1 forces the real run-verification (used on the cluster).
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "1")
+    target = get_target(_cuda_config())
+    assert target.verify_command() == ["make", "verify"]
+
+
+def test_cuda_compile_builds_verify_and_bench(tmp_path):
+    # The compile-check target builds both binaries so CI catches bench breakage.
+    from tests.codegen.conftest import build_ista
+
+    case = build_ista()
+    ir = extract_ir(case["verifier"], case["next_state"], config=_cuda_config(), name="ista")
+    scaffold(ir, tmp_path, _cuda_config())
+    mk = (tmp_path / "Makefile").read_text()
+    assert "verify_bin" in mk and "bench_bin" in mk
+    assert "compile: $(OBJS) test/verify_main.c test/bench_main.c" in mk
+    assert (tmp_path / "test" / "bench_main.c").exists()
+
+
+def test_cuda_pdhg_scaffold_emits_device_ops(tmp_path):
+    # PDHG-for-LP is the pure-matvec GPU showcase (satlin + relu, no solve).
+    from tests.codegen.conftest import build_pdhg_lp
+
+    case = build_pdhg_lp(max_iters=150)
+    cfg = _cuda_config(max_iters=150)
+    ir = extract_ir(case["verifier"], case["next_state"], config=cfg, name="pdhg_lp")
+    assert not ir.factorizations  # no linear solve
+    scaffold(ir, tmp_path, cfg)
+    ops = (tmp_path / "src" / "fom_ops.cu").read_text()
+    assert 'extern "C" void fom_apply_t0_state(' in ops
+    assert 'extern "C" void fom_apply_t1_t_t0(' in ops
+    # clip bounds + dual constant remain host arrays for the solver to upload
+    assert "FOM_MAT_t0_lo" in (tmp_path / "include" / "fom_data.h").read_text()
+
+
+@pytest.mark.skipif(not shutil.which("nvcc"), reason="no CUDA toolkit (nvcc) available")
+def test_cuda_pdhg_compile_check(tmp_path):
+    from tests.codegen.conftest import build_pdhg_lp
+
+    case = build_pdhg_lp(max_iters=150)
+    result = generate_code(
+        case["verifier"],
+        case["next_state"],
+        tmp_path,
+        config=_cuda_config(max_iters=150),
+        driver=StubAgentDriver(CUDA_PDHG_GOLDEN),
+        name="pdhg_lp",
+    )
+    assert result.translate.success, result.translate.log
 
 
 @pytest.mark.skipif(not shutil.which("nvcc"), reason="no CUDA toolkit (nvcc) available")

@@ -28,12 +28,18 @@ Design decisions (mirroring the CPU emission in ``embedded_c.py``):
   the CPU routine. Prefer ``solve_method=CG`` for large SPD systems on CUDA.
 * No matrix inverse is ever formed or used (project-wide invariant).
 
-Because CI typically has no GPU/``nvcc``, the verify command is a *compile
-check* (``make compile``); run-verification (``make verify``) is deferred to a
-GPU machine.
+The verify command auto-detects the hardware: on a GPU machine (``nvcc`` +
+``nvidia-smi`` reporting a device, or ``FOMTOOLS_CUDA_RUN=1``) it is
+``make verify`` — build *and* run the real comparison against the oracle —
+while CI / dev boxes with no GPU fall back to a ``make compile`` compile-check.
+See :meth:`CudaTarget.verify_command`.
 """
 
 from __future__ import annotations
+
+import os
+import shutil
+import subprocess
 
 from fomtools.codegen.ir import FomIR
 from fomtools.codegen.targets.embedded_c import (
@@ -68,8 +74,31 @@ class CudaTarget(EmbeddedCTarget):
         return "src/fom_linsolve.cu"
 
     def verify_command(self) -> list[str]:
-        # No GPU in CI: compile-check only (build the verify binary, do not run).
-        return ["make", "compile"]
+        """``make verify`` (build *and run* on a GPU) when one is available, else
+        ``make compile`` (compile-check only).
+
+        CI and dev boxes have no GPU, so the default is a compile check. On a GPU
+        machine the harness automatically runs the real comparison against the
+        oracle. Detection: the ``FOMTOOLS_CUDA_RUN`` env var forces the choice
+        (``1`` → run, ``0`` → compile-only); otherwise it auto-detects a usable
+        GPU (``nvcc`` to build + ``nvidia-smi`` reporting a device to run).
+        """
+        return ["make", "verify"] if self._can_run_on_gpu() else ["make", "compile"]
+
+    @staticmethod
+    def _can_run_on_gpu() -> bool:
+        override = os.environ.get("FOMTOOLS_CUDA_RUN")
+        if override is not None:
+            return override.strip().lower() not in ("", "0", "false", "no", "off")
+        if not shutil.which("nvcc") or not shutil.which("nvidia-smi"):
+            return False
+        try:
+            proc = subprocess.run(["nvidia-smi", "-L"], capture_output=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        # `nvidia-smi -L` lists one "GPU <n>: ..." line per device, or
+        # "No devices were found" when none are visible.
+        return proc.returncode == 0 and b"GPU " in proc.stdout
 
     def static_checks(self, source: str) -> list[str]:
         return []
@@ -460,19 +489,21 @@ class CudaTarget(EmbeddedCTarget):
                 "",
                 "OBJS = fom_solver.o fom_ops.o fom_linsolve.o fom_data.o",
                 "",
-                "# Compile-check: build the verify binary (no GPU run).",
-                "compile: $(OBJS) test/verify_main.c",
+                "# Compile-check: build BOTH the verify and bench binaries (no GPU run).",
+                "# Building bench_bin here too means a CI compile-check catches bench",
+                "# breakage even though benchmarking itself needs a GPU.",
+                "compile: $(OBJS) test/verify_main.c test/bench_main.c",
                 "\t$(CC) $(CFLAGS) -c test/verify_main.c -o verify_main.o",
                 "\t$(NVCC) $(NVCCFLAGS) $(OBJS) verify_main.o -o verify_bin",
+                "\t$(CC) $(CFLAGS) -c test/bench_main.c -o bench_main.o",
+                "\t$(NVCC) $(NVCCFLAGS) $(OBJS) bench_main.o -o bench_bin",
                 "",
-                "# Run-verification (requires a GPU).",
+                "# Run-verification (requires a GPU): check the solver vs the oracle.",
                 "verify: compile",
                 "\t./verify_bin",
                 "",
-                "# Benchmark full solves (requires a GPU).",
-                "bench: $(OBJS) test/bench_main.c",
-                "\t$(CC) $(CFLAGS) -c test/bench_main.c -o bench_main.o",
-                "\t$(NVCC) $(NVCCFLAGS) $(OBJS) bench_main.o -o bench_bin",
+                "# Benchmark full solves (requires a GPU); prints a BENCH line.",
+                "bench: compile",
                 "\t./bench_bin",
                 "",
                 "lib: $(CU_SRC) src/fom_data.c",
