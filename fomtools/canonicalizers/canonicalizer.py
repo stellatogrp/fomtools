@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from typing import ClassVar
 
 import numpy as np
 
@@ -15,6 +16,11 @@ class Canonicalizer:
     defines a common interface for mixed-integer programming (MIP),
     and semidefinite programming (SDP).
 
+    Subclasses declare a class-level ``_CANONICALIZERS`` dict mapping the
+    lowercase step class name (e.g. ``"relu"``) to the function that
+    encodes it. ``canonicalize`` looks up the function in this dict and
+    raises ``NotImplementedError`` if absent.
+
     Attributes
     ----------
     solver: Solver
@@ -22,6 +28,8 @@ class Canonicalizer:
         (e.g., ``gurobi.Gurobi()``).
 
     """
+
+    _CANONICALIZERS: ClassVar[dict] = {}
 
     def __init__(self, solver_params: dict = None, solver: str = "gurobi"):
         """
@@ -92,12 +100,10 @@ class Canonicalizer:
         """
         Dispatch the provided step into a backend-specific encoding.
 
-        This method converts a `Step` instance (e.g., ``Relu``, ``SoftThreshold``,
-        ``Affine``) into a collection of backend-specific constraints for the
-        underlying optimization problem. The canonicalizer inspects the concrete
-        type of ``step`` and forwards the call to a method of the form
-        ``canonicalize_<step_class_name>()`` defined on the subclasses,
-        for example ``canonicalize_relu`` or ``canonicalize_soft_threshold``.
+        Looks up the lowercase step class name (e.g. ``"relu"``) in this
+        canonicalizer's ``_CANONICALIZERS`` registry and invokes the
+        corresponding encoder. Raises ``NotImplementedError`` if the step
+        type is not registered.
 
         Parameters
         ----------
@@ -112,19 +118,16 @@ class Canonicalizer:
         Raises
         ------
         NotImplementedError
-            If this canonicalizer does not provide an encoder for the concrete
-            type of ``step`` (i.e. no matching ``canonicalize_<step_class_name>`` method
-            is implemented).
+            If this canonicalizer's ``_CANONICALIZERS`` registry has no
+            entry for the concrete type of ``step``.
 
         """
-        method_name = f"canonicalize_{type(step).__name__.lower()}"
-        try:
-            canonicalizer = getattr(self, method_name)
-        except AttributeError:
+        canonicalizer = self._CANONICALIZERS.get(type(step).__name__.lower())
+        if canonicalizer is None:
             raise NotImplementedError(
                 f"{self.__class__.__name__} does not support {type(step).__name__}"
             )
-        canonicalizer(step)
+        canonicalizer(self, step)
 
     def add_var(self, iterate, **kwargs) -> None:
         """

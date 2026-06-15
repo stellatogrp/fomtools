@@ -21,24 +21,19 @@ class NormL1(ProxableFunction):
     $$
 
     when ``lambd`` is an array of non-negative weights.
-
-    Notes
-    -----
-    The ``prox`` method returns the value $f(y)$ evaluated at the
-    proximal point $y = \operatorname{prox}_{\gamma f}(x)$, **not**
-    the proximal point itself.
     """
 
-    def __init__(self, lambd: float = 1):
+    def __init__(self, lambd: float | np.ndarray = 1.0):
         super().__init__()
         if np.any(lambd < 0):
             raise ValueError("Lambda must be positive")
-
-        self.lambd = lambd
+        if isinstance(lambd, np.ndarray) and lambd.ndim > 1:
+            raise ValueError("Lambda cannot have dimension larger than 1")
+        self.lambd = np.array(lambd)
 
     def eval(self, x: np.ndarray) -> float:
         r"""
-        Evaluate the weighted $\ell_1$  norm $f(x)$.
+        Evaluate the weighted $\ell_1$ norm $f(x)$.
 
         Parameters
         ----------
@@ -50,44 +45,67 @@ class NormL1(ProxableFunction):
         float
             The value $f(x) = \sum_i \lambda_i |x_i|$.
         """
-        return np.sum(self.lambd * np.abs(x))
+        if x.ndim >= 2:
+            raise ValueError("Input should be one-dimensional")
+        if self.lambd.ndim == 1 and x.shape[0] != self.lambd.shape[0]:
+            raise ValueError("Input should be of the same size as Lambda")
+        return np.sum(np.multiply(self.lambd, np.abs(x)))
 
-    def prox(self, x: np.ndarray, gamma=1):
+    def prox(
+        self, rhs: np.ndarray, gamma: float | np.ndarray = 1.0
+    ) -> np.ndarray:
         r"""
-        Compute the proximal objective value of the $\ell_1$ norm at ``x``.
+        Compute the proximal point of the $\ell_1$ norm at ``rhs``.
 
-        This method computes the proximal point
-
-        $$
-            y = \operatorname{prox}_{\gamma f}(x),
-        $$
-
-        The proximal operator of $f$ with (possibly coordinate-wise)
-        step size $\gamma$ is defined by:
+        This method computes
 
         $$
-            \operatorname{prox}_{\gamma f}(x) = \arg\!\min_{u} \left\{ f(u)
-            + \frac{1}{2} \sum_i \frac{(u_i - x_i)^2}{\gamma_i} \right\},
+            y = \operatorname{prox}_{\gamma f}(\text{rhs})
+              = \arg\!\min_{u} \left\{ f(u)
+                + \frac{1}{2} \sum_i \frac{(u_i - \text{rhs}_i)^2}{\gamma_i}
+                \right\},
         $$
 
-        where $\gamma$ can be a scalar or an array.
+        where $\gamma$ can be a scalar or a 1-D array broadcastable to
+        the shape of ``rhs``. The closed form is element-wise soft
+        thresholding by $\gamma \lambda$.
+
+        Parameters
+        ----------
+        rhs : np.ndarray
+            Input point at which to apply the proximal operator.
+        gamma : float or array_like, default 1.0
+            Step size(s) $\gamma$. Can be a scalar or an array
+            broadcastable to the shape of ``rhs``.
+
+        Returns
+        -------
+        np.ndarray
+            The proximal point
+            $y = \operatorname{prox}_{\gamma f}(\text{rhs})$.
+        """
+        if rhs.ndim >= 2:
+            raise ValueError("Input should be one-dimensional")
+        if self.lambd.ndim == 1 and rhs.shape != self.lambd.shape:
+            raise ValueError("Input should be of the same size as Lambda")
+        gl = gamma * self.lambd
+        return rhs + np.where(rhs <= -gl, gl, np.where(rhs >= gl, -gl, -rhs))
+
+    def grad(self, x: np.ndarray) -> np.ndarray:
+        r"""
+        Compute a subgradient of the weighted $\ell_1$ norm at ``x``.
+
+        Returns the sign of ``x`` element-wise; at ``x_i = 0`` returns
+        ``0`` (an element of the subdifferential).
 
         Parameters
         ----------
         x : np.ndarray
-            Input point at which to apply the proximal operator.
-
-        gamma : float or array_like
-            Step size(s) $\gamma$. Can be a scalar or an array
-            broadcastable to the shape of ``x``.
+            Point at which to evaluate the subgradient.
 
         Returns
         -------
-        float
-            The value $f(y)$ at the proximal point
-            $y = \operatorname{prox}_{\gamma f}(x)$.
+        np.ndarray
+            A subgradient $g \in \partial f(x)$.
         """
-        gl = gamma * self.lambd
-        y = x + np.where(x <= -gl, gl, np.where(x >= gl, -gl, -x))
-
-        return self.eval(y)
+        return np.sign(x)

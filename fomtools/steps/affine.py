@@ -39,8 +39,6 @@ class Affine(Step):
         Coefficient matrix on the left-hand side of the operator equation.
     """
 
-    skip_obbt: bool = True  # Bounds computed analytically via linear solve
-
     def __init__(
         self,
         rhs: LinearExpression,

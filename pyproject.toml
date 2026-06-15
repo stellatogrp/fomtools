@@ -42,7 +42,7 @@ dev = [
        "pepit",
 ]
 
-nn = ["torch"]
+nn = ["torch", "jax", "flax"]
 
 docs = [
        "cvxpy",

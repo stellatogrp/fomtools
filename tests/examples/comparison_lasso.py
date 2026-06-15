@@ -1,5 +1,6 @@
 """
 ISTA worst-case bound: MIP vs SDP vs PEPit.
+Reproduces the three verification approaches for the Lasso example (Section 5.3).
 
 Problem:
     minimize  (1/2) ||Ds - x||^2 + lambda * ||s||_1
@@ -15,10 +16,10 @@ PEPit is solved with ||s0 - s*|| <= R
     MATCH_MIP_AT_K1 = False -> R = sqrt(n) * max(|x_ub|), geometric worst-case
 """
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from PEPit import PEP
-from PEPit.functions import SmoothConvexFunction, ConvexFunction
+from PEPit.functions import ConvexFunction, SmoothConvexFunction
 from PEPit.primitive_steps import proximal_step
 
 from fomtools.verifier import Verifier
@@ -48,25 +49,25 @@ solver_params = {"OutputFlag": 0, "LogToConsole": 0}
 MATCH_MIP_AT_K1 = True
 
 # ── MIP — squared 2-norm of fixed-point residual (MIQP, Gurobi only) ──────────
-vp_mip = Verifier(method="mip", solver="gurobi", obbt_handler="highs",
+vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver="gurobi",
                   params=solver_params)
 
 x_mip = vp_mip.add_param(p, lb=x_lb, ub=x_ub)
 s_mip = [s0]
 
 mip_residuals = []
-x_worst_k4 = None
+x_worst_k5 = None
 for k in range(1, K + 1):
     s_mip.append(vp_mip.step.soft_threshold(
         s_mip[k - 1] - eta * D.T @ (D @ s_mip[k - 1] - x_mip), lambd=lambd * eta))
     vp_mip.set_objective_norm([s_mip[k] - s_mip[k - 1]], ord=2)
     mip_residuals.append(vp_mip.solve())
     print(f"MIP  k={k}: {mip_residuals[-1]:.6f}")
-    if k == 4:
-        x_worst_k4 = vp_mip.get_solution_value(x_mip)
+    if k == 5:
+        x_worst_k5 = vp_mip.get_solution_value(x_mip)
 
 # ── SDP — squared 2-norm of fixed-point residual ──────────────────────────────
-vp_sdp = Verifier(method="sdp", solver="clarabel", obbt_handler="highs")
+vp_sdp = Verifier(method="sdp", solver="clarabel", obbt_solver="highs")
 
 x_sdp = vp_sdp.add_param(p, lb=x_lb, ub=x_ub)
 s_sdp = [s0]
@@ -136,11 +137,11 @@ def _soft_threshold(v, threshold):
 
 s_wc = [s0.copy()]
 for k in range(1, K + 1):
-    v = s_wc[-1] - eta * D.T @ (D @ s_wc[-1] - x_worst_k4)
+    v = s_wc[-1] - eta * D.T @ (D @ s_wc[-1] - x_worst_k5)
     s_wc.append(_soft_threshold(v, lambd * eta))
 
 wc_residuals = [float(np.sum((s_wc[k] - s_wc[k - 1]) ** 2)) for k in range(1, K + 1)]
-print(f"\nWorst-case x (MIP k=4): {x_worst_k4}")
+print(f"\nWorst-case x (MIP k=4): {x_worst_k5}")
 for k in range(1, K + 1):
     print(f"WC sim k={k}: {wc_residuals[k - 1]:.6f}")
 
@@ -151,7 +152,7 @@ plt.figure(figsize=(7, 4))
 plt.plot(iters, mip_residuals,   "o-",  label="MIP")
 plt.plot(iters, sdp_residuals,   "s--", label="SDP")
 plt.plot(iters, pepit_residuals, "^:",  label="PEPit")
-plt.plot(iters, wc_residuals,    "x:",  label="WC instance (MIP k=4)")
+plt.plot(iters, wc_residuals,    "x:",  label="WC instance (MIP k=5)")
 plt.plot(iters, sim_residuals,   "d-.", label=f"Simulation (max over N={num_star})")
 plt.yscale("log")
 plt.xlabel(r"Iteration $k$")

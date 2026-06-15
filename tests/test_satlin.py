@@ -145,7 +145,7 @@ def test_satlin_sdp_mip(vp_param_2, vp_sdp):
     mip_solver_name = {"GurobiSolver": "gurobi", "HiGHSSolver": "highs"}[mip_solver_name]
 
     # --- SDP ---
-    vp_s = Verifier(method="sdp", solver=sdp_solver_name, obbt_handler="highs")
+    vp_s = Verifier(method="sdp", solver=sdp_solver_name, obbt_solver="highs")
     q_s = vp_s.add_param(n, lb=q - q_offset, ub=q + q_offset)
     z_s = [vp_s.add_iterate(n, lb=z0_init, ub=z0_init)]
     for k in range(K):
@@ -154,7 +154,7 @@ def test_satlin_sdp_mip(vp_param_2, vp_sdp):
     sdp_res = vp_s.solve()
 
     # --- MIP ---
-    vp_m = Verifier(solver=mip_solver_name, obbt_handler=mip_solver_name,
+    vp_m = Verifier(solver=mip_solver_name, obbt_solver=mip_solver_name,
                      params={"TimeLimit": 10, "MIPGap": 1e-4, "OutputFlag": 0})
     q_m = vp_m.add_param(n, lb=q - q_offset, ub=q + q_offset)
     z_m = [vp_m.add_iterate(n, lb=z0_init, ub=z0_init)]
@@ -183,7 +183,7 @@ def test_satlin_param_sdp_mip(vp_param_2, vp_sdp):
     mip_solver_name = {"GurobiSolver": "gurobi", "HiGHSSolver": "highs"}[mip_solver_name]
 
     # --- SDP ---
-    vp_s = Verifier(method="sdp", solver=sdp_solver_name, obbt_handler="highs")
+    vp_s = Verifier(method="sdp", solver=sdp_solver_name, obbt_solver="highs")
     q_s = vp_s.add_param(n, lb=q - q_offset, ub=q + q_offset)
     top_s = vp_s.add_param(1, lb=0.5, ub=0.6)
     l_rest_s = vp_s.add_param(n - 1, lb=np.array([-1.2, -0.35]), ub=np.array([-1.1, 0]))
@@ -198,7 +198,7 @@ def test_satlin_param_sdp_mip(vp_param_2, vp_sdp):
     sdp_res = vp_s.solve()
 
     # --- MIP ---
-    vp_m = Verifier(solver=mip_solver_name, obbt_handler=mip_solver_name,
+    vp_m = Verifier(solver=mip_solver_name, obbt_solver=mip_solver_name,
                      params={"TimeLimit": 10, "MIPGap": 1e-4, "OutputFlag": 0})
     q_m = vp_m.add_param(n, lb=q - q_offset, ub=q + q_offset)
     top_m = vp_m.add_param(1, lb=0.5, ub=0.6)
@@ -215,6 +215,36 @@ def test_satlin_param_sdp_mip(vp_param_2, vp_sdp):
 
     # SDP two-norm squared >= MIP inf-norm squared
     assert sdp_res >= mip_res**2 - TEST_EPS
+
+
+def test_satlin_diamond(vp_param_2):
+    """
+    Diamond case: input bounds [lb, ub] strictly contain saturation region [l, u],
+    with a verification objective whose worst case sits at a diamond corner that
+    is NOT on the buggy upper-left diagonal.
+
+    Setup: l=0, u=1 (asymmetric), z0=0, q in [-3, 3] so the satlin input rhs = -q
+    spans [-3, 3], clearly containing [0, 1]. The objective ||z1 - q||_inf equals
+    |lhs + rhs| with z0=0, and is maximized over the true diamond at the corner
+    (rhs, lhs) = (3, 1) -> value 4 (achieved at q=-3, z1=clip(3,0,1)=1).
+
+    Under the previously buggy diamond cut (lines 645-647), feasibility collapsed
+    onto the line through (lb, l)=(-3, 0) and (u, u)=(1, 1), so the (3, 1) corner
+    was excluded and the MIP returned 3 instead of 4.
+    """
+    n = 1
+    l = np.array([0.0])
+    u = np.array([1.0])
+
+    q_param = vp_param_2.add_param(n, lb=np.array([-3.0]), ub=np.array([3.0]))
+    z0 = vp_param_2.add_iterate(n, lb=np.array([0.0]), ub=np.array([0.0]))
+    z1 = vp_param_2.step.satlin(z0 - q_param, l=l, u=u)
+
+    vp_param_2.set_objective_norm(z1 - q_param, np.inf)
+    mip_res = vp_param_2.solve()
+
+    true_worst_case = 4.0
+    assert mip_res >= true_worst_case - TEST_EPS
 
 
 def proj(v, l, u):

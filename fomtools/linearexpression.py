@@ -135,8 +135,8 @@ class LinearExpression:
         obj.counter = cls.counter
         obj.const = np.zeros(ndim)
         obj.is_binary = is_binary
-        obj.lb = np.zeros(ndim) if is_binary else lb
-        obj.ub = np.ones(ndim) if is_binary else ub
+        obj.lb = np.zeros(ndim) if is_binary else np.full(ndim, lb, dtype=float)
+        obj.ub = np.ones(ndim) if is_binary else np.full(ndim, ub, dtype=float)
         cls.counter += 1
         return obj
 
@@ -655,3 +655,145 @@ class LinearExpression:
     def eval(self):
         # TODO
         raise NotImplementedError("LinExpr.eval() needs to be implemented.")
+
+
+def stack(exprs: list[LinearExpression]) -> LinearExpression:
+    r"""
+    Concatenate ``LinearExpression`` objects along axis 0 into a single view.
+
+    The result shares storage with its components: no new optimization
+    variables are introduced and no equality constraint of the form
+    ``y == [e_1; ...; e_n]`` is added. Any constraint or bound update on a
+    leaf appearing in ``exprs`` automatically applies to the corresponding
+    slice of the returned stack, since canonicalizers walk the result's
+    ``decomposition_dict`` directly to the underlying leaves.
+
+    Parameters
+    ----------
+    exprs : list[LinearExpression]
+        Components to stack. Each must be a valid ``LinearExpression``
+        (leaf or derived). Components may share leaves
+        (e.g. ``stack([x, 2*x])``); shared leaves are deduplicated in the
+        result's ``decomposition_dict`` via summation of their composed
+        coefficient matrices.
+
+    Returns
+    -------
+    LinearExpression
+        A non-leaf ``LinearExpression`` of dimension
+        ``sum(e.ndim for e in exprs)``. ``result.const`` is the
+        concatenation of each component's ``const``; ``result.lb`` / ``result.ub``
+        are computed once at construction by interval propagation from the
+        component leaves.
+
+    Raises
+    ------
+    ValueError
+        If ``exprs`` is empty.
+
+    Warnings
+    --------
+    The stack's ``lb`` / ``ub`` attributes are a **snapshot** taken at
+    construction time. They do *not* refresh automatically when a
+    component leaf's bounds are tightened later (for example by an OBBT
+    pass triggered by ``add_constraint``). Any consumer that needs
+    up-to-date stack bounds must explicitly recompute them via::
+
+        stack_expr.lb, stack_expr.ub = stack_expr.bound_propagation()
+
+    This matters most in the dual / KKT use case (the primary motivator
+    for ``stack``): if the stack is reused across multiple constraint
+    additions, stale snapshot bounds can cause downstream OBBT passes
+    to under-tighten. Canonicalizer constraint emission is unaffected
+    — it walks ``decomposition_dict`` straight to the underlying leaves,
+    whose bounds *are* always current — so this caveat applies only to
+    callers that read ``stack_expr.lb`` / ``stack_expr.ub`` directly.
+    """
+    if len(exprs) == 0:
+        raise ValueError("stack() requires at least one expression")
+
+    total_dim = sum(e.ndim for e in exprs)
+    decomposition_dict: dict = {}
+    const = np.zeros(total_dim)
+    offset = 0
+    for e in exprs:
+        rows = np.arange(offset, offset + e.ndim)
+        cols = np.arange(e.ndim)
+        sel = spa.csc_matrix(
+            (np.ones(e.ndim), (rows, cols)),
+            shape=(total_dim, e.ndim),
+        )
+        for leaf, coeff in e.decomposition_dict.items():
+            composed = sel @ coeff
+            if leaf in decomposition_dict:
+                decomposition_dict[leaf] = decomposition_dict[leaf] + composed
+            else:
+                decomposition_dict[leaf] = composed
+        const[offset : offset + e.ndim] = e.const
+        offset += e.ndim
+
+    # Drop entries whose composed coefficient is all-zero — possible when a
+    # component's leaf coefficient is supported only on rows masked out by
+    # the selection matrix. Pruning prevents canonicalizers walking the
+    # result's decomposition_dict from looking up irrelevant leaves.
+    result = LinearExpression(
+        decomposition_dict=prune_dict(decomposition_dict), const=const
+    )
+    result.lb, result.ub = result.bound_propagation()
+    return result
+
+
+def solve_linexpr(M, expr: LinearExpression) -> LinearExpression:
+    r"""
+    Build a ``LinearExpression`` representing :math:`M^{-1}\,\text{expr}`
+    without forming :math:`M^{-1}` explicitly.
+
+    Each leaf coefficient and the constant are computed via
+    ``np.linalg.solve(M, ...)`` (dense ``M``) or an LU-factorized
+    ``splu.solve(...)`` (sparse ``M``) — the same pattern as
+    :attr:`fomtools.steps.affine.Affine.lhs_mat_inverse`.
+
+    The returned ``LinearExpression`` is intended for **interval-propagating
+    bounds through an implicit inverse**; it should not be registered with
+    a canonicalizer (the verification model should post ``M @ u == expr``
+    instead, leaving the solve to the solver).
+
+    Parameters
+    ----------
+    M : np.ndarray or scipy.sparse matrix
+        Square invertible matrix.
+    expr : LinearExpression
+        Expression to be "left-multiplied" by ``M^{-1}``. Its
+        ``decomposition_dict`` and ``const`` are mapped through the
+        per-coefficient solve.
+
+    Returns
+    -------
+    LinearExpression
+        Throwaway expression of dimension equal to ``M.shape[0]``.
+    """
+
+    def _to_dense(b):
+        return np.asarray(b.todense()) if spa.issparse(b) else np.asarray(b)
+
+    if spa.issparse(M):
+        lu = spa.linalg.splu(M.tocsc())
+
+        def solve(b):
+            return lu.solve(_to_dense(b))
+    else:
+
+        def solve(b):
+            return np.asarray(np.linalg.solve(M, _to_dense(b)))
+
+    # Preserve coefficient rank: ``solve`` returns a 2-D ``(n, k)`` block
+    # for each 2-D leaf coefficient and a 1-D ``(n,)`` vector for the
+    # constant. ``np.squeeze`` would collapse a ``(n, 1)`` block (for
+    # 1-dim leaves) into ``(n,)``, breaking the ``a @ (ub + lb)`` matmul
+    # in ``bound_propagation``; pin the ranks instead.
+    return LinearExpression(
+        decomposition_dict={
+            k: np.atleast_2d(solve(v)) for k, v in expr.decomposition_dict.items()
+        },
+        const=np.atleast_1d(solve(expr.const)),
+    )

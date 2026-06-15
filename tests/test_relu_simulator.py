@@ -19,7 +19,7 @@ def test_relu_simulator():
     n = 3
     step_size = 0.01
 
-    vp = Verifier(method="simulator", obbt_handler=None)
+    vp = Verifier(method="simulator", obbt_solver=None)
 
     z = [None] * (K + 1)
     z[0] = vp.add_iterate(ndim=n, lb=-10, ub=10, init=np.full(n, 1))

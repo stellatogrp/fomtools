@@ -55,7 +55,7 @@ def test_nn_simulator(small_model):
     with torch.no_grad():
         y_torch = small_model(torch.tensor(x_samples)).numpy()
 
-    vp = Verifier(method="simulator", obbt_handler=None)
+    vp = Verifier(method="simulator", obbt_solver=None)
     layers = from_torch(small_model)
     input_param = vp.add_param(2, lb=-1.0, ub=1.0, samples=x_samples)
     output_expr = vp.neural_network(input_param, layers)

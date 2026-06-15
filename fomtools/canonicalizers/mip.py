@@ -310,14 +310,16 @@ class MIP(Canonicalizer):
             # Create relu(expr) step
             step_pos = Relu(rhs=expr)
             step_pos.update_bounds(*self.get_expression_bounds(expr))
-            solver.add_var(step_pos.lhs)
+            for leaf in step_pos.lhs_leaves:
+                solver.add_var(leaf)
             constraints.extend(self._build_relu_constraints(step_pos))
 
             # Create relu(-expr) step
             neg_expr = -expr
             step_neg = Relu(rhs=neg_expr)
             step_neg.update_bounds(*self.get_expression_bounds(neg_expr))
-            solver.add_var(step_neg.lhs)
+            for leaf in step_neg.lhs_leaves:
+                solver.add_var(leaf)
             constraints.extend(self._build_relu_constraints(step_neg))
 
             # Accumulate: 1^T @ (relu(expr) + relu(-expr))
@@ -487,26 +489,29 @@ class MIP(Canonicalizer):
             MIP constraints for the ReLU activation.
         """
         constraints = []
-        for i, (_lhs, _rhs) in enumerate(zip(step.lhs, step.rhs)):
-            if i not in step.proj_indices:
+        # Iterate proj indices only. For partial projection, ``step.lhs`` is a
+        # composite whose non-proj rows share decomposition with ``step.rhs``;
+        # those rows already satisfy ``lhs[i] == rhs[i]`` structurally, so no
+        # explicit constraint is needed. For full projection, ``proj_indices``
+        # covers every row and behavior matches the previous implementation.
+        for i in sorted(step.proj_indices):
+            _lhs = step.lhs[i]
+            _rhs = step.rhs[i]
+            if step.ub[i] <= 0:
+                constraints.append(_lhs == 0)
+            elif step.lb[i] > 0:
                 constraints.append(_lhs == _rhs)
             else:
-                if step.ub[i] <= 0:
-                    constraints.append(_lhs == 0)
-                elif step.lb[i] > 0:
-                    constraints.append(_lhs == _rhs)
-                elif step.ub[i] > 0 or step.lb[i] <= 0:
-                    new_var = LinearExpression.from_int(_rhs.ndim, is_binary=True)
-                    step.idx_with_binary_vars.add(i)
-                    constraints.append(_lhs <= step.ub[i] * new_var)
-
-                    constraints.extend(
-                        [
-                            _lhs <= step.ub[i] / (step.ub[i] - step.lb[i]) * (_rhs - step.lb[i]),
-                            _lhs >= _rhs,
-                            _lhs <= _rhs - step.lb[i] * (1 - new_var),
-                        ]
-                    )
+                new_var = LinearExpression.from_int(_rhs.ndim, is_binary=True)
+                step.idx_with_binary_vars.add(i)
+                constraints.append(_lhs <= step.ub[i] * new_var)
+                constraints.extend(
+                    [
+                        _lhs <= step.ub[i] / (step.ub[i] - step.lb[i]) * (_rhs - step.lb[i]),
+                        _lhs >= _rhs,
+                        _lhs <= _rhs - step.lb[i] * (1 - new_var),
+                    ]
+                )
         return constraints
 
     def canonicalize_saturatedlinear(self, step: SaturatedLinear):
@@ -643,8 +648,12 @@ class MIP(Canonicalizer):
                             constraints.append(lhs >= u - (u - lb) * (1 - w1))
 
                 if lb < l and ub > u:
-                    expr = (u - l) / (u - lb) * (rhs - u) + u
-                    constraints.extend([lhs <= expr, lhs >= expr])
+                    constraints.extend(
+                        [
+                            lhs <= (u - l) / (u - lb) * (rhs - u) + u,
+                            lhs >= (u - l) / (ub - l) * (rhs - l) + l,
+                        ]
+                    )
 
                 elif lb < l and ub < u:
                     constraints.extend(
@@ -838,3 +847,10 @@ class MIP(Canonicalizer):
 
         self.add_constraints(constraints)
         self.steps.append(step)
+
+    _CANONICALIZERS = {
+        "affine": canonicalize_affine,
+        "relu": canonicalize_relu,
+        "saturatedlinear": canonicalize_saturatedlinear,
+        "softthreshold": canonicalize_softthreshold,
+    }

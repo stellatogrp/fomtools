@@ -3,14 +3,13 @@ import warnings
 from typing import List, Sequence
 
 import numpy as np
-import scipy.sparse as spa
 
 from fomtools.canonicalizers.mip import MIP
 from fomtools.canonicalizers.obbt_handler import OBBTHandler
 from fomtools.canonicalizers.sdp import SDP
 from fomtools.canonicalizers.simulator import Simulator
-from fomtools.constraint import Constraint
-from fomtools.linearexpression import LinearExpression
+from fomtools.constraint import Constraint, is_binary_free
+from fomtools.linearexpression import LinearExpression, stack
 from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
@@ -33,7 +32,7 @@ class Verifier(object):
         theory_func=None,
         method="mip",
         solver="gurobi",
-        obbt_handler="gurobi",
+        obbt_solver="gurobi",
         params=None,
         rlt_cuts=False,
         triangle_cuts=False,
@@ -49,7 +48,7 @@ class Verifier(object):
             Canonicalization method for the verification problem.
         solver : str, default "gurobi"
             Solver backend identifier (e.g., "gurobi", "highs", "clarabel").
-        obbt_handler : str or None, default "gurobi"
+        obbt_solver : str or None, default "gurobi"
             Solver used by the OBBT bound-tightening handler. Disable with
             ``None``.
         params : dict, optional
@@ -74,12 +73,17 @@ class Verifier(object):
             rlt_cuts=rlt_cuts,
             triangle_cuts=triangle_cuts,
         )
-        self.obbt_handler = OBBTHandler(solver=obbt_handler) if obbt_handler else None
-        self.use_obbt_handler = True if obbt_handler else False
+        self.obbt_handler = OBBTHandler(solver=obbt_solver) if obbt_solver else None
+        self.use_obbt_handler = True if obbt_solver else False
         if self.obbt_handler is not None:
             self.canonicalizer.obbt_handler = self.obbt_handler
         decomposer_cls = self._get_step_decomposer(method)
-        self.step_decomposer = decomposer_cls(self.canonicalizer, self._register_var)
+        self.step_decomposer = decomposer_cls(
+            self.canonicalizer,
+            self._register_var,
+            self.add_iterate,
+            self.add_constraint,
+        )
         self._step_proxy = _StepProxy(self)
 
     def __getitem__(self, item):
@@ -370,11 +374,10 @@ class Verifier(object):
         """
         Stack multiple parameters into a single composite LinearExpression.
 
-        Unlike ``add_param``, this does not create a new leaf variable. Instead,
-        it builds a composite expression that references the original parameters
-        via sparse block-selection matrices. This preserves shared identity: if
-        the same parameter appears in multiple stacks, the solver sees one
-        variable, not independent copies.
+        Equivalent to :func:`fomtools.stack`; preserved for API consistency
+        with ``add_param`` / ``add_iterate``. Does not create a new leaf or
+        any solver-side equality constraints — the result is a view sharing
+        storage with the input parameters via sparse block-selection matrices.
 
         The constituent parameters must already be registered (via ``add_param``).
 
@@ -389,34 +392,7 @@ class Verifier(object):
             A composite expression of dimension ``sum(p.ndim for p in param_list)``
             whose decomposition references the leaves of the input parameters.
         """
-        total_dim = sum(p.ndim for p in param_list)
-        decomposition_dict = {}
-        const = np.zeros(total_dim)
-        offset = 0
-
-        for p in param_list:
-            # Sparse selection matrix: total_dim x p.ndim
-            # Identity block at rows [offset : offset + p.ndim]
-            rows = np.arange(offset, offset + p.ndim)
-            cols = np.arange(p.ndim)
-            data = np.ones(p.ndim)
-            sel = spa.csc_matrix((data, (rows, cols)), shape=(total_dim, p.ndim))
-
-            # Compose selection with p's decomposition dict
-            for leaf, coeff in p.decomposition_dict.items():
-                composed = sel @ coeff
-                if leaf in decomposition_dict:
-                    decomposition_dict[leaf] = decomposition_dict[leaf] + composed
-                else:
-                    decomposition_dict[leaf] = composed
-
-            const[offset : offset + p.ndim] = p.const
-            offset += p.ndim
-
-        result = LinearExpression(decomposition_dict=decomposition_dict, const=const)
-        # Override __init__'s list-based lb/ub with proper numpy arrays
-        result.lb, result.ub = result.bound_propagation()
-        return result
+        return stack(param_list)
 
     def add_constraint(self, constr: Constraint):
         """
@@ -437,7 +413,9 @@ class Verifier(object):
         -------
         None
         """
-        if self.use_obbt_handler:
+        # Only forward binary-free constraints to the OBBT handler so its model
+        # stays a pure LP (binary leaves would otherwise be relaxed silently).
+        if self.use_obbt_handler and is_binary_free(constr):
             self.obbt_handler.add_constraint(constr)
             self._tighten_constraint_bounds(constr)
         self.canonicalizer.add_constraint(constr)
@@ -481,41 +459,43 @@ class Verifier(object):
             # 3. OBBT handler's solver
             self.obbt_handler.update_bounds(leaf_expr, new_lb, new_ub)
 
-    def prox(self, function: ProxableFunction, rhs: LinearExpression, gamma: float = 1, **kwargs):
+    def prox(
+        self,
+        function: ProxableFunction,
+        rhs: LinearExpression,
+        gamma: float = 1.0,
+    ) -> LinearExpression:
         """
-        Interface for constructing and executing proxable functions.
+        Encode a proxable function as steps + auxiliary variables.
 
-        This method centralizes the execution pipeline for all proxable
-        functions. It instantiates ``function`` with the provided
-        keyword arguments, and computes the proximal objective value
-        of the provided ``function`` at the current solution value of the
-        model.
+        Dispatches to the active step decomposer's prox registry, which
+        lowers ``function`` into one or more steps (and any auxiliary
+        variables those steps require) and returns the output expression.
 
         Parameters
         ----------
-        function: ProxableFunction
-            Proxable function class to be instantiated and appplied.
-
-        rhs: LinearExpression
-            Linear Expression whose current solution value is used as
-            the input to the proximal operator.
-
-        gamma: float, optional
-            Proximal step size. Default is ``1``.
-
-        **kwargs
-            Additional keyword arguments passed to the constructor of
-            ``function``.
+        function : ProxableFunction
+            A pre-configured proxable function instance carrying problem
+            data (e.g. ``NormL1(lambd=0.5)``, ``IndBox(l=l, u=u)``).
+        rhs : LinearExpression
+            The input expression to which the prox is applied.
+        gamma : float, default 1.0
+            The proximal step size.
 
         Returns
         -------
-        numpy.ndarray
-            The proximal objective value corresponding to the implementation of
-            ``function``.
+        LinearExpression
+            The output expression representing
+            ``prox_{gamma * function}(rhs)``.
+
+        Raises
+        ------
+        NotImplementedError
+            If the active backend's step decomposer does not have an
+            entry for the concrete type of ``function`` in its
+            ``_PROX_DECOMPOSERS`` registry.
         """
-        rhs_value = self.get_solution_value(rhs)
-        proxable_func = function(**kwargs)
-        return proxable_func.prox(rhs_value, gamma)
+        return self.step_decomposer.process_prox(function, rhs, gamma)
 
     @property
     def step(self) -> "_StepProxy":
@@ -541,10 +521,9 @@ class Verifier(object):
         Construct and execute the specified thresholding or activation step.
 
         This method centralizes the execution pipeline for all step-like
-        operators. It instantiates ``step_cls`` with the provided arguments,
-        optionally invokes the OBBT handler to refine bounds, and then
-        incorporates constraints produced by the respective step object
-        into the verification problem.
+        operators. It instantiates ``step_cls`` with the provided
+        arguments and forwards it to the step decomposer, which handles
+        OBBT bound tightening, decomposition, and canonicalization.
 
         Parameters
         ----------
@@ -566,11 +545,8 @@ class Verifier(object):
         """
         step = step_cls(rhs=rhs, relax_binary_vars=relax_binary_vars, **kwargs)
 
-        if self.use_obbt_handler and not step.skip_obbt:
-            result = self.obbt_handler.obbt(step.rhs, step.lb, step.ub)
-            if result is not None:
-                step.update_bounds(*result)
-
+        # OBBT input-tightening + relaxation building happens per-primitive in
+        # StepDecomposer._process_primitive, so decomposed sub-steps are covered.
         lhs = self.step_decomposer.process_step(step)
         self.steps.append(step)
 
@@ -626,6 +602,14 @@ class Verifier(object):
             improv_frac = (sum(_lb > lb) + sum(_ub < ub)) / (2.0 * len(lb))
 
         self.canonicalizer.add_theory_cut(C, target_expr, lb, ub)
+
+        # Mirror the (binary-free) theory cut into the OBBT LP so subsequent
+        # bound tightening benefits from it as well.
+        if self.use_obbt_handler:
+            theory_cuts = [target_expr >= lb - C, target_expr <= ub + C]
+            self.obbt_handler.add_constraints(
+                [c for c in theory_cuts if is_binary_free(c)]
+            )
         return improv_frac
 
     def set_zero_objective(self):
