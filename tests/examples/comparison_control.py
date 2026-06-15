@@ -16,14 +16,13 @@ PEPit is solved with ||(z0-z*)|| <= R
     MATCH_MIP_AT_K1 = False -> R = 1.0
 """
 
+import matplotlib.pyplot as plt
 import numpy as np
 import scipy.sparse as spa
-from scipy.sparse import csr_matrix
-import matplotlib.pyplot as plt
-
 from PEPit import PEP
-from PEPit.functions import SmoothStronglyConvexFunction, ConvexIndicatorFunction
+from PEPit.functions import ConvexIndicatorFunction, SmoothStronglyConvexFunction
 from PEPit.primitive_steps import proximal_step
+from scipy.sparse import csr_matrix
 
 from fomtools.verifier import Verifier
 

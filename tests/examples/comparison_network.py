@@ -16,15 +16,14 @@ PEPit is solved with ||(z0,v0,w0) - (z*,v*,w*)|| <= R
     MATCH_MIP_AT_K1 = False -> R = 1.0 (unit ball)
 """
 
-import numpy as np
-import networkx as nx
-import scipy.sparse as spa
 import cvxpy as cp
 import matplotlib.pyplot as plt
-
+import networkx as nx
+import numpy as np
+import scipy.sparse as spa
 from PEPit import PEP, Point
-from PEPit.operators import LinearOperator
 from PEPit.functions import ConvexFunction
+from PEPit.operators import LinearOperator
 from PEPit.primitive_steps import proximal_step
 
 from fomtools.verifier import Verifier
