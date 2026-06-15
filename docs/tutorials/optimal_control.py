@@ -15,11 +15,10 @@ def _():
 def _():
     import matplotlib.pyplot as plt
     import numpy as np
-
-    from fomtools.verifier import Verifier
-    from fomtools import LinearExpression
     import scipy.sparse as spa
     from scipy.sparse import csr_matrix
+
+    from fomtools.verifier import Verifier
 
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
@@ -403,7 +402,7 @@ def _(
 ):
     plt.plot(range(1, K+1), all_residuals, label='ADMM (MIP worst-case)')
     plt.plot(range(1, K+1), simulation_residuals_admm, '--', label='ADMM (in-sample avg)')
-    plt.plot(range(1, K+1), worst_case_residuals_admm, '-.', color='w', linewidth=.7, label='worst-case ADMM instance')
+    plt.plot(range(1, K+1), worst_case_residuals_admm, '-.', color='gray', linewidth=.7, label='worst-case ADMM instance')
     plt.suptitle('optimal control example (MIP)')
     plt.yscale('log')
     plt.xlabel(r'$K$')
@@ -428,9 +427,8 @@ def _(mo):
 
 @app.cell
 def _(K, P, np, spa):
-    from PEPit import PEP, Point
-    from PEPit.operators import LinearOperator
-    from PEPit.functions import SmoothStronglyConvexFunction, ConvexIndicatorFunction
+    from PEPit import PEP
+    from PEPit.functions import ConvexIndicatorFunction, SmoothStronglyConvexFunction
     from PEPit.primitive_steps import proximal_step
 
     P_eigs, _ = spa.linalg.eigs(P)

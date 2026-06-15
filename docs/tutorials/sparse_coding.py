@@ -15,9 +15,8 @@ def _():
 def _():
     import matplotlib.pyplot as plt
     import numpy as np
-
-    from PEPit import PEP, Point
-    from PEPit.functions import ConvexLipschitzFunction, SmoothConvexFunction, ConvexFunction
+    from PEPit import PEP
+    from PEPit.functions import ConvexFunction, SmoothConvexFunction
     from PEPit.primitive_steps import proximal_step
 
     from fomtools.verifier import Verifier
@@ -139,10 +138,12 @@ def _(D, K, Verifier, eta, lambd, n, n_samples, np, p, x_lb, x_ub):
     _x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, p))
     _x_param = _VP.add_param(ndim=p, lb=x_lb, ub=x_ub, samples=_x_samples)
 
-    _s = _VP.add_iterate(ndim=n, lb=0.0, ub=0.0, init=np.zeros(n))
+    _s = [None] * (K + 1)
+    _s[0] = _VP.add_iterate(ndim=n, lb=0.0, ub=0.0, init=np.zeros(n))
 
-    _VP.step.soft_threshold(_s - eta * D.T @ (D @ _s - _x_param), lambd=lambd*eta)
-    _residuals = _VP.solve(K=K)
+    for _k in range(1, K + 1):
+        _s[_k] = _VP.step.soft_threshold(_s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), lambd=lambd*eta)
+    _residuals = _VP.solve()
 
     print(
         f"Summary statistics:\n"
@@ -275,9 +276,11 @@ def _(
     for _k in range(1, K + 1):
         _VP = Verifier(method='simulator')
         _x_param = _VP.add_param(ndim=p, lb=x_lb, ub=x_ub, samples=[worst_case_x_param_ista[_k - 1]])
-        _s = _VP.add_iterate(ndim=n, lb=0.0, ub=0.0, init=np.zeros(n))
-        _VP.step.soft_threshold(_s - eta * D.T @ (D @ _s - _x_param), lambd=lambd * eta)
-        worst_case_residuals_ista.append(_VP.solve(K=_k)[0][-1])
+        _s = [None] * (_k + 1)
+        _s[0] = _VP.add_iterate(ndim=n, lb=0.0, ub=0.0, init=np.zeros(n))
+        for k in range(1, _k + 1):
+            _s[k] = _VP.step.soft_threshold(_s[k-1] - eta * D.T @ (D @ _s[k-1] - _x_param), lambd=lambd * eta)
+        worst_case_residuals_ista.append(_VP.solve()[0][-1])
 
     worst_case_residuals_ista = np.array(worst_case_residuals_ista)
     return (worst_case_residuals_ista,)

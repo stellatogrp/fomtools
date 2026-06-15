@@ -96,7 +96,7 @@ def _(D, np):
 
 @app.cell
 def _(D, K_spc, Verifier, eta_spc, lambd, n, np, p_spc, x_lb, x_ub):
-    _VP_spc_sdp = Verifier(method='sdp', solver='clarabel', obbt_handler='highs')
+    _VP_spc_sdp = Verifier(method='sdp', solver='clarabel')
     _x_param = _VP_spc_sdp.add_param(p_spc, lb=x_lb, ub=x_ub)
 
     _s0 = np.zeros(n)  # initialized at zero
@@ -166,10 +166,10 @@ def _(np):
     A = A.todense()
     A[n_s_net:, :] *= -1
 
-    with open('docs/tutorials/incidence_matrix.npy', 'wb') as write_file:
+    with open('incidence_matrix.npy', 'wb') as write_file:
         np.save(write_file, A)
 
-    A = np.load('docs/tutorials/incidence_matrix.npy', allow_pickle=True)
+    A = np.load('incidence_matrix.npy', allow_pickle=True)
 
     A_s = A[:n_s_net, :]
     A_d = A[n_s_net:, :]
@@ -268,7 +268,7 @@ def _(
     x_ub_net,
     z0_value_net,
 ):
-    _VP_net_sdp = Verifier(method='sdp', solver='clarabel', obbt_handler='highs')
+    _VP_net_sdp = Verifier(method='sdp', solver='clarabel')
     _x_param = _VP_net_sdp.add_param(n_d, lb=x_lb_net, ub=x_ub_net)
     _c_param = _VP_net_sdp.add_param(n_e, lb=c_lb * np.ones(n_e), ub=c_ub * np.ones(n_e))
     _b_s_param = _VP_net_sdp.add_param(n_s_net, lb=b_s, ub=b_s)
@@ -320,7 +320,7 @@ def _(
     z0_value_net,
 ):
     # Solve verification problem for momentum PDHG
-    _VP_net_sdp_mom = Verifier(method='sdp', solver='clarabel', obbt_handler='highs')
+    _VP_net_sdp_mom = Verifier(method='sdp', solver='clarabel')
     _x_param = _VP_net_sdp_mom.add_param(n_d, lb=x_lb_net, ub=x_ub_net)
     _c_param = _VP_net_sdp_mom.add_param(n_e, lb=c_lb * np.ones(n_e), ub=c_ub * np.ones(n_e))
     _b_s_param = _VP_net_sdp_mom.add_param(n_s_net, lb=b_s, ub=b_s)

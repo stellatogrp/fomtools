@@ -13,9 +13,9 @@ def _():
 
 @app.cell
 def _():
-    import numpy as np
     import cvxpy as cp
     import matplotlib.pyplot as plt
+    import numpy as np
 
     from fomtools.verifier import Verifier
 
@@ -83,10 +83,10 @@ def _(np):
     A = A.todense()
     A[n_s:, :] *= -1
 
-    with open('docs/tutorials/incidence_matrix.npy', 'wb') as write_file:
+    with open('incidence_matrix.npy', 'wb') as write_file:
         np.save(write_file, A)
 
-    A = np.load('docs/tutorials/incidence_matrix.npy', allow_pickle=True)
+    A = np.load('incidence_matrix.npy', allow_pickle=True)
 
     A_s = A[:n_s, :]
     A_d = A[n_s:, :]
@@ -580,8 +580,8 @@ def _(mo):
 @app.cell
 def _(K, L, eta):
     from PEPit import PEP, Point
-    from PEPit.operators import LinearOperator
     from PEPit.functions import ConvexFunction
+    from PEPit.operators import LinearOperator
     from PEPit.primitive_steps import proximal_step
 
     all_residuals_PEP = []

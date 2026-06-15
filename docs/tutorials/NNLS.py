@@ -110,10 +110,12 @@ def _(A, K, Verifier, eta, m, n, n_samples, np, x_lb, x_ub, z0_lb, z0_ub):
     _x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, m))
     _x_param = _VP.add_param(ndim=m, lb=x_lb, ub=x_ub, samples=_x_samples)
 
-    _z = _VP.add_iterate(ndim=n, lb=z0_lb, ub=z0_ub, init=np.full(n, (z0_lb+z0_ub)/2))
+    _z = [None] * (K + 1)
+    _z[0] = _VP.add_iterate(ndim=n, lb=z0_lb, ub=z0_ub, init=np.full(n, (z0_lb+z0_ub)/2))
 
-    _VP.step.relu(_z - eta * A.T @ (A @ _z - _x_param))
-    _residuals = _VP.solve(K=K)
+    for _k in range(1, K + 1):
+        _z[_k] = _VP.step.relu(_z[_k-1] - eta * A.T @ (A @ _z[_k-1] - _x_param))
+    _residuals = _VP.solve()
 
     print(
         f"Summary statistics:\n"
@@ -220,9 +222,11 @@ def _(
     for _k in range(1, K + 1):
         _VP = Verifier(method='simulator')
         _x_param = _VP.add_param(ndim=m, lb=x_lb, ub=x_ub, samples=[worst_case_x_param[_k - 1]])
-        _z = _VP.add_iterate(ndim=n, lb=z0_lb, ub=z0_ub, init=np.full(n, (z0_lb + z0_ub) / 2))
-        _VP.step.relu(_z - eta * A.T @ (A @ _z - _x_param))
-        worst_case_residuals.append(_VP.solve(K=_k)[0][-1])
+        _z = [None] * (_k + 1)
+        _z[0] = _VP.add_iterate(ndim=n, lb=z0_lb, ub=z0_ub, init=np.full(n, (z0_lb + z0_ub) / 2))
+        for k in range(1, _k + 1):
+            _z[k] = _VP.step.relu(_z[k-1] - eta * A.T @ (A @ _z[k-1] - _x_param))
+        worst_case_residuals.append(_VP.solve()[0][-1])
 
     worst_case_residuals = np.array(worst_case_residuals)
     return (worst_case_residuals,)
@@ -328,8 +332,8 @@ def _(mo):
 
 @app.cell
 def _(K, L, eta):
-    from PEPit import PEP, Point
-    from PEPit.functions import SmoothConvexFunction, ConvexIndicatorFunction
+    from PEPit import PEP
+    from PEPit.functions import ConvexIndicatorFunction, SmoothConvexFunction
     from PEPit.primitive_steps import proximal_step
 
     all_residuals_PEP = []
@@ -429,7 +433,7 @@ def _(mo):
 
 @app.cell
 def _(A, K, Verifier, eta, m, n, x_lb, x_ub, z0_lb, z0_ub):
-    _VP = Verifier(method='sdp', solver='clarabel', obbt_handler='highs')
+    _VP = Verifier(method='sdp', solver='clarabel')
 
     _x_param = _VP.add_param(m, lb=x_lb, ub=x_ub)
 
@@ -448,7 +452,7 @@ def _(A, K, Verifier, eta, m, n, x_lb, x_ub, z0_lb, z0_ub):
 
 @app.cell
 def _(A, K, Verifier, eta, m, n, x_lb, x_ub, z0_lb, z0_ub):
-    _VP = Verifier(method='sdp', solver='clarabel', obbt_handler='highs')
+    _VP = Verifier(method='sdp', solver='clarabel')
     _x_param = _VP.add_param(m, lb=x_lb, ub=x_ub)
 
     _z0 = _VP.add_iterate(n, lb=z0_lb, ub=z0_ub)
