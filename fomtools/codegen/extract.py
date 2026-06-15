@@ -17,8 +17,8 @@ from __future__ import annotations
 import numpy as np
 import scipy.sparse as spa
 
-from fomtools.codegen.config import CodegenConfig
-from fomtools.codegen.factorize import Factorization, factorize
+from fomtools.codegen.config import Backend, CodegenConfig, SolveMethod, Version
+from fomtools.codegen.factorize import Factorization, factorize, is_spd
 from fomtools.codegen.ir import (
     ActivationKind,
     ActivationOp,
@@ -153,6 +153,29 @@ def _eval_step_fresh(step, values: dict[LinearExpression, np.ndarray]) -> np.nda
         lower, upper = _satlin_arrays(step)
         return np.minimum(np.maximum(rhs_val, lower), upper)
     raise NonStationaryFOMError(f"Unsupported step type: {type(step).__name__}")
+
+
+def _resolve_solve_method(lhs_mat, config: CodegenConfig) -> str:
+    """Pick the concrete solve method for an affine operator ``lhs_mat w = rhs``.
+
+    An explicit ``solve_method`` is honored as-is. For ``AUTO`` on the
+    large-scale **CUDA** backend, upgrade to CG when the system is large
+    (dimension ``>= config.cg_auto_min_dim``) and SPD: CG is matrix-free and
+    fully data-parallel — the GPU-friendly choice — whereas the direct LDL^T/LU
+    triangular solves are sequential and run on the host. Small systems and any
+    non-SPD system (e.g. a quasidefinite ADMM/OSQP KKT matrix, which is
+    symmetric-indefinite) keep AUTO's direct factorization. No inverse is ever
+    formed in any branch.
+    """
+    if (
+        config.solve_method == SolveMethod.AUTO
+        and config.version == Version.LARGE_SCALE
+        and config.backend == Backend.CUDA
+        and lhs_mat.shape[0] >= config.cg_auto_min_dim
+        and is_spd(lhs_mat)
+    ):
+        return "cg"
+    return config.solve_method.value
 
 
 def _dependency_cone(steps, next_state_leaves: set[LinearExpression]):
@@ -303,7 +326,8 @@ def extract_ir(
         # division-free triangular solves to the assembled right-hand side.
         if isinstance(step, Affine):
             solve_name = prefix
-            factorizations[prefix] = factorize(step.lhs_mat, method=config.solve_method.value)
+            method = _resolve_solve_method(step.lhs_mat, config)
+            factorizations[prefix] = factorize(step.lhs_mat, method=method)
         # Saturated-linear clip bounds become per-coordinate IR arrays.
         if activation.kind == ActivationKind.SATURATED_LINEAR:
             lower, upper = _satlin_arrays(step)

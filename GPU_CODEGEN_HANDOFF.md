@@ -51,7 +51,8 @@ Everything described lives on git branch **`codegen`** (pushed to
 - Real on-GPU verification + benchmarking (CI has no GPU, so it never ran).
   Compile-check of the new emission has NOT run anywhere yet (no nvcc on the
   dev machine) — run `pytest tests/codegen -q` on the GPU box first.
-- AUTO does not yet pick **CG** for large SPD systems on GPU (the right default).
+- AUTO now upgrades large SPD systems to **CG** on CUDA (work item C, below) —
+  but the size threshold default (256) is a guess; re-tune with real GPU timings.
 - No cuSPARSE/cuBLAS; no float32 path exercised on hardware.
 
 ---
@@ -282,15 +283,20 @@ end; `CudaTarget.agent_notes()` instructs the live agent to do the same. Remaini
 confirm on hardware, and consider reducing the residual only every
 `FOM_CHECK_TERMINATION` iters for large problems (goldens reduce every iter).
 
-**(C) Make AUTO choose CG for large SPD systems on CUDA.** CG is the GPU-friendly
-method (all data-parallel); direct triangular solves are sequential. The enum +
-factorize already support CG. The work is the selection heuristic + wiring:
-factorize is currently called as `factorize(step.lhs_mat,
-method=config.solve_method.value)` in `extract.py`. Consider: when
-`version==LARGE_SCALE and backend==CUDA and solve_method==AUTO` and the matrix is
-SPD and large, choose CG. (Keep it explicit/overridable.) Quasidefinite KKT
-(OSQP/MPC) is **indefinite** → CG does NOT apply there; you'd need MINRES or a
-reduced normal-equations form, or keep those on a direct/host solve. Document.
+**(C) [DONE] Make AUTO choose CG for large SPD systems on CUDA.** Implemented in
+`extract.py: _resolve_solve_method(lhs_mat, config)`: when
+`solve_method==AUTO and version==LARGE_SCALE and backend==CUDA` and the matrix is
+SPD (`factorize.is_spd`, a non-throwing Cholesky certificate) and large
+(`dim >= config.cg_auto_min_dim`, default 256), it upgrades to CG; otherwise it
+returns `config.solve_method.value` unchanged. Explicit `LDLT`/`LU`/`CG` always
+bypass the heuristic, and `cg_auto_min_dim` tunes/disables the size gate. A
+quasidefinite (symmetric-indefinite) KKT fails the SPD check, so OSQP/MPC systems
+stay on a direct factorization — they'd need MINRES or a normal-equations form
+for an indirect GPU solve, not done here. Documented on `SolveMethod` /
+`CodegenConfig`; tested in `test_factorize.py` (`is_spd`) and `test_large_scale.py`
+(upgrade / size-gate / indefinite-stays-direct / embedded-never-CG /
+explicit-bypass). Note: the *threshold default (256)* is an unvalidated guess —
+re-tune once (D) gives real GPU timings for the CG-vs-direct crossover.
 
 **(D) Real GPU verification + benchmarking.** Flip `CudaTarget.verify_command` to
 `["make","verify"]` on the cluster; confirm `VERIFY OK` against the oracle for

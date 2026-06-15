@@ -46,6 +46,14 @@ class SolveMethod(str, Enum):
     products. It requires a symmetric positive-definite system and a few scalar
     divisions per iteration, so it is only available for the large-scale version
     (the embedded target is division-free).
+
+    On the large-scale **CUDA** backend, ``AUTO`` additionally *upgrades* to CG
+    for systems that are large (dimension ``>= cg_auto_min_dim``) and SPD,
+    because CG is matrix-free and fully data-parallel — the GPU-friendly choice
+    — whereas the direct triangular solves are sequential and run on the host.
+    Small SPD systems and all non-SPD systems (including quasidefinite KKT,
+    which is symmetric-indefinite) keep AUTO's direct factorization. Forcing
+    ``LDLT`` / ``LU`` / ``CG`` always bypasses this heuristic.
     """
 
     AUTO = "auto"
@@ -135,6 +143,11 @@ class CodegenConfig(BaseModel):
         Number of random parameter instances drawn for the golden verify data.
     seed:
         RNG seed for reproducible verify-sample generation.
+    cg_auto_min_dim:
+        Dimension threshold for the ``AUTO`` → CG upgrade on the large-scale
+        CUDA backend (see :class:`SolveMethod`). Raise it to keep more systems
+        on a direct factorization; lower it to prefer CG for smaller SPD
+        systems. Ignored for non-CUDA backends and explicit solve methods.
     """
 
     version: Version = Version.EMBEDDED
@@ -150,6 +163,17 @@ class CodegenConfig(BaseModel):
     allow_unroll: bool = False
     num_verify_samples: int = 8
     seed: int = 0
+    cg_auto_min_dim: int = Field(
+        ge=1,
+        default=256,
+        description=(
+            "Minimum affine-system dimension at which solve_method=AUTO upgrades "
+            "a large-scale CUDA SPD solve to CG (matrix-free, data-parallel). "
+            "Smaller SPD systems and all non-SPD systems keep a direct "
+            "factorization. No effect for non-CUDA backends or an explicit "
+            "solve_method."
+        ),
+    )
 
     model_config = ConfigDict(frozen=True)
 

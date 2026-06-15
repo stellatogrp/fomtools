@@ -83,6 +83,75 @@ def _cuda_cg_config(max_iters=100):
     )
 
 
+def _cuda_auto_config(max_iters=50, **kw):
+    return CodegenConfig(
+        version=Version.LARGE_SCALE,
+        backend=Backend.CUDA,
+        solve_method=SolveMethod.AUTO,
+        termination=TerminationSpec(max_iters=max_iters),
+        **kw,
+    )
+
+
+def test_cuda_auto_upgrades_large_spd_to_cg():
+    # AUTO on CUDA picks CG for a large SPD affine system (matrix-free, parallel).
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg(n=6)
+    cfg = _cuda_auto_config(cg_auto_min_dim=4)
+    ir = extract_ir(case["verifier"], case["next_state"], config=cfg, name="cgqp")
+    assert ir.factorizations["t0"].method == "cg"
+
+
+def test_cuda_auto_keeps_small_spd_direct():
+    # Below the size threshold, AUTO keeps the (sequential) direct LDL^T solve.
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg(n=6)
+    cfg = _cuda_auto_config()  # default cg_auto_min_dim=256 > 6
+    ir = extract_ir(case["verifier"], case["next_state"], config=cfg, name="cgqp")
+    assert ir.factorizations["t0"].method == "ldlt"
+
+
+def test_cuda_auto_keeps_indefinite_kkt_direct():
+    # A symmetric-indefinite KKT system is not SPD -> stays on a direct solve
+    # even with the size gate wide open; CG does not apply (would need MINRES or
+    # a normal-equations form).
+    from tests.codegen.conftest import build_indefinite_kkt
+
+    case = build_indefinite_kkt()
+    cfg = _cuda_auto_config(cg_auto_min_dim=1)  # size gate wide open
+    ir = extract_ir(case["verifier"], case["next_state"], config=cfg, name="indef_kkt")
+    method = next(iter(ir.factorizations.values())).method
+    assert method == "lu"  # not "cg"
+
+
+def test_embedded_auto_never_upgrades_to_cg():
+    # The AUTO->CG upgrade is CUDA-only; the embedded target stays division-free.
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg(n=6)
+    cfg = CodegenConfig(solve_method=SolveMethod.AUTO, cg_auto_min_dim=1)  # embedded C
+    ir = extract_ir(case["verifier"], case["next_state"], config=cfg, name="cgqp")
+    assert ir.factorizations["t0"].method == "ldlt"
+
+
+def test_cuda_explicit_method_bypasses_heuristic():
+    # Forcing LDLT keeps the direct factorization even for a large SPD system.
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg(n=6)
+    cfg = CodegenConfig(
+        version=Version.LARGE_SCALE,
+        backend=Backend.CUDA,
+        solve_method=SolveMethod.LDLT,
+        termination=TerminationSpec(max_iters=50),
+        cg_auto_min_dim=1,
+    )
+    ir = extract_ir(case["verifier"], case["next_state"], config=cfg, name="cgqp")
+    assert ir.factorizations["t0"].method == "ldlt"
+
+
 def test_embedded_cuda_combo_rejected():
     with pytest.raises(ValueError):
         CodegenConfig(version=Version.EMBEDDED, backend=Backend.CUDA)

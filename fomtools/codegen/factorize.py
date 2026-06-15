@@ -296,6 +296,27 @@ def factorize(M, method: str = "auto", symmetry_tol: float = 1e-9) -> Factorizat
     )
 
 
+def is_spd(M, symmetry_tol: float = 1e-9) -> bool:
+    """True if ``M`` is symmetric positive-definite (cheap Cholesky certificate).
+
+    A non-throwing companion to the SPD check inside :func:`_cg_factorization`,
+    used by the ``auto`` solve-method heuristic to decide whether CG is
+    applicable (CG converges only on SPD systems). A quasidefinite ADMM/OSQP KKT
+    matrix is symmetric *indefinite*, so this returns ``False`` for it and
+    ``auto`` keeps such systems on a direct factorization.
+    """
+    Md = np.asarray(M.todense(), dtype=float) if spa.issparse(M) else np.asarray(M, dtype=float)
+    if Md.ndim != 2 or Md.shape[0] != Md.shape[1] or Md.shape[0] == 0:
+        return False
+    if not np.allclose(Md, Md.T, atol=symmetry_tol):
+        return False
+    try:
+        np.linalg.cholesky(Md)
+    except np.linalg.LinAlgError:
+        return False
+    return True
+
+
 def _cg_factorization(Md: np.ndarray, n: int, is_sym: bool) -> Factorization:
     """Build a CG (indirect) solver for a symmetric positive-definite matrix.
 
