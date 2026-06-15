@@ -66,3 +66,63 @@ class LinearProgram(QuadraticProgram):
             relax_binary_vars=relax_binary_vars,
         )
         self.is_lp = True
+
+
+class StandardFormLinearProgram(LinearProgram):
+    r"""
+    Step representing the solution of a **standard-form** linear program
+
+    $$
+        x^\star = \arg\min_x\; c^\top x
+        \quad\text{s.t.}\quad A x = b,\; x \ge 0.
+    $$
+
+    A :class:`LinearProgram` with ``q = c``, equality ``(A, b)``, and the non-negativity
+    constraint ``x >= 0`` written as the inequality ``-I x <= 0`` (``C = -I``, ``d = 0``).
+    No new lowering logic — it reuses the entire ``LinearProgram`` / ``_qp_kkt`` machinery
+    (the step decomposer resolves it to the ``LinearProgram`` decomposer via the class MRO).
+
+    Parameters
+    ----------
+    c : np.ndarray or LinearExpression
+        Linear cost; its dimension defines ``n``. A scalar is rejected (cannot size the LP).
+    A, b : optional
+        Equality matrix ``(p, n)`` and right-hand side (dim ``p``).
+    dual_ub, primal_bounds, nu_bounds, rhs, relax_binary_vars
+        See :class:`QuadraticProgram`. ``dual_ub`` is required (the ``x >= 0`` inequality is
+        always present, so the decomposer needs a finite bound on its multiplier).
+    """
+
+    def __init__(
+        self,
+        c,
+        A=None,
+        b=None,
+        dual_ub=None,
+        primal_bounds=None,
+        nu_bounds=None,
+        rhs: LinearExpression = None,
+        relax_binary_vars: bool = False,
+    ):
+        if _is_linexpr(c):
+            n = c.ndim
+        else:
+            c_arr = np.asarray(c, dtype=float)
+            if c_arr.ndim == 0:
+                raise ValueError(
+                    "StandardFormLinearProgram requires a vector c (a scalar cannot size the LP)"
+                )
+            n = c_arr.shape[0]
+
+        super().__init__(
+            q=c,
+            A=A,
+            b=b,
+            C=-np.eye(n),  # x >= 0  <=>  -I x <= 0
+            d=np.zeros(n),
+            dual_ub=dual_ub,
+            primal_bounds=primal_bounds,
+            nu_bounds=nu_bounds,
+            rhs=rhs,
+            relax_binary_vars=relax_binary_vars,
+        )

@@ -138,12 +138,28 @@ class StepDecomposer:
         self.add_iterate = add_iterate
         self.add_constraint = add_constraint
 
+    def _lookup_decomposer(self, step: Step):
+        """
+        Return the first registered decomposer along the step's MRO, or ``None``.
+
+        Walking ``type(step).__mro__`` (rather than matching the exact class name)
+        lets a subclass inherit its parent's decomposer — e.g.
+        ``StandardFormLinearProgram`` resolves to the ``"linearprogram"`` entry — without
+        a dedicated registry key. Behaviour is unchanged for registered classes: each is
+        first in its own MRO, so it still matches itself.
+        """
+        for cls in type(step).__mro__:
+            decomposer = self._DECOMPOSERS.get(cls.__name__.lower())
+            if decomposer is not None:
+                return decomposer
+        return None
+
     def is_primitive(self, step: Step) -> bool:
         """
         Return True if ``step`` has no registered decomposition for this
         decomposer and should be processed directly as a primitive.
         """
-        return type(step).__name__.lower() not in self._DECOMPOSERS
+        return self._lookup_decomposer(step) is None
 
     def process_step(self, step: Step) -> LinearExpression:
         """
@@ -167,7 +183,7 @@ class StepDecomposer:
             For composite steps, this is a LinearExpression composed from
             the outputs of the decomposed primitive steps.
         """
-        decomposer = self._DECOMPOSERS.get(type(step).__name__.lower())
+        decomposer = self._lookup_decomposer(step)
         if decomposer is None:
             return self._process_primitive(step)
         return decomposer(self, step)
@@ -434,63 +450,43 @@ class StepDecomposer:
             \begin{bmatrix} \text{rhs} \\ b \end{bmatrix}.
         $$
 
-        Independent of $\gamma$ (indicator prox). No inverse is formed
-        in the verification model — the two KKT rows are posted as
-        separate linear equalities and the solver handles the block
-        system. Initial finite bounds on ``u`` and ``ν`` are derived
-        via interval propagation through a throwaway ``LinearExpression``
-        that represents $M_{\text{block}}^{-1}$ applied to the stacked
-        right-hand side, built via :func:`solve_linexpr`. Bounds are
-        tightened further whenever OBBT is enabled, via the existing
-        ``_tighten_constraint_bounds`` path triggered by the two
-        ``add_constraint`` calls. ``b`` may be numeric data or a
-        ``LinearExpression`` parameter; both flow through ``stack`` and
-        ``solve_linexpr`` uniformly.
+        Independent of $\gamma$ (indicator prox). This is the equality-only case of
+        the generic QP (``P = I``, ``q = -rhs``, no inequalities), so it routes through
+        :meth:`_qp_kkt`, which posts ``x == rhs - A^T nu`` and ``A x == b`` (no
+        complementarity — there are no inequality constraints). The tight initial
+        bounds on ``u`` and ``ν`` are still derived here via interval propagation
+        through a throwaway ``LinearExpression`` that represents $M_{\text{block}}^{-1}$
+        applied to the stacked right-hand side (built via :func:`solve_linexpr`) and
+        passed to ``_qp_kkt`` as ``primal_bounds`` / ``nu_bounds``; OBBT tightens them
+        further. ``b`` may be numeric data or a ``LinearExpression`` parameter (lifted
+        uniformly via :meth:`_lift_to_le`).
 
         Backend-independent: registered on the base class. Simulator
         defers (no per-step activation callback for an implicitly
         defined iterate); see the Simulator override.
         """
-        A, b = prox.A, prox.b
+        A = prox.A
         m, n = prox.m, prox.n
+        b_le = self._lift_to_le(prox.b, m)
 
-        # Lift ``b`` to a LinearExpression for the stack+solve step.
-        # EAFP test for LE-ness (avoid isinstance per codebase convention).
-        try:
-            _ = b.decomposition_dict
-            b_le = b
-        except AttributeError:
-            # Broadcast scalar ``b`` to length ``m``; ``(m,)`` arrays pass
-            # through unchanged (already shape-checked in ``IndAffine.__init__``).
-            # ``np.atleast_1d`` alone would leave a scalar at shape ``(1,)``,
-            # making the stacked LE of dimension ``n + 1`` instead of ``n + m``.
-            b_le = LinearExpression(
-                decomposition_dict={},
-                const=np.broadcast_to(np.asarray(b, dtype=float), (m,)).copy(),
-            )
-
-        # Block KKT matrix (constant; just numpy).
+        # Block KKT matrix (constant; just numpy) for deriving joint (u, nu) bounds.
         M_block = np.block(
             [
                 [np.eye(n), A.T],
                 [A, np.zeros((m, m))],
             ]
         )
-
         # Throwaway LE representing M_block^{-1} @ [rhs; b]; never registered.
-        stacked_rhs_LE = stack([rhs, b_le])
-        combined_lb, combined_ub = solve_linexpr(M_block, stacked_rhs_LE).bound_propagation()
-        u_lb, u_ub = combined_lb[:n], combined_ub[:n]
-        nu_lb, nu_ub = combined_lb[n:], combined_ub[n:]
+        combined_lb, combined_ub = solve_linexpr(M_block, stack([rhs, b_le])).bound_propagation()
 
-        # Register both iterates with derived finite bounds.
-        u = self.add_iterate(n, lb=u_lb, ub=u_ub)
-        nu = self.add_iterate(m, lb=nu_lb, ub=nu_ub)
-
-        # Post the two KKT rows; each goes through OBBT (when enabled).
-        self.add_constraint(u + A.T @ nu == rhs)
-        self.add_constraint(A @ u == b)
-        return u
+        return self._qp_kkt(
+            lin_term=-rhs,
+            P=None,
+            A_eq=A,
+            b_eq=b_le,
+            primal_bounds=(combined_lb[:n], combined_ub[:n]),
+            nu_bounds=(combined_lb[n:], combined_ub[n:]),
+        )
 
     def _lift_to_le(self, value, dim: int) -> LinearExpression:
         """
@@ -806,10 +802,22 @@ class StepDecomposer:
             0 \le \beta \perp (t + u) \ge 0,\ \
             0 \le \mu \perp (r - \mathbf{1}^\top t) \ge 0.
 
-        ``u`` and ``t`` are registered as explicit iterates so each complementarity's two
-        arguments reference disjoint leaves (required by the SDP encoding). The dual upper
-        bound is auto-derived from the input box (``mu = theta <= max_i|x_i|`` and
-        ``alpha_i, beta_i <= mu``), independent of ``r``; ``prox.dual_ub`` overrides it.
+        The projection is routed through the generic QP core :meth:`_qp_kkt` on the
+        lifted variable ``x = [u; t]`` (dim ``2n``) with ``P = diag(I_n, 0_n)``,
+        ``q = [-rhs; 0]`` and the stacked inequalities
+
+        .. math::
+            C_{ineq} = \begin{bmatrix} I & -I \\ -I & -I \\ 0 & \mathbf{1}^\top \end{bmatrix},
+            \quad d_{ineq} = [0; 0; r].
+
+        The single stacked dual ``lambda = [alpha; beta; mu]`` and the one complementarity
+        ``lambda ⊥ (d_ineq - C_ineq x)`` reproduce the three bespoke complementarities
+        exactly; the generic stationarity ``P x == -(q + C_ineq^T lambda)`` encodes both the
+        ``u``- and ``t``-stationarity (the all-zero ``t``-rows of ``P`` give
+        ``alpha + beta = mu 1``). The dual upper bound is auto-derived from the input box
+        (``<= max_i|x_i|``), independent of ``r``; ``prox.dual_ub`` overrides it. ``P`` is
+        singular, so explicit ``primal_bounds`` are supplied (``u in rhs +/- dub``,
+        ``t in [0, r]``). The returned projection is the slice ``x[:n]``.
 
         Parameters
         ----------
@@ -823,16 +831,11 @@ class StepDecomposer:
         Returns
         -------
         LinearExpression
-            The primal projection ``u`` of dimension ``n``.
+            The primal projection ``u`` of dimension ``n`` (the slice ``x[:n]``).
         """
         n = rhs.ndim
 
-        # Lift r to a dim-1 LinearExpression (constant if numeric, pass-through if param).
-        r = prox.r
-        if hasattr(r, "decomposition_dict"):
-            r_le = r
-        else:
-            r_le = LinearExpression(decomposition_dict={}, const=np.array([float(r)]))
+        r_le = self._lift_to_le(prox.r, 1)
         r_ub = float(r_le.bound_propagation()[1][0])  # max radius -> static upper bound on t
 
         # Auto dual bound from the input box (independent of r); override via prox.dual_ub.
@@ -840,24 +843,28 @@ class StepDecomposer:
         M = float(max(np.max(np.abs(rhs_lb)), np.max(np.abs(rhs_ub))))
         dub = M if prox.dual_ub is None else float(prox.dual_ub)
 
-        alpha = self.add_iterate(n, lb=np.zeros(n), ub=np.full(n, dub))
-        beta = self.add_iterate(n, lb=np.zeros(n), ub=np.full(n, dub))
-        mu = self.add_iterate(1, lb=np.zeros(1), ub=np.full(1, dub))
-        t = self.add_iterate(n, lb=np.zeros(n), ub=np.full(n, r_ub))  # 0 <= t, 1^T t <= r
-
-        # ``u`` explicit so each complementarity's two args reference disjoint leaves.
-        u_lb, u_ub = (rhs - alpha + beta).bound_propagation()
-        u = self.add_iterate(n, lb=u_lb, ub=u_ub)
-
-        ones_col = np.ones((n, 1))  # broadcast mu (dim 1) -> dim n
-        ones_row = np.ones((1, n))  # sum_i t -> dim 1
-
-        self.add_constraint(u == rhs - alpha + beta)  # stationarity wrt u
-        self.add_constraint(alpha + beta == ones_col @ mu)  # stationarity wrt t
-        self.add_constraint(complementarity(alpha, t - u))
-        self.add_constraint(complementarity(beta, t + u))
-        self.add_constraint(complementarity(mu, r_le - ones_row @ t))
-        return u
+        # Lifted x = [u; t]: P = diag(I_n, 0_n), q = [-rhs; 0].
+        zeros_n = self._lift_to_le(0.0, n)
+        eye = np.eye(n)
+        C_ineq = np.block(
+            [
+                [eye, -eye],  # u - t <= 0
+                [-eye, -eye],  # -u - t <= 0
+                [np.zeros((1, n)), np.ones((1, n))],  # 1^T t <= r
+            ]
+        )
+        x = self._qp_kkt(
+            lin_term=stack([-rhs, zeros_n]),
+            P=spa.block_diag([spa.eye(n), spa.csr_matrix((n, n))], format="csr"),
+            C_ineq=C_ineq,
+            d_ineq=stack([zeros_n, zeros_n, r_le]),
+            lam_ub=np.full(2 * n + 1, dub),
+            primal_bounds=(
+                np.concatenate([rhs_lb - dub, np.zeros(n)]),
+                np.concatenate([rhs_ub + dub, np.full(n, r_ub)]),
+            ),
+        )
+        return x[:n]
 
     def prox_indballlinf(
         self, prox: IndBallLinf, rhs: LinearExpression, gamma: float = 1.0
@@ -1129,17 +1136,15 @@ class StepDecomposer:
             (I + \gamma Q)\, u \;=\; \text{rhs} - \gamma q.
         $$
 
-        No inverse or pseudoinverse is formed in the verification model —
-        the equality is posted as-is and the solver handles the linear
-        system. Initial bounds on ``u`` are derived via interval
-        propagation through a throwaway ``LinearExpression`` that
-        represents ``M^{-1} @ (rhs - gamma * q)``, built via
-        ``solve_linexpr`` (per-leaf ``np.linalg.solve`` — no inverse
-        materialized as a matrix). Those bounds are tightened further
-        whenever OBBT is enabled, via the existing
-        ``Verifier._tighten_constraint_bounds`` path triggered by
-        ``add_constraint``. ``q`` may be numeric data or a
-        ``LinearExpression`` parameter.
+        This is the unconstrained case of the generic QP, so it routes through
+        :meth:`_qp_kkt` with ``P = I + gamma*Q`` and ``q_qp = gamma*q - rhs`` (the
+        prox objective expands to :math:`\tfrac12 x^\top(I+\gamma Q)x + (\gamma q -
+        \text{rhs})^\top x`). With no equality/inequality blocks, ``_qp_kkt`` creates
+        only the primal iterate and posts the single stationarity equality
+        ``(I + gamma*Q) x == rhs - gamma*q`` — no duals, no complementarity. Bounds
+        on ``x`` are derived in ``_qp_kkt`` via ``solve_linexpr(M, rhs - gamma*q)``
+        (per-leaf ``np.linalg.solve`` — no inverse materialized) and tightened by OBBT
+        when enabled. ``q`` may be numeric data or a ``LinearExpression`` parameter.
 
         Backend-independent: registered on the base class. Simulator
         overrides this with a deferral (no per-step activation callback
@@ -1147,14 +1152,9 @@ class StepDecomposer:
         """
         n = rhs.ndim
         M = np.eye(n) + gamma * prox.Q
-        rhs_shift = rhs - gamma * prox.q
-
-        # Throwaway expression: never registered, only used for bound prop.
-        u_lb, u_ub = solve_linexpr(M, rhs_shift).bound_propagation()
-
-        u = self.add_iterate(n, lb=u_lb, ub=u_ub)
-        self.add_constraint(M @ u == rhs_shift)
-        return u
+        # lin_term = q_qp = gamma*q - rhs (negation of the known-good rhs - gamma*q,
+        # which keeps the arithmetic on LinearExpression operands).
+        return self._qp_kkt(lin_term=-(rhs - gamma * prox.q), P=M)
 
     def prox_softnonnegative(
         self, prox: SoftNonNegative, rhs: LinearExpression, gamma: float = 1.0

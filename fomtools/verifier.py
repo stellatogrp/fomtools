@@ -26,6 +26,7 @@ from fomtools.steps import (
     Relu,
     SaturatedLinear,
     SoftThreshold,
+    StandardFormLinearProgram,
 )
 
 log = logging.getLogger(__name__)
@@ -642,6 +643,42 @@ class Verifier(object):
             b=b,
             C=C,
             d=d,
+            dual_ub=dual_ub,
+            primal_bounds=primal_bounds,
+            nu_bounds=nu_bounds,
+            rhs=rhs,
+            relax_binary_vars=relax_binary_vars,
+        )
+        x = self.step_decomposer.process_step(step)
+        self.steps.append(step)
+        return x
+
+    def standard_form_linear_program(
+        self,
+        c,
+        A=None,
+        b=None,
+        dual_ub=None,
+        primal_bounds=None,
+        nu_bounds=None,
+        rhs: LinearExpression = None,
+        relax_binary_vars: bool = False,
+    ) -> LinearExpression:
+        r"""
+        Encode the solution of a standard-form linear program as a step:
+
+        .. math::
+            x^\star = \arg\min_x c^\top x \quad\text{s.t.}\quad A x = b,\; x \ge 0.
+
+        A :class:`~fomtools.steps.LinearProgram` with ``q = c``, equality ``(A, b)`` and
+        ``x \ge 0`` written as ``-I x \le 0``. See :meth:`linear_program`. ``dual_ub`` is
+        required (the ``x \ge 0`` inequality is always present); finite primal bounds must
+        come from ``primal_bounds`` or OBBT.
+        """
+        step = StandardFormLinearProgram(
+            c=c,
+            A=A,
+            b=b,
             dual_ub=dual_ub,
             primal_bounds=primal_bounds,
             nu_bounds=nu_bounds,

@@ -81,14 +81,10 @@ def test_norml1_emits_softthreshold_on_mip():
     rhs = v.add_param(3, lb=-1.0, ub=1.0)
     v.prox(NormL1(lambd=0.3), rhs, gamma=0.5)
 
-    n_soft = sum(
-        1 for s in v.canonicalizer.steps if isinstance(s, SoftThreshold)
-    )
+    n_soft = sum(1 for s in v.canonicalizer.steps if isinstance(s, SoftThreshold))
     assert n_soft == 1
     # SoftThreshold's lambd should be the scaled value lambd * gamma = 0.15
-    soft_step = next(
-        s for s in v.canonicalizer.steps if isinstance(s, SoftThreshold)
-    )
+    soft_step = next(s for s in v.canonicalizer.steps if isinstance(s, SoftThreshold))
     assert np.isclose(soft_step.lambd, 0.15)
 
 
@@ -133,9 +129,7 @@ def test_elasticnet_emits_softthreshold_on_mip():
     rhs = v.add_param(3, lb=-1.0, ub=1.0)
     v.prox(ElasticNet(alpha=0.3, beta=0.5), rhs, gamma=0.4)
 
-    soft_steps = [
-        s for s in v.canonicalizer.steps if isinstance(s, SoftThreshold)
-    ]
+    soft_steps = [s for s in v.canonicalizer.steps if isinstance(s, SoftThreshold)]
     assert len(soft_steps) == 1
     # SoftThreshold's lambd should be alpha * gamma = 0.12
     assert np.isclose(soft_steps[0].lambd, 0.12)
@@ -170,12 +164,8 @@ def test_elasticnet_reduces_to_norml1_when_beta_zero():
     rhs_l1 = v_l1.add_param(3, lb=-1.0, ub=1.0)
     v_l1.prox(NormL1(lambd=alpha), rhs_l1, gamma=gamma)
 
-    soft_en = [
-        s for s in v_en.canonicalizer.steps if isinstance(s, SoftThreshold)
-    ][0]
-    soft_l1 = [
-        s for s in v_l1.canonicalizer.steps if isinstance(s, SoftThreshold)
-    ][0]
+    soft_en = [s for s in v_en.canonicalizer.steps if isinstance(s, SoftThreshold)][0]
+    soft_l1 = [s for s in v_l1.canonicalizer.steps if isinstance(s, SoftThreshold)][0]
     assert np.isclose(soft_en.lambd, soft_l1.lambd)
 
 
@@ -188,9 +178,7 @@ def test_elasticnet_ridge_only_when_alpha_zero():
     beta, gamma = 0.5, 0.4
     rhs = np.array([-2.0, 0.05, 1.5])
     expected = rhs / (1.0 + 2.0 * beta * gamma)
-    np.testing.assert_allclose(
-        ElasticNet(alpha=0.0, beta=beta).prox(rhs, gamma), expected
-    )
+    np.testing.assert_allclose(ElasticNet(alpha=0.0, beta=beta).prox(rhs, gamma), expected)
 
 
 def test_elasticnet_prox_matches_closed_form():
@@ -202,13 +190,8 @@ def test_elasticnet_prox_matches_closed_form():
     alpha, beta, gamma = 0.3, 0.5, 0.4
     rhs = rng.normal(size=8)
     thresh = alpha * gamma
-    expected = (
-        np.sign(rhs) * np.maximum(np.abs(rhs) - thresh, 0.0)
-        / (1.0 + 2.0 * beta * gamma)
-    )
-    np.testing.assert_allclose(
-        ElasticNet(alpha=alpha, beta=beta).prox(rhs, gamma), expected
-    )
+    expected = np.sign(rhs) * np.maximum(np.abs(rhs) - thresh, 0.0) / (1.0 + 2.0 * beta * gamma)
+    np.testing.assert_allclose(ElasticNet(alpha=alpha, beta=beta).prox(rhs, gamma), expected)
 
 
 # --- HuberLoss ---
@@ -235,9 +218,7 @@ def test_huberloss_emits_softthreshold_on_mip():
     rhs = v.add_param(3, lb=-1.0, ub=1.0)
     v.prox(HuberLoss(delta=0.5), rhs, gamma=0.4)
 
-    soft_steps = [
-        s for s in v.canonicalizer.steps if isinstance(s, SoftThreshold)
-    ]
+    soft_steps = [s for s in v.canonicalizer.steps if isinstance(s, SoftThreshold)]
     assert len(soft_steps) == 1
     # lambd should be delta * (1 + gamma) = 0.5 * 1.4 = 0.7
     assert np.isclose(soft_steps[0].lambd, 0.7)
@@ -266,9 +247,7 @@ def test_huberloss_prox_middle_branch():
     # theta = 2.0; all |rhs_i| < 2.0
     rhs = np.array([-1.5, 0.5, 1.9, -0.1])
     expected = rhs / (1.0 + gamma)
-    np.testing.assert_allclose(
-        HuberLoss(delta=delta).prox(rhs, gamma), expected
-    )
+    np.testing.assert_allclose(HuberLoss(delta=delta).prox(rhs, gamma), expected)
 
 
 def test_huberloss_prox_tail_branch():
@@ -280,9 +259,7 @@ def test_huberloss_prox_tail_branch():
     # theta = 2.0; all |rhs_i| > 2.0
     rhs = np.array([-5.0, 3.5, 2.5, -4.2])
     expected = rhs - gamma * delta * np.sign(rhs)
-    np.testing.assert_allclose(
-        HuberLoss(delta=delta).prox(rhs, gamma), expected
-    )
+    np.testing.assert_allclose(HuberLoss(delta=delta).prox(rhs, gamma), expected)
 
 
 def test_huberloss_prox_matches_closed_form():
@@ -299,9 +276,7 @@ def test_huberloss_prox_matches_closed_form():
         rhs / (1.0 + gamma),
         rhs - gamma * delta * np.sign(rhs),
     )
-    np.testing.assert_allclose(
-        HuberLoss(delta=delta).prox(rhs, gamma), expected
-    )
+    np.testing.assert_allclose(HuberLoss(delta=delta).prox(rhs, gamma), expected)
 
 
 def test_huberloss_delta_zero_identity():
@@ -489,15 +464,14 @@ def test_indaffine_sdp_obbt_tightens_registered_bounds():
     v_ref = _make_verifier("sdp")
     rhs_ref = v_ref.add_param(3, lb=rhs_lb, ub=rhs_ub)
     b_le = LinearExpression(decomposition_dict={}, const=b)
-    solve_lb, solve_ub = solve_linexpr(
-        M_block, stack([rhs_ref, b_le])
-    ).bound_propagation()
+    solve_lb, solve_ub = solve_linexpr(M_block, stack([rhs_ref, b_le])).bound_propagation()
 
     # With OBBT enabled: SDP.update_bounds is called by _tighten_constraint_bounds.
     v_obbt = _make_verifier("sdp", obbt="gurobi")
     rhs = v_obbt.add_param(3, lb=rhs_lb, ub=rhs_ub)
     u = v_obbt.prox(IndAffine(A=A, b=b), rhs)
-    nu = v_obbt.iterates[-1]
+    # _qp_kkt registers the dual ν before the primal x, so ν is the second-to-last.
+    nu = v_obbt.iterates[-2]
 
     # OBBT-tightened bounds must dominate the solve-derived ones.
     assert np.all(u.lb >= solve_lb[:3] - 1e-9)
@@ -515,9 +489,7 @@ def test_indaffine_simulator_raises_notimplemented():
     rhs = v.add_param(3, lb=-1.0, ub=1.0)
 
     with pytest.raises(NotImplementedError, match="IndAffine"):
-        v.prox(
-            IndAffine(A=np.array([[1.0, 1.0, 1.0]]), b=np.array([0.0])), rhs
-        )
+        v.prox(IndAffine(A=np.array([[1.0, 1.0, 1.0]]), b=np.array([0.0])), rhs)
 
 
 def test_indaffine_introduces_two_iterates():
@@ -532,9 +504,10 @@ def test_indaffine_introduces_two_iterates():
     n_before = len(v.iterates)
     v.prox(IndAffine(A=A, b=b), rhs)
     assert len(v.iterates) == n_before + 2
-    # The two new iterates: u (dim n=4) and ν (dim m=2), in that order.
-    assert v.iterates[-2].ndim == 4
-    assert v.iterates[-1].ndim == 2
+    # The two new iterates: ν (dim m=2) then the primal x (dim n=4) — _qp_kkt
+    # registers the equality dual before the primal.
+    assert v.iterates[-2].ndim == 2
+    assert v.iterates[-1].ndim == 4
 
 
 def test_indaffine_scalar_b_broadcasts_to_m():
@@ -546,15 +519,17 @@ def test_indaffine_scalar_b_broadcasts_to_m():
     v = _make_verifier("mip")
     rhs = v.add_param(4, lb=-1.0, ub=1.0)
     # m = 3 rows, full row rank so the block KKT is nonsingular.
-    A = np.array([
-        [1.0, 0.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0],
-    ])
+    A = np.array(
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ]
+    )
     v.prox(IndAffine(A=A, b=0.25), rhs)
-    # ν must be the most recently added iterate of dim m=3 with finite
-    # length-3 bounds derived from broadcasting b = 0.25.
-    nu = v.iterates[-1]
+    # ν is registered just before the primal x (so second-to-last), of dim m=3 with
+    # finite length-3 bounds derived from broadcasting b = 0.25.
+    nu = v.iterates[-2]
     assert nu.ndim == 3
     assert nu.lb.shape == (3,) and nu.ub.shape == (3,)
     assert np.all(np.isfinite(nu.lb)) and np.all(np.isfinite(nu.ub))
@@ -606,9 +581,9 @@ def test_indaffine_eval():
     A = np.array([[1.0, 1.0]])
     b = np.array([1.0])
     ind = IndAffine(A=A, b=b)
-    assert ind.eval(np.array([0.5, 0.5])) == 0.0       # on
-    assert ind.eval(np.array([0.6, 0.4])) == 0.0       # on (sum 1)
-    assert ind.eval(np.array([1.0, 1.0])) == np.inf    # off (sum 2)
+    assert ind.eval(np.array([0.5, 0.5])) == 0.0  # on
+    assert ind.eval(np.array([0.6, 0.4])) == 0.0  # on (sum 1)
+    assert ind.eval(np.array([1.0, 1.0])) == np.inf  # off (sum 2)
 
 
 def test_indaffine_grad_raises():
@@ -869,8 +844,8 @@ def test_indhalfspace_prox_matches_closed_form():
 def test_indhalfspace_eval():
     """eval returns 0.0 inside the halfspace, +inf outside."""
     f = IndHalfSpace(a=np.array([1.0, 0.0]), b=1.0)
-    assert f.eval(np.array([0.5, 100.0])) == 0.0     # inside
-    assert f.eval(np.array([1.0, 100.0])) == 0.0     # boundary
+    assert f.eval(np.array([0.5, 100.0])) == 0.0  # inside
+    assert f.eval(np.array([1.0, 100.0])) == 0.0  # boundary
     assert f.eval(np.array([1.5, 100.0])) == np.inf  # outside
 
 
@@ -939,9 +914,7 @@ def test_labeledhingeloss_returns_linear_expression(method):
     margin residual; all three backends accept it."""
     v = _make_verifier(method)
     rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    out = v.prox(
-        LabeledHingeLoss(y=np.array([1.0, -1.0, 1.0])), rhs, gamma=0.5
-    )
+    out = v.prox(LabeledHingeLoss(y=np.array([1.0, -1.0, 1.0])), rhs, gamma=0.5)
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
 
@@ -1077,9 +1050,7 @@ def test_linear_const_and_coefficient_with_array_c():
     np.testing.assert_allclose(out.const, -gamma * c)
     # rhs is a leaf — its decomposition is {rhs: I}; after subtracting gamma*c
     # (a constant), the coefficient on rhs is still I.
-    np.testing.assert_allclose(
-        out.decomposition_dict[rhs].toarray(), np.eye(3)
-    )
+    np.testing.assert_allclose(out.decomposition_dict[rhs].toarray(), np.eye(3))
 
 
 def test_linear_supports_scalar_c():
@@ -1103,12 +1074,8 @@ def test_linear_supports_linexpr_c():
     gamma = 0.5
     out = v.prox(Linear(c=c), rhs, gamma=gamma)
 
-    np.testing.assert_allclose(
-        out.decomposition_dict[rhs].toarray(), np.eye(3)
-    )
-    np.testing.assert_allclose(
-        out.decomposition_dict[c].toarray(), -gamma * np.eye(3)
-    )
+    np.testing.assert_allclose(out.decomposition_dict[rhs].toarray(), np.eye(3))
+    np.testing.assert_allclose(out.decomposition_dict[c].toarray(), -gamma * np.eye(3))
 
 
 def test_linear_prox_matches_closed_form():
@@ -1118,9 +1085,7 @@ def test_linear_prox_matches_closed_form():
         c = rng.standard_normal(4)
         rhs = rng.standard_normal(4)
         gamma = float(rng.uniform(0.1, 2.0))
-        np.testing.assert_allclose(
-            Linear(c=c).prox(rhs, gamma=gamma), rhs - gamma * c
-        )
+        np.testing.assert_allclose(Linear(c=c).prox(rhs, gamma=gamma), rhs - gamma * c)
     # scalar c case
     np.testing.assert_allclose(
         Linear(c=1.5).prox(np.array([2.0, 3.0]), gamma=0.5),
@@ -1193,9 +1158,7 @@ def test_softnonnegative_alpha_one_is_identity():
     rng = np.random.default_rng(2)
     rhs = rng.uniform(-3.0, 3.0, size=5)
     for gamma in [0.1, 1.0, 10.0]:
-        np.testing.assert_allclose(
-            SoftNonNegative(alpha=1.0).prox(rhs, gamma=gamma), rhs
-        )
+        np.testing.assert_allclose(SoftNonNegative(alpha=1.0).prox(rhs, gamma=gamma), rhs)
 
 
 def test_softnonnegative_small_alpha_approaches_relu():
@@ -1298,9 +1261,7 @@ def test_sql2norm_coefficient_is_scaled_identity():
     gamma = 0.5
     out = v.prox(SqL2Norm(), rhs, gamma=gamma)
 
-    np.testing.assert_allclose(
-        out.decomposition_dict[rhs].toarray(), np.eye(3) / (1.0 + gamma)
-    )
+    np.testing.assert_allclose(out.decomposition_dict[rhs].toarray(), np.eye(3) / (1.0 + gamma))
     np.testing.assert_allclose(out.const, np.zeros(3))
 
 
@@ -1309,9 +1270,7 @@ def test_sql2norm_gamma_one_halves_coefficient():
     v = _make_verifier("mip")
     rhs = v.add_param(3, lb=-1.0, ub=1.0)
     out = v.prox(SqL2Norm(), rhs)
-    np.testing.assert_allclose(
-        out.decomposition_dict[rhs].toarray(), 0.5 * np.eye(3)
-    )
+    np.testing.assert_allclose(out.decomposition_dict[rhs].toarray(), 0.5 * np.eye(3))
 
 
 def test_sql2norm_prox_matches_closed_form():
@@ -1320,9 +1279,7 @@ def test_sql2norm_prox_matches_closed_form():
     for _ in range(5):
         rhs = rng.standard_normal(4)
         gamma = float(rng.uniform(0.1, 2.0))
-        np.testing.assert_allclose(
-            SqL2Norm().prox(rhs, gamma=gamma), rhs / (1.0 + gamma)
-        )
+        np.testing.assert_allclose(SqL2Norm().prox(rhs, gamma=gamma), rhs / (1.0 + gamma))
 
 
 def test_sql2norm_eval_and_grad():
@@ -1571,6 +1528,7 @@ def test_leastsquares_isinstance_quadratic():
     concrete class name, but the inheritance contract powers the math
     (prox/grad inherited unchanged from Quadratic)."""
     from fomtools.proxable_functions import Quadratic
+
     ls = LeastSquares(A=np.eye(3), b=np.zeros(3))
     assert isinstance(ls, Quadratic)
 
@@ -1806,9 +1764,7 @@ def test_sumpositive_prox_matches_closed_form():
         x = rng.standard_normal(6)
         g = float(rng.uniform(0.1, 2.0))
         out = f.prox(x, gamma=g)
-        expected = np.where(
-            x > g, x - g, np.where(x < 0, x, 0.0)
-        )
+        expected = np.where(x > g, x - g, np.where(x < 0, x, 0.0))
         np.testing.assert_allclose(out, expected)
 
 
@@ -1869,9 +1825,7 @@ def test_sumnegative_prox_matches_closed_form():
         x = rng.standard_normal(6)
         g = float(rng.uniform(0.1, 2.0))
         out = f.prox(x, gamma=g)
-        expected = np.where(
-            x < -g, x + g, np.where(x > 0, x, 0.0)
-        )
+        expected = np.where(x < -g, x + g, np.where(x > 0, x, 0.0))
         np.testing.assert_allclose(out, expected)
 
 
@@ -1896,9 +1850,7 @@ def test_sumnegative_is_sumpositive_mirror():
     for _ in range(8):
         v_vec = rng.standard_normal(5)
         g = float(rng.uniform(0.1, 2.0))
-        np.testing.assert_allclose(
-            f_neg.prox(v_vec, gamma=g), -f_pos.prox(-v_vec, gamma=g)
-        )
+        np.testing.assert_allclose(f_neg.prox(v_vec, gamma=g), -f_pos.prox(-v_vec, gamma=g))
 
 
 def test_unsupported_prox_raises_on_every_backend():
