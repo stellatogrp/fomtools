@@ -340,10 +340,30 @@ emission, and end-to-end ISTA-embedded + CG-OpenMP `VERIFY OK` runs).
 Remaining: exercise f32 *on GPU hardware* (item D) — it may behave slightly
 differently than the CPU f32 build, and re-confirm the 1e-4 gate there.
 
-**(F) Scale the examples.** The built-in examples are tiny (verification-sized).
-For GPU you want large instances (e.g. `mpc_osqp_example(nx, nu, N)` big, or a
-large SPD `cg_qp_example(n=...)`, or `pdhg_lp` with big A). PDHG-for-LP and CG-QP
-are the natural GPU showcases (pure matvec + projection / pure CG).
+**(F) [DONE for the two GPU showcases] Scale the examples.** The built-in
+examples defaulted to tiny *dense* problems that don't scale (cgqp's SPD matrix
+was 100% dense; pdhg's step size used an O(n^3) `eigvals`). The two natural GPU
+showcases now take an opt-in structure knob that produces **sparse** instances
+whose generated code runs CSR matvecs (the actual GPU path), with defaults
+byte-identical to before:
+- `cg_qp_example(n, bandwidth=b)` — sparse banded diagonally-dominant SPD
+  (`eig >= 2` by Gershgorin, no eigendecomposition). `bandwidth=None` keeps the
+  dense default. At n=3000, b=4 the CG matrix is 0.3% dense (~27k nnz) and
+  builds+extracts in ~0.25s.
+- `pdhg_lp_example(n, m, density=d)` — sparse `A` with a cheap O(nnz) spectral-
+  norm *upper* bound for the step size (keeps `tau*sigma*||A||^2 <= 0.81 < 1`,
+  stable). `density=None` keeps the dense+exact-norm default. n=3000/m=2000 at
+  density 0.005 builds in ~0.6s (vs minutes for dense `eigvals`).
+Both verify end-to-end **on the CPU** against the oracle at scaled sizes
+(reusing the cgqp-OpenMP and pdhg-embedded goldens, which are size-agnostic) —
+see `tests/codegen/test_examples_scale.py`. Helpers: `examples._banded_spd`,
+`_sparse_dense_matrix`, `_spectral_norm_bound`.
+Not done (deliberately): dr / mpc / indef_kkt stay dense — they're *direct*
+(sequential triangular) solves, not GPU showcases. And the builders still
+construct dense-with-zeros arrays (O(n^2) offline memory), so n >> ~5000 would
+need sparse support in the Verifier / `LinearExpression` bound propagation —
+a larger change left for later. Remaining: run these at true GPU scale and
+collect `make bench` numbers (item D) to feed the AUTO->CG threshold (item C).
 
 **(G) Optional: CuPy GPU oracle / wrapper.** `cupy-cuda12x` is in the `gpu`
 extra. Could provide a CuPy reference for cross-checking, or a CuPy-based Python

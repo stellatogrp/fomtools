@@ -15,6 +15,54 @@ from fomtools.linearexpression import stack
 from fomtools.verifier import Verifier
 
 
+def _banded_spd(n: int, bandwidth: int, seed: int, scale: float = 0.3) -> np.ndarray:
+    """A sparse, symmetric, strictly diagonally-dominant (hence SPD) banded matrix.
+
+    Off-diagonals live within ``bandwidth`` of the diagonal; the diagonal is set to
+    its row's off-diagonal absolute sum plus ``2`` — so every eigenvalue is ``>= 2``
+    (Gershgorin), making ``x <- solve(M, x + q)`` a contraction, and the matrix is
+    SPD without computing a single eigenvalue. Structurally sparse (``~n(2b+1)``
+    nonzeros), so the generated code emits a CSR matrix-vector product rather than a
+    dense ``n^2`` block — the point of a GPU-scale CG example.
+    """
+    rng = np.random.default_rng(seed)
+    M = np.zeros((n, n))
+    for k in range(1, bandwidth + 1):
+        band = scale * rng.uniform(-1.0, 1.0, size=n - k)
+        idx = np.arange(n - k)
+        M[idx, idx + k] = band
+        M[idx + k, idx] = band
+    np.fill_diagonal(M, np.abs(M).sum(axis=1) + 2.0)
+    return M
+
+
+def _sparse_dense_matrix(m: int, n: int, density: float, rng) -> np.ndarray:
+    """A structurally sparse ``m x n`` matrix (dense storage, mostly zeros).
+
+    Each row has ``max(1, round(density * n))`` random nonzeros. Returned as a
+    dense array (the verifier records dense coefficients), but the codegen detects
+    the sparsity and emits a CSR matvec.
+    """
+    A = np.zeros((m, n))
+    nnz_per_row = max(1, round(density * n))
+    for i in range(m):
+        cols = rng.choice(n, size=min(nnz_per_row, n), replace=False)
+        A[i, cols] = rng.normal(size=cols.size)
+    return A
+
+
+def _spectral_norm_bound(A: np.ndarray) -> float:
+    """Cheap upper bound on ``||A||_2`` via ``sqrt(||A||_1 * ||A||_inf)``.
+
+    O(nnz), no eigendecomposition — and an *upper* bound, so PDHG step sizes
+    ``tau = sigma = 0.9 / bound`` keep ``tau*sigma*||A||_2^2 <= 0.81 < 1`` (stable).
+    Used for large/sparse instances where the exact ``eigvals`` is O(n^3).
+    """
+    one = float(np.max(np.abs(A).sum(axis=0))) if A.size else 0.0
+    inf = float(np.max(np.abs(A).sum(axis=1))) if A.size else 0.0
+    return float(np.sqrt(one * inf)) or 1.0
+
+
 def ista_example(*, n: int = 2, m: int = 4, seed: int = 0, K: int = 3) -> dict:
     """Lasso ISTA: ``z <- soft_threshold(At z + Bt b, lambda t)``."""
     rng = np.random.default_rng(seed)
@@ -176,17 +224,29 @@ def mpc_osqp_example(
     }
 
 
-def cg_qp_example(*, n: int = 6, seed: int = 3) -> dict:
+def cg_qp_example(*, n: int = 6, seed: int = 3, bandwidth: int | None = None) -> dict:
     """A symmetric positive-definite linear-solve FOM: ``x <- solve(M, x + q)``.
 
     The affine system ``M`` is SPD, so its solve can use the *indirect* CG
     backend (``solve_method=CG``) on the large-scale targets, or a sparse direct
     factorization on the embedded target — the generated calling convention is
     identical. ``eig(M) >= 2`` makes the outer map a contraction (stable).
+
+    ``bandwidth`` selects the matrix structure:
+
+    * ``None`` (default): a *dense* random SPD matrix ``half @ half.T + 2 I`` —
+      fine for small verification-sized instances.
+    * an integer ``b``: a *sparse banded* SPD matrix (off-diagonals within ``b``
+      of the diagonal). This is the GPU-scale form — the generated CG solve then
+      runs a CSR sparse matrix-vector product instead of a dense ``n^2`` one, so
+      memory and work stay ``O(n*b)``. Use this for large ``n``.
     """
-    rng = np.random.default_rng(seed)
-    half = rng.normal(size=(n, n))
-    M = half @ half.T + 2.0 * np.eye(n)
+    if bandwidth is None:
+        rng = np.random.default_rng(seed)
+        half = rng.normal(size=(n, n))
+        M = half @ half.T + 2.0 * np.eye(n)
+    else:
+        M = _banded_spd(n, bandwidth, seed)
 
     v = Verifier(method="simulator", obbt_solver=None)
     q = v.add_param(n, lb=-np.ones(n), ub=np.ones(n))
@@ -198,7 +258,7 @@ def cg_qp_example(*, n: int = 6, seed: int = 3) -> dict:
     return {"verifier": v, "next_state": iterates[1], "name": "cgqp"}
 
 
-def pdhg_lp_example(*, n: int = 4, m: int = 3, seed: int = 7) -> dict:
+def pdhg_lp_example(*, n: int = 4, m: int = 3, seed: int = 7, density: float | None = None) -> dict:
     r"""Plain PDHG (Chambolle-Pock) for an LP — no restarts.
 
     Solves ``min c'x  s.t.  A x >= b,  l <= x <= u`` via the saddle problem
@@ -211,14 +271,27 @@ def pdhg_lp_example(*, n: int = 4, m: int = 3, seed: int = 7) -> dict:
     Pure first-order: matrix-vector products + projections, no linear solve. The
     objective ``c`` is the solve-time parameter; ``A, b, l, u`` are fixed. This
     is the LP base of PDLP-style solvers, in its plain (restart-free) form.
+
+    ``density`` selects the constraint matrix structure:
+
+    * ``None`` (default): a *dense* random ``A`` with step sizes from the exact
+      spectral norm (``eigvals``, O(n^3)) — verification-sized only.
+    * a fraction in ``(0, 1]``: a *sparse* ``A`` (that fraction of entries
+      nonzero per row) with step sizes from a cheap O(nnz) spectral-norm upper
+      bound. This is the GPU-scale form — the generated code then runs CSR
+      matrix-vector products. Use this for large ``n``/``m``.
     """
     rng = np.random.default_rng(seed)
-    A = rng.normal(size=(m, n))
+    if density is None:
+        A = rng.normal(size=(m, n))
+        normA = float(np.sqrt(np.max(np.real(np.linalg.eigvals(A.T @ A)))))
+    else:
+        A = _sparse_dense_matrix(m, n, density, rng)
+        normA = _spectral_norm_bound(A)
     x_feas = rng.uniform(-0.5, 0.5, size=n)
     b = A @ x_feas - 0.5  # feasible: A x_feas >= b
     c_nom = rng.normal(size=n)
     lo, hi = -np.ones(n), np.ones(n)
-    normA = float(np.sqrt(np.max(np.real(np.linalg.eigvals(A.T @ A)))))
     tau = sigma = 0.9 / normA
 
     v = Verifier(method="simulator", obbt_solver=None)
