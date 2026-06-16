@@ -15,7 +15,9 @@ import numpy as np
 import pytest
 
 cp = pytest.importorskip("cvxpy")
-pytest.importorskip("cvxpygen")
+from tests.codegen.conftest import importorskip_cvxpygen  # noqa: E402
+
+importorskip_cvxpygen()
 
 from fomtools.codegen.agent.stub import StubAgentDriver  # noqa: E402
 from fomtools.codegen.config import CodegenConfig, TerminationSpec  # noqa: E402
