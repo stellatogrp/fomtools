@@ -54,6 +54,7 @@ class Verifier(object):
         ineq_box_cuts=True,
         ineq_square_cuts=True,
         relu_envelope_cuts=False,
+        rlt_all_pairs=False,
         full_psd_cone=False,
     ):
         """
@@ -92,6 +93,10 @@ class Verifier(object):
             SDP-only: add the linear ReLU convex-hull inequalities (lower
             envelope and mixed-row upper chord) on the first-moment variables.
             No effect for ``method != "sdp"``.
+        rlt_all_pairs : bool, default False
+            SDP-only: RLT every variable pair by coupling each via a ``{0,p,q}``
+            3x3 PSD minor (the middle tier between cone-mate ``rlt_cuts`` and the
+            dense ``full_psd_cone``). No effect for ``method != "sdp"``.
         full_psd_cone : bool, default False
             SDP-only: union all PSD cones into one full moment matrix; combined
             with ``rlt_cuts`` gives the full Shor + RLT relaxation. No effect for
@@ -112,6 +117,7 @@ class Verifier(object):
             ineq_box_cuts=ineq_box_cuts,
             ineq_square_cuts=ineq_square_cuts,
             relu_envelope_cuts=relu_envelope_cuts,
+            rlt_all_pairs=rlt_all_pairs,
             full_psd_cone=full_psd_cone,
         )
         self.obbt_handler = OBBTHandler(solver=obbt_solver) if obbt_solver else None
@@ -180,6 +186,7 @@ class Verifier(object):
         ineq_box_cuts: bool = True,
         ineq_square_cuts: bool = True,
         relu_envelope_cuts: bool = False,
+        rlt_all_pairs: bool = False,
         full_psd_cone: bool = False,
     ):
         """
@@ -224,6 +231,7 @@ class Verifier(object):
             ("rlt_cuts", rlt_cuts),
             ("triangle_cuts", triangle_cuts),
             ("relu_envelope_cuts", relu_envelope_cuts),
+            ("rlt_all_pairs", rlt_all_pairs),
             ("full_psd_cone", full_psd_cone),
         ]
         if method_lower != "sdp" and any(v for _, v in sdp_only_flags):
@@ -247,6 +255,7 @@ class Verifier(object):
                     ineq_box_cuts=ineq_box_cuts,
                     ineq_square_cuts=ineq_square_cuts,
                     relu_envelope_cuts=relu_envelope_cuts,
+                    rlt_all_pairs=rlt_all_pairs,
                     full_psd_cone=full_psd_cone,
                 )
             case "simulator":

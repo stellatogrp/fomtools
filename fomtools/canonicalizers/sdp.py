@@ -72,6 +72,7 @@ class SDP(Canonicalizer):
         ineq_box_cuts=True,
         ineq_square_cuts=True,
         relu_envelope_cuts=False,
+        rlt_all_pairs=False,
         full_psd_cone=False,
     ):
         """
@@ -108,6 +109,17 @@ class SDP(Canonicalizer):
             l_i)`` with ``E_ii = u_i / (u_i - l_i)``. The ``y_i >= 0`` line is
             omitted because the y-leaf box bound plus the PSD constraint already
             imply it.
+        rlt_all_pairs : bool, default=False
+            If True, RLT *every* pair of variables (not just cone-mates) by
+            registering a cheap ``{0, p, q}`` 3x3 PSD minor for each pair so the
+            all-pairs McCormick cuts actually bind, then firing ``_build_rlt_cuts``
+            on the resulting (now all-pairs) cone structure. This is the middle
+            tier between cone-mate-only ``rlt_cuts`` and the dense
+            ``full_psd_cone``: ``baseline >= rlt_cuts >= rlt_all_pairs >=
+            full_psd_cone + rlt_cuts``. Pairs already inside a larger cone add no
+            new minor (``add_psd_cone_indices`` drops subsumed cones), so it only
+            couples genuinely-uncoupled pairs. Implies RLT cut emission on its own
+            (no need to also set ``rlt_cuts``).
         full_psd_cone : bool, default=False
             If True, union all PSD cones into a single full moment-matrix block
             at solve time. Combined with ``rlt_cuts=True`` this yields the full
@@ -132,6 +144,7 @@ class SDP(Canonicalizer):
         self.ineq_box_cuts = ineq_box_cuts
         self.ineq_square_cuts = ineq_square_cuts
         self.relu_envelope_cuts = relu_envelope_cuts
+        self.rlt_all_pairs = rlt_all_pairs
         self.full_psd_cone = full_psd_cone
         self._cuts_dirty = True
         self._cut_ineq_matrices = []
@@ -331,6 +344,7 @@ class SDP(Canonicalizer):
         new_canon.ineq_box_cuts = self.ineq_box_cuts
         new_canon.ineq_square_cuts = self.ineq_square_cuts
         new_canon.relu_envelope_cuts = self.relu_envelope_cuts
+        new_canon.rlt_all_pairs = self.rlt_all_pairs
         new_canon.full_psd_cone = self.full_psd_cone
         # Cuts get rebuilt from current state on the copy's first solve.
         new_canon._cuts_dirty = True
@@ -1011,14 +1025,20 @@ class SDP(Canonicalizer):
         # (see ``solve_model``), so mutating the cone here is local to the copy.
         if self.full_psd_cone and len(self.psd_cone_indices) != 1:
             self.psd_cone_indices = [set(range(self.get_sdp_var_dim()))]
+        elif self.rlt_all_pairs:
+            # Middle tier: couple every pair via a cheap {0, p, q} 3x3 PSD minor
+            # so the all-pairs McCormick cuts bind. add_psd_cone_indices keeps the
+            # antichain, so a pair already inside a larger cone adds no new minor.
+            for p, q in combinations(range(1, self.get_sdp_var_dim()), 2):
+                self.add_psd_cone_indices([(p, p + 1), (q, q + 1)])
 
         self._cut_ineq_matrices = []
         self._cut_bineq_upperbounds = []
 
-        if self.rlt_cuts or self.triangle_cuts:
+        if self.rlt_cuts or self.rlt_all_pairs or self.triangle_cuts:
             sdp_idx_bounds = self._build_sdp_idx_bounds()
 
-            if self.rlt_cuts:
+            if self.rlt_cuts or self.rlt_all_pairs:
                 self._build_rlt_cuts(sdp_idx_bounds)
 
             if self.triangle_cuts:
