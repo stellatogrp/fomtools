@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from pathlib import Path
 
 from fomtools.codegen.agent.driver import (
     AgentBackendError,
@@ -102,12 +103,19 @@ class CodexAgentDriver(AgentDriver):
         # --max-turns flag, so max_turns is unused here, matching the claude
         # CLI). --skip-git-repo-check lets it run in the output dir even when
         # that is not a git repo.
+        #
+        # Resolve the workdir to an ABSOLUTE path: codex resolves --cd relative
+        # to its own working directory, and we also start the process in the
+        # workdir via subprocess cwd. A relative workdir (e.g. "out/ista") would
+        # therefore be applied twice ("out/ista/out/ista"), which codex reports
+        # as "No such file or directory (os error 2)".
+        workdir = str(Path(task.workdir).resolve())
         full_prompt = _SYSTEM_PROMPT + "\n\n" + prompt
         cmd = [
             self.codex_bin,
             "exec",
             "--cd",
-            str(task.workdir),
+            workdir,
             "--skip-git-repo-check",
         ]
         if self.bypass_sandbox:
@@ -118,7 +126,7 @@ class CodexAgentDriver(AgentDriver):
             cmd += ["--model", self.model]
         cmd.append(full_prompt)
         try:
-            proc = subprocess.run(cmd, cwd=str(task.workdir), capture_output=True, text=True)
+            proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True)
         except FileNotFoundError as exc:  # binary vanished after preflight
             raise AgentBackendError(f"Codex CLI {self.codex_bin!r} not found: {exc}") from exc
         output = proc.stdout + proc.stderr
