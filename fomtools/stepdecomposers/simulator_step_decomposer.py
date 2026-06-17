@@ -22,6 +22,20 @@ class SimulatorStepDecomposer(StepDecomposer):
         self.canonicalizer.canonicalize(step)
         return step.lhs
 
+    def _qp_step_not_supported(self, step: Step) -> LinearExpression:
+        # QuadraticProgram / LinearProgram lower to an implicit-iterate KKT system
+        # (a fresh primal x defined by equality + complementarity constraints). The
+        # Simulator backend has no per-sample solve for it; defer like the
+        # implicit-iterate proxes. Routed via ``_DECOMPOSERS`` (composite step path).
+        raise NotImplementedError(
+            f"{type(step).__name__} step is not yet supported on the Simulator backend"
+        )
+
+    _DECOMPOSERS: ClassVar[dict] = {
+        "quadraticprogram": _qp_step_not_supported,
+        "linearprogram": _qp_step_not_supported,
+    }
+
     def _implicit_iterate_not_supported(self, prox, rhs, gamma=1.0):
         # TODO(simulator): Implement implicit-iterate proxes on Simulator.
         # Shared deferral for prox lowerings that register a fresh iterate
@@ -40,4 +54,9 @@ class SimulatorStepDecomposer(StepDecomposer):
         "quadratic": _implicit_iterate_not_supported,
         "leastsquares": _implicit_iterate_not_supported,
         "indaffine": _implicit_iterate_not_supported,
+        "indpolyhedral": _implicit_iterate_not_supported,
+        "indballl1": _implicit_iterate_not_supported,
+        "norminf": _implicit_iterate_not_supported,
+        "indsimplex": _implicit_iterate_not_supported,
+        "totalvariation1d": _implicit_iterate_not_supported,
     }

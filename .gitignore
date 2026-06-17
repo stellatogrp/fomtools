@@ -383,3 +383,4 @@ cython_debug/
 fomtools.project
 .entropy/
 __marimo__/
+*.npz
