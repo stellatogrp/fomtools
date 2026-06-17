@@ -96,7 +96,9 @@ def test_indicator_specialization_and_numeric(name, make, x0, _sim, ind_name):
     proj = s.project(x0)
     # project == indicator.prox (the contract); and the projection lands in the set.
     np.testing.assert_allclose(proj, s.indicator().prox(x0), atol=PROX_ATOL)
-    assert s.contains(proj, tol=1e-6)
+    # `contains` re-projects (idempotence test), so for cvxpy-solved sets (Simplex,
+    # L1Ball, Polyhedron) it inherits the solver's ~PROX_ATOL precision, not machine eps.
+    assert s.contains(proj, tol=PROX_ATOL)
 
 
 def test_numeric_closed_forms():
