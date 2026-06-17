@@ -583,8 +583,10 @@ class Verifier(object):
         Raises
         ------
         TypeError
-            If ``proj_set`` is not a :class:`~fomtools.sets.set.Set` (or subclass).
-            Penalty/loss functions are not projections — use :meth:`prox` for those.
+            If ``proj_set`` is not a :class:`~fomtools.sets.set.Set` (or subclass) —
+            penalty/loss functions are not projections, use :meth:`prox` for those; or
+            if a *parameterized* Set class is passed as the bare-class shorthand (the
+            shorthand only works for parameterless Sets like ``NonNegative``).
 
         Notes
         -----
@@ -592,7 +594,14 @@ class Verifier(object):
         argument.
         """
         if isinstance(proj_set, type) and issubclass(proj_set, Set):
-            proj_set = proj_set()
+            try:
+                proj_set = proj_set()
+            except TypeError as exc:
+                raise TypeError(
+                    f"project(): the bare-class shorthand only works for parameterless "
+                    f"Sets; {proj_set.__name__} requires constructor arguments — "
+                    f"instantiate it explicitly, e.g. project({proj_set.__name__}(...), arg)."
+                ) from exc
         if not isinstance(proj_set, Set):
             raise TypeError(
                 "project expects a Set (or a parameterless Set subclass); got "

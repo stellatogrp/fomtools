@@ -1,5 +1,5 @@
 from fomtools.proxable_functions.ind_affine import IndAffine
-from fomtools.sets.set import Set
+from fomtools.sets.set import Set, _fmt
 
 
 class AffineSubspace(Set):
@@ -26,3 +26,6 @@ class AffineSubspace(Set):
 
     def indicator(self) -> IndAffine:
         return IndAffine(self.A, self.b)
+
+    def _repr_fields(self) -> str:
+        return f"A={_fmt(self.A)}, b={_fmt(self.b)}"

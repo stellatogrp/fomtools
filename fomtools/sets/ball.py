@@ -28,6 +28,9 @@ class L1Ball(Set):
     def indicator(self) -> IndBallL1:
         return IndBallL1(self.r, dual_ub=self.dual_ub)
 
+    def _repr_fields(self) -> str:
+        return f"r={self.r!r}, dual_ub={self.dual_ub!r}"
+
 
 class LinfBall(Box):
     r"""
@@ -50,3 +53,6 @@ class LinfBall(Box):
 
     def indicator(self) -> IndBallLinf:
         return IndBallLinf(self.r)
+
+    def _repr_fields(self) -> str:
+        return f"r={self.r!r}"

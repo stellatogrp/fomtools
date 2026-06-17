@@ -3,6 +3,20 @@ import numpy as np
 from fomtools.proxable_functions.proximal_operator import ProxableFunction
 
 
+def _fmt(value) -> str:
+    """Compact repr for a constructor argument.
+
+    Scalars/objects use their normal ``repr``; small arrays are shown by value and
+    large arrays (> 8 elements) by shape, so reprs stay readable in interactive use
+    and test-failure messages.
+    """
+    if isinstance(value, np.ndarray):
+        if value.size <= 8:
+            return np.array2string(value, separator=", ")
+        return f"<ndarray shape={value.shape}>"
+    return repr(value)
+
+
 class Set:
     r"""
     Base class for convex sets onto which we can project.
@@ -47,19 +61,52 @@ class Set:
 
         Delegates to the indicator's numerical ``prox`` (projection is
         ``prox`` of the indicator).
+
+        Notes
+        -----
+        A fresh indicator object is constructed on each call (construction is cheap —
+        it only stores the set's parameters). If you are projecting/checking membership
+        in a tight loop, build the indicator once and reuse it:
+        ``ind = my_set.indicator(); ind.prox(x1); ind.prox(x2); ...``.
         """
         return self.indicator().prox(np.asarray(x, dtype=float))
 
-    def contains(self, x: np.ndarray, tol: float = 1e-6) -> bool:
+    def contains(self, x: np.ndarray, tol: float = 1e-6, rtol: float = 1e-5) -> bool:
         r"""
-        Return ``True`` if ``x`` lies in the set (within ``tol``).
+        Return ``True`` if ``x`` lies in the set (within tolerance).
 
         Tested via projection idempotence: for a closed convex set,
         $x \in C \iff \Pi_C(x) = x$. This relies only on the indicator's ``prox``
         (which every indicator implements), so it works uniformly across all sets.
+
+        The comparison uses :func:`numpy.allclose` semantics,
+        $\lVert \Pi_C(x) - x \rVert \le \text{tol} + \text{rtol}\,\lvert x \rvert$
+        (elementwise): ``tol`` is the absolute tolerance and ``rtol`` adds a relative,
+        **scale-aware** slack so large-magnitude points are not held to an unrealistic
+        absolute bound. Pass ``rtol=0.0`` for a pure absolute check. For cvxpy-solved
+        sets (Simplex, L1Ball, Polyhedron) the round-trip inherits the solver's
+        precision (~``PROX_ATOL``), so ``tol`` may need to be loosened accordingly.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Point to test.
+        tol : float, default 1e-6
+            Absolute tolerance.
+        rtol : float, default 1e-5
+            Relative tolerance (scale-aware term).
+
+        Notes
+        -----
+        Calls :meth:`project`, which constructs a fresh indicator each call; for tight
+        membership-checking loops reuse a single indicator (see :meth:`project`).
         """
         x = np.asarray(x, dtype=float)
-        return bool(np.allclose(self.project(x), x, atol=tol, rtol=0.0))
+        return bool(np.allclose(self.project(x), x, atol=tol, rtol=rtol))
+
+    def _repr_fields(self) -> str:
+        """Constructor-argument string for :meth:`__repr__`; overridden per set."""
+        return ""
 
     def __repr__(self) -> str:
-        return f"<{self.__class__.__name__}>"
+        return f"{type(self).__name__}({self._repr_fields()})"

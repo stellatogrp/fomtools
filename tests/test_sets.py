@@ -152,6 +152,46 @@ def test_subclasses_populate_box_attributes():
         assert s.A is None and s.b is None and s.dual_ub is None
 
 
+def test_repr_echoes_constructor_args():
+    """__repr__ reads like the constructor (params no longer dropped)."""
+    assert repr(Box(-1.0, 1.0)) == "Box(l=-1.0, u=1.0)"
+    assert repr(NonNegative()) == "NonNegative()"
+    assert repr(NonPositive()) == "NonPositive()"
+    assert repr(LinfBall(2.0)) == "LinfBall(r=2.0)"
+    assert repr(L1Ball(0.5, dual_ub=10.0)) == "L1Ball(r=0.5, dual_ub=10.0)"
+    assert repr(Simplex(1.0)) == "Simplex(a=1.0)"
+    assert repr(Point(0.5)) == "Point(p=0.5)"
+    # array-valued args appear by value when small
+    assert repr(HalfSpace(np.array([1.0, 2.0]), 0.5)) == "HalfSpace(a=[1., 2.], b=0.5)"
+    # large arrays summarize by shape, not a wall of numbers
+    big = AffineSubspace(np.ones((1, 50)), np.array([1.0]))
+    assert "shape=(1, 50)" in repr(big)
+
+
+def test_contains_is_scale_aware():
+    """rtol gives a relative slack so large-magnitude points aren't held to a tiny
+    absolute bound; rtol=0.0 recovers the pure-absolute behavior."""
+    box = Box(-1e9, 1e9)
+    pt = np.array([1e9 + 50.0])  # outside by 50, but ~5e-8 in relative terms
+    assert box.contains(pt)  # default rtol=1e-5 -> within tolerance at this scale
+    assert not box.contains(pt, rtol=0.0)  # pure absolute -> 50 > atol
+
+
+def test_halfspace_uses_polyhedron_attribute_meaning():
+    """HalfSpace stores A/b with the inherited Polyhedron meaning (1-row, RHS vector),
+    not a scalar — resolving the self.b semantic collision. The normal is on self.a."""
+    a = np.array([1.0, 2.0, -1.0])
+    hs = HalfSpace(a, 0.5)
+    np.testing.assert_array_equal(hs.A, a.reshape(1, -1))  # (1, n) matrix
+    np.testing.assert_array_equal(hs.b, np.array([0.5]))  # length-1 RHS vector
+    np.testing.assert_array_equal(hs.a, a)  # scalar-inequality normal
+    assert hs.dual_ub is None
+    # indicator still gets the scalar offset and projects correctly
+    x = np.array([1.0, 1.0, 1.0])
+    expected = x - max(0.0, (a @ x - 0.5)) / (a @ a) * a
+    np.testing.assert_allclose(hs.project(x), expected, atol=PROX_ATOL)
+
+
 # --- MIP-exact projection (solver lowering vs numeric formula) --------------
 
 
@@ -207,6 +247,15 @@ def test_project_rejects_non_set(bad):
     arg = v.add_param(3, lb=-1.0, ub=1.0)
     with pytest.raises(TypeError, match="Set"):
         v.project(bad, arg)
+
+
+def test_project_parameterized_bare_class_helpful_error():
+    """Passing a parameterized Set *class* (not instance) gives a project-aware error,
+    not a bare 'missing required arguments' TypeError from the constructor."""
+    v = _make_verifier("mip", obbt="gurobi")
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    with pytest.raises(TypeError, match="parameterless|instantiate it explicitly"):
+        v.project(Box, arg)  # Box needs l, u
 
 
 # --- SDP backend ------------------------------------------------------------

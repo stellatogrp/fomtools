@@ -5,6 +5,7 @@ from fomtools.proxable_functions.ind_nonnegative import IndNonNegative
 from fomtools.proxable_functions.ind_nonpositive import IndNonPositive
 from fomtools.proxable_functions.ind_point import IndPoint
 from fomtools.sets.polyhedron import Polyhedron
+from fomtools.sets.set import _fmt
 
 
 class Box(Polyhedron):
@@ -29,6 +30,9 @@ class Box(Polyhedron):
     def indicator(self) -> IndBox:
         return IndBox(self.l, self.u)
 
+    def _repr_fields(self) -> str:
+        return f"l={_fmt(self.l)}, u={_fmt(self.u)}"
+
 
 class NonNegative(Box):
     r"""
@@ -47,6 +51,9 @@ class NonNegative(Box):
     def indicator(self) -> IndNonNegative:
         return IndNonNegative()
 
+    def _repr_fields(self) -> str:
+        return ""  # parameterless constructor
+
 
 class NonPositive(Box):
     r"""
@@ -62,6 +69,9 @@ class NonPositive(Box):
 
     def indicator(self) -> IndNonPositive:
         return IndNonPositive()
+
+    def _repr_fields(self) -> str:
+        return ""  # parameterless constructor
 
 
 class Point(Box):
@@ -83,3 +93,6 @@ class Point(Box):
 
     def indicator(self) -> IndPoint:
         return IndPoint(self.p)
+
+    def _repr_fields(self) -> str:
+        return f"p={_fmt(self.p)}"
