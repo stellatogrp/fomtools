@@ -71,6 +71,8 @@ class SDP(Canonicalizer):
         ineq_product_cuts=True,
         ineq_box_cuts=True,
         ineq_square_cuts=True,
+        relu_envelope_cuts=False,
+        full_psd_cone=False,
     ):
         """
         Initialize the SDP canonicalizer.
@@ -98,6 +100,19 @@ class SDP(Canonicalizer):
         ineq_square_cuts : bool, default=True
             For each inequality constraint, add the self-square upper bound
             ``g_i^2 <= g_i_lower * g_i`` using a propagated lower bound on ``g_i``.
+        relu_envelope_cuts : bool, default=False
+            If True, add the linear ReLU convex-hull inequalities on the
+            first-moment (vector) variables: the lower envelope ``y_i >= a_i^T x
+            + b_i`` for every projected row and, on mixed-bound rows
+            (``l_i < 0 < u_i``), the upper chord ``y_i <= E_ii (a_i^T x + b_i -
+            l_i)`` with ``E_ii = u_i / (u_i - l_i)``. The ``y_i >= 0`` line is
+            omitted because the y-leaf box bound plus the PSD constraint already
+            imply it.
+        full_psd_cone : bool, default=False
+            If True, union all PSD cones into a single full moment-matrix block
+            at solve time. Combined with ``rlt_cuts=True`` this yields the full
+            Shor + RLT relaxation (RLT then fires on every variable pair, not
+            just cone-mates). Tightest but most expensive configuration.
         """
         super(SDP, self).__init__(solver_params, solver)
         self.solver_name = solver.lower()  # Store for dispatch
@@ -116,10 +131,12 @@ class SDP(Canonicalizer):
         self.ineq_product_cuts = ineq_product_cuts
         self.ineq_box_cuts = ineq_box_cuts
         self.ineq_square_cuts = ineq_square_cuts
+        self.relu_envelope_cuts = relu_envelope_cuts
+        self.full_psd_cone = full_psd_cone
         self._cuts_dirty = True
         self._cut_ineq_matrices = []
         self._cut_bineq_upperbounds = []
-        self._relu_steps = []  # registry for triangle cuts
+        self._relu_steps = []  # registry for triangle / envelope cuts
         self._ineq_constraints = []  # (constraint, add_product_cuts) for inequality cuts
 
         self.C_obj = None
@@ -313,6 +330,8 @@ class SDP(Canonicalizer):
         new_canon.ineq_product_cuts = self.ineq_product_cuts
         new_canon.ineq_box_cuts = self.ineq_box_cuts
         new_canon.ineq_square_cuts = self.ineq_square_cuts
+        new_canon.relu_envelope_cuts = self.relu_envelope_cuts
+        new_canon.full_psd_cone = self.full_psd_cone
         # Cuts get rebuilt from current state on the copy's first solve.
         new_canon._cuts_dirty = True
         new_canon._cut_ineq_matrices = []
@@ -357,7 +376,10 @@ class SDP(Canonicalizer):
         2. Quadratic constraint: diag([b|A] X [b|A]^T) = 0
 
         With the PSD constraint, the diagonal being zero implies the full
-        quadratic form is zero.
+        quadratic form is zero. Note this is already the full equality-RLT
+        closure within the cone: ``c_i^T X c_i = 0`` with ``X ⪰ 0`` forces the
+        whole column ``X c_i = 0``, i.e. every product ``h_i(x) x_p = 0`` for
+        cone-mate ``p`` — so no separate equality-RLT cuts are needed.
 
         Parameters
         ----------
@@ -983,6 +1005,13 @@ class SDP(Canonicalizer):
         if not self._cuts_dirty:
             return
 
+        # Option A: collapse the antichain of cones into one full moment-matrix
+        # block so that ``_build_rlt_cuts`` (which keys off cone membership)
+        # fires on every variable pair. Solve always runs on ``self.copy()``
+        # (see ``solve_model``), so mutating the cone here is local to the copy.
+        if self.full_psd_cone and len(self.psd_cone_indices) != 1:
+            self.psd_cone_indices = [set(range(self.get_sdp_var_dim()))]
+
         self._cut_ineq_matrices = []
         self._cut_bineq_upperbounds = []
 
@@ -994,6 +1023,9 @@ class SDP(Canonicalizer):
 
             if self.triangle_cuts:
                 self._build_triangle_cuts()
+
+        if self.relu_envelope_cuts:
+            self._build_relu_envelope_cuts()
 
         if self._ineq_constraints and (
             self.ineq_product_cuts or self.ineq_box_cuts or self.ineq_square_cuts
@@ -1305,6 +1337,72 @@ class SDP(Canonicalizer):
         N_sym = symmetrize(N.tocsc())
         self._cut_ineq_matrices.append(-N_sym)
         self._cut_bineq_upperbounds.append(0.0)
+
+    def _build_relu_envelope_cuts(self) -> None:
+        r"""
+        Append the linear ReLU convex-hull inequalities on the first-moment
+        (vector) variables for every registered ReLU step.
+
+        Unlike the *lifted* triangle cut (a quadratic-in-X product), these are
+        linear in the first moments ``X[0, .]`` and so restrict the relaxation
+        in a way the lifted equality ``y^2 = (a^T x + b) y`` plus PSD does not.
+        For each projected arg row ``i`` with ``hat_x_i = a_i^T x + b_i``:
+
+        - Lower envelope ``y_i >= hat_x_i`` (valid for every row, since
+          ``ReLU(t) >= t``).
+        - Upper chord ``y_i <= E_ii (hat_x_i - l_i)`` with
+          ``E_ii = u_i / (u_i - l_i)``, emitted only on mixed-bound rows
+          (``l_i < 0 < u_i``, finite ``u_i``) where the secant of ``max(0, .)``
+          through ``(l_i, 0)`` and ``(u_i, u_i)`` dominates the true map. On a
+          passthrough row (``l_i >= 0``) this chord would cut the true point, so
+          it is skipped (gated exactly like the triangle cut).
+
+        ``y_i >= 0`` is intentionally omitted: the y-leaf box bound (lb >= 0)
+        together with the PSD ``2x2`` minor already implies it.
+
+        Bounds are recomputed fresh from ``step.arg.bound_propagation()`` so the
+        cuts track any leaf tightening since ``canonicalize_relu`` ran (parity
+        with ``_build_triangle_cuts``).
+        """
+        n_dim = self.get_sdp_var_dim()
+        for step in self._relu_steps:
+            arg = step.arg
+            arg_lb, arg_ub = arg.bound_propagation()
+            A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(arg)
+            b_vec = np.asarray(arg.const)
+
+            y_leaf = step.output_leaves[0]
+            rhs_to_y_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
+            y_start, _y_end = self.var_idx_map[y_leaf]
+            x_row0_idx = process_1d_ranges(x_idx_bounds, row=True)
+
+            for i in range(arg.ndim):
+                if i not in rhs_to_y_pos:
+                    continue
+                a_i = np.asarray(A_mat[i, :]).flatten()
+                b_i = float(b_vec[i])
+                y_i_idx = y_start + rhs_to_y_pos[i]
+
+                # Lower envelope: y_i - (a_i^T x + b_i) >= 0.
+                N = spa.lil_matrix((n_dim, n_dim))
+                N[y_i_idx, 0] = 1.0
+                N[x_row0_idx] = -a_i
+                N[0, 0] = -b_i
+                self._cut_ineq_matrices.append(-symmetrize(N.tocsc()))
+                self._cut_bineq_upperbounds.append(0.0)
+
+                # Upper chord (mixed rows only): E_ii (a_i^T x + b_i - l_i) - y_i >= 0.
+                lb_i = arg_lb[i]
+                ub_i = arg_ub[i]
+                if lb_i >= 0 or ub_i <= 0 or not np.isfinite(ub_i):
+                    continue
+                E_ii = ub_i / (ub_i - lb_i)
+                N = spa.lil_matrix((n_dim, n_dim))
+                N[x_row0_idx] = E_ii * a_i
+                N[0, 0] = E_ii * b_i - E_ii * lb_i
+                N[y_i_idx, 0] = -1.0
+                self._cut_ineq_matrices.append(-symmetrize(N.tocsc()))
+                self._cut_bineq_upperbounds.append(0.0)
 
     def solve_model(self, steps=None, convex_hull_cuts=False):
         """Solve the SDP problem using the configured solver.

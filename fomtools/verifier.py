@@ -53,6 +53,8 @@ class Verifier(object):
         ineq_product_cuts=True,
         ineq_box_cuts=True,
         ineq_square_cuts=True,
+        relu_envelope_cuts=False,
+        full_psd_cone=False,
     ):
         """
         Initialize a Verifier instance.
@@ -86,6 +88,14 @@ class Verifier(object):
         ineq_square_cuts : bool, default True
             SDP-only: add the self-square upper bound ``g_i^2 <= g_i_lower * g_i``
             for each inequality constraint. No effect for ``method != "sdp"``.
+        relu_envelope_cuts : bool, default False
+            SDP-only: add the linear ReLU convex-hull inequalities (lower
+            envelope and mixed-row upper chord) on the first-moment variables.
+            No effect for ``method != "sdp"``.
+        full_psd_cone : bool, default False
+            SDP-only: union all PSD cones into one full moment matrix; combined
+            with ``rlt_cuts`` gives the full Shor + RLT relaxation. No effect for
+            ``method != "sdp"``.
         """
         self.theory_func = theory_func
         self.iterates = []
@@ -101,6 +111,8 @@ class Verifier(object):
             ineq_product_cuts=ineq_product_cuts,
             ineq_box_cuts=ineq_box_cuts,
             ineq_square_cuts=ineq_square_cuts,
+            relu_envelope_cuts=relu_envelope_cuts,
+            full_psd_cone=full_psd_cone,
         )
         self.obbt_handler = OBBTHandler(solver=obbt_solver) if obbt_solver else None
         self.use_obbt_handler = True if obbt_solver else False
@@ -167,6 +179,8 @@ class Verifier(object):
         ineq_product_cuts: bool = True,
         ineq_box_cuts: bool = True,
         ineq_square_cuts: bool = True,
+        relu_envelope_cuts: bool = False,
+        full_psd_cone: bool = False,
     ):
         """
          Return an initialized instance for the requested method.
@@ -206,12 +220,14 @@ class Verifier(object):
              If the requested canonicalizer is not one of the supported options.
         """
         method_lower = method.lower()
-        if method_lower != "sdp" and (rlt_cuts or triangle_cuts):
-            enabled = []
-            if rlt_cuts:
-                enabled.append("rlt_cuts")
-            if triangle_cuts:
-                enabled.append("triangle_cuts")
+        sdp_only_flags = [
+            ("rlt_cuts", rlt_cuts),
+            ("triangle_cuts", triangle_cuts),
+            ("relu_envelope_cuts", relu_envelope_cuts),
+            ("full_psd_cone", full_psd_cone),
+        ]
+        if method_lower != "sdp" and any(v for _, v in sdp_only_flags):
+            enabled = [name for name, v in sdp_only_flags if v]
             warnings.warn(
                 f"{', '.join(enabled)} is SDP-only and will be ignored for method={method!r}.",
                 UserWarning,
@@ -230,6 +246,8 @@ class Verifier(object):
                     ineq_product_cuts=ineq_product_cuts,
                     ineq_box_cuts=ineq_box_cuts,
                     ineq_square_cuts=ineq_square_cuts,
+                    relu_envelope_cuts=relu_envelope_cuts,
+                    full_psd_cone=full_psd_cone,
                 )
             case "simulator":
                 return Simulator()
