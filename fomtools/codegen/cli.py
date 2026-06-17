@@ -12,6 +12,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+from fomtools.codegen.agent import AGENT_BACKENDS, AgentBackendError
 from fomtools.codegen.config import (
     Backend,
     CodegenConfig,
@@ -52,9 +53,9 @@ def _make_driver(args):
             raise SystemExit("--driver stub requires --golden PATH (a known-good solver source)")
         return StubAgentDriver(Path(args.golden))
     if args.driver == "agent":
-        from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
+        from fomtools.codegen.agent import make_agent_driver
 
-        return ClaudeAgentDriver()
+        return make_agent_driver(backend=args.agent)
     return None
 
 
@@ -65,6 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--module", help="path to a Python module defining build_fom()")
     p.add_argument("--out", required=True, help="output directory")
     p.add_argument("--driver", choices=["agent", "stub"], default="agent")
+    p.add_argument(
+        "--agent",
+        choices=list(AGENT_BACKENDS),
+        default=None,
+        help="real coding-agent backend for --driver agent (default: claude, or "
+        "$FOMTOOLS_CODEGEN_BACKEND)",
+    )
     p.add_argument("--golden", help="known-good solver source (for --driver stub)")
     p.add_argument("--version", choices=[v.value for v in Version], default="embedded")
     p.add_argument("--backend", choices=[b.value for b in Backend], default="c")
@@ -120,18 +128,24 @@ def main(argv: list[str] | None = None) -> int:
     # Phase B defaults on for the real agent (the product flow) and off for the
     # stub (which cannot meaningfully optimize), unless the user is explicit.
     run_phase_b = args.phase_b if args.phase_b is not None else (args.driver == "agent")
-    result = generate_code(
-        fom["verifier"],
-        fom["next_state"],
-        args.out,
-        config=config,
-        driver=driver,
-        state=fom.get("state"),
-        params=fom.get("params"),
-        name=fom.get("name", "fom"),
-        run_phase_b=run_phase_b,
-        profile=args.profile,
-    )
+    try:
+        result = generate_code(
+            fom["verifier"],
+            fom["next_state"],
+            args.out,
+            config=config,
+            driver=driver,
+            state=fom.get("state"),
+            params=fom.get("params"),
+            name=fom.get("name", "fom"),
+            run_phase_b=run_phase_b,
+            profile=args.profile,
+        )
+    except AgentBackendError as exc:
+        # A missing / unauthenticated backend is a clear user-fixable setup
+        # problem, not an internal error: report it plainly without a traceback.
+        sys.stderr.write(f"codegen FAILED: {exc}\n")
+        return 2
     status = "OK" if result.success else "FAILED"
     print(f"codegen {status}: {result.out_dir}")
     if result.timing is not None:

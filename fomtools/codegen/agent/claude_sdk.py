@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import subprocess
 
-from fomtools.codegen.agent.driver import AgentDriver, AgentResult, AgentTask
+from fomtools.codegen.agent.driver import AgentDriver, AgentResult, AgentTask, run_verify_loop
 
 _ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 
@@ -51,49 +51,12 @@ class ClaudeAgentDriver(AgentDriver):
 
     # -- public API --------------------------------------------------------
     def run(self, task: AgentTask) -> AgentResult:
-        log_parts: list[str] = []
-        prompt = task.instructions
-
-        # Larger turn budget for the open-ended optimization phase.
-        max_turns = task.max_turns if task.phase == "B_optimize" else max(self.max_turns, 20)
-
-        for attempt in range(self.max_attempts):
-            log_parts.append(f"\n===== agent attempt {attempt + 1} =====\n")
-            # The agent hitting its turn cap (or any transient error) must not crash
-            # the run: we capture it and let the authoritative verify below decide,
-            # since the agent may already have produced passing code.
-            try:
-                agent_log = self._invoke_agent(task, prompt, max_turns)
-            except Exception as exc:  # noqa: BLE001 - surface as a failed attempt
-                agent_log = f"[agent invocation raised: {exc}]"
-            log_parts.append(agent_log)
-
-            # Revert any agent edits to the immutable deterministic files before
-            # the authoritative verify (the agent may only change the solver body).
-            if task.restore_hook is not None:
-                task.restore_hook()
-            verify = subprocess.run(
-                task.verify_cmd, cwd=str(task.workdir), capture_output=True, text=True
-            )
-            log_parts.append(verify.stdout + verify.stderr)
-            if verify.returncode == 0:
-                return AgentResult(
-                    success=True,
-                    log="".join(log_parts),
-                    turns_used=attempt + 1,
-                    artifacts=[task.workdir / task.solver_rel_path],
-                )
-            # Re-prompt with the failure so the agent can fix it.
-            prompt = (
-                task.instructions
-                + "\n\nThe verify command FAILED with this output:\n"
-                + (verify.stdout + verify.stderr)[-4000:]
-                + "\nFix `"
-                + task.solver_rel_path
-                + "` and make it pass."
-            )
-
-        return AgentResult(success=False, log="".join(log_parts), turns_used=self.max_attempts)
+        return run_verify_loop(
+            task,
+            lambda prompt, max_turns: self._invoke_agent(task, prompt, max_turns),
+            max_attempts=self.max_attempts,
+            max_turns=self.max_turns,
+        )
 
     # -- agent invocation --------------------------------------------------
     def _invoke_agent(self, task: AgentTask, prompt: str, max_turns: int) -> str:
