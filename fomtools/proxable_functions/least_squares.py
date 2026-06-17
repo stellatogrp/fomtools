@@ -44,8 +44,7 @@ class LeastSquares(Quadratic):
         m = A.shape[0]
         if isinstance(b, np.ndarray) and b.shape != (m,):
             raise ValueError(
-                f"b must have shape ({m},) to match A's row count; "
-                f"got shape {b.shape}"
+                f"b must have shape ({m},) to match A's row count; got shape {b.shape}"
             )
         Q = A.T @ A
         q = -A.T @ b

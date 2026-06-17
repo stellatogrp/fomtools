@@ -39,13 +39,13 @@ class IndBallL1(ProxableFunction):
         self.r = r
         self.dual_ub = dual_ub
 
-    def prox(self, rhs, gamma=1.0):
+    def prox(self, arg, gamma=1.0):
         """
-        Project ``rhs`` onto ``{u : ||u||_1 <= r}`` (independent of ``gamma``).
+        Project ``arg`` onto ``{u : ||u||_1 <= r}`` (independent of ``gamma``).
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Point to project.
         gamma : float, default 1.0
             Step size (irrelevant for an indicator; accepted for interface consistency).
@@ -53,11 +53,11 @@ class IndBallL1(ProxableFunction):
         Returns
         -------
         np.ndarray
-            The Euclidean projection of ``rhs`` onto the ball.
+            The Euclidean projection of ``arg`` onto the ball.
         """
-        rhs = np.asarray(rhs, dtype=float)
+        arg = np.asarray(arg, dtype=float)
         # Numeric reference: a parameter ``r`` uses its stored constant value (cf. IndAffine).
         r = float(self.r.const[0]) if hasattr(self.r, "decomposition_dict") else float(self.r)
-        u = cp.Variable(rhs.shape[0])
-        cp.Problem(cp.Minimize(cp.sum_squares(u - rhs)), [cp.norm1(u) <= r]).solve()
+        u = cp.Variable(arg.shape[0])
+        cp.Problem(cp.Minimize(cp.sum_squares(u - arg)), [cp.norm1(u) <= r]).solve()
         return np.asarray(u.value, dtype=float)

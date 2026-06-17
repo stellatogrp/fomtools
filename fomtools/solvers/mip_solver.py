@@ -117,28 +117,28 @@ class MIPSolver(Solver):
         self.relax_model()
 
         for step in steps:
-            y_var, y_val = self.get_relaxed_variables(step.rhs)
-            # ``step.lhs_leaves[0]`` is the fresh MIP variable: the full lhs
+            y_var, y_val = self.get_relaxed_variables(step.arg)
+            # ``step.output_leaves[0]`` is the fresh MIP variable: the full output
             # leaf for full relu, or the smaller proj-leaf for partial relu.
-            # ``rhs_to_pos`` maps each projected rhs row to its row in that
+            # ``arg_to_pos`` maps each projected arg row to its row in that
             # fresh leaf; for full relu this is the identity dict.
-            w_leaf = step.lhs_leaves[0]
+            w_leaf = step.output_leaves[0]
             w_var, w_val = self.get_relaxed_variables(w_leaf)
 
-            rhs_to_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
+            arg_to_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
 
-            l = np.concatenate(step.rhs.lb)
-            u = np.concatenate(step.rhs.ub)
+            l = np.concatenate(step.arg.lb)
+            u = np.concatenate(step.arg.ub)
 
-            for i in range(step.lhs.ndim):
-                if i not in rhs_to_pos:
+            for i in range(step.output.ndim):
+                if i not in arg_to_pos:
                     continue
-                pos = rhs_to_pos[i]
+                pos = arg_to_pos[i]
                 # special case out sparse matrices as needed
                 A = np.concatenate(
                     [
                         np.asarray(v.todense()).reshape(-1) if spa.issparse(v) else v.flatten()
-                        for v in step.rhs[i].decomposition_dict.values()
+                        for v in step.arg[i].decomposition_dict.values()
                     ]
                 )
 

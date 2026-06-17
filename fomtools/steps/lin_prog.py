@@ -24,9 +24,9 @@ class LinearProgram(QuadraticProgram):
     Parameters
     ----------
     q : np.ndarray or LinearExpression
-        Linear cost; its dimension defines ``n``. Required (no ``-rhs`` default
+        Linear cost; its dimension defines ``n``. Required (no ``-arg`` default
         makes sense for an LP cost). A scalar ``q`` is rejected (cannot size the LP).
-    A, b, C, d, dual_ub, primal_bounds, nu_bounds, rhs, relax_binary_vars
+    A, b, C, d, dual_ub, primal_bounds, nu_bounds, arg, relax_binary_vars
         See :class:`QuadraticProgram`.
     """
 
@@ -40,7 +40,7 @@ class LinearProgram(QuadraticProgram):
         dual_ub=None,
         primal_bounds=None,
         nu_bounds=None,
-        rhs: LinearExpression = None,
+        arg: LinearExpression = None,
         relax_binary_vars: bool = False,
     ):
         if _is_linexpr(q):
@@ -62,7 +62,7 @@ class LinearProgram(QuadraticProgram):
             dual_ub=dual_ub,
             primal_bounds=primal_bounds,
             nu_bounds=nu_bounds,
-            rhs=rhs,
+            arg=arg,
             relax_binary_vars=relax_binary_vars,
         )
         self.is_lp = True
@@ -88,7 +88,7 @@ class StandardFormLinearProgram(LinearProgram):
         Linear cost; its dimension defines ``n``. A scalar is rejected (cannot size the LP).
     A, b : optional
         Equality matrix ``(p, n)`` and right-hand side (dim ``p``).
-    dual_ub, primal_bounds, nu_bounds, rhs, relax_binary_vars
+    dual_ub, primal_bounds, nu_bounds, arg, relax_binary_vars
         See :class:`QuadraticProgram`. ``dual_ub`` is required (the ``x >= 0`` inequality is
         always present, so the decomposer needs a finite bound on its multiplier).
     """
@@ -101,7 +101,7 @@ class StandardFormLinearProgram(LinearProgram):
         dual_ub=None,
         primal_bounds=None,
         nu_bounds=None,
-        rhs: LinearExpression = None,
+        arg: LinearExpression = None,
         relax_binary_vars: bool = False,
     ):
         if _is_linexpr(c):
@@ -123,6 +123,6 @@ class StandardFormLinearProgram(LinearProgram):
             dual_ub=dual_ub,
             primal_bounds=primal_bounds,
             nu_bounds=nu_bounds,
-            rhs=rhs,
+            arg=arg,
             relax_binary_vars=relax_binary_vars,
         )

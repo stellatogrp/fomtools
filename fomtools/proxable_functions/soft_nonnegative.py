@@ -56,14 +56,14 @@ class SoftNonNegative(ProxableFunction):
         neg = np.maximum(0.0, -x)
         return float(coeff * np.sum(neg * neg))
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
         Compute the proximal point — a LeakyReLU with effective slope
         $\tilde\alpha(\gamma) = \alpha / (\alpha + \gamma(1-\alpha))$.
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Proximal step size.
@@ -74,7 +74,7 @@ class SoftNonNegative(ProxableFunction):
             The proximal point.
         """
         alpha_tilde = self.alpha / (self.alpha + gamma * (1.0 - self.alpha))
-        return alpha_tilde * rhs + (1.0 - alpha_tilde) * np.maximum(rhs, 0.0)
+        return alpha_tilde * arg + (1.0 - alpha_tilde) * np.maximum(arg, 0.0)
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""

@@ -55,7 +55,7 @@ class SumPositive(ProxableFunction):
         """
         return float(np.sum(np.maximum(0.0, x)))
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
         Compute the proximal point.
 
@@ -64,7 +64,7 @@ class SumPositive(ProxableFunction):
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Proximal step size.
@@ -74,7 +74,7 @@ class SumPositive(ProxableFunction):
         np.ndarray
             The proximal point.
         """
-        return rhs - np.minimum(np.maximum(rhs, 0.0), gamma)
+        return arg - np.minimum(np.maximum(arg, 0.0), gamma)
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""

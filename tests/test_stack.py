@@ -212,14 +212,10 @@ def test_stack_through_relu_mip(solver):
         if use_stack:
             y = stack([x, nu])
         else:
-            sel_x = spa.csc_matrix(
-                (np.ones(2), (np.arange(2), np.arange(2))), shape=(4, 2)
-            )
-            sel_nu = spa.csc_matrix(
-                (np.ones(2), (np.arange(2, 4), np.arange(2))), shape=(4, 2)
-            )
+            sel_x = spa.csc_matrix((np.ones(2), (np.arange(2), np.arange(2))), shape=(4, 2))
+            sel_nu = spa.csc_matrix((np.ones(2), (np.arange(2, 4), np.arange(2))), shape=(4, 2))
             y = sel_x @ x + sel_nu @ nu
-        z = v.step.relu(rhs=y)
+        z = v.step.relu(arg=y)
         v.set_infinity_norm_objective([z])
         return v.solve()
 
@@ -252,7 +248,7 @@ def test_stack_through_relu_sdp(vp, vp_sdp):
     v_sdp = Verifier(method="sdp", solver=sdp_solver_name, obbt_solver=None)
     x = v_sdp.add_iterate(2, lb=x_lb, ub=x_ub)
     nu = v_sdp.add_iterate(2, lb=nu_lb, ub=nu_ub)
-    z_sdp = v_sdp.step.relu(rhs=stack([x, nu]))
+    z_sdp = v_sdp.step.relu(arg=stack([x, nu]))
     v_sdp.set_objective_norm(z_sdp, 2)
     sdp_two_norm_sq = v_sdp.solve()
 
@@ -263,7 +259,7 @@ def test_stack_through_relu_sdp(vp, vp_sdp):
     )
     x_m = v_mip.add_iterate(2, lb=x_lb, ub=x_ub)
     nu_m = v_mip.add_iterate(2, lb=nu_lb, ub=nu_ub)
-    z_mip = v_mip.step.relu(rhs=stack([x_m, nu_m]))
+    z_mip = v_mip.step.relu(arg=stack([x_m, nu_m]))
     v_mip.set_objective_norm(z_mip, np.inf)
     mip_inf_norm = v_mip.solve()
 
@@ -292,16 +288,12 @@ def test_stack_through_affine(solver):
         nu = v.add_iterate(2, lb=nu_lb, ub=nu_ub)
         if use_stack:
             y = stack([x, nu])
-            w = v.step.implicit_linear(rhs=M @ y, lhs_mat=np.eye(3))
+            w = v.step.implicit_linear(arg=M @ y, output_mat=np.eye(3))
         else:
-            sel_x = spa.csc_matrix(
-                (np.ones(2), (np.arange(2), np.arange(2))), shape=(4, 2)
-            )
-            sel_nu = spa.csc_matrix(
-                (np.ones(2), (np.arange(2, 4), np.arange(2))), shape=(4, 2)
-            )
+            sel_x = spa.csc_matrix((np.ones(2), (np.arange(2), np.arange(2))), shape=(4, 2))
+            sel_nu = spa.csc_matrix((np.ones(2), (np.arange(2, 4), np.arange(2))), shape=(4, 2))
             y = sel_x @ x + sel_nu @ nu
-            w = v.step.implicit_linear(rhs=M @ y, lhs_mat=np.eye(3))
+            w = v.step.implicit_linear(arg=M @ y, output_mat=np.eye(3))
         v.set_infinity_norm_objective([w])
         return v.solve()
 
@@ -317,7 +309,7 @@ def test_stack_inherits_leaf_constraint(solver):
     must apply to the corresponding slice of the stack with no explicit
     constraint on that slice. We pin ``x = c`` at ``add_iterate`` time and
     leave ``nu`` constrained loosely; the relu objective over ``stack([x, nu])``
-    must match the case where the relu rhs is built without ``stack()``.
+    must match the case where the relu arg is built without ``stack()``.
     """
     c = np.array([-0.5, 0.7])
     nu_lb = np.array([-0.3, -0.4])
@@ -330,14 +322,10 @@ def test_stack_inherits_leaf_constraint(solver):
         if use_stack:
             y = stack([x, nu])
         else:
-            sel_x = spa.csc_matrix(
-                (np.ones(2), (np.arange(2), np.arange(2))), shape=(4, 2)
-            )
-            sel_nu = spa.csc_matrix(
-                (np.ones(2), (np.arange(2, 4), np.arange(2))), shape=(4, 2)
-            )
+            sel_x = spa.csc_matrix((np.ones(2), (np.arange(2), np.arange(2))), shape=(4, 2))
+            sel_nu = spa.csc_matrix((np.ones(2), (np.arange(2, 4), np.arange(2))), shape=(4, 2))
             y = sel_x @ x + sel_nu @ nu
-        z = v.step.relu(rhs=y)
+        z = v.step.relu(arg=y)
         v.set_infinity_norm_objective([z])
         return v.solve()
 

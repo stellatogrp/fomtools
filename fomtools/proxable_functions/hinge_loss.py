@@ -44,7 +44,7 @@ class HingeLoss(ProxableFunction):
         r"""Evaluate $g(x) = \sum_i \max(0, 1 - x_i)$."""
         return float(np.sum(np.maximum(0.0, 1.0 - x)))
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
         Compute the proximal point.
 
@@ -52,7 +52,7 @@ class HingeLoss(ProxableFunction):
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Proximal step size.
@@ -62,7 +62,7 @@ class HingeLoss(ProxableFunction):
         np.ndarray
             The proximal point.
         """
-        return rhs + np.minimum(np.maximum(1.0 - rhs, 0.0), gamma)
+        return arg + np.minimum(np.maximum(1.0 - arg, 0.0), gamma)
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""

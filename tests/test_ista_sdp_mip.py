@@ -45,7 +45,7 @@ def test_ista_sdp_mip_comparison(vp, vp_sdp):
         vp_sdp_local = Verifier(
             method="sdp",
             solver=sdp_solver_name,
-            obbt_solver='highs',
+            obbt_solver="highs",
         )
 
         b_sdp = vp_sdp_local.add_param(m, lb=b - 0.1, ub=b + 0.1)
@@ -63,7 +63,7 @@ def test_ista_sdp_mip_comparison(vp, vp_sdp):
         vp_mip = Verifier(
             method="mip",
             solver=mip_solver_name,
-            obbt_solver='highs',
+            obbt_solver="highs",
         )
 
         b_mip = vp_mip.add_param(m, lb=b - 0.1, ub=b + 0.1)
@@ -119,18 +119,18 @@ def test_ista_sdp_softthresh_vs_relus(vp_sdp):
     b_manual = vp_manual.add_param(m, lb=b - 0.1, ub=b + 0.1)
     z0_manual = vp_manual.add_iterate(n, lb=1, ub=1.1)
 
-    # Compute the input to soft threshold: rhs = At @ z0 + Bt @ b_param
-    rhs = At @ z0_manual + Bt @ b_manual
+    # Compute the input to soft threshold: arg = At @ z0 + Bt @ b_param
+    arg = At @ z0_manual + Bt @ b_manual
 
     # Create lambda vector
     lambd_vec = np.full(n, lambda_t)
 
     # Manual ReLU decomposition
-    relu_pos_lhs = vp_manual.step.relu(rhs - lambd_vec)
-    relu_neg_lhs = vp_manual.step.relu(-rhs - lambd_vec)
+    relu_pos_output = vp_manual.step.relu(arg - lambd_vec)
+    relu_neg_output = vp_manual.step.relu(-arg - lambd_vec)
 
     # z1 = relu_pos - relu_neg (this is the soft threshold output)
-    z1_manual = relu_pos_lhs - relu_neg_lhs
+    z1_manual = relu_pos_output - relu_neg_output
 
     # Set objective on z1 - z0
     vp_manual.set_objective_norm(z1_manual - z0_manual, 2)

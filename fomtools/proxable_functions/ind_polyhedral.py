@@ -58,13 +58,13 @@ class IndPolyhedral(ProxableFunction):
         self.n = n
         self.dual_ub = dual_ub
 
-    def prox(self, rhs, gamma=1.0):
+    def prox(self, arg, gamma=1.0):
         """
-        Project ``rhs`` onto ``{u : Au <= b}``.
+        Project ``arg`` onto ``{u : Au <= b}``.
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Point to project, of dimension ``n``.
         gamma : float, default 1.0
             Step size (irrelevant for an indicator; accepted for interface
@@ -73,10 +73,10 @@ class IndPolyhedral(ProxableFunction):
         Returns
         -------
         np.ndarray
-            The Euclidean projection of ``rhs`` onto the polyhedron.
+            The Euclidean projection of ``arg`` onto the polyhedron.
         """
-        rhs = np.asarray(rhs, dtype=float)
+        arg = np.asarray(arg, dtype=float)
         b = self.b if isinstance(self.b, np.ndarray) else np.asarray(self.b.const, dtype=float)
         u = cp.Variable(self.n)
-        cp.Problem(cp.Minimize(cp.sum_squares(u - rhs)), [self.A @ u <= b]).solve()
+        cp.Problem(cp.Minimize(cp.sum_squares(u - arg)), [self.A @ u <= b]).solve()
         return np.asarray(u.value, dtype=float)

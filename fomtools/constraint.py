@@ -27,10 +27,7 @@ def is_binary_free(constraint: "Constraint") -> bool:
     bool
         ``True`` if no leaf in the constraint is binary, ``False`` otherwise.
     """
-    return not any(
-        getattr(leaf, "is_binary", False)
-        for leaf in constraint.lhs.decomposition_dict
-    )
+    return not any(getattr(leaf, "is_binary", False) for leaf in constraint.lhs.decomposition_dict)
 
 
 class Constraint:

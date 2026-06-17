@@ -51,45 +51,43 @@ class NormL1(ProxableFunction):
             raise ValueError("Input should be of the same size as Lambda")
         return np.sum(np.multiply(self.lambd, np.abs(x)))
 
-    def prox(
-        self, rhs: np.ndarray, gamma: float | np.ndarray = 1.0
-    ) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float | np.ndarray = 1.0) -> np.ndarray:
         r"""
-        Compute the proximal point of the $\ell_1$ norm at ``rhs``.
+        Compute the proximal point of the $\ell_1$ norm at ``arg``.
 
         This method computes
 
         $$
-            y = \operatorname{prox}_{\gamma f}(\text{rhs})
+            y = \operatorname{prox}_{\gamma f}(\text{arg})
               = \arg\!\min_{u} \left\{ f(u)
-                + \frac{1}{2} \sum_i \frac{(u_i - \text{rhs}_i)^2}{\gamma_i}
+                + \frac{1}{2} \sum_i \frac{(u_i - \text{arg}_i)^2}{\gamma_i}
                 \right\},
         $$
 
         where $\gamma$ can be a scalar or a 1-D array broadcastable to
-        the shape of ``rhs``. The closed form is element-wise soft
+        the shape of ``arg``. The closed form is element-wise soft
         thresholding by $\gamma \lambda$.
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point at which to apply the proximal operator.
         gamma : float or array_like, default 1.0
             Step size(s) $\gamma$. Can be a scalar or an array
-            broadcastable to the shape of ``rhs``.
+            broadcastable to the shape of ``arg``.
 
         Returns
         -------
         np.ndarray
             The proximal point
-            $y = \operatorname{prox}_{\gamma f}(\text{rhs})$.
+            $y = \operatorname{prox}_{\gamma f}(\text{arg})$.
         """
-        if rhs.ndim >= 2:
+        if arg.ndim >= 2:
             raise ValueError("Input should be one-dimensional")
-        if self.lambd.ndim == 1 and rhs.shape != self.lambd.shape:
+        if self.lambd.ndim == 1 and arg.shape != self.lambd.shape:
             raise ValueError("Input should be of the same size as Lambda")
         gl = gamma * self.lambd
-        return rhs + np.where(rhs <= -gl, gl, np.where(rhs >= gl, -gl, -rhs))
+        return arg + np.where(arg <= -gl, gl, np.where(arg >= gl, -gl, -arg))
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""

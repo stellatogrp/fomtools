@@ -56,14 +56,14 @@ def test_add_constraint_inequality(vp):
     mip_solver_name = MIP_SOLVER_NAMES[type(vp.canonicalizer.solver).__name__]
 
     # Unconstrained baseline
-    vp_unc = Verifier(method='mip', solver=mip_solver_name, obbt_solver=None)
+    vp_unc = Verifier(method="mip", solver=mip_solver_name, obbt_solver=None)
     x_unc = vp_unc.add_iterate(n, lb=0, ub=10)
     z_unc = vp_unc.step.relu(x_unc - 3)
     vp_unc.set_objective_norm([z_unc], np.inf)
     result_unc = vp_unc.solve()
 
     # Constrained: x[i] <= 5 for all i
-    vp_con = Verifier(method='mip', solver=mip_solver_name, obbt_solver=None)
+    vp_con = Verifier(method="mip", solver=mip_solver_name, obbt_solver=None)
     x_con = vp_con.add_iterate(n, lb=0, ub=10)
     for i in range(n):
         vp_con.add_constraint(x_con[i] <= 5)
@@ -122,14 +122,14 @@ def test_affine_step_solves(vp):
 
     # Create a simple invertible matrix
     M = np.eye(n) + 0.1 * np.ones((n, n))
-    lhs = spa.csc_matrix(M)
+    output_mat = spa.csc_matrix(M)
 
     # Create parameter and iterate
     p = vp.add_param(n, lb=1, ub=2)
     z0 = vp.add_iterate(n, lb=0, ub=0)
 
     # Apply implicit_linear (Affine) step
-    z1 = vp.step.implicit_linear(z0 + p, lhs_mat=lhs.todense())
+    z1 = vp.step.implicit_linear(z0 + p, output_mat=output_mat.todense())
 
     # Add another step
     z2 = vp.step.relu(z1)
@@ -158,11 +158,7 @@ def test_add_constraint_equality_sdp_mip_comparison(vp, vp_sdp):
     sdp_solver_name = vp_sdp.canonicalizer.solver_name
 
     # MIP with infinity-norm objective
-    vp_mip = Verifier(
-        method='mip',
-        solver=mip_solver_name,
-        obbt_solver=None
-    )
+    vp_mip = Verifier(method="mip", solver=mip_solver_name, obbt_solver=None)
 
     x_mip = vp_mip.add_iterate(n, lb=0, ub=10)
     y_mip = vp_mip.add_iterate(n, lb=0, ub=10)
@@ -175,11 +171,7 @@ def test_add_constraint_equality_sdp_mip_comparison(vp, vp_sdp):
     mip_inf_norm = vp_mip.solve()
 
     # SDP with two-norm objective
-    vp_sdp_local = Verifier(
-        method='sdp',
-        solver=sdp_solver_name,
-        obbt_solver=None
-    )
+    vp_sdp_local = Verifier(method="sdp", solver=sdp_solver_name, obbt_solver=None)
 
     x_sdp = vp_sdp_local.add_iterate(n, lb=0, ub=10)
     y_sdp = vp_sdp_local.add_iterate(n, lb=0, ub=10)
