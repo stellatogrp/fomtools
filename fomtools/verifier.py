@@ -11,8 +11,10 @@ from fomtools.canonicalizers.simulator import Simulator
 from fomtools.constraint import (
     ComplementarityConstraint,
     Constraint,
+    SumSquares,
     complementarity,
     is_binary_free,
+    sum_squares,
 )
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.nn.layers import LinearLayer, ReLULayer
@@ -504,6 +506,33 @@ class Verifier(object):
             The constraint object.
         """
         return complementarity(expr1, expr2)
+
+    def sum_squares(self, expr: LinearExpression) -> SumSquares:
+        r"""
+        Build a sum-of-squares atom ``\sum_i (a_i^\top x + b_i)^2`` for ``expr``.
+
+        Compare the returned object against a nonnegative scalar to form a quadratic
+        constraint, then pass it to :meth:`add_constraint`::
+
+            vp.add_constraint(vp.sum_squares(expr) <= r**2)   # ||A x + b||_2^2 <= r^2
+            vp.add_constraint(vp.sum_squares(expr) >= r**2)   # nonconvex shell
+            vp.add_constraint(vp.sum_squares(expr) == r**2)   # nonconvex sphere
+
+        The ``<=`` sense is convex; ``>=`` / ``==`` are nonconvex but still representable
+        on the SDP backend (linear in the lifted matrix) and on Gurobi (``NonConvex=2``).
+        Quadratic constraints are unsupported on HiGHS and raise at ``add_constraint``.
+
+        Parameters
+        ----------
+        expr : LinearExpression
+            The expression whose squared two-norm is taken.
+
+        Returns
+        -------
+        SumSquares
+            The atom; compare it with ``<=`` / ``>=`` / ``==`` to obtain a constraint.
+        """
+        return sum_squares(expr)
 
     def _tighten_constraint_bounds(self, constr: Constraint) -> None:
         """

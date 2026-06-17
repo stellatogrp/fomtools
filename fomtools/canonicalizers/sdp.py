@@ -378,6 +378,8 @@ class SDP(Canonicalizer):
                 self._add_inequality_constraint_impl(constraint)
             case "complementarity":
                 self._add_complementarity_constraint_impl(constraint)
+            case "sum_squares":
+                self._add_sum_squares_constraint_impl(constraint)
             case _:
                 raise ValueError(f"Unknown constraint operator: {constraint.operator}")
 
@@ -497,6 +499,55 @@ class SDP(Canonicalizer):
         # complementarity nonnegativity sides while still emitting box/square cuts.
         self._ineq_constraints.append((constraint, add_product_cuts))
         self._cuts_dirty = True
+
+    def _add_sum_squares_constraint_impl(self, constraint) -> None:
+        r"""
+        Add a sum-of-squares constraint ``sum_i (a_i^T x + b_i)^2  op  r^2``.
+
+        With ``C = [b; A]^T [b; A]`` the squared two-norm is linear in the lifted matrix:
+        ``sum_i (a_i^T x + b_i)^2 = tr(C X)`` (since ``X[0, 0] = 1``). Each sense becomes a
+        single linear constraint on ``X``:
+
+        - ``"<="`` : ``tr(C X) <= r^2``      -> ``Aineq``  with ub ``r^2``
+        - ``">="`` : ``tr(C X) >= r^2``      -> ``Aineq``  on ``-C`` with ub ``-r^2``
+        - ``"=="`` : ``tr(C X)  = r^2``      -> ``Aeq``    with rhs ``r^2``
+
+        All senses are valid relaxations: the rank-1 lift ``X = [1; x][1; x]^T`` attains
+        ``tr(C X) = ||A x + b||^2`` exactly, so no feasible point is cut (for ``>=`` / ``==``
+        the PSD relaxation is merely looser, never invalid). A PSD cone over ``{0} U x`` is
+        registered so the quadratic block is coupled, matching the (in)equality impls.
+
+        Parameters
+        ----------
+        constraint : QuadraticConstraint
+            A sum-of-squares constraint (operator ``"sum_squares"``).
+        """
+        A_mat, idx_bounds = self.linexpr_to_Amat_and_bounds(constraint.expr)
+        b_vec = constraint.expr.const.reshape((-1, 1))
+        curr_prob_dim = self.get_sdp_var_dim()
+
+        # Build C = [b; A]^T [b; A] in lifted coordinates, mirroring _apply_two_norm_objective.
+        C_mat = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
+        C_mat[process_2d_ranges(idx_bounds, idx_bounds)] = A_mat.T @ A_mat
+        C_mat[process_1d_ranges(idx_bounds, row=True)] = b_vec.T @ A_mat
+        C_mat[process_1d_ranges(idx_bounds, row=False)] = A_mat.T @ b_vec
+        C_mat[0, 0] = np.trace(b_vec.T @ b_vec)
+        C = symmetrize(C_mat.tocsc())
+
+        r_sq = constraint.radius_sq
+        match constraint.sense:
+            case "<=":
+                self.Aineq_matrices.append(C)
+                self.bineq_upperbounds.append(r_sq)
+            case ">=":
+                self.Aineq_matrices.append(-C)
+                self.bineq_upperbounds.append(-r_sq)
+            case "==":
+                self.Aeq_matrices.append(C)
+                self.beq_consts.append(r_sq)
+
+        # PSD cone for {0} U x_indices (also marks _cuts_dirty via add_psd_cone_indices).
+        self.add_psd_cone_indices(idx_bounds)
 
     def _add_complementarity_constraint_impl(self, constraint) -> None:
         r"""
