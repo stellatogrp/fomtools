@@ -45,6 +45,7 @@ class LinfBall(Box):
     """
 
     def __init__(self, r):
+        super().__init__(-r, r)  # the box [-r, r]
         self.r = r
 
     def indicator(self) -> IndBallLinf:

@@ -1,3 +1,5 @@
+import numpy as np
+
 from fomtools.proxable_functions.ind_box import IndBox
 from fomtools.proxable_functions.ind_nonnegative import IndNonNegative
 from fomtools.proxable_functions.ind_nonpositive import IndNonPositive
@@ -30,17 +32,17 @@ class Box(Polyhedron):
 
 class NonNegative(Box):
     r"""
-    The non-negative orthant $\{x : x \ge 0\}$.
+    The non-negative orthant $\{x : x \ge 0\}$, i.e. the box $[0, +\infty)$.
 
-    A parameterless :class:`Box` specialization; backed by
-    :class:`~fomtools.proxable_functions.ind_nonnegative.IndNonNegative`, which
-    projects via a single ReLU (more efficient than the generic box/polyhedron path).
+    A parameterless :class:`Box` specialization (``l = 0``, ``u = +\infty``); backed by
+    :class:`~fomtools.proxable_functions.ind_nonnegative.IndNonNegative`, which projects
+    via a single ReLU (more efficient than the generic box/polyhedron path). The box
+    bounds are stored for the inherited :class:`Box`/:class:`Polyhedron` contract but are
+    not used by :meth:`indicator`.
     """
 
     def __init__(self):
-        # Conceptually Box(0, +inf), but the indicator is the specialized ReLU
-        # projection; the dimension is inferred from the projection input.
-        pass
+        super().__init__(0.0, np.inf)
 
     def indicator(self) -> IndNonNegative:
         return IndNonNegative()
@@ -48,14 +50,15 @@ class NonNegative(Box):
 
 class NonPositive(Box):
     r"""
-    The non-positive orthant $\{x : x \le 0\}$.
+    The non-positive orthant $\{x : x \le 0\}$, i.e. the box $(-\infty, 0]$.
 
-    A parameterless :class:`Box` specialization; backed by
-    :class:`~fomtools.proxable_functions.ind_nonpositive.IndNonPositive`.
+    A parameterless :class:`Box` specialization (``l = -\infty``, ``u = 0``); backed by
+    :class:`~fomtools.proxable_functions.ind_nonpositive.IndNonPositive`. The box bounds
+    are stored for the inherited contract but are not used by :meth:`indicator`.
     """
 
     def __init__(self):
-        pass
+        super().__init__(-np.inf, 0.0)
 
     def indicator(self) -> IndNonPositive:
         return IndNonPositive()
@@ -75,6 +78,7 @@ class Point(Box):
     """
 
     def __init__(self, p):
+        super().__init__(p, p)  # degenerate box l = u = p
         self.p = p
 
     def indicator(self) -> IndPoint:

@@ -139,6 +139,19 @@ def test_inheritance_tree():
     assert isinstance(LinfBall(1.0), Box)
 
 
+def test_subclasses_populate_box_attributes():
+    """IS-A implies HAS-A: Box subclasses set the canonical (l, u) and parent attrs."""
+    assert (NonNegative().l, NonNegative().u) == (0.0, np.inf)
+    assert (NonPositive().l, NonPositive().u) == (-np.inf, 0.0)
+    p = Point(np.array([1.0, 2.0, 3.0]))
+    assert np.array_equal(p.l, p.p) and np.array_equal(p.u, p.p)
+    b = LinfBall(2.0)
+    assert (b.l, b.u) == (-2.0, 2.0)
+    # parent (Polyhedron) attributes exist too
+    for s in (NonNegative(), NonPositive(), Point(0.0), LinfBall(1.0)):
+        assert s.A is None and s.b is None and s.dual_ub is None
+
+
 # --- MIP-exact projection (solver lowering vs numeric formula) --------------
 
 
