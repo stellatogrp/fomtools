@@ -17,6 +17,7 @@ from fomtools.constraint import (
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
+from fomtools.sets import Set
 from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
 from fomtools.stepdecomposers.simulator_step_decomposer import SimulatorStepDecomposer
 from fomtools.steps import (
@@ -553,6 +554,51 @@ class Verifier(object):
             ``_PROX_DECOMPOSERS`` registry.
         """
         return self.step_decomposer.process_prox(function, arg, gamma)
+
+    def project(self, proj_set, arg: LinearExpression) -> LinearExpression:
+        r"""
+        Project ``arg`` onto a convex set.
+
+        A friendly, math-named front door over :meth:`prox`: for a set $C$ with
+        indicator $I_C$, the Euclidean projection is exactly
+        $\Pi_C(x) = \operatorname{prox}_{I_C}(x)$. This method simply calls
+        ``self.prox(proj_set.indicator(), arg)``, reusing the entire prox lowering
+        (and inheriting each backend's support, including the simulator's
+        ``NotImplementedError`` for KKT-based projections).
+
+        Parameters
+        ----------
+        proj_set : Set or type[Set]
+            The set to project onto, e.g. ``Box(l, u)`` or ``Polyhedron(A, b, dual_ub=...)``.
+            A parameterless :class:`~fomtools.sets.set.Set` subclass may be passed as a
+            bare class (e.g. ``NonNegative``), which is instantiated automatically.
+        arg : LinearExpression
+            The input expression to project.
+
+        Returns
+        -------
+        LinearExpression
+            The output expression representing $\Pi_{C}(\text{arg})$.
+
+        Raises
+        ------
+        TypeError
+            If ``proj_set`` is not a :class:`~fomtools.sets.set.Set` (or subclass).
+            Penalty/loss functions are not projections — use :meth:`prox` for those.
+
+        Notes
+        -----
+        Projection is independent of the proximal step size, so there is no ``gamma``
+        argument.
+        """
+        if isinstance(proj_set, type) and issubclass(proj_set, Set):
+            proj_set = proj_set()
+        if not isinstance(proj_set, Set):
+            raise TypeError(
+                "project expects a Set (or a parameterless Set subclass); got "
+                f"{type(proj_set).__name__}. For penalties/losses use prox() directly."
+            )
+        return self.prox(proj_set.indicator(), arg)
 
     def quadratic_program(
         self,
