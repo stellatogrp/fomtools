@@ -12,6 +12,11 @@ SDP_SOLVERS = ["clarabel", "cvxpy"]
 # Test tolerance for numerical comparisons
 TEST_EPS = 1e-5
 
+# Tolerance for comparing against the cvxpy reference prox. The reference proxes solve a QP
+# with cvxpy's default conic solver, which is only accurate to ~5e-4 on these problems, so
+# equality comparisons against them (and MIP-vs-reference checks) use this looser tolerance.
+PROX_ATOL = 1e-3
+
 
 @pytest.fixture(params=SOLVERS, scope="function")
 def vp(request: pytest.FixtureRequest):

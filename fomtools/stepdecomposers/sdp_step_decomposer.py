@@ -79,4 +79,6 @@ class SDPStepDecomposer(StepDecomposer):
     _DECOMPOSERS = {
         "saturatedlinear": decompose_saturatedlinear,
         "softthreshold": decompose_softthreshold,
+        "quadraticprogram": StepDecomposer.decompose_quadraticprogram,
+        "linearprogram": StepDecomposer.decompose_quadraticprogram,
     }

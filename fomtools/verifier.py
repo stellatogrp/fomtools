@@ -8,13 +8,26 @@ from fomtools.canonicalizers.mip import MIP
 from fomtools.canonicalizers.obbt_handler import OBBTHandler
 from fomtools.canonicalizers.sdp import SDP
 from fomtools.canonicalizers.simulator import Simulator
-from fomtools.constraint import Constraint, is_binary_free
+from fomtools.constraint import (
+    ComplementarityConstraint,
+    Constraint,
+    complementarity,
+    is_binary_free,
+)
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
 from fomtools.stepdecomposers.simulator_step_decomposer import SimulatorStepDecomposer
-from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
+from fomtools.steps import (
+    Affine,
+    LinearProgram,
+    QuadraticProgram,
+    Relu,
+    SaturatedLinear,
+    SoftThreshold,
+    StandardFormLinearProgram,
+)
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +49,9 @@ class Verifier(object):
         params=None,
         rlt_cuts=False,
         triangle_cuts=False,
+        ineq_product_cuts=True,
+        ineq_box_cuts=True,
+        ineq_square_cuts=True,
     ):
         """
         Initialize a Verifier instance.
@@ -60,6 +76,15 @@ class Verifier(object):
             SDP-only: when True, add lifted triangle cuts for mixed-bound
             ReLU outputs (paper §4.5 eq 25/26). No effect for
             ``method != "sdp"``.
+        ineq_product_cuts : bool, default True
+            SDP-only: add off-diagonal products ``g_i g_j >= 0`` for each
+            inequality constraint ``Ax + b <= 0``. No effect for ``method != "sdp"``.
+        ineq_box_cuts : bool, default True
+            SDP-only: add RLT products of each inequality constraint with the
+            variable box bounds. No effect for ``method != "sdp"``.
+        ineq_square_cuts : bool, default True
+            SDP-only: add the self-square upper bound ``g_i^2 <= g_i_lower * g_i``
+            for each inequality constraint. No effect for ``method != "sdp"``.
         """
         self.theory_func = theory_func
         self.iterates = []
@@ -72,6 +97,9 @@ class Verifier(object):
             solver,
             rlt_cuts=rlt_cuts,
             triangle_cuts=triangle_cuts,
+            ineq_product_cuts=ineq_product_cuts,
+            ineq_box_cuts=ineq_box_cuts,
+            ineq_square_cuts=ineq_square_cuts,
         )
         self.obbt_handler = OBBTHandler(solver=obbt_solver) if obbt_solver else None
         self.use_obbt_handler = True if obbt_solver else False
@@ -135,6 +163,9 @@ class Verifier(object):
         solver: dict,
         rlt_cuts: bool = False,
         triangle_cuts: bool = False,
+        ineq_product_cuts: bool = True,
+        ineq_box_cuts: bool = True,
+        ineq_square_cuts: bool = True,
     ):
         """
          Return an initialized instance for the requested method.
@@ -181,8 +212,7 @@ class Verifier(object):
             if triangle_cuts:
                 enabled.append("triangle_cuts")
             warnings.warn(
-                f"{', '.join(enabled)} is SDP-only and will be ignored for "
-                f"method={method!r}.",
+                f"{', '.join(enabled)} is SDP-only and will be ignored for method={method!r}.",
                 UserWarning,
                 stacklevel=3,
             )
@@ -196,6 +226,9 @@ class Verifier(object):
                     solver=solver,
                     rlt_cuts=rlt_cuts,
                     triangle_cuts=triangle_cuts,
+                    ineq_product_cuts=ineq_product_cuts,
+                    ineq_box_cuts=ineq_box_cuts,
+                    ineq_square_cuts=ineq_square_cuts,
                 )
             case "simulator":
                 return Simulator()
@@ -413,12 +446,36 @@ class Verifier(object):
         -------
         None
         """
-        # Only forward binary-free constraints to the OBBT handler so its model
-        # stays a pure LP (binary leaves would otherwise be relaxed silently).
-        if self.use_obbt_handler and is_binary_free(constr):
+        # Only forward LINEAR, binary-free constraints to the OBBT handler so its
+        # model stays a pure LP. Binary leaves would otherwise be relaxed silently,
+        # and non-convex constraints (e.g. complementarity, is_linear=False) cannot
+        # be represented in the LP at all.
+        if self.use_obbt_handler and getattr(constr, "is_linear", True) and is_binary_free(constr):
             self.obbt_handler.add_constraint(constr)
             self._tighten_constraint_bounds(constr)
         self.canonicalizer.add_constraint(constr)
+
+    def complementarity(
+        self, expr1: LinearExpression, expr2: LinearExpression
+    ) -> ComplementarityConstraint:
+        """
+        Build an elementwise complementarity constraint between two expressions.
+
+        Asserts ``expr1 >= 0``, ``expr2 >= 0`` and ``expr1[i] * expr2[i] == 0`` for
+        all ``i`` (at most one side nonzero per coordinate). Pass the returned object
+        to :meth:`add_constraint`.
+
+        Parameters
+        ----------
+        expr1, expr2 : LinearExpression
+            The two expressions to place in complementarity. Must have equal ``ndim``.
+
+        Returns
+        -------
+        ComplementarityConstraint
+            The constraint object.
+        """
+        return complementarity(expr1, expr2)
 
     def _tighten_constraint_bounds(self, constr: Constraint) -> None:
         """
@@ -497,6 +554,141 @@ class Verifier(object):
         """
         return self.step_decomposer.process_prox(function, rhs, gamma)
 
+    def quadratic_program(
+        self,
+        P,
+        q=None,
+        A=None,
+        b=None,
+        C=None,
+        d=None,
+        dual_ub=None,
+        primal_bounds=None,
+        nu_bounds=None,
+        rhs: LinearExpression = None,
+        relax_binary_vars: bool = False,
+    ) -> LinearExpression:
+        r"""
+        Encode the solution of an arbitrary convex QP as a step.
+
+        Solves (in the verification model, via the KKT + complementarity system)
+
+        .. math::
+            x^\star = \arg\min_x \tfrac12 x^\top P x + q^\top x
+            \quad\text{s.t.}\quad A x = b,\; C x \le d,
+
+        where ``P`` is symmetric PSD (dense or scipy.sparse) and ``q``, ``b``, ``d``
+        may be numeric or :class:`LinearExpression` parameters. Unlike ``run_step``,
+        this takes the parametric inputs directly (a QP has up to three) rather than a
+        single positional ``rhs``; the ``LinearExpression`` inputs already carry their
+        dependence on prior iterates.
+
+        Parameters
+        ----------
+        P, q, A, b, C, d, dual_ub, primal_bounds, nu_bounds, rhs, relax_binary_vars
+            See :class:`fomtools.steps.QuadraticProgram`. ``dual_ub`` is required when
+            inequality constraints ``C`` are present.
+
+        Returns
+        -------
+        LinearExpression
+            The primal solution ``x``.
+        """
+        step = QuadraticProgram(
+            P=P,
+            q=q,
+            A=A,
+            b=b,
+            C=C,
+            d=d,
+            dual_ub=dual_ub,
+            primal_bounds=primal_bounds,
+            nu_bounds=nu_bounds,
+            rhs=rhs,
+            relax_binary_vars=relax_binary_vars,
+        )
+        # Composite step: the decomposer creates the primal x via add_iterate (already
+        # tracked in self.iterates) and returns it; just record the step itself.
+        x = self.step_decomposer.process_step(step)
+        self.steps.append(step)
+        return x
+
+    def linear_program(
+        self,
+        q,
+        A=None,
+        b=None,
+        C=None,
+        d=None,
+        dual_ub=None,
+        primal_bounds=None,
+        nu_bounds=None,
+        rhs: LinearExpression = None,
+        relax_binary_vars: bool = False,
+    ) -> LinearExpression:
+        r"""
+        Encode the solution of a linear program (:class:`QuadraticProgram` with
+        ``P = 0``) as a step:
+
+        .. math::
+            x^\star = \arg\min_x q^\top x \quad\text{s.t.}\quad A x = b,\; C x \le d.
+
+        See :meth:`quadratic_program`. ``q`` is required and its dimension sizes the LP;
+        finite primal bounds must come from ``primal_bounds`` or OBBT (stationarity does
+        not pin ``x`` when ``P = 0``).
+        """
+        step = LinearProgram(
+            q=q,
+            A=A,
+            b=b,
+            C=C,
+            d=d,
+            dual_ub=dual_ub,
+            primal_bounds=primal_bounds,
+            nu_bounds=nu_bounds,
+            rhs=rhs,
+            relax_binary_vars=relax_binary_vars,
+        )
+        x = self.step_decomposer.process_step(step)
+        self.steps.append(step)
+        return x
+
+    def standard_form_linear_program(
+        self,
+        c,
+        A=None,
+        b=None,
+        dual_ub=None,
+        primal_bounds=None,
+        nu_bounds=None,
+        rhs: LinearExpression = None,
+        relax_binary_vars: bool = False,
+    ) -> LinearExpression:
+        r"""
+        Encode the solution of a standard-form linear program as a step:
+
+        .. math::
+            x^\star = \arg\min_x c^\top x \quad\text{s.t.}\quad A x = b,\; x \ge 0.
+
+        A :class:`~fomtools.steps.LinearProgram` with ``q = c``, equality ``(A, b)`` and
+        ``x \ge 0`` written as ``-I x \le 0``. See :meth:`linear_program`. ``dual_ub`` is
+        required (the ``x \ge 0`` inequality is always present); finite primal bounds must
+        come from ``primal_bounds`` or OBBT.
+        """
+        step = StandardFormLinearProgram(
+            c=c,
+            A=A,
+            b=b,
+            dual_ub=dual_ub,
+            primal_bounds=primal_bounds,
+            nu_bounds=nu_bounds,
+            rhs=rhs,
+            relax_binary_vars=relax_binary_vars,
+        )
+        x = self.step_decomposer.process_step(step)
+        self.steps.append(step)
+        return x
+
     @property
     def step(self) -> "_StepProxy":
         """
@@ -550,8 +742,12 @@ class Verifier(object):
         lhs = self.step_decomposer.process_step(step)
         self.steps.append(step)
 
-        # Track lhs as iterate only if it's a leaf variable
-        if lhs.is_leaf:
+        # Track lhs as iterate only if it's a fresh leaf variable. Use identity
+        # comparison (not ``in``): LinearExpression.__eq__ builds a Constraint, so a
+        # membership test would not behave as expected. Composite KKT-style steps
+        # (e.g. QuadraticProgram) return a leaf already registered via add_iterate;
+        # the guard avoids a double-append in that case.
+        if lhs.is_leaf and not any(lhs is it for it in self.iterates):
             self.iterates.append(lhs)
 
         return lhs
@@ -607,9 +803,7 @@ class Verifier(object):
         # bound tightening benefits from it as well.
         if self.use_obbt_handler:
             theory_cuts = [target_expr >= lb - C, target_expr <= ub + C]
-            self.obbt_handler.add_constraints(
-                [c for c in theory_cuts if is_binary_free(c)]
-            )
+            self.obbt_handler.add_constraints([c for c in theory_cuts if is_binary_free(c)])
         return improv_frac
 
     def set_zero_objective(self):
