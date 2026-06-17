@@ -17,13 +17,14 @@ def _():
     import matplotlib.pyplot as plt
     import numpy as np
 
+    from fomtools.proxable_functions import IndBox, IndNonNegative
     from fomtools.verifier import Verifier
 
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
 
     np.random.seed(2)
-    return Verifier, cp, np, plt
+    return IndBox, IndNonNegative, Verifier, cp, np, plt
 
 
 @app.cell(hide_code=True)
@@ -55,11 +56,12 @@ def _(mo):
     We solve this problem using the standard Chambolle-Pock method, or Primal-dual Hybrid Gradient (PDHG):
 
     \begin{array}{rcl}
-        z^{k+1} &=& \Pi_{[0, c]} \big( z^k - \eta (\mu + A_s^T v^k - A_d^T w^k) \big) \\
-        v^{k+1} &=& \max \big\{ v^k + \eta \big( - b_s + A_s (2 z^{k+1} - z^k) \big) \big\} \\
+        z^{k+1} &=& \mathbf{prox}_{\mathbb{I}_{[0, c]}} \big( z^k - \eta (\mu + A_s^T v^k - A_d^T w^k) \big) \\
+        v^{k+1} &=& \mathbf{prox}_{\mathbb{I}_{\mathbb{R}_+}} \big( v^k + \eta \big( - b_s + A_s (2 z^{k+1} - z^k) \big) \big) \\
         w^{k+1} &=& w^k + \eta \big( x - A_d (2 z^{k+1} - z^k) \big).
     \end{array}
 
+    Here $\mathbf{prox}_{\mathbb{I}_{[0, c]}}$ is projection onto the flow-capacity box and $\mathbf{prox}_{\mathbb{I}_{\mathbb{R}_+}}$ is projection onto the nonnegative orthant.
     We choose $\eta = 0.5 / \| \begin{bmatrix} - A_s^T & A_d^T \end{bmatrix} \|_2$.
     """)
     return
@@ -209,6 +211,8 @@ def _(mo):
 def _(
     A_d,
     A_s,
+    IndBox,
+    IndNonNegative,
     K,
     b_s,
     c,
@@ -232,15 +236,15 @@ def _(
     _w_batch = np.zeros((n_samples, n_d), dtype=float)
 
     _residuals_sim = np.empty((n_samples, K), dtype=float)
+    _flow_box = IndBox(l=0.0, u=c)
+    _dual_nonnegative = IndNonNegative()
 
     for _k in range(1, K + 1):
-        # satlin: z update with box constraints [0, c]
         _z_rhs = _z_batch - eta * (mu[np.newaxis, :] + _v_batch @ A_s - _w_batch @ A_d)
-        _z_new_batch = np.clip(_z_rhs, 0, c[np.newaxis, :])
+        _z_new_batch = _flow_box.prox(_z_rhs)
 
-        # relu: v update
         _v_rhs = _v_batch + eta * (-b_s[np.newaxis, :] + (2*_z_new_batch - _z_batch) @ A_s.T)
-        _v_new_batch = np.maximum(_v_rhs, 0.0)
+        _v_new_batch = _dual_nonnegative.prox(_v_rhs)
 
         # linear: w update
         _w_new_batch = _w_batch + eta * (_x_samples - (2*_z_new_batch - _z_batch) @ A_d.T)
@@ -263,6 +267,8 @@ def _(
 def _(
     A_d,
     A_s,
+    IndBox,
+    IndNonNegative,
     K,
     b_s,
     c,
@@ -286,18 +292,18 @@ def _(
     _w_batch = np.zeros((n_samples, n_d), dtype=float)
 
     _residuals_sim_mom = np.empty((n_samples, K), dtype=float)
+    _flow_box = IndBox(l=0.0, u=c)
+    _dual_nonnegative = IndNonNegative()
 
     for _k in range(1, K + 1):
-        # satlin: z update with box constraints [0, c]
         _z_rhs = _z_batch - eta * (mu[np.newaxis, :] + _v_batch @ A_s - _w_batch @ A_d)
-        _z_new_batch = np.clip(_z_rhs, 0, c[np.newaxis, :])
+        _z_new_batch = _flow_box.prox(_z_rhs)
 
         # momentum extrapolation
         _z_tilde_batch = _z_new_batch + (_k - 1) / (_k + 2) * (_z_new_batch - _z_batch)
 
-        # relu: v update
         _v_rhs = _v_batch + eta * (-b_s[np.newaxis, :] + (2*_z_tilde_batch - _z_batch) @ A_s.T)
-        _v_new_batch = np.maximum(_v_rhs, 0.0)
+        _v_new_batch = _dual_nonnegative.prox(_v_rhs)
 
         # linear: w update
         _w_new_batch = _w_batch + eta * (_x_samples - (2*_z_tilde_batch - _z_batch) @ A_d.T)
@@ -320,6 +326,8 @@ def _(
 def _(
     A_d,
     A_s,
+    IndBox,
+    IndNonNegative,
     K,
     Verifier,
     b_s,
@@ -355,9 +363,11 @@ def _(
 
     all_residuals = []
     worst_case_x_param_pdhg = []
+    _flow_box = IndBox(l=0.0, u=_c_param)
+    _dual_nonnegative = IndNonNegative()
     for _k in range(1, K+1):
-        _z[_k] = _VP.step.satlin(_z[_k-1] - eta * (_mu_param + A_s.T @ _v[_k-1] - A_d.T @ _w[_k-1]), l=np.zeros(n_e), u=c)
-        _v[_k] = _VP.step.relu(_v[_k-1] + eta * (- _b_s_param + A_s @ (2*_z[_k] - _z[_k-1])))
+        _z[_k] = _VP.prox(_flow_box, _z[_k-1] - eta * (_mu_param + A_s.T @ _v[_k-1] - A_d.T @ _w[_k-1]))
+        _v[_k] = _VP.prox(_dual_nonnegative, _v[_k-1] + eta * (- _b_s_param + A_s @ (2*_z[_k] - _z[_k-1])))
         _w[_k] = _w[_k-1] + eta * (_x_param - A_d @ (2*_z[_k] - _z[_k-1]))
         # _VP.set_objective_norm([_z[_k] - _z[_k-1], _v[_k] - _v[_k-1], _w[_k] - _w[_k-1]], 2)
         _VP.set_objective_norm([
@@ -377,6 +387,8 @@ def _(
 def _(
     A_d,
     A_s,
+    IndBox,
+    IndNonNegative,
     K,
     b_s,
     c,
@@ -390,6 +402,8 @@ def _(
 ):
     # Simulate each horizon with its own worst-case demand vector.
     worst_case_residuals_pdhg = []
+    _flow_box = IndBox(l=0.0, u=c)
+    _dual_nonnegative = IndNonNegative()
     for _k in range(1, K+1):
         _x_k = np.array(worst_case_x_param_pdhg[_k-1], dtype=float)
 
@@ -400,10 +414,10 @@ def _(
 
         for _j in range(1, _k + 1):
             _z_rhs = _z - eta * (mu + A_s.T @ _v - A_d.T @ _w)
-            _z_new = np.clip(_z_rhs, 0, c)
+            _z_new = _flow_box.prox(_z_rhs)
 
             _v_rhs = _v + eta * (-b_s + A_s @ (2 * _z_new - _z))
-            _v_new = np.maximum(_v_rhs, 0.0)
+            _v_new = _dual_nonnegative.prox(_v_rhs)
 
             _w_new = _w + eta * (_x_k - A_d @ (2 * _z_new - _z))
 
@@ -426,6 +440,8 @@ def _(
 def _(
     A_d,
     A_s,
+    IndBox,
+    IndNonNegative,
     K,
     Verifier,
     b_s,
@@ -463,10 +479,12 @@ def _(
 
     all_residuals_momentum = []
     worst_case_x_param_pdhg_mom = []
+    _flow_box = IndBox(l=0.0, u=_c_param)
+    _dual_nonnegative = IndNonNegative()
     for _k in range(1, K+1):
-        _z[_k] = _VP.step.satlin(_z[_k-1] - eta * (_mu_param + A_s.T @ _v[_k-1] - A_d.T @ _w[_k-1]), l=np.zeros(n_e), u=c)
+        _z[_k] = _VP.prox(_flow_box, _z[_k-1] - eta * (_mu_param + A_s.T @ _v[_k-1] - A_d.T @ _w[_k-1]))
         _ztilde[_k] = _z[_k] + (_k-1)/(_k+2) * (_z[_k] - _z[_k-1])
-        _v[_k] = _VP.step.relu(_v[_k-1] + eta * (- _b_s_param + A_s @ (2*_ztilde[_k] - _z[_k-1])))
+        _v[_k] = _VP.prox(_dual_nonnegative, _v[_k-1] + eta * (- _b_s_param + A_s @ (2*_ztilde[_k] - _z[_k-1])))
         _w[_k] = _w[_k-1] + eta * (_x_param - A_d @ (2*_ztilde[_k] - _z[_k-1]))
         _VP.set_objective_norm([
             (1/eta) * (_z[_k] - _z[_k-1]) - A_s.T@(_v[_k] - _v[_k-1]) + A_d.T@(_w[_k] - _w[_k-1]),
@@ -485,6 +503,8 @@ def _(
 def _(
     A_d,
     A_s,
+    IndBox,
+    IndNonNegative,
     K,
     b_s,
     c,
@@ -498,6 +518,8 @@ def _(
 ):
     # Simulate each horizon with its own worst-case demand vector for momentum PDHG.
     worst_case_residuals_pdhg_mom = []
+    _flow_box = IndBox(l=0.0, u=c)
+    _dual_nonnegative = IndNonNegative()
     for _k in range(1, K + 1):
         _x_k = np.array(worst_case_x_param_pdhg_mom[_k - 1], dtype=float)
 
@@ -508,11 +530,11 @@ def _(
 
         for _j in range(1, _k + 1):
             _z_rhs = _z - eta * (mu + A_s.T @ _v - A_d.T @ _w)
-            _z_new = np.clip(_z_rhs, 0, c)
+            _z_new = _flow_box.prox(_z_rhs)
 
             _z_tilde = _z_new + (_j - 1) / (_j + 2) * (_z_new - _z)
             _v_rhs = _v + eta * (-b_s + A_s @ (2 * _z_tilde - _z))
-            _v_new = np.maximum(_v_rhs, 0.0)
+            _v_new = _dual_nonnegative.prox(_v_rhs)
 
             _w_new = _w + eta * (_x_k - A_d @ (2 * _z_tilde - _z))
 

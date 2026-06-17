@@ -20,11 +20,13 @@ def _():
     from PEPit.primitive_steps import proximal_step
 
     from fomtools.verifier import Verifier
+    from fomtools.proxable_functions import NormL1
 
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
     return (
         ConvexFunction,
+        NormL1,
         PEP,
         SmoothConvexFunction,
         Verifier,
@@ -233,10 +235,8 @@ def _(mo):
 
 
 @app.cell
-def _(D, K, Verifier, eta, lambd, n, np, p, solver_params, x_lb, x_ub):
-    # from fomtools.proxable_functions import NormL1
-    # regularizer = lambd * NormL1
-    # regularizer = NormL1(lambd=lambd)
+def _(D, K, NormL1, Verifier, eta, lambd, n, np, p, solver_params, x_lb, x_ub):
+    regularizer = NormL1(lambd=lambd)
 
     _VP = Verifier(method='mip', solver='gurobi', params=solver_params)
     _x_param = _VP.add_param(p, lb=x_lb, ub=x_ub)
@@ -248,13 +248,13 @@ def _(D, K, Verifier, eta, lambd, n, np, p, solver_params, x_lb, x_ub):
     all_residuals = []
     worst_case_x_param_ista = []
     for _k in range(1, K+1):
-        _s[_k] = _VP.step.soft_threshold(_s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), lambd=lambd*eta)
-        # _s[_k] = VP.prox(function=regularizer, rhs=_s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), gamma=eta)
+        # _s[_k] = _VP.step.soft_threshold(_s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), lambd=lambd*eta)
+        _s[_k] = _VP.prox(function=regularizer, rhs=_s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), gamma=eta)
         _VP.set_objective_norm([_s[_k] - _s[_k-1]], np.inf)
         _res = _VP.solve()
         all_residuals.append(_res)
         worst_case_x_param_ista.append(_VP.get_solution_value(_x_param))
-    return all_residuals, worst_case_x_param_ista
+    return all_residuals, regularizer, worst_case_x_param_ista
 
 
 @app.cell
@@ -263,10 +263,10 @@ def _(
     K,
     Verifier,
     eta,
-    lambd,
     n,
     np,
     p,
+    regularizer,
     worst_case_x_param_ista,
     x_lb,
     x_ub,
@@ -278,8 +278,9 @@ def _(
         _x_param = _VP.add_param(ndim=p, lb=x_lb, ub=x_ub, samples=[worst_case_x_param_ista[_k - 1]])
         _s = [None] * (_k + 1)
         _s[0] = _VP.add_iterate(ndim=n, lb=0.0, ub=0.0, init=np.zeros(n))
-        for k in range(1, _k + 1):
-            _s[k] = _VP.step.soft_threshold(_s[k-1] - eta * D.T @ (D @ _s[k-1] - _x_param), lambd=lambd * eta)
+        for _k in range(1, _k + 1):
+            # _s[_k] = _VP.step.soft_threshold(_s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), lambd=lambd * eta)
+            _s[_k] = _VP.prox(function=regularizer, rhs=_s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), gamma=eta)
         worst_case_residuals_ista.append(_VP.solve()[0][-1])
 
     worst_case_residuals_ista = np.array(worst_case_residuals_ista)
@@ -287,7 +288,7 @@ def _(
 
 
 @app.cell
-def _(D, K, Verifier, eta, lambd, n, np, p, solver_params, x_lb, x_ub):
+def _(D, K, Verifier, eta, n, np, p, regularizer, solver_params, x_lb, x_ub):
     # FISTA MIP verification
     _VP_fista = Verifier(method='mip', solver='gurobi', params=solver_params)
     _x_param_fista = _VP_fista.add_param(p, lb=x_lb, ub=x_ub)
@@ -305,7 +306,9 @@ def _(D, K, Verifier, eta, lambd, n, np, p, solver_params, x_lb, x_ub):
 
     for _k in range(1, K+1):
         # FISTA step: y := ST_{lambda*eta}(z - eta * D^T(D*z - x))
-        _y[_k] = _VP_fista.step.soft_threshold(_z[_k-1] - eta * D.T @ (D @ _z[_k-1] - _x_param_fista), lambd=lambd*eta)
+        # _y[_k] = _VP_fista.step.soft_threshold(_z[_k-1] - eta * D.T @ (D @ _z[_k-1] - _x_param_fista), lambd=lambd*eta)
+        _y[_k] = _VP_fista.prox(function=regularizer, rhs=_z[_k-1] - eta * D.T @ (D @ _z[_k-1] - _x_param_fista), gamma=eta)
+    
 
         # Update momentum parameter
         _t_new = (1.0 + np.sqrt(1.0 + 4.0 * _t[-1]**2)) / 2.0

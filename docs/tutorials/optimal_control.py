@@ -19,10 +19,11 @@ def _():
     from scipy.sparse import csr_matrix
 
     from fomtools.verifier import Verifier
+    from fomtools.proxable_functions import IndBox
 
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
-    return Verifier, csr_matrix, np, plt, spa
+    return IndBox, Verifier, csr_matrix, np, plt, spa
 
 
 @app.cell(hide_code=True)
@@ -264,6 +265,7 @@ def _(P, T, n_u, np, q, u_max, u_min, x_init):
 
 @app.cell
 def _(
+    IndBox,
     K,
     M,
     P,
@@ -312,19 +314,16 @@ def _(
     _v[0] = _VP.add_param(n_xz, lb=np.zeros(n_xz), ub=np.ones(n_xz))
     _w[0] = np.zeros(n_xz)
 
-    # Box constraint
-    # from fomtools.proxable_functions import IndBox
-    # indbox = IndBox(l=l_x, u=u_x)
-
     # ADMM (OSQP) iterations
+    indbox = IndBox(l=_l_x, u=_u_x)
     _lhs_mat = csr_matrix(P + sigma*np.eye(n_xz) + rho*(M.T@M))
 
     all_residuals = []
     worst_case_x_param_admm = []
     worst_case_v_admm = []
     for _k in range(K):
-        _w[_k+1] = _VP.step.satlin(_v[_k], l=_l_x, u=_u_x)
-        # _w[_k+1] = _VP.prox(function=indbox, rhs=_v[_k])
+        # _w[_k+1] = _VP.step.satlin(_v[_k], l=_l_x, u=_u_x)
+        _w[_k+1] = _VP.prox(function=indbox, rhs=_v[_k])
         _rhs = sigma * _z[_k] - q + rho * M.T @ (2*_w[_k+1] - _v[_k])
         _z[_k+1] = _VP.step.implicit_linear(rhs=_rhs, lhs_mat=_lhs_mat)
         _v[_k+1] = _v[_k] + (M @ _z[_k+1] - _w[_k+1])

@@ -5,8 +5,8 @@ Problem: minimum-cost network flow on a bipartite graph with n_s supply nodes
 and n_d demand nodes, parameterized by demand x in [x_lb, x_ub].
 
 Algorithm: PDHG (Chambolle-Pock / Primal-Dual Hybrid Gradient)
-    z^{k+1} = Pi_{[0,c]}( z^k - eta*(mu + A_s^T v^k - A_d^T w^k) )
-    v^{k+1} = relu( v^k + eta*(-b_s + A_s*(2z^{k+1} - z^k)) )
+    z^{k+1} = prox_{I_[0,c]}( z^k - eta*(mu + A_s^T v^k - A_d^T w^k) )
+    v^{k+1} = prox_{I_R+}( v^k + eta*(-b_s + A_s*(2z^{k+1} - z^k)) )
     w^{k+1} = w^k + eta*(x - A_d*(2z^{k+1} - z^k))
 
 Metric (all methods): ||(z^k-z^{k-1}, v^k-v^{k-1}, w^k-w^{k-1})||_2^2
@@ -26,6 +26,7 @@ from PEPit.functions import ConvexFunction
 from PEPit.operators import LinearOperator
 from PEPit.primitive_steps import proximal_step
 
+from fomtools.proxable_functions import IndBox, IndNonNegative
 from fomtools.verifier import Verifier
 
 # ── Problem setup (same as network_optimization.py tutorial) ──────────────────
@@ -68,6 +69,8 @@ eta = 0.5 / L
 
 solver_params = {"OutputFlag": 0, "LogToConsole": 0}
 MATCH_MIP_AT_K1 = True
+flow_box = IndBox(l=0.0, u=c)
+dual_nonnegative = IndNonNegative()
 
 # ── MIP — squared 2-norm of combined fixed-point residual ─────────────────────
 vp_mip = Verifier(method="mip", solver="gurobi", obbt_handler="highs",
@@ -83,10 +86,11 @@ w_mip = [vp_mip.add_iterate(n_d, lb=np.zeros(n_d), ub=np.zeros(n_d))]
 
 mip_residuals = []
 for k in range(1, K + 1):
-    z_new = vp_mip.step.satlin(
-        z_mip[k - 1] - eta * (mu_mip + A_s.T @ v_mip[k - 1] - A_d.T @ w_mip[k - 1]),
-        l=np.zeros(n_e), u=c)
-    v_new = vp_mip.step.relu(
+    z_new = vp_mip.prox(
+        flow_box,
+        z_mip[k - 1] - eta * (mu_mip + A_s.T @ v_mip[k - 1] - A_d.T @ w_mip[k - 1]))
+    v_new = vp_mip.prox(
+        dual_nonnegative,
         v_mip[k - 1] + eta * (-b_s_mip + A_s @ (2 * z_new - z_mip[k - 1])))
     w_new = w_mip[k - 1] + eta * (x_mip - A_d @ (2 * z_new - z_mip[k - 1]))
     z_mip.append(z_new)
@@ -111,10 +115,11 @@ w_sdp = [vp_sdp.add_iterate(n_d, lb=np.zeros(n_d), ub=np.zeros(n_d))]
 
 sdp_residuals = []
 for k in range(1, K + 1):
-    z_new = vp_sdp.step.satlin(
-        z_sdp[k - 1] - eta * (mu_sdp + A_s.T @ v_sdp[k - 1] - A_d.T @ w_sdp[k - 1]),
-        l=np.zeros(n_e), u=c)
-    v_new = vp_sdp.step.relu(
+    z_new = vp_sdp.prox(
+        flow_box,
+        z_sdp[k - 1] - eta * (mu_sdp + A_s.T @ v_sdp[k - 1] - A_d.T @ w_sdp[k - 1]))
+    v_new = vp_sdp.prox(
+        dual_nonnegative,
         v_sdp[k - 1] + eta * (-b_s_sdp + A_s @ (2 * z_new - z_sdp[k - 1])))
     w_new = w_sdp[k - 1] + eta * (x_sdp - A_d @ (2 * z_new - z_sdp[k - 1]))
     z_sdp.append(z_new)
@@ -190,10 +195,11 @@ v_sim = [vp_sim.add_iterate(n_s, lb=np.zeros(n_s), ub=np.zeros(n_s))]
 w_sim = [vp_sim.add_iterate(n_d, lb=np.zeros(n_d), ub=np.zeros(n_d))]
 
 for k in range(1, K + 1):
-    z_new = vp_sim.step.satlin(
-        z_sim[k - 1] - eta * (mu + A_s.T @ v_sim[k - 1] - A_d.T @ w_sim[k - 1]),
-        l=np.zeros(n_e), u=c)
-    v_new = vp_sim.step.relu(
+    z_new = vp_sim.prox(
+        flow_box,
+        z_sim[k - 1] - eta * (mu + A_s.T @ v_sim[k - 1] - A_d.T @ w_sim[k - 1]))
+    v_new = vp_sim.prox(
+        dual_nonnegative,
         v_sim[k - 1] + eta * (-b_s + A_s @ (2 * z_new - z_sim[k - 1])))
     w_new = w_sim[k - 1] + eta * (x_sim - A_d @ (2 * z_new - z_sim[k - 1]))
     z_sim.append(z_new)
