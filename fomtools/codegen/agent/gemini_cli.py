@@ -13,10 +13,20 @@ prompts. The authoritative verify/retry loop is shared with every other real
 backend via :func:`~fomtools.codegen.agent.driver.run_verify_loop`, which
 restores the deterministic files (``restore_hook``) and runs the verify command
 itself after each attempt, re-prompting with the failure output until it passes.
+
+Authentication works in two modes:
+
+* **Login ("auth mode")** — a logged-in ``gemini`` CLI (Google account). Nothing
+  extra is needed; the CLI picks up the on-disk credential.
+* **API key** — pass ``api_key=...`` or set ``GEMINI_API_KEY`` (or
+  ``GOOGLE_API_KEY``). We forward the key into the spawned process environment
+  (``subprocess`` ``env``) so an explicit key forces API-key auth even when a
+  login is also present.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -67,6 +77,7 @@ class GeminiAgentDriver(AgentDriver):
         max_turns: int = 16,
         gemini_bin: str = "gemini",
         yolo: bool = True,
+        api_key: str | None = None,
     ):
         self.config = config
         self.model = model
@@ -79,6 +90,25 @@ class GeminiAgentDriver(AgentDriver):
         # actions is safe and required for non-interactive runs (it must write the
         # solver and run `make`). Set False to keep the default approval mode.
         self.yolo = yolo
+        # Explicit Gemini API key. When None we fall back to GEMINI_API_KEY (then
+        # GOOGLE_API_KEY) from the environment; when neither is set the backend
+        # uses the on-disk login instead ("auth mode"). A resolved key is
+        # forwarded into the spawned process so it takes precedence over a login.
+        self.api_key = (
+            api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        )
+
+    def _child_env(self) -> dict[str, str] | None:
+        """Process environment for the CLI, forcing API-key auth if we have one.
+
+        Returns ``None`` when no key is configured so the backend keeps its
+        default behavior (login auth). Otherwise returns the full parent
+        environment with ``GEMINI_API_KEY`` injected, so PATH and the rest of the
+        environment are preserved while the key forces API-key auth.
+        """
+        if not self.api_key:
+            return None
+        return {**os.environ, "GEMINI_API_KEY": self.api_key}
 
     # -- public API --------------------------------------------------------
     def run(self, task: AgentTask) -> AgentResult:
@@ -114,7 +144,13 @@ class GeminiAgentDriver(AgentDriver):
         # `-p/--prompt` triggers non-interactive (headless) mode.
         cmd += ["--prompt", full_prompt]
         try:
-            proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True)
+            proc = subprocess.run(
+                cmd,
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                env=self._child_env(),
+            )
         except FileNotFoundError as exc:  # binary vanished after preflight
             raise AgentBackendError(f"Gemini CLI {self.gemini_bin!r} not found: {exc}") from exc
         output = proc.stdout + proc.stderr

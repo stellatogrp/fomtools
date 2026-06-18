@@ -12,10 +12,20 @@ authoritative verify/retry loop is shared with every other real backend via
 :func:`~fomtools.codegen.agent.driver.run_verify_loop`, which restores the
 deterministic files (``restore_hook``) and runs the verify command itself after
 each attempt, re-prompting with the failure output until it passes.
+
+Authentication works in two modes:
+
+* **Subscription / login ("auth mode")** — a logged-in ``codex`` CLI. Nothing
+  extra is needed; the CLI picks up the on-disk credential.
+* **API key** — pass ``api_key=...`` or set ``OPENAI_API_KEY``. We forward the
+  key into the spawned process environment (``subprocess`` ``env``) so an
+  explicit key forces API-key auth even when a subscription login is also
+  present.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -65,6 +75,7 @@ class CodexAgentDriver(AgentDriver):
         max_turns: int = 16,
         codex_bin: str = "codex",
         bypass_sandbox: bool = True,
+        api_key: str | None = None,
     ):
         self.config = config
         self.model = model
@@ -78,6 +89,23 @@ class CodexAgentDriver(AgentDriver):
         # (it must write the solver and run `make`). Set False to keep Codex's
         # workspace-write sandbox instead.
         self.bypass_sandbox = bypass_sandbox
+        # Explicit OpenAI API key. When None we fall back to OPENAI_API_KEY from
+        # the environment; when neither is set the backend uses the on-disk
+        # subscription/login instead ("auth mode"). A resolved key is forwarded
+        # into the spawned process so it takes precedence over any login.
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
+
+    def _child_env(self) -> dict[str, str] | None:
+        """Process environment for the CLI, forcing API-key auth if we have one.
+
+        Returns ``None`` when no key is configured so the backend keeps its
+        default behavior (subscription/login auth). Otherwise returns the full
+        parent environment with ``OPENAI_API_KEY`` injected, so PATH and the
+        rest of the environment are preserved while the key forces API-key auth.
+        """
+        if not self.api_key:
+            return None
+        return {**os.environ, "OPENAI_API_KEY": self.api_key}
 
     # -- public API --------------------------------------------------------
     def run(self, task: AgentTask) -> AgentResult:
@@ -126,7 +154,13 @@ class CodexAgentDriver(AgentDriver):
             cmd += ["--model", self.model]
         cmd.append(full_prompt)
         try:
-            proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True)
+            proc = subprocess.run(
+                cmd,
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                env=self._child_env(),
+            )
         except FileNotFoundError as exc:  # binary vanished after preflight
             raise AgentBackendError(f"Codex CLI {self.codex_bin!r} not found: {exc}") from exc
         output = proc.stdout + proc.stderr
