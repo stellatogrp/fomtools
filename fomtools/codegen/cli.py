@@ -12,7 +12,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from fomtools.codegen.agent import AGENT_BACKENDS, AgentBackendError
+from fomtools.codegen.agent import AgentBackendError, available_backends
 from fomtools.codegen.config import (
     Backend,
     CodegenConfig,
@@ -55,7 +55,10 @@ def _make_driver(args):
     if args.driver == "agent":
         from fomtools.codegen.agent import make_agent_driver
 
-        return make_agent_driver(backend=args.agent)
+        try:
+            return make_agent_driver(backend=args.agent)
+        except ValueError as exc:  # unknown backend name
+            raise SystemExit(str(exc)) from exc
     return None
 
 
@@ -68,10 +71,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--driver", choices=["agent", "stub"], default="agent")
     p.add_argument(
         "--agent",
-        choices=list(AGENT_BACKENDS),
+        # Not a hard `choices=`: user-registered CLI agents (from config) are
+        # valid too. make_agent_driver validates and lists available backends.
+        metavar="{" + ",".join(available_backends()) + ",...}",
         default=None,
         help="real coding-agent backend for --driver agent (default: claude, or "
-        "$FOMTOOLS_CODEGEN_BACKEND)",
+        "$FOMTOOLS_CODEGEN_BACKEND); custom CLI agents can be defined in "
+        "~/.config/fomtools/agents.yaml",
     )
     p.add_argument("--golden", help="known-good solver source (for --driver stub)")
     p.add_argument("--version", choices=[v.value for v in Version], default="embedded")

@@ -1,72 +1,24 @@
-"""Real coding-agent driver backed by the Google Gemini CLI.
+"""Google Gemini CLI backend.
 
-Like the Claude and Codex drivers, this backend is only used when explicitly
-selected (``--agent gemini`` or ``FOMTOOLS_CODEGEN_BACKEND=gemini``): it is
-nondeterministic, needs authentication (``GEMINI_API_KEY`` or a logged-in
-``gemini`` CLI), and therefore never runs in CI. The deterministic pipeline is
-tested via :class:`~fomtools.codegen.agent.stub.StubAgentDriver`.
+A thin convenience wrapper over the generic
+:class:`~fomtools.codegen.agent.cli_driver.CliAgentDriver`, bound to
+:data:`~fomtools.codegen.agent.specs.GEMINI_SPEC`. The invocation logic, the
+shared verify/retry loop, and API-key handling all live in the generic driver;
+this class only exposes Gemini-specific constructor knobs (``gemini_bin``,
+``yolo``) and resolves ``GEMINI_API_KEY`` (then ``GOOGLE_API_KEY``).
 
-It shells out to ``gemini -p`` — the non-interactive (headless) mode that runs
-the agent to completion in one invocation — inside the isolated output
-directory, with ``--yolo`` so file writes and ``make`` run without approval
-prompts. The authoritative verify/retry loop is shared with every other real
-backend via :func:`~fomtools.codegen.agent.driver.run_verify_loop`, which
-restores the deterministic files (``restore_hook``) and runs the verify command
-itself after each attempt, re-prompting with the failure output until it passes.
-
-Authentication works in two modes:
-
-* **Login ("auth mode")** — a logged-in ``gemini`` CLI (Google account). Nothing
-  extra is needed; the CLI picks up the on-disk credential.
-* **API key** — pass ``api_key=...`` or set ``GEMINI_API_KEY`` (or
-  ``GOOGLE_API_KEY``). We forward the key into the spawned process environment
-  (``subprocess`` ``env``) so an explicit key forces API-key auth even when a
-  login is also present.
+Like every real backend it is nondeterministic and needs auth (``GEMINI_API_KEY``
+or a logged-in ``gemini`` CLI), so it never runs in CI; the deterministic
+pipeline is tested via :class:`~fomtools.codegen.agent.stub.StubAgentDriver`.
 """
 
 from __future__ import annotations
 
-import os
-import shutil
-import subprocess
-from pathlib import Path
-
-from fomtools.codegen.agent.driver import (
-    AgentBackendError,
-    AgentDriver,
-    AgentResult,
-    AgentTask,
-    run_verify_loop,
-)
-
-# Substrings (matched case-insensitively in gemini's own error output) that mark
-# a non-recoverable authentication failure rather than a fixable task error.
-_AUTH_FAILURE_MARKERS = (
-    "api key not valid",
-    "api_key_invalid",
-    "invalid api key",
-    "missing api key",
-    "gemini_api_key",
-    "google_api_key",
-    "please set an auth method",
-    "unauthorized",
-    "permission denied",
-    "401",
-    "403",
-    "authentication",
-)
-
-# Gemini has no per-call "system prompt" flag (its persistent guidance comes from
-# GEMINI.md context files). We prepend the same guidance the other backends use
-# to the task prompt so every backend gets equivalent framing.
-_SYSTEM_PROMPT = (
-    "You are an expert in high-performance numerical C. You translate a "
-    "specified first-order optimization method into a correct, allocation-free, "
-    "division-free embedded C solver and iterate until it passes verification."
-)
+from fomtools.codegen.agent.cli_driver import CliAgentDriver
+from fomtools.codegen.agent.specs import GEMINI_SPEC, replace
 
 
-class GeminiAgentDriver(AgentDriver):
+class GeminiAgentDriver(CliAgentDriver):
     """Drive code generation with the Google ``gemini`` CLI (``gemini -p``)."""
 
     def __init__(
@@ -79,88 +31,17 @@ class GeminiAgentDriver(AgentDriver):
         yolo: bool = True,
         api_key: str | None = None,
     ):
-        self.config = config
-        self.model = model
-        self.max_attempts = max_attempts
-        # `gemini -p` runs the agent to completion in one invocation (no turn cap
-        # to pass); kept for parity with the shared loop's signature.
-        self.max_turns = max_turns
-        self.gemini_bin = gemini_bin
-        # The agent works inside an isolated output directory, so auto-approving
-        # actions is safe and required for non-interactive runs (it must write the
-        # solver and run `make`). Set False to keep the default approval mode.
-        self.yolo = yolo
-        # Explicit Gemini API key. When None we fall back to GEMINI_API_KEY (then
-        # GOOGLE_API_KEY) from the environment; when neither is set the backend
-        # uses the on-disk login instead ("auth mode"). A resolved key is
-        # forwarded into the spawned process so it takes precedence over a login.
-        self.api_key = (
-            api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        spec = GEMINI_SPEC
+        # --yolo auto-approves writes/`make` (safe in the isolated output dir);
+        # set False to keep the default approval mode.
+        if not yolo:
+            spec = replace(spec, flags=())
+        super().__init__(
+            spec,
+            config=config,
+            model=model,
+            max_attempts=max_attempts,
+            max_turns=max_turns,
+            bin=gemini_bin,
+            api_key=api_key,
         )
-
-    def _child_env(self) -> dict[str, str] | None:
-        """Process environment for the CLI, forcing API-key auth if we have one.
-
-        Returns ``None`` when no key is configured so the backend keeps its
-        default behavior (login auth). Otherwise returns the full parent
-        environment with ``GEMINI_API_KEY`` injected, so PATH and the rest of the
-        environment are preserved while the key forces API-key auth.
-        """
-        if not self.api_key:
-            return None
-        return {**os.environ, "GEMINI_API_KEY": self.api_key}
-
-    # -- public API --------------------------------------------------------
-    def run(self, task: AgentTask) -> AgentResult:
-        # Preflight before the retry loop: a missing CLI is fatal and must not be
-        # absorbed as a failed attempt (which, against a stale output dir, could
-        # otherwise verify and look successful).
-        if shutil.which(self.gemini_bin) is None:
-            raise AgentBackendError(
-                f"Gemini CLI {self.gemini_bin!r} not found on PATH. Install it "
-                "(e.g. `npm install -g @google/gemini-cli`), make sure it is on "
-                "PATH, or select a different backend (`--agent claude`)."
-            )
-        return run_verify_loop(
-            task,
-            lambda prompt, max_turns: self._invoke_agent(task, prompt, max_turns),
-            max_attempts=self.max_attempts,
-            max_turns=self.max_turns,
-        )
-
-    # -- agent invocation --------------------------------------------------
-    def _invoke_agent(self, task: AgentTask, prompt: str, max_turns: int) -> str:
-        # The Gemini CLI operates on its current working directory, so we start
-        # the process there. Resolve to an ABSOLUTE path: a relative workdir would
-        # be wrong if the process's cwd ever differs, and absolute paths avoid the
-        # path-resolution pitfalls seen with other CLIs.
-        workdir = str(Path(task.workdir).resolve())
-        full_prompt = _SYSTEM_PROMPT + "\n\n" + prompt
-        cmd = [self.gemini_bin]
-        if self.yolo:
-            cmd.append("--yolo")
-        if self.model:
-            cmd += ["--model", self.model]
-        # `-p/--prompt` triggers non-interactive (headless) mode.
-        cmd += ["--prompt", full_prompt]
-        try:
-            proc = subprocess.run(
-                cmd,
-                cwd=workdir,
-                capture_output=True,
-                text=True,
-                env=self._child_env(),
-            )
-        except FileNotFoundError as exc:  # binary vanished after preflight
-            raise AgentBackendError(f"Gemini CLI {self.gemini_bin!r} not found: {exc}") from exc
-        output = proc.stdout + proc.stderr
-        # An auth failure is not a fixable task error — retrying would just burn
-        # the attempt budget. Surface it immediately.
-        if proc.returncode != 0:
-            lowered = output.lower()
-            if any(marker in lowered for marker in _AUTH_FAILURE_MARKERS):
-                raise AgentBackendError(
-                    "Gemini CLI could not authenticate. Set GEMINI_API_KEY or run "
-                    "`gemini` once to sign in. Gemini output:\n" + output[-1000:]
-                )
-        return output
