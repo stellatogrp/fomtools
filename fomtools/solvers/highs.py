@@ -276,23 +276,9 @@ class HiGHSSolver(MIPSolver):
             "Use Gurobi for two-norm objectives, or switch to one-norm/infinity-norm."
         )
 
-    def add_sum_squares_constr(self, expr, radius_sq, sense) -> None:
-        """
-        Add a sum-of-squares (quadratic) constraint (not supported for HiGHS).
-
-        HiGHS does not support quadratic constraints (MIQCP). This backstop mirrors
-        :meth:`set_two_norm_objective`; the MIP canonicalizer guards on the solver name
-        before reaching here, so this is normally unreached.
-
-        Raises
-        ------
-        NotImplementedError
-            Always raised since HiGHS does not support quadratic constraints.
-        """
-        raise NotImplementedError(
-            "HiGHS does not support quadratic constraints (MIQCP). "
-            "Use Gurobi for sum_squares constraints."
-        )
+    # sum_squares (quadratic) constraints are unsupported on HiGHS; the rejecting
+    # default in MIPSolver.add_sum_squares_constr applies (it names the solver, so no
+    # HiGHS-specific override is needed).
 
     def optimize(self):
         """

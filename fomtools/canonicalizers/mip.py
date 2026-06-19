@@ -70,13 +70,9 @@ class MIP(Canonicalizer):
             return
         if isinstance(constraint, QuadraticConstraint):
             # Quadratic (sum-of-squares) constraints require a solver that supports
-            # quadratic constraints (MIQCP). Gurobi does; HiGHS does not. Raise eagerly
-            # here so the error surfaces at add-time rather than at solve-time.
-            if self.solver_name not in ("gurobi", "grb"):
-                raise ValueError(
-                    "sum_squares (quadratic) constraints require a solver that supports "
-                    "quadratic constraints (MIQCP). HiGHS does not. Use solver='gurobi'."
-                )
+            # quadratic constraints (MIQCP). Gurobi does; HiGHS does not. Each solver
+            # validates this in its own ``add_sum_squares_constr`` (HiGHS raises), so the
+            # error still surfaces eagerly at add-time rather than at solve-time.
             self.solver.add_sum_squares_constr(
                 constraint.expr, constraint.radius_sq, constraint.sense
             )

@@ -531,7 +531,7 @@ class SDP(Canonicalizer):
         C_mat[process_2d_ranges(idx_bounds, idx_bounds)] = A_mat.T @ A_mat
         C_mat[process_1d_ranges(idx_bounds, row=True)] = b_vec.T @ A_mat
         C_mat[process_1d_ranges(idx_bounds, row=False)] = A_mat.T @ b_vec
-        C_mat[0, 0] = np.trace(b_vec.T @ b_vec)
+        C_mat[0, 0] = float(b_vec.flatten() @ b_vec.flatten())  # b^T b (scalar)
         C = symmetrize(C_mat.tocsc())
 
         r_sq = constraint.radius_sq
@@ -1074,12 +1074,19 @@ class SDP(Canonicalizer):
         # block so that ``_build_rlt_cuts`` (which keys off cone membership)
         # fires on every variable pair. Solve always runs on ``self.copy()``
         # (see ``solve_model``), so mutating the cone here is local to the copy.
-        if self.full_psd_cone and len(self.psd_cone_indices) != 1:
-            self.psd_cone_indices = [set(range(self.get_sdp_var_dim()))]
+        if self.full_psd_cone:
+            full_cone = set(range(self.get_sdp_var_dim()))
+            # Guard on the exact target, not the cone count: a single cone that is
+            # not the full moment matrix (e.g. iterates merged but some auxiliary
+            # variables still uncoupled) must still be unioned.
+            if self.psd_cone_indices != [full_cone]:
+                self.psd_cone_indices = [full_cone]
         elif self.rlt_all_pairs:
             # Middle tier: couple every pair via a cheap {0, p, q} 3x3 PSD minor
             # so the all-pairs McCormick cuts bind. add_psd_cone_indices keeps the
             # antichain, so a pair already inside a larger cone adds no new minor.
+            # (Each call sets _cuts_dirty = True; that churn is harmless — it is
+            # overridden by _cuts_dirty = False at the end of this method.)
             for p, q in combinations(range(1, self.get_sdp_var_dim()), 2):
                 self.add_psd_cone_indices([(p, p + 1), (q, q + 1)])
 
