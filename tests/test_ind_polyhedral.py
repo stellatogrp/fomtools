@@ -64,9 +64,9 @@ def test_constructor_dim_mismatch():
 def test_returns_linear_expression_on_mip():
     """prox_indpolyhedral returns the primal u as a LinearExpression of dim n."""
     v = _make_verifier("mip", obbt="gurobi")
-    rhs = v.add_param(2, lb=-1.0, ub=1.0)
+    arg = v.add_param(2, lb=-1.0, ub=1.0)
     A = np.array([[1.0, 1.0]])
-    out = v.prox(IndPolyhedral(A, np.array([0.5]), dual_ub=10.0), rhs)
+    out = v.prox(IndPolyhedral(A, np.array([0.5]), dual_ub=10.0), arg)
     assert isinstance(out, LinearExpression)
     assert out.ndim == 2
 
@@ -85,9 +85,9 @@ def test_returns_linear_expression_on_mip():
     ],
 )
 def test_mip_projection_matches_numeric(A, b, x0, dual_ub):
-    """The MIP KKT encoding reproduces the true projection at a fixed rhs."""
+    """The MIP KKT encoding reproduces the true projection at a fixed arg."""
     v = _make_verifier("mip", obbt="gurobi")
-    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed rhs
+    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed arg
     u = v.prox(IndPolyhedral(A, b, dual_ub=dual_ub), x)
     v.set_objective_norm([u], np.inf)
     v.solve()
@@ -112,9 +112,9 @@ def test_without_dual_ub_raises(method):
 def test_simulator_not_supported():
     """IndPolyhedral is an implicit-iterate prox; the simulator defers it."""
     v = _make_verifier("simulator")
-    rhs = v.add_param(2, lb=-1.0, ub=1.0)
+    arg = v.add_param(2, lb=-1.0, ub=1.0)
     with pytest.raises(NotImplementedError):
-        v.prox(IndPolyhedral(np.array([[1.0, 1.0]]), np.array([0.5]), dual_ub=10.0), rhs)
+        v.prox(IndPolyhedral(np.array([[1.0, 1.0]]), np.array([0.5]), dual_ub=10.0), arg)
 
 
 # --- SDP backend (complementarity encoding) --------------------------------
@@ -135,21 +135,21 @@ _SDP_CASES = [
 def test_sdp_complementarity_solves():
     """IndPolyhedral now solves on the SDP backend (no NotImplementedError)."""
     v = _make_verifier("sdp")
-    rhs = v.add_param(2, lb=-1.0, ub=1.0)
-    u = v.prox(IndPolyhedral(np.array([[1.0, 1.0]]), np.array([0.5]), dual_ub=10.0), rhs)
+    arg = v.add_param(2, lb=-1.0, ub=1.0)
+    u = v.prox(IndPolyhedral(np.array([[1.0, 1.0]]), np.array([0.5]), dual_ub=10.0), arg)
     v.set_objective_norm(u, 2)
     assert np.isfinite(v.solve())
 
 
 @pytest.mark.parametrize("A, b, x0, dual_ub", _SDP_CASES)
 def test_sdp_projection_tight_at_fixed_point(A, b, x0, dual_ub):
-    """At a fixed rhs, max ||u||^2 over the relaxed KKT equals ||proj(x0)||^2.
+    """At a fixed arg, max ||u||^2 over the relaxed KKT equals ||proj(x0)||^2.
 
     SDP has no primal value extraction, so we assert via the objective bound; the
     relaxation is empirically tight for these projection instances.
     """
     v = _make_verifier("sdp")
-    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed rhs
+    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed arg
     u = v.prox(IndPolyhedral(A, b, dual_ub=dual_ub), x)
     v.set_objective_norm(u, 2)
     obj = v.solve()
@@ -158,22 +158,22 @@ def test_sdp_projection_tight_at_fixed_point(A, b, x0, dual_ub):
 
 
 def test_sdp_bound_vs_mip_over_box():
-    """SDP relaxation is a valid bound on the MIP over a box of rhs.
+    """SDP relaxation is a valid bound on the MIP over a box of arg.
 
     MIP inf-norm <= sqrt(SDP two-norm), since ||.||_inf <= ||.||_2.
     """
     A = np.array([[1.0, 1.0]])
     b = np.array([0.5])
-    rhs_lb, rhs_ub = -np.ones(2), np.ones(2)
+    arg_lb, arg_ub = -np.ones(2), np.ones(2)
 
     vm = _make_verifier("mip", obbt="gurobi")
-    xm = vm.add_param(2, lb=rhs_lb, ub=rhs_ub)
+    xm = vm.add_param(2, lb=arg_lb, ub=arg_ub)
     um = vm.prox(IndPolyhedral(A, b, dual_ub=10.0), xm)
     vm.set_objective_norm([um], np.inf)
     mip_inf = vm.solve()
 
     vs = _make_verifier("sdp")
-    xs = vs.add_param(2, lb=rhs_lb, ub=rhs_ub)
+    xs = vs.add_param(2, lb=arg_lb, ub=arg_ub)
     us = vs.prox(IndPolyhedral(A, b, dual_ub=10.0), xs)
     vs.set_objective_norm(us, 2)
     sdp_two = np.sqrt(vs.solve())
@@ -194,10 +194,10 @@ def test_complementarity_composite_slack_bound():
     """Regression: complementarity big-M reads bound_propagation, so a composite
     second argument (b - A@u) yields finite M and does not spuriously raise."""
     v = _make_verifier("mip", obbt="gurobi")
-    x = v.add_param(2, lb=np.array([0.0, 0.0]), ub=np.array([0.0, 0.0]))  # rhs=0, inside box
+    x = v.add_param(2, lb=np.array([0.0, 0.0]), ub=np.array([0.0, 0.0]))  # arg=0, inside box
     A, b = _box(2, -np.ones(2), np.ones(2))
     u = v.prox(IndPolyhedral(A, b, dual_ub=5.0), x)
     v.set_objective_norm([u], np.inf)
     v.solve()
-    # rhs=0 is interior; projection is the identity.
+    # arg=0 is interior; projection is the identity.
     np.testing.assert_allclose(v.get_solution_value(u), np.zeros(2), atol=TEST_EPS)

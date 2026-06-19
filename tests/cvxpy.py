@@ -222,7 +222,7 @@ def portfolio_l1(
 
     A = np.block([A_top, A_budget, A_abs_plus, A_abs_minus, A_lower_bound, A_upper_bound])
 
-    rhs = np.hstack([np.zeros(d), 1, x_prev, -x_prev, np.zeros(n), 1.5 / n * np.ones(n)])
+    arg = np.hstack([np.zeros(d), 1, x_prev, -x_prev, np.zeros(n), 1.5 / n * np.ones(n)])
     slack = cp.Variable(4 * n + d + 1)
 
     q = np.hstack([-alpha * mu, np.zeros(d), alpha * lambd * np.ones(n)])
@@ -236,11 +236,11 @@ def portfolio_l1(
 
     obj = 0.5 * cp.quad_form(x2, P) + q @ x2
     constraints = [
-        A @ x2 + slack == rhs,
+        A @ x2 + slack == arg,
         slack[: d + 1] == 0,
         slack[d + 1 :] >= 0,
     ]
 
     prob = cp.Problem(cp.Minimize(obj), constraints)
     prob.solve(solver=cp.CLARABEL)
-    return A, P, q, rhs, x_orig, x2.value
+    return A, P, q, arg, x_orig, x2.value

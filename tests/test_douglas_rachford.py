@@ -27,14 +27,14 @@ def test_dr(vp):
 
     print("testing with DR splitting:")
     M = np.block([[P, A.T], [-A, np.zeros((m, m))]])
-    lhs = spa.csc_matrix(M) + spa.eye(m + n)
+    output = spa.csc_matrix(M) + spa.eye(m + n)
     q = np.hstack([c, b])
 
     zk = np.zeros(m + n)
 
     K = 1000
     for _ in range(K):
-        u = spa.linalg.spsolve(lhs, zk - q)
+        u = spa.linalg.spsolve(output, zk - q)
         utilde = proj(2 * u - zk, n)
         zk = zk + utilde - u
 
@@ -58,7 +58,7 @@ def test_dr(vp):
 
     for k in range(1, K + 1):
         print(f"-K = {k}-")
-        u[k] = vp.step.implicit_linear(z[k - 1] - q_param, lhs_mat=lhs.todense())
+        u[k] = vp.step.implicit_linear(z[k - 1] - q_param, output_mat=output.todense())
         utilde[k] = vp.step.relu(2 * u[k] - z[k - 1], proj_ranges=(n, n + m))
         z[k] = z[k - 1] + utilde[k] - u[k]
 
@@ -74,7 +74,7 @@ def test_dr(vp):
     PGD_resids = []
 
     for k in range(K):
-        u = spa.linalg.spsolve(lhs, zk - q)
+        u = spa.linalg.spsolve(output, zk - q)
         utilde = proj(2 * u - zk, n)
         znew = zk + utilde - u
         PGD_resids.append(np.max(np.abs(znew - zk)))

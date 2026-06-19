@@ -72,7 +72,7 @@ def vp_sdp(request: pytest.FixtureRequest):
     Pytest fixture that provides an SDP Verifier instance.
     Parameterized to run tests with different SDP solver backends.
     """
-    return Verifier(method='sdp', solver=request.param, obbt_solver=None)
+    return Verifier(method="sdp", solver=request.param, obbt_solver=None)
 
 
 @pytest.fixture(params=SDP_SOLVERS, scope="function")
@@ -88,8 +88,8 @@ def vp_sdp_obbt(request: pytest.FixtureRequest):
 # Shared builders/helpers for OBBT tests.
 # --------------------------------------------------------------------------
 
-def build_lasso_ista(obbt, solver, *, method="mip", K=3, seed=0, n=3, m=4,
-                     t=0.05, lambd=0.1):
+
+def build_lasso_ista(obbt, solver, *, method="mip", K=3, seed=0, n=3, m=4, t=0.05, lambd=0.1):
     """
     Build a K-step ISTA (lasso) soft-threshold chain, mirroring
     ``_obbt_leak_repro.py``.
@@ -120,7 +120,7 @@ def build_lasso_ista(obbt, solver, *, method="mip", K=3, seed=0, n=3, m=4,
 
     iterates = [z]
     for _ in range(K):
-        z = v.step.soft_threshold(rhs=W @ z + G @ b, lambd=lambd * t)
+        z = v.step.soft_threshold(arg=W @ z + G @ b, lambd=lambd * t)
         iterates.append(z)
     return v, iterates
 

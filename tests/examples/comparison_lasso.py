@@ -49,8 +49,7 @@ solver_params = {"OutputFlag": 0, "LogToConsole": 0}
 MATCH_MIP_AT_K1 = True
 
 # ── MIP — squared 2-norm of fixed-point residual (MIQP, Gurobi only) ──────────
-vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver="gurobi",
-                  params=solver_params)
+vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver="gurobi", params=solver_params)
 
 x_mip = vp_mip.add_param(p, lb=x_lb, ub=x_ub)
 s_mip = [s0]
@@ -58,8 +57,11 @@ s_mip = [s0]
 mip_residuals = []
 x_worst_k5 = None
 for k in range(1, K + 1):
-    s_mip.append(vp_mip.step.soft_threshold(
-        s_mip[k - 1] - eta * D.T @ (D @ s_mip[k - 1] - x_mip), lambd=lambd * eta))
+    s_mip.append(
+        vp_mip.step.soft_threshold(
+            s_mip[k - 1] - eta * D.T @ (D @ s_mip[k - 1] - x_mip), lambd=lambd * eta
+        )
+    )
     vp_mip.set_objective_norm([s_mip[k] - s_mip[k - 1]], ord=2)
     mip_residuals.append(vp_mip.solve())
     print(f"MIP  k={k}: {mip_residuals[-1]:.6f}")
@@ -74,8 +76,11 @@ s_sdp = [s0]
 
 sdp_residuals = []
 for k in range(1, K + 1):
-    s_sdp.append(vp_sdp.step.soft_threshold(
-        s_sdp[k - 1] - eta * D.T @ (D @ s_sdp[k - 1] - x_sdp), lambd=lambd * eta))
+    s_sdp.append(
+        vp_sdp.step.soft_threshold(
+            s_sdp[k - 1] - eta * D.T @ (D @ s_sdp[k - 1] - x_sdp), lambd=lambd * eta
+        )
+    )
     vp_sdp.set_objective_norm([s_sdp[k] - s_sdp[k - 1]], ord=2)
     sdp_residuals.append(vp_sdp.solve())
     print(f"SDP  k={k}: {sdp_residuals[-1]:.6f}")
@@ -104,7 +109,7 @@ for k in range(1, K + 1):
     F = f + g
     xs = F.stationary_point()
     s0_pep = problem.set_initial_point()
-    problem.set_initial_condition((s0_pep - xs) ** 2 <= R ** 2)
+    problem.set_initial_condition((s0_pep - xs) ** 2 <= R**2)
 
     s = [s0_pep]
     for j in range(k):
@@ -122,8 +127,11 @@ x_sim = vp_sim.add_param(ndim=p, lb=x_lb, ub=x_ub, samples=x_samples.T)
 s_sim = [s0]  # fixed initial point
 
 for k in range(1, K + 1):
-    s_sim.append(vp_sim.step.soft_threshold(
-        s_sim[k - 1] - eta * D.T @ (D @ s_sim[k - 1] - x_sim), lambd=lambd * eta))
+    s_sim.append(
+        vp_sim.step.soft_threshold(
+            s_sim[k - 1] - eta * D.T @ (D @ s_sim[k - 1] - x_sim), lambd=lambd * eta
+        )
+    )
     vp_sim.set_objective_norm([s_sim[k] - s_sim[k - 1]], ord=2)
 
 sim_results = vp_sim.solve()
@@ -131,9 +139,11 @@ sim_residuals = sim_results.max(axis=0).tolist()
 for k in range(1, K + 1):
     print(f"Sim  k={k}: {sim_residuals[k - 1]:.6f}  (max over N={num_star})")
 
+
 # ── Simulate worst-case instance from MIP k=4 ────────────────────────────────
 def _soft_threshold(v, threshold):
     return np.sign(v) * np.maximum(np.abs(v) - threshold, 0)
+
 
 s_wc = [s0.copy()]
 for k in range(1, K + 1):
@@ -149,11 +159,11 @@ for k in range(1, K + 1):
 iters = range(1, K + 1)
 
 plt.figure(figsize=(7, 4))
-plt.plot(iters, mip_residuals,   "o-",  label="MIP")
-plt.plot(iters, sdp_residuals,   "s--", label="SDP")
-plt.plot(iters, pepit_residuals, "^:",  label="PEPit")
-plt.plot(iters, wc_residuals,    "x:",  label="WC instance (MIP k=5)")
-plt.plot(iters, sim_residuals,   "d-.", label=f"Simulation (max over N={num_star})")
+plt.plot(iters, mip_residuals, "o-", label="MIP")
+plt.plot(iters, sdp_residuals, "s--", label="SDP")
+plt.plot(iters, pepit_residuals, "^:", label="PEPit")
+plt.plot(iters, wc_residuals, "x:", label="WC instance (MIP k=5)")
+plt.plot(iters, sim_residuals, "d-.", label=f"Simulation (max over N={num_star})")
 plt.yscale("log")
 plt.xlabel(r"Iteration $k$")
 plt.ylabel(r"Worst-case $\|s^k - s^{k-1}\|_2^2$")

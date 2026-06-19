@@ -8,6 +8,7 @@ torch = pytest.importorskip("torch")
 nn = torch.nn
 optim = torch.optim
 
+
 class ReLUFFNet(nn.Module):
     def __init__(self, input_dim: int, hidden_dims: list, output_dim: int):
         super().__init__()
@@ -22,9 +23,6 @@ class ReLUFFNet(nn.Module):
 
     def forward(self, x):
         return self.net(x)
-
-
-
 
 
 @pytest.fixture(scope="module")

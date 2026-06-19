@@ -63,13 +63,13 @@ class TotalVariation1D(ProxableFunction):
         x = np.asarray(x, dtype=float)
         return self._lambd_value() * float(np.sum(np.abs(np.diff(x))))
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Compute :math:`\operatorname{prox}_{\gamma \lambda \|D\cdot\|_1}(\text{rhs})`.
+        Compute :math:`\operatorname{prox}_{\gamma \lambda \|D\cdot\|_1}(\text{arg})`.
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input signal.
         gamma : float, default 1.0
             Step size.
@@ -79,13 +79,13 @@ class TotalVariation1D(ProxableFunction):
         np.ndarray
             The proximal point.
         """
-        rhs = np.asarray(rhs, dtype=float)
-        n = rhs.shape[0]
+        arg = np.asarray(arg, dtype=float)
+        n = arg.shape[0]
         if n < 2:
             warnings.warn(_SHORT_SIGNAL_MSG.format(n=n), UserWarning, stacklevel=2)
-            return rhs.copy()  # TV of a scalar is 0 -> identity
+            return arg.copy()  # TV of a scalar is 0 -> identity
         x = cp.Variable(n)
         tau = gamma * self._lambd_value()
-        obj = 0.5 * cp.sum_squares(x - rhs) + tau * cp.norm1(diff_matrix(n) @ x)
+        obj = 0.5 * cp.sum_squares(x - arg) + tau * cp.norm1(diff_matrix(n) @ x)
         cp.Problem(cp.Minimize(obj)).solve()
         return np.asarray(x.value, dtype=float)

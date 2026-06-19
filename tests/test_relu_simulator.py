@@ -37,8 +37,8 @@ def test_relu_simulator():
         z[k] = vp.step.relu(z[k - 1] - step_size * (P @ z[k - 1] + q_param))
 
     residuals = vp.solve()
-    assert vp['n_samples'] == len(q_samples)
-    assert vp['risk_bound'] >= vp['empirical_risk']
+    assert vp["n_samples"] == len(q_samples)
+    assert vp["risk_bound"] >= vp["empirical_risk"]
     assert residuals[:, -1].mean() < residuals[:, 0].mean()
 
     print(

@@ -49,12 +49,12 @@ def test_accepts_psd_identity_and_sparse():
 
 
 def test_q_none_requires_matching_rhs():
-    rhs = LinearExpression.from_int(3)
-    QuadraticProgram(P=np.eye(3), q=None, rhs=rhs)  # ok: rhs.ndim == n
-    with pytest.raises(ValueError, match="rhs"):
-        QuadraticProgram(P=np.eye(3), q=None, rhs=LinearExpression.from_int(2))
-    with pytest.raises(ValueError, match="rhs"):
-        QuadraticProgram(P=np.eye(3), q=None)  # no rhs at all
+    arg = LinearExpression.from_int(3)
+    QuadraticProgram(P=np.eye(3), q=None, arg=arg)  # ok: arg.ndim == n
+    with pytest.raises(ValueError, match="arg"):
+        QuadraticProgram(P=np.eye(3), q=None, arg=LinearExpression.from_int(2))
+    with pytest.raises(ValueError, match="arg"):
+        QuadraticProgram(P=np.eye(3), q=None)  # no arg at all
 
 
 def test_dimension_mismatches():
@@ -134,7 +134,7 @@ def test_mip_dense_and_sparse_P_agree(P):
 
 
 def test_mip_parametric_q_b():
-    """q = -rhs and a parametric equality RHS b are tied to pinned params."""
+    """q = -arg and a parametric equality RHS b are tied to pinned params."""
     x0 = np.array([0.4, 0.1])
     b0 = np.array([1.0])
     A = np.array([[1.0, 1.0]])
@@ -156,7 +156,7 @@ def test_mip_parametric_q_b():
 
 
 def test_mip_reproduces_indpolyhedral_projection():
-    """P=I, q=-rhs, (C, d) reproduces the IndPolyhedral projection."""
+    """P=I, q=-arg, (C, d) reproduces the IndPolyhedral projection."""
     Apoly = np.array([[1.0, 0.0], [0.0, 1.0], [-1.0, -1.0]])
     bpoly = np.array([1.0, 1.0, -0.5])
     x0 = np.array([3.0, 3.0])
@@ -192,9 +192,9 @@ def test_singular_P_without_primal_bounds_raises():
 
 def test_simulator_not_supported():
     v = _make_verifier("simulator")
-    rhs = v.add_param(2, lb=-1.0, ub=1.0)
+    arg = v.add_param(2, lb=-1.0, ub=1.0)
     with pytest.raises(NotImplementedError):
-        v.quadratic_program(P=np.eye(2), q=-rhs)
+        v.quadratic_program(P=np.eye(2), q=-arg)
 
 
 # --- SDP backend (complementarity encoding) ---------------------------------
@@ -208,7 +208,7 @@ def test_simulator_not_supported():
     ],
 )
 def test_sdp_projection_bound_tight_at_fixed_point(C, d, x0, dual_ub):
-    """At a fixed rhs, max ||x||^2 over the relaxed KKT equals ||proj(x0)||^2.
+    """At a fixed arg, max ||x||^2 over the relaxed KKT equals ||proj(x0)||^2.
 
     SDP is a relaxation with no primal extraction, so we assert via the objective bound.
     """
@@ -222,18 +222,18 @@ def test_sdp_projection_bound_tight_at_fixed_point(C, d, x0, dual_ub):
 
 
 def test_sdp_bound_dominates_mip_over_box():
-    """SDP two-norm bound dominates the MIP inf-norm over a box of rhs."""
+    """SDP two-norm bound dominates the MIP inf-norm over a box of arg."""
     C, d = np.array([[1.0, 1.0]]), np.array([0.5])
-    rhs_lb, rhs_ub = -np.ones(2), np.ones(2)
+    arg_lb, arg_ub = -np.ones(2), np.ones(2)
 
     vm = _make_verifier("mip", obbt="gurobi")
-    xm = vm.add_param(2, lb=rhs_lb, ub=rhs_ub)
+    xm = vm.add_param(2, lb=arg_lb, ub=arg_ub)
     um = vm.quadratic_program(P=np.eye(2), q=-xm, C=C, d=d, dual_ub=10.0)
     vm.set_objective_norm([um], np.inf)
     mip_inf = vm.solve()
 
     vs = _make_verifier("sdp")
-    xs = vs.add_param(2, lb=rhs_lb, ub=rhs_ub)
+    xs = vs.add_param(2, lb=arg_lb, ub=arg_ub)
     us = vs.quadratic_program(P=np.eye(2), q=-xs, C=C, d=d, dual_ub=10.0)
     vs.set_objective_norm(us, 2)
     sdp_two = np.sqrt(vs.solve())

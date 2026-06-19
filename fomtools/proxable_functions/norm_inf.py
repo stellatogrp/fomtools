@@ -52,16 +52,16 @@ class NormInf(ProxableFunction):
         r"""Evaluate :math:`f(x) = \lambda \|x\|_\infty`."""
         return self._lambd_value() * float(np.max(np.abs(np.asarray(x, dtype=float))))
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Compute :math:`\operatorname{prox}_{\gamma \lambda \|\cdot\|_\infty}(\text{rhs})`.
+        Compute :math:`\operatorname{prox}_{\gamma \lambda \|\cdot\|_\infty}(\text{arg})`.
 
         Solved directly from the defining problem (an independent reference, not via the
         Moreau identity used for the verification lowering).
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Step size.
@@ -71,8 +71,8 @@ class NormInf(ProxableFunction):
         np.ndarray
             The proximal point.
         """
-        rhs = np.asarray(rhs, dtype=float)
-        u = cp.Variable(rhs.shape[0])
-        obj = 0.5 * cp.sum_squares(u - rhs) + gamma * self._lambd_value() * cp.norm_inf(u)
+        arg = np.asarray(arg, dtype=float)
+        u = cp.Variable(arg.shape[0])
+        obj = 0.5 * cp.sum_squares(u - arg) + gamma * self._lambd_value() * cp.norm_inf(u)
         cp.Problem(cp.Minimize(obj)).solve()
         return np.asarray(u.value, dtype=float)

@@ -77,27 +77,27 @@ class HuberLoss(ProxableFunction):
         )
         return float(np.sum(per_coord))
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
         Compute the proximal point of the element-wise Huber loss.
 
         Uses the closed form per coordinate
 
         $$
-            \operatorname{prox}_{\gamma f}(\text{rhs})_i = \begin{cases}
-                \text{rhs}_i / (1+\gamma)
-                    & |\text{rhs}_i| \leq \delta(1+\gamma) \\
-                \text{rhs}_i - \gamma\,\delta\,\operatorname{sign}(\text{rhs}_i)
-                    & |\text{rhs}_i| > \delta(1+\gamma).
+            \operatorname{prox}_{\gamma f}(\text{arg})_i = \begin{cases}
+                \text{arg}_i / (1+\gamma)
+                    & |\text{arg}_i| \leq \delta(1+\gamma) \\
+                \text{arg}_i - \gamma\,\delta\,\operatorname{sign}(\text{arg}_i)
+                    & |\text{arg}_i| > \delta(1+\gamma).
             \end{cases}
         $$
 
         The two branches agree at the kink, so the result is a
-        continuous piecewise-linear function of ``rhs``.
+        continuous piecewise-linear function of ``arg``.
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Proximal step size.
@@ -105,13 +105,13 @@ class HuberLoss(ProxableFunction):
         Returns
         -------
         np.ndarray
-            The proximal point $\operatorname{prox}_{\gamma f}(\text{rhs})$.
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{arg})$.
         """
         theta = self.delta * (1.0 + gamma)
         return np.where(
-            np.abs(rhs) <= theta,
-            rhs / (1.0 + gamma),
-            rhs - gamma * self.delta * np.sign(rhs),
+            np.abs(arg) <= theta,
+            arg / (1.0 + gamma),
+            arg - gamma * self.delta * np.sign(arg),
         )
 
     def grad(self, x: np.ndarray) -> np.ndarray:

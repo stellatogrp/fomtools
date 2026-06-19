@@ -59,8 +59,8 @@ def test_prox_extremes():
 
 def test_returns_linear_expression_on_mip():
     v = _make_verifier("mip", obbt="gurobi")
-    rhs = v.add_param(3, lb=-2.0, ub=2.0)
-    out = v.prox(NormInf(1.0), rhs)
+    arg = v.add_param(3, lb=-2.0, ub=2.0)
+    out = v.prox(NormInf(1.0), arg)
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
 
@@ -74,7 +74,7 @@ def test_returns_linear_expression_on_mip():
 )
 def test_mip_matches_numeric(x0, lam, g):
     v = _make_verifier("mip", obbt="gurobi")
-    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed rhs
+    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed arg
     out = v.prox(NormInf(lam), x, gamma=g)
     v.set_objective_norm([out], np.inf)
     v.solve()
@@ -102,7 +102,7 @@ def test_param_lambd():
 def test_sdp_valid_bound_at_fixed_point(x0, lam):
     """SDP gives a valid (upper) bound on ||prox(x0)||^2.
 
-    Unlike IndBallL1 (objective on u), maximizing ||rhs - u||^2 leaves the Shor relaxation
+    Unlike IndBallL1 (objective on u), maximizing ||arg - u||^2 leaves the Shor relaxation
     non-tight here, so we only assert validity: sdp_obj >= ||prox(x0)||^2.
     """
     v = _make_verifier("sdp")
@@ -115,18 +115,18 @@ def test_sdp_valid_bound_at_fixed_point(x0, lam):
 
 
 def test_sdp_bound_vs_mip_over_box():
-    """SDP relaxation is a valid bound on the MIP over a box of rhs."""
-    rhs_lb, rhs_ub = -2.0 * np.ones(3), 2.0 * np.ones(3)
+    """SDP relaxation is a valid bound on the MIP over a box of arg."""
+    arg_lb, arg_ub = -2.0 * np.ones(3), 2.0 * np.ones(3)
     lam = 1.0
 
     vm = _make_verifier("mip", obbt="gurobi")
-    xm = vm.add_param(3, lb=rhs_lb, ub=rhs_ub)
+    xm = vm.add_param(3, lb=arg_lb, ub=arg_ub)
     om = vm.prox(NormInf(lam), xm)
     vm.set_objective_norm([om], np.inf)
     mip_inf = vm.solve()
 
     vs = _make_verifier("sdp")
-    xs = vs.add_param(3, lb=rhs_lb, ub=rhs_ub)
+    xs = vs.add_param(3, lb=arg_lb, ub=arg_ub)
     os_ = vs.prox(NormInf(lam), xs)
     vs.set_objective_norm(os_, 2)
     sdp_two = np.sqrt(vs.solve())
@@ -153,6 +153,6 @@ def test_dual_ub_stored_and_forwarded():
 
 def test_simulator_not_supported():
     v = _make_verifier("simulator")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
     with pytest.raises(NotImplementedError):
-        v.prox(NormInf(1.0), rhs)
+        v.prox(NormInf(1.0), arg)

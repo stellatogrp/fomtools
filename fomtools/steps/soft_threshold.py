@@ -23,14 +23,14 @@ class SoftThreshold(Step):
 
     Attributes
     ----------
-    rhs : LinearExpression
+    arg : LinearExpression
         Right-hand side (input) linear expression.
-    lhs : LinearExpression
+    output : LinearExpression
         Left-hand side (output) linear expression.
     lb : np.ndarray
-        Lower bounds on the INPUT (rhs), before soft-thresholding is applied.
+        Lower bounds on the INPUT (arg), before soft-thresholding is applied.
     ub : np.ndarray
-        Upper bounds on the INPUT (rhs), before soft-thresholding is applied.
+        Upper bounds on the INPUT (arg), before soft-thresholding is applied.
     relax_binary_vars : bool
         If true, binary decision variables associated with the operator
         are relaxed to take continuous values.
@@ -42,15 +42,15 @@ class SoftThreshold(Step):
         Indices tied to "left-branch" indicators (e.g., $t<-\lambda$).
     """
 
-    def __init__(self, rhs: LinearExpression, lambd: float, relax_binary_vars: bool = False):
-        super().__init__(rhs, relax_binary_vars)
+    def __init__(self, arg: LinearExpression, lambd: float, relax_binary_vars: bool = False):
+        super().__init__(arg, relax_binary_vars)
         self.lambd = lambd
         self.idx_with_right_binary_vars = set()
         self.idx_with_left_binary_vars = set()
-        self.update_bounds(*self.rhs.bound_propagation())
+        self.update_bounds(*self.arg.bound_propagation())
 
     def __hash__(self):
-        return hash((self.rhs, self.lhs))
+        return hash((self.arg, self.output))
 
     def soft_threshold(self, x: np.ndarray) -> np.ndarray:
         """
@@ -86,4 +86,4 @@ class SoftThreshold(Step):
             The new upper bound(s) before applying soft-thresholding.
         """
         self.lb, self.ub = lb, ub
-        self.lhs.update_bounds(lb=self.soft_threshold(lb), ub=self.soft_threshold(ub))
+        self.output.update_bounds(lb=self.soft_threshold(lb), ub=self.soft_threshold(ub))

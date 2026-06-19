@@ -559,25 +559,25 @@ class SDP(Canonicalizer):
         constraint for the lifted formulation.
 
         Operates uniformly over ``step.proj_indices`` and binds equalities to
-        ``step.lhs_leaves[0]``. For full ReLU, ``proj_indices`` covers every
-        rhs row and ``lhs_leaves[0]`` is the full lhs leaf — equivalent to a
+        ``step.output_leaves[0]``. For full ReLU, ``proj_indices`` covers every
+        arg row and ``output_leaves[0]`` is the full output leaf — equivalent to a
         standard full-output encoding. For partial-projection ReLU, only the
-        projected rows get lifted equalities and ``lhs_leaves[0]`` is the
+        projected rows get lifted equalities and ``output_leaves[0]`` is the
         smaller fresh proj-leaf; the non-projected rows are structurally
-        fused into shared rhs leaves at composition time, so no equalities
+        fused into shared arg leaves at composition time, so no equalities
         and no SDP rows are emitted for them.
 
         Parameters
         ----------
         step : Relu
-            The ReLU step containing input expression (rhs) and output
-            variable (lhs).
+            The ReLU step containing input expression (arg) and output
+            variable (output).
         """
-        rhs = step.rhs
-        A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(rhs)
-        b_vec = rhs.const
+        arg = step.arg
+        A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(arg)
+        b_vec = arg.const
 
-        y_leaf = step.lhs_leaves[0]
+        y_leaf = step.output_leaves[0]
         proj_list = sorted(step.proj_indices)
 
         y_idx_bounds = [self.var_idx_map[y_leaf]]
@@ -591,7 +591,7 @@ class SDP(Canonicalizer):
         curr_prob_dim = self.get_sdp_var_dim()
         for j, i in enumerate(proj_list):
             # j indexes y_leaf (size = len(proj_list));
-            # i indexes rhs row in A_mat / b_vec (size = rhs.ndim).
+            # i indexes arg row in A_mat / b_vec (size = arg.ndim).
             Ij = I[j]
             new_A = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
             new_A[y_idx_ranges_2d] = np.outer(Ij, Ij)
@@ -609,7 +609,7 @@ class SDP(Canonicalizer):
         """
         Encode an Affine step as a linear equality constraint.
 
-        The Affine step asserts ``step.lhs_mat @ step.lhs == step.rhs``;
+        The Affine step asserts ``step.output_mat @ step.output == step.arg``;
         this is the same equality MIP encodes (``mip.py:404``). On SDP it
         flows through ``add_constraint`` → ``_add_equality_constraint_impl``,
         which emits the linear matrix, the quadratic strengthening, and
@@ -620,7 +620,7 @@ class SDP(Canonicalizer):
         step : Affine
             The affine step to canonicalize.
         """
-        self.add_constraint(step.lhs_mat @ step.lhs == step.rhs)
+        self.add_constraint(step.output_mat @ step.output == step.arg)
 
     _CANONICALIZERS = {
         "affine": canonicalize_affine,
@@ -774,11 +774,11 @@ class SDP(Canonicalizer):
         expr_list : list[LinearExpression]
             List of expressions whose one-norms are summed in the objective.
         """
-        relu_lhs_vars = []
+        relu_output_vars = []
 
         for expr in expr_list:
-            relu_lhs_vars.append(self._create_relu_step(canon_copy, expr))
-            relu_lhs_vars.append(self._create_relu_step(canon_copy, -expr))
+            relu_output_vars.append(self._create_relu_step(canon_copy, expr))
+            relu_output_vars.append(self._create_relu_step(canon_copy, -expr))
 
         # Build linear objective: maximize sum of all relu outputs
         # For lifted SDP with X = [1, x]^T @ [1, x], linear term c^T x
@@ -787,8 +787,8 @@ class SDP(Canonicalizer):
         C_mat = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
 
         all_idx_bounds = []
-        for lhs_var in relu_lhs_vars:
-            idx_bounds = canon_copy.var_idx_map[lhs_var]
+        for output_var in relu_output_vars:
+            idx_bounds = canon_copy.var_idx_map[output_var]
             all_idx_bounds.append(idx_bounds)
             start, end = idx_bounds
             # Coefficient 1 for each component, divided by 2 for symmetry
@@ -873,14 +873,14 @@ class SDP(Canonicalizer):
         Returns
         -------
         LinearExpression
-            The output (lhs) of the ReLU step.
+            The output (output) of the ReLU step.
         """
-        step = Relu(rhs=expr)
+        step = Relu(arg=expr)
         step.update_bounds(*canon_copy.get_expression_bounds(expr))
-        for leaf in step.lhs_leaves:
+        for leaf in step.output_leaves:
             canon_copy.add_var(leaf)
         canon_copy.canonicalize_relu(step)
-        return step.lhs
+        return step.output
 
     def set_zero_objective(self):
         """
@@ -1183,34 +1183,34 @@ class SDP(Canonicalizer):
         Append lifted triangle cuts for every registered ReLU step.
 
         For each step, iterate over output index pairs ``(i, j)``: emit one
-        cut whenever row ``i`` has mixed bounds (``rhs_lb[i] < 0 <
-        rhs_ub[i]``) and column ``j`` has finite upper bound. Bounds are
-        recomputed fresh from ``step.rhs.bound_propagation()`` so they
+        cut whenever row ``i`` has mixed bounds (``arg_lb[i] < 0 <
+        arg_ub[i]``) and column ``j`` has finite upper bound. Bounds are
+        recomputed fresh from ``step.arg.bound_propagation()`` so they
         reflect any leaf tightening since ``canonicalize_relu`` ran. See
         paper §4.5 eq 25/26 for the derivation.
         """
         for step in self._relu_steps:
-            rhs = step.rhs
-            rhs_lb, rhs_ub = rhs.bound_propagation()
-            A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(rhs)
-            b_vec = np.asarray(rhs.const)
+            arg = step.arg
+            arg_lb, arg_ub = arg.bound_propagation()
+            A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(arg)
+            b_vec = np.asarray(arg.const)
 
-            # Map each rhs row to its position in the fresh y-leaf. For full
-            # relu this is the identity dict (proj_indices spans rhs.ndim);
-            # for partial relu it maps only projected rhs rows and skips the
+            # Map each arg row to its position in the fresh y-leaf. For full
+            # relu this is the identity dict (proj_indices spans arg.ndim);
+            # for partial relu it maps only projected arg rows and skips the
             # rest (handled by the ``if i not in rhs_to_y_pos`` guard below).
-            y_leaf = step.lhs_leaves[0]
+            y_leaf = step.output_leaves[0]
             rhs_to_y_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
             y_idx_bounds = [self.var_idx_map[y_leaf]]
 
-            d = rhs.ndim
+            d = arg.ndim
             for i in range(d):
                 if i not in rhs_to_y_pos:
                     continue
-                if rhs_lb[i] >= 0 or rhs_ub[i] <= 0:
+                if arg_lb[i] >= 0 or arg_ub[i] <= 0:
                     continue
                 for j in range(d):
-                    if not np.isfinite(rhs_ub[j]):
+                    if not np.isfinite(arg_ub[j]):
                         continue
                     self._build_triangle_cut_for_pair(
                         i,
@@ -1219,8 +1219,8 @@ class SDP(Canonicalizer):
                         b_vec,
                         x_idx_bounds,
                         y_idx_bounds,
-                        rhs_lb,
-                        rhs_ub,
+                        arg_lb,
+                        arg_ub,
                         y_pos=rhs_to_y_pos[i],
                     )
 
@@ -1232,8 +1232,8 @@ class SDP(Canonicalizer):
         b_vec: np.ndarray,
         x_idx_bounds: list,
         y_idx_bounds: list,
-        rhs_lb: np.ndarray,
-        rhs_ub: np.ndarray,
+        arg_lb: np.ndarray,
+        arg_ub: np.ndarray,
         y_pos: int | None = None,
     ) -> None:
         """
@@ -1244,7 +1244,7 @@ class SDP(Canonicalizer):
         ``(E_ii (a_i^T x + b_i) + c_i − y_i)(u_j − a_j^T x − b_j) ≥ 0``
         where ``E_ii = u_i / (u_i − l_i)``, ``c_i = −E_ii · l_i``, and
         ``(l_i, u_i, u_j)`` are taken from the freshly propagated bounds
-        ``rhs_lb`` / ``rhs_ub`` of the ReLU's input expression. Using
+        ``arg_lb`` / ``arg_ub`` of the ReLU's input expression. Using
         propagated bounds (rather than the cached ``step.lb``/``step.ub``)
         keeps the cuts in sync with leaf tightening — see ``_build_triangle_cuts``.
 
@@ -1263,9 +1263,9 @@ class SDP(Canonicalizer):
         """
         n_dim = self.get_sdp_var_dim()
 
-        lb_i = rhs_lb[i]
-        ub_i = rhs_ub[i]
-        ub_j = rhs_ub[j]
+        lb_i = arg_lb[i]
+        ub_i = arg_ub[i]
+        ub_j = arg_ub[j]
         E_ii = ub_i / (ub_i - lb_i)
         c_i = -E_ii * lb_i
 
@@ -1276,7 +1276,7 @@ class SDP(Canonicalizer):
 
         y_start, _y_end = y_idx_bounds[0]
         # ``y_pos`` is the row of the (possibly smaller) fresh leaf that
-        # corresponds to rhs row ``i``. For full-projection it equals ``i``.
+        # corresponds to arg row ``i``. For full-projection it equals ``i``.
         y_i_idx = y_start + (y_pos if y_pos is not None else i)
 
         N = spa.lil_matrix((n_dim, n_dim))
@@ -1293,12 +1293,7 @@ class SDP(Canonicalizer):
         N[y_i_idx, 0] = b_j - ub_j
 
         # x linear at row 0
-        lin = (
-            E_ii * ub_j * a_i
-            - E_ii * b_j * a_i
-            - E_ii * b_i * a_j
-            - c_i * a_j
-        )
+        lin = E_ii * ub_j * a_i - E_ii * b_j * a_i - E_ii * b_i * a_j - c_i * a_j
         x_row0_idx = process_1d_ranges(x_idx_bounds, row=True)
         N[x_row0_idx] = lin
 

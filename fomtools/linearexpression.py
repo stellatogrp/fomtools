@@ -736,9 +736,7 @@ def stack(exprs: list[LinearExpression]) -> LinearExpression:
     # component's leaf coefficient is supported only on rows masked out by
     # the selection matrix. Pruning prevents canonicalizers walking the
     # result's decomposition_dict from looking up irrelevant leaves.
-    result = LinearExpression(
-        decomposition_dict=prune_dict(decomposition_dict), const=const
-    )
+    result = LinearExpression(decomposition_dict=prune_dict(decomposition_dict), const=const)
     result.lb, result.ub = result.bound_propagation()
     return result
 
@@ -751,7 +749,7 @@ def solve_linexpr(M, expr: LinearExpression) -> LinearExpression:
     Each leaf coefficient and the constant are computed via
     ``np.linalg.solve(M, ...)`` (dense ``M``) or an LU-factorized
     ``splu.solve(...)`` (sparse ``M``) — the same pattern as
-    :attr:`fomtools.steps.affine.Affine.lhs_mat_inverse`.
+    :attr:`fomtools.steps.affine.Affine.output_mat_inverse`.
 
     The returned ``LinearExpression`` is intended for **interval-propagating
     bounds through an implicit inverse**; it should not be registered with
@@ -792,8 +790,6 @@ def solve_linexpr(M, expr: LinearExpression) -> LinearExpression:
     # 1-dim leaves) into ``(n,)``, breaking the ``a @ (ub + lb)`` matmul
     # in ``bound_propagation``; pin the ranks instead.
     return LinearExpression(
-        decomposition_dict={
-            k: np.atleast_2d(solve(v)) for k, v in expr.decomposition_dict.items()
-        },
+        decomposition_dict={k: np.atleast_2d(solve(v)) for k, v in expr.decomposition_dict.items()},
         const=np.atleast_1d(solve(expr.const)),
     )

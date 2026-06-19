@@ -64,9 +64,9 @@ def _make_verifier(method: str, obbt: str | None = None) -> Verifier:
 def test_norml1_returns_linear_expression(method):
     """NormL1 prox is registered on the base class; every backend inherits."""
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    out = v.prox(NormL1(lambd=0.3), rhs, gamma=0.5)
+    out = v.prox(NormL1(lambd=0.3), arg, gamma=0.5)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
@@ -78,8 +78,8 @@ def test_norml1_emits_softthreshold_on_mip():
     decomposition — MIP encodes SoftThreshold natively).
     """
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    v.prox(NormL1(lambd=0.3), rhs, gamma=0.5)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(NormL1(lambd=0.3), arg, gamma=0.5)
 
     n_soft = sum(1 for s in v.canonicalizer.steps if isinstance(s, SoftThreshold))
     assert n_soft == 1
@@ -95,8 +95,8 @@ def test_norml1_decomposes_to_two_relus_on_sdp():
     the two registry layers (prox + step) compose correctly.
     """
     v = _make_verifier("sdp")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    v.prox(NormL1(lambd=0.3), rhs, gamma=0.5)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(NormL1(lambd=0.3), arg, gamma=0.5)
 
     # SDP canonicalizer tracks Relus it encoded
     assert len(v.canonicalizer._relu_steps) == 2
@@ -110,9 +110,9 @@ def test_norml1_decomposes_to_two_relus_on_sdp():
 def test_elasticnet_returns_linear_expression(method):
     """ElasticNet prox is registered on the base; every backend inherits."""
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    out = v.prox(ElasticNet(alpha=0.3, beta=0.5), rhs, gamma=0.4)
+    out = v.prox(ElasticNet(alpha=0.3, beta=0.5), arg, gamma=0.4)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
@@ -126,8 +126,8 @@ def test_elasticnet_emits_softthreshold_on_mip():
     not a separate step).
     """
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    v.prox(ElasticNet(alpha=0.3, beta=0.5), rhs, gamma=0.4)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(ElasticNet(alpha=0.3, beta=0.5), arg, gamma=0.4)
 
     soft_steps = [s for s in v.canonicalizer.steps if isinstance(s, SoftThreshold)]
     assert len(soft_steps) == 1
@@ -141,8 +141,8 @@ def test_elasticnet_decomposes_to_two_relus_on_sdp():
     into two ReLUs via _DECOMPOSERS — same composition as NormL1.
     """
     v = _make_verifier("sdp")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    v.prox(ElasticNet(alpha=0.3, beta=0.5), rhs, gamma=0.4)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(ElasticNet(alpha=0.3, beta=0.5), arg, gamma=0.4)
 
     assert len(v.canonicalizer._relu_steps) == 2
     assert all(isinstance(s, Relu) for s in v.canonicalizer._relu_steps)
@@ -157,8 +157,8 @@ def test_elasticnet_reduces_to_norml1_when_beta_zero():
     alpha, gamma = 0.3, 0.4
 
     v_en = _make_verifier("mip")
-    rhs_en = v_en.add_param(3, lb=-1.0, ub=1.0)
-    v_en.prox(ElasticNet(alpha=alpha, beta=0.0), rhs_en, gamma=gamma)
+    arg_en = v_en.add_param(3, lb=-1.0, ub=1.0)
+    v_en.prox(ElasticNet(alpha=alpha, beta=0.0), arg_en, gamma=gamma)
 
     v_l1 = _make_verifier("mip")
     rhs_l1 = v_l1.add_param(3, lb=-1.0, ub=1.0)
@@ -171,27 +171,27 @@ def test_elasticnet_reduces_to_norml1_when_beta_zero():
 
 def test_elasticnet_ridge_only_when_alpha_zero():
     """
-    With alpha = 0 the prox is pure ridge shrinkage: rhs / (1 + 2*beta*gamma).
+    With alpha = 0 the prox is pure ridge shrinkage: arg / (1 + 2*beta*gamma).
     Verified numerically on the math wrapper (the lowering still emits a
     SoftThreshold with lambd=0, which is the identity-shaped envelope).
     """
     beta, gamma = 0.5, 0.4
-    rhs = np.array([-2.0, 0.05, 1.5])
-    expected = rhs / (1.0 + 2.0 * beta * gamma)
-    np.testing.assert_allclose(ElasticNet(alpha=0.0, beta=beta).prox(rhs, gamma), expected)
+    arg = np.array([-2.0, 0.05, 1.5])
+    expected = arg / (1.0 + 2.0 * beta * gamma)
+    np.testing.assert_allclose(ElasticNet(alpha=0.0, beta=beta).prox(arg, gamma), expected)
 
 
 def test_elasticnet_prox_matches_closed_form():
     """
     Numerical math-layer sanity: ElasticNet.prox matches the closed-form
-    S_{alpha*gamma}(rhs) / (1 + 2*beta*gamma) on a random rhs.
+    S_{alpha*gamma}(arg) / (1 + 2*beta*gamma) on a random arg.
     """
     rng = np.random.default_rng(7)
     alpha, beta, gamma = 0.3, 0.5, 0.4
-    rhs = rng.normal(size=8)
+    arg = rng.normal(size=8)
     thresh = alpha * gamma
-    expected = np.sign(rhs) * np.maximum(np.abs(rhs) - thresh, 0.0) / (1.0 + 2.0 * beta * gamma)
-    np.testing.assert_allclose(ElasticNet(alpha=alpha, beta=beta).prox(rhs, gamma), expected)
+    expected = np.sign(arg) * np.maximum(np.abs(arg) - thresh, 0.0) / (1.0 + 2.0 * beta * gamma)
+    np.testing.assert_allclose(ElasticNet(alpha=alpha, beta=beta).prox(arg, gamma), expected)
 
 
 # --- HuberLoss ---
@@ -201,9 +201,9 @@ def test_elasticnet_prox_matches_closed_form():
 def test_huberloss_returns_linear_expression(method):
     """HuberLoss prox is registered on the base; every backend inherits."""
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    out = v.prox(HuberLoss(delta=0.5), rhs, gamma=0.4)
+    out = v.prox(HuberLoss(delta=0.5), arg, gamma=0.4)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
@@ -215,8 +215,8 @@ def test_huberloss_emits_softthreshold_on_mip():
     threshold scaled to delta * (1 + gamma).
     """
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    v.prox(HuberLoss(delta=0.5), rhs, gamma=0.4)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(HuberLoss(delta=0.5), arg, gamma=0.4)
 
     soft_steps = [s for s in v.canonicalizer.steps if isinstance(s, SoftThreshold)]
     assert len(soft_steps) == 1
@@ -231,8 +231,8 @@ def test_huberloss_decomposes_to_two_relus_on_sdp():
     explicit two-ReLU form.
     """
     v = _make_verifier("sdp")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    v.prox(HuberLoss(delta=0.5), rhs, gamma=0.4)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(HuberLoss(delta=0.5), arg, gamma=0.4)
 
     assert len(v.canonicalizer._relu_steps) == 2
     assert all(isinstance(s, Relu) for s in v.canonicalizer._relu_steps)
@@ -240,53 +240,53 @@ def test_huberloss_decomposes_to_two_relus_on_sdp():
 
 def test_huberloss_prox_middle_branch():
     """
-    For rhs entirely inside the quadratic region (|rhs_i| <= delta*(1+gamma)),
+    For arg entirely inside the quadratic region (|arg_i| <= delta*(1+gamma)),
     the prox is pure linear shrinkage by 1/(1+gamma).
     """
     delta, gamma = 1.0, 1.0
-    # theta = 2.0; all |rhs_i| < 2.0
-    rhs = np.array([-1.5, 0.5, 1.9, -0.1])
-    expected = rhs / (1.0 + gamma)
-    np.testing.assert_allclose(HuberLoss(delta=delta).prox(rhs, gamma), expected)
+    # theta = 2.0; all |arg_i| < 2.0
+    arg = np.array([-1.5, 0.5, 1.9, -0.1])
+    expected = arg / (1.0 + gamma)
+    np.testing.assert_allclose(HuberLoss(delta=delta).prox(arg, gamma), expected)
 
 
 def test_huberloss_prox_tail_branch():
     """
-    For rhs entirely outside the quadratic region (|rhs_i| > delta*(1+gamma)),
+    For arg entirely outside the quadratic region (|arg_i| > delta*(1+gamma)),
     the prox subtracts a constant gamma*delta toward zero.
     """
     delta, gamma = 1.0, 1.0
-    # theta = 2.0; all |rhs_i| > 2.0
-    rhs = np.array([-5.0, 3.5, 2.5, -4.2])
-    expected = rhs - gamma * delta * np.sign(rhs)
-    np.testing.assert_allclose(HuberLoss(delta=delta).prox(rhs, gamma), expected)
+    # theta = 2.0; all |arg_i| > 2.0
+    arg = np.array([-5.0, 3.5, 2.5, -4.2])
+    expected = arg - gamma * delta * np.sign(arg)
+    np.testing.assert_allclose(HuberLoss(delta=delta).prox(arg, gamma), expected)
 
 
 def test_huberloss_prox_matches_closed_form():
     """
     Numerical math-layer sanity: HuberLoss.prox matches the closed-form
-    piecewise formula on a random rhs mixing both regimes.
+    piecewise formula on a random arg mixing both regimes.
     """
     rng = np.random.default_rng(11)
     delta, gamma = 0.7, 0.6
-    rhs = rng.normal(scale=2.0, size=12)  # mixes the quadratic and linear regions
+    arg = rng.normal(scale=2.0, size=12)  # mixes the quadratic and linear regions
     theta = delta * (1.0 + gamma)
     expected = np.where(
-        np.abs(rhs) <= theta,
-        rhs / (1.0 + gamma),
-        rhs - gamma * delta * np.sign(rhs),
+        np.abs(arg) <= theta,
+        arg / (1.0 + gamma),
+        arg - gamma * delta * np.sign(arg),
     )
-    np.testing.assert_allclose(HuberLoss(delta=delta).prox(rhs, gamma), expected)
+    np.testing.assert_allclose(HuberLoss(delta=delta).prox(arg, gamma), expected)
 
 
 def test_huberloss_delta_zero_identity():
     """
     delta = 0 makes h(x) identically zero; the prox is the identity for
-    any rhs and any gamma.
+    any arg and any gamma.
     """
-    rhs = np.array([-3.7, 0.0, 0.42, 2.0])
+    arg = np.array([-3.7, 0.0, 0.42, 2.0])
     for gamma in (0.1, 1.0, 10.0):
-        np.testing.assert_allclose(HuberLoss(delta=0.0).prox(rhs, gamma), rhs)
+        np.testing.assert_allclose(HuberLoss(delta=0.0).prox(arg, gamma), arg)
 
 
 # --- HingeLoss ---
@@ -295,10 +295,10 @@ def test_huberloss_delta_zero_identity():
 @pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
 def test_hingeloss_returns_linear_expression(method):
     """Standard hinge lowers to one SaturatedLinear clip on the margin
-    residual 1 - rhs; all three backends accept it."""
+    residual 1 - arg; all three backends accept it."""
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    out = v.prox(HingeLoss(), rhs, gamma=0.5)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    out = v.prox(HingeLoss(), arg, gamma=0.5)
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
 
@@ -306,9 +306,9 @@ def test_hingeloss_returns_linear_expression(method):
 def test_hingeloss_emits_one_satlin_on_mip():
     """One SaturatedLinear with l=0, u=γ, applied to the margin residual."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
     gamma = 0.5
-    v.prox(HingeLoss(), rhs, gamma=gamma)
+    v.prox(HingeLoss(), arg, gamma=gamma)
 
     satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
     assert len(satlins) == 1
@@ -320,10 +320,10 @@ def test_hingeloss_prox_matches_closed_form():
     """Numpy-level: covers all three branches of the piecewise formula."""
     g = HingeLoss()
     # v < 1 - γ: shift up by γ; in middle: clamp to 1; v > 1: identity.
-    rhs = np.array([-1.0, 0.0, 0.5, 0.8, 1.5, 2.0])
+    arg = np.array([-1.0, 0.0, 0.5, 0.8, 1.5, 2.0])
     gamma = 0.5
     expected = np.array([-0.5, 0.5, 1.0, 1.0, 1.5, 2.0])
-    np.testing.assert_allclose(g.prox(rhs, gamma=gamma), expected)
+    np.testing.assert_allclose(g.prox(arg, gamma=gamma), expected)
 
     rng = np.random.default_rng(0)
     for _ in range(5):
@@ -359,9 +359,9 @@ def test_hingeloss_grad_subgradient():
 def test_indnonnegative_returns_linear_expression(method):
     """IndNonNegative prox is registered on the base; every backend inherits."""
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    out = v.prox(IndNonNegative(), rhs)
+    out = v.prox(IndNonNegative(), arg)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
@@ -370,8 +370,8 @@ def test_indnonnegative_returns_linear_expression(method):
 def test_indnonnegative_emits_relu_on_mip():
     """On MIP, IndNonNegative lowers to a single Relu primitive."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    v.prox(IndNonNegative(), rhs)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(IndNonNegative(), arg)
 
     n_relu = sum(1 for s in v.canonicalizer.steps if isinstance(s, Relu))
     assert n_relu == 1
@@ -380,8 +380,8 @@ def test_indnonnegative_emits_relu_on_mip():
 def test_indnonnegative_gamma_is_ignored():
     """Indicator prox is gamma-independent; lowering should still produce one Relu."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    v.prox(IndNonNegative(), rhs, gamma=42.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(IndNonNegative(), arg, gamma=42.0)
 
     n_relu = sum(1 for s in v.canonicalizer.steps if isinstance(s, Relu))
     assert n_relu == 1
@@ -391,9 +391,9 @@ def test_indnonnegative_gamma_is_ignored():
 def test_indnonpositive_returns_linear_expression(method):
     """IndNonPositive prox is registered on the base; every backend inherits."""
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    out = v.prox(IndNonPositive(), rhs)
+    out = v.prox(IndNonPositive(), arg)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
@@ -401,16 +401,16 @@ def test_indnonpositive_returns_linear_expression(method):
 
 def test_indnonpositive_emits_one_relu_on_mip():
     """
-    IndNonPositive uses the -Relu(-rhs) reduction, so MIP sees exactly one Relu.
-    Its input bounds are the negation/swap of the original rhs bounds.
+    IndNonPositive uses the -Relu(-arg) reduction, so MIP sees exactly one Relu.
+    Its input bounds are the negation/swap of the original arg bounds.
     """
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-2.0, ub=1.0)
-    v.prox(IndNonPositive(), rhs)
+    arg = v.add_param(3, lb=-2.0, ub=1.0)
+    v.prox(IndNonPositive(), arg)
 
     relus = [s for s in v.canonicalizer.steps if isinstance(s, Relu)]
     assert len(relus) == 1
-    # Bounds on -rhs are [-rhs.ub, -rhs.lb] = [-1, 2]
+    # Bounds on -arg are [-arg.ub, -arg.lb] = [-1, 2]
     np.testing.assert_allclose(relus[0].lb, [-1.0, -1.0, -1.0])
     np.testing.assert_allclose(relus[0].ub, [2.0, 2.0, 2.0])
 
@@ -422,11 +422,11 @@ def test_indaffine_returns_linear_expression_on_mip():
     """IndAffine introduces a primal u and dual ν via a block KKT system;
     the prox output is u as a LinearExpression of dim n."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     A = np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
     b = np.array([0.5, 0.3])
-    out = v.prox(IndAffine(A=A, b=b), rhs)
+    out = v.prox(IndAffine(A=A, b=b), arg)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
@@ -436,11 +436,11 @@ def test_indaffine_sdp_works():
     """SDP path works without OBBT — bounds for both u and ν derived
     via solve_linexpr on the block KKT matrix."""
     v = _make_verifier("sdp")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     A = np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
     b = np.array([0.5, 0.3])
-    out = v.prox(IndAffine(A=A, b=b), rhs)
+    out = v.prox(IndAffine(A=A, b=b), arg)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
@@ -457,19 +457,19 @@ def test_indaffine_sdp_obbt_tightens_registered_bounds():
 
     A = np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
     b = np.array([0.5, 0.3])
-    rhs_lb, rhs_ub = np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
+    arg_lb, arg_ub = np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
     M_block = np.block([[np.eye(3), A.T], [A, np.zeros((2, 2))]])
 
     # Reference: solve-derived bounds (what SDP gets at registration).
     v_ref = _make_verifier("sdp")
-    rhs_ref = v_ref.add_param(3, lb=rhs_lb, ub=rhs_ub)
+    arg_ref = v_ref.add_param(3, lb=arg_lb, ub=arg_ub)
     b_le = LinearExpression(decomposition_dict={}, const=b)
-    solve_lb, solve_ub = solve_linexpr(M_block, stack([rhs_ref, b_le])).bound_propagation()
+    solve_lb, solve_ub = solve_linexpr(M_block, stack([arg_ref, b_le])).bound_propagation()
 
     # With OBBT enabled: SDP.update_bounds is called by _tighten_constraint_bounds.
     v_obbt = _make_verifier("sdp", obbt="gurobi")
-    rhs = v_obbt.add_param(3, lb=rhs_lb, ub=rhs_ub)
-    u = v_obbt.prox(IndAffine(A=A, b=b), rhs)
+    arg = v_obbt.add_param(3, lb=arg_lb, ub=arg_ub)
+    u = v_obbt.prox(IndAffine(A=A, b=b), arg)
     # _qp_kkt registers the dual ν before the primal x, so ν is the second-to-last.
     nu = v_obbt.iterates[-2]
 
@@ -486,23 +486,23 @@ def test_indaffine_simulator_raises_notimplemented():
     """Simulator backend defers IndAffine (shares the implicit-iterate
     limitation with Quadratic/LeastSquares)."""
     v = _make_verifier("simulator")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     with pytest.raises(NotImplementedError, match="IndAffine"):
-        v.prox(IndAffine(A=np.array([[1.0, 1.0, 1.0]]), b=np.array([0.0])), rhs)
+        v.prox(IndAffine(A=np.array([[1.0, 1.0, 1.0]]), b=np.array([0.0])), arg)
 
 
 def test_indaffine_introduces_two_iterates():
     """First multi-iterate KKT prox: registers exactly TWO new iterates
     (primal u of dim n, dual ν of dim m)."""
     v = _make_verifier("mip")
-    rhs = v.add_param(4, lb=-1.0, ub=1.0)
+    arg = v.add_param(4, lb=-1.0, ub=1.0)
 
     A = np.array([[1.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 1.0]])  # m=2, n=4
     b = np.array([0.5, -0.3])
 
     n_before = len(v.iterates)
-    v.prox(IndAffine(A=A, b=b), rhs)
+    v.prox(IndAffine(A=A, b=b), arg)
     assert len(v.iterates) == n_before + 2
     # The two new iterates: ν (dim m=2) then the primal x (dim n=4) — _qp_kkt
     # registers the equality dual before the primal.
@@ -517,7 +517,7 @@ def test_indaffine_scalar_b_broadcasts_to_m():
     was registered with mismatched bounds (length 1 for an m-dim var).
     """
     v = _make_verifier("mip")
-    rhs = v.add_param(4, lb=-1.0, ub=1.0)
+    arg = v.add_param(4, lb=-1.0, ub=1.0)
     # m = 3 rows, full row rank so the block KKT is nonsingular.
     A = np.array(
         [
@@ -526,7 +526,7 @@ def test_indaffine_scalar_b_broadcasts_to_m():
             [0.0, 0.0, 1.0, 0.0],
         ]
     )
-    v.prox(IndAffine(A=A, b=0.25), rhs)
+    v.prox(IndAffine(A=A, b=0.25), arg)
     # ν is registered just before the primal x (so second-to-last), of dim m=3 with
     # finite length-3 bounds derived from broadcasting b = 0.25.
     nu = v.iterates[-2]
@@ -539,17 +539,17 @@ def test_indaffine_scalar_b_broadcasts_to_m():
 def test_indaffine_emits_no_step():
     """Lowering posts equality constraints, never a Step."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
     A = np.array([[1.0, 1.0, 0.0]])
     b = np.array([0.5])
 
     n_steps_before = len(v.canonicalizer.steps)
-    v.prox(IndAffine(A=A, b=b), rhs)
+    v.prox(IndAffine(A=A, b=b), arg)
     assert len(v.canonicalizer.steps) == n_steps_before
 
 
 def test_indaffine_prox_matches_closed_form():
-    """Numpy-level: prox = rhs - A.T @ solve(A A.T, A rhs - b), and the
+    """Numpy-level: prox = arg - A.T @ solve(A A.T, A arg - b), and the
     result lies exactly on the set {x : Ax = b}."""
     rng = np.random.default_rng(0)
     for _ in range(5):
@@ -557,11 +557,11 @@ def test_indaffine_prox_matches_closed_form():
         m = int(rng.integers(1, n))  # m < n so AA.T is invertible
         A = rng.standard_normal((m, n))
         b = rng.standard_normal(m)
-        rhs = rng.standard_normal(n)
+        arg = rng.standard_normal(n)
 
         ind = IndAffine(A=A, b=b)
-        out = ind.prox(rhs)
-        expected = rhs - A.T @ np.linalg.solve(A @ A.T, A @ rhs - b)
+        out = ind.prox(arg)
+        expected = arg - A.T @ np.linalg.solve(A @ A.T, A @ arg - b)
         np.testing.assert_allclose(out, expected, atol=1e-10)
         # Projection lands on the affine set.
         np.testing.assert_allclose(A @ out, b, atol=1e-10)
@@ -571,9 +571,9 @@ def test_indaffine_gamma_is_ignored():
     """Indicator-prox γ-independence: the result is the same for any γ."""
     A = np.array([[1.0, 2.0, 0.0]])
     b = np.array([1.0])
-    rhs = np.array([0.5, 0.5, 0.5])
+    arg = np.array([0.5, 0.5, 0.5])
     ind = IndAffine(A=A, b=b)
-    np.testing.assert_allclose(ind.prox(rhs, gamma=1.0), ind.prox(rhs, gamma=10.0))
+    np.testing.assert_allclose(ind.prox(arg, gamma=1.0), ind.prox(arg, gamma=10.0))
 
 
 def test_indaffine_eval():
@@ -600,7 +600,7 @@ def test_indaffine_eval_and_prox_reject_linexpr_b():
     Without the guard, ``eval`` silently makes ``self.A @ x - self.b`` an
     LE (via ``__array_priority__``) and then ``np.allclose`` / ``np.abs``
     fails inside numpy with a confusing traceback; ``prox`` hits
-    ``np.linalg.solve(..., A @ rhs - b_LE)`` and dies on the same path.
+    ``np.linalg.solve(..., A @ arg - b_LE)`` and dies on the same path.
     """
     v = _make_verifier("mip")
     A = np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
@@ -615,30 +615,30 @@ def test_indaffine_eval_and_prox_reject_linexpr_b():
 
 def test_indaffine_supports_linexpr_b():
     """``b`` may be a LinearExpression parameter; the posted equalities
-    reference rhs, u, ν, and b's leaf."""
+    reference arg, u, ν, and b's leaf."""
     v = _make_verifier("mip")
     n, m = 3, 2
     A = np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
-    rhs = v.add_param(n, lb=-1.0, ub=1.0)
+    arg = v.add_param(n, lb=-1.0, ub=1.0)
     b_param = v.add_param(m, lb=-0.5, ub=0.5)
 
-    out = v.prox(IndAffine(A=A, b=b_param), rhs)
+    out = v.prox(IndAffine(A=A, b=b_param), arg)
     assert out.is_leaf
     assert out.ndim == n
 
 
 def test_indaffine_end_to_end_mip():
-    """Pin rhs via tight bounds, solve for u, assert u matches the
+    """Pin arg via tight bounds, solve for u, assert u matches the
     closed-form projection and Au == b numerically."""
     A = np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
     b = np.array([0.5, 0.3])
-    rhs_value = np.array([0.4, 0.6, -0.2])
+    arg_value = np.array([0.4, 0.6, -0.2])
 
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=rhs_value, ub=rhs_value)
-    u = v.prox(IndAffine(A=A, b=b), rhs)
+    arg = v.add_param(3, lb=arg_value, ub=arg_value)
+    u = v.prox(IndAffine(A=A, b=b), arg)
 
-    expected = rhs_value - A.T @ np.linalg.solve(A @ A.T, A @ rhs_value - b)
+    expected = arg_value - A.T @ np.linalg.solve(A @ A.T, A @ arg_value - b)
 
     solver = v.canonicalizer.solver
     for i in range(3):
@@ -675,19 +675,19 @@ def test_indaffine_rejects_1d_A():
 def test_indballlinf_returns_linear_expression(method):
     """IndBallLinf prox is registered on the base; every backend inherits."""
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-2.0, ub=2.0)
+    arg = v.add_param(3, lb=-2.0, ub=2.0)
 
-    out = v.prox(IndBallLinf(r=0.7), rhs)
+    out = v.prox(IndBallLinf(r=0.7), arg)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
 
 
 def test_indballlinf_emits_satlin_with_symmetric_bounds():
-    """IndBallLinf lowers to SaturatedLinear with l=-r, u=r broadcast to rhs.ndim."""
+    """IndBallLinf lowers to SaturatedLinear with l=-r, u=r broadcast to arg.ndim."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-2.0, ub=2.0)
-    v.prox(IndBallLinf(r=0.7), rhs)
+    arg = v.add_param(3, lb=-2.0, ub=2.0)
+    v.prox(IndBallLinf(r=0.7), arg)
 
     satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
     assert len(satlins) == 1
@@ -702,19 +702,19 @@ def test_indballlinf_emits_satlin_with_symmetric_bounds():
 def test_indbox_returns_linear_expression(method):
     """IndBox prox lowering is registered on the base; every backend inherits."""
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-2.0, ub=2.0)
+    arg = v.add_param(3, lb=-2.0, ub=2.0)
 
-    out = v.prox(IndBox(l=-0.5, u=0.5), rhs)
+    out = v.prox(IndBox(l=-0.5, u=0.5), arg)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
 
 
 def test_indbox_scalar_bounds_broadcast():
-    """Scalar l/u get broadcast to rhs.ndim before SaturatedLinear sees them."""
+    """Scalar l/u get broadcast to arg.ndim before SaturatedLinear sees them."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-2.0, ub=2.0)
-    v.prox(IndBox(l=-0.5, u=0.5), rhs)
+    arg = v.add_param(3, lb=-2.0, ub=2.0)
+    v.prox(IndBox(l=-0.5, u=0.5), arg)
 
     satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
     assert len(satlins) == 1
@@ -727,8 +727,8 @@ def test_indbox_array_bounds_forwarded_unchanged():
     l = np.array([-1.0, 0.0, -0.5])
     u = np.array([0.5, 1.0, 1.0])
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-2.0, ub=2.0)
-    v.prox(IndBox(l=l, u=u), rhs)
+    arg = v.add_param(3, lb=-2.0, ub=2.0)
+    v.prox(IndBox(l=l, u=u), arg)
 
     satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
     assert len(satlins) == 1
@@ -742,7 +742,7 @@ def test_indbox_eval_and_prox_reject_linexpr_bounds():
 
     Without the guard, ``eval``'s ``x >= self.l`` returns an
     :class:`InequalityConstraint` whose truthiness silently lies, and
-    ``prox``'s ``np.minimum(np.maximum(rhs, l_LE), u_LE)`` dies in a
+    ``prox``'s ``np.minimum(np.maximum(arg, l_LE), u_LE)`` dies in a
     generic ``LinearExpression`` codepath.
     """
     v = _make_verifier("mip")
@@ -772,12 +772,12 @@ def test_indbox_eval_and_prox_reject_linexpr_bounds():
 def test_indhalfspace_returns_linear_expression(method):
     """
     IndHalfSpace lowers to one scalar Relu plus a rank-one lift back to
-    rhs.ndim. All three backends accept this.
+    arg.ndim. All three backends accept this.
     """
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    out = v.prox(IndHalfSpace(a=np.array([1.0, 1.0, 0.0]), b=0.5), rhs)
+    out = v.prox(IndHalfSpace(a=np.array([1.0, 1.0, 0.0]), b=0.5), arg)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
@@ -786,12 +786,12 @@ def test_indhalfspace_returns_linear_expression(method):
 def test_indhalfspace_emits_one_scalar_relu_on_mip():
     """Exactly one Relu, applied to a 1-D signed-distance LinearExpression."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    v.prox(IndHalfSpace(a=np.array([1.0, 1.0, 0.0]), b=0.5), rhs)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(IndHalfSpace(a=np.array([1.0, 1.0, 0.0]), b=0.5), arg)
 
     relus = [s for s in v.canonicalizer.steps if isinstance(s, Relu)]
     assert len(relus) == 1
-    assert relus[0].rhs.ndim == 1
+    assert relus[0].arg.ndim == 1
 
 
 def test_indhalfspace_gamma_is_ignored():
@@ -812,7 +812,7 @@ def test_indhalfspace_gamma_is_ignored():
     relus1 = [s for s in v1.canonicalizer.steps if isinstance(s, Relu)]
     relus2 = [s for s in v2.canonicalizer.steps if isinstance(s, Relu)]
     assert len(relus1) == len(relus2) == 1
-    assert relus1[0].rhs.ndim == relus2[0].rhs.ndim == 1
+    assert relus1[0].arg.ndim == relus2[0].arg.ndim == 1
 
 
 def test_indhalfspace_prox_matches_closed_form():
@@ -872,19 +872,19 @@ def test_indpoint_returns_linear_expression(method):
     All three backends should accept this.
     """
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    out = v.prox(IndPoint(p=np.array([0.1, 0.2, 0.3])), rhs)
+    out = v.prox(IndPoint(p=np.array([0.1, 0.2, 0.3])), arg)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
 
 
 def test_indpoint_scalar_broadcast():
-    """Scalar p is broadcast to rhs.ndim; SaturatedLinear sees l == u arrays."""
+    """Scalar p is broadcast to arg.ndim; SaturatedLinear sees l == u arrays."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    v.prox(IndPoint(p=0.5), rhs)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(IndPoint(p=0.5), arg)
 
     satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
     assert len(satlins) == 1
@@ -893,16 +893,16 @@ def test_indpoint_scalar_broadcast():
 
 
 def test_indpoint_lhs_bounds_collapse_to_p():
-    """The SaturatedLinear lhs bounds collapse to [p, p] for IndPoint."""
+    """The SaturatedLinear output bounds collapse to [p, p] for IndPoint."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
     p = np.array([0.1, 0.2, 0.3])
-    v.prox(IndPoint(p=p), rhs)
+    v.prox(IndPoint(p=p), arg)
 
     satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
     assert len(satlins) == 1
-    np.testing.assert_allclose(satlins[0].lhs.lb, p)
-    np.testing.assert_allclose(satlins[0].lhs.ub, p)
+    np.testing.assert_allclose(satlins[0].output.lb, p)
+    np.testing.assert_allclose(satlins[0].output.ub, p)
 
 
 # --- LabeledHingeLoss ---
@@ -913,8 +913,8 @@ def test_labeledhingeloss_returns_linear_expression(method):
     """Labeled hinge lowers to one SaturatedLinear clip on the labeled
     margin residual; all three backends accept it."""
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    out = v.prox(LabeledHingeLoss(y=np.array([1.0, -1.0, 1.0])), rhs, gamma=0.5)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    out = v.prox(LabeledHingeLoss(y=np.array([1.0, -1.0, 1.0])), arg, gamma=0.5)
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
 
@@ -922,9 +922,9 @@ def test_labeledhingeloss_returns_linear_expression(method):
 def test_labeledhingeloss_emits_one_satlin_on_mip():
     """One SaturatedLinear with l=0, u=γ, applied to the labeled residual."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
     gamma = 0.5
-    v.prox(LabeledHingeLoss(y=np.array([1.0, -1.0, 1.0])), rhs, gamma=gamma)
+    v.prox(LabeledHingeLoss(y=np.array([1.0, -1.0, 1.0])), arg, gamma=gamma)
 
     satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
     assert len(satlins) == 1
@@ -938,14 +938,14 @@ def test_labeledhingeloss_prox_matches_closed_form():
     for _ in range(5):
         n = int(rng.integers(2, 6))
         y = rng.choice([-1.0, 1.0], size=n)
-        rhs = rng.uniform(-3.0, 3.0, size=n)
+        arg = rng.uniform(-3.0, 3.0, size=n)
         gamma = float(rng.uniform(0.1, 2.0))
 
         g = LabeledHingeLoss(y=y)
-        out = g.prox(rhs, gamma=gamma)
+        out = g.prox(arg, gamma=gamma)
         # u + y * satlin(1 - y*u; 0, gamma)
-        clip = np.minimum(np.maximum(1.0 - y * rhs, 0.0), gamma)
-        expected = rhs + y * clip
+        clip = np.minimum(np.maximum(1.0 - y * arg, 0.0), gamma)
+        expected = arg + y * clip
         np.testing.assert_allclose(out, expected)
 
 
@@ -954,11 +954,11 @@ def test_labeledhingeloss_y_all_ones_matches_hingeloss():
     rng = np.random.default_rng(1)
     for _ in range(3):
         n = int(rng.integers(2, 6))
-        rhs = rng.uniform(-3.0, 3.0, size=n)
+        arg = rng.uniform(-3.0, 3.0, size=n)
         gamma = float(rng.uniform(0.1, 2.0))
 
-        labeled = LabeledHingeLoss(y=np.ones(n)).prox(rhs, gamma=gamma)
-        unlabeled = HingeLoss().prox(rhs, gamma=gamma)
+        labeled = LabeledHingeLoss(y=np.ones(n)).prox(arg, gamma=gamma)
+        unlabeled = HingeLoss().prox(arg, gamma=gamma)
         np.testing.assert_allclose(labeled, unlabeled)
 
 
@@ -967,11 +967,11 @@ def test_labeledhingeloss_y_all_minus_ones_flips():
     rng = np.random.default_rng(2)
     for _ in range(3):
         n = int(rng.integers(2, 6))
-        rhs = rng.uniform(-3.0, 3.0, size=n)
+        arg = rng.uniform(-3.0, 3.0, size=n)
         gamma = float(rng.uniform(0.1, 2.0))
 
-        labeled = LabeledHingeLoss(y=-np.ones(n)).prox(rhs, gamma=gamma)
-        mirror = -HingeLoss().prox(-rhs, gamma=gamma)
+        labeled = LabeledHingeLoss(y=-np.ones(n)).prox(arg, gamma=gamma)
+        mirror = -HingeLoss().prox(-arg, gamma=gamma)
         np.testing.assert_allclose(labeled, mirror)
 
 
@@ -1011,15 +1011,15 @@ def test_labeledhingeloss_rejects_2d_y():
 @pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
 def test_linear_returns_linear_expression(method):
     """
-    Linear lowers to pure ``rhs - gamma*c`` arithmetic on the
+    Linear lowers to pure ``arg - gamma*c`` arithmetic on the
     ``LinearExpression`` — no Step is emitted and no fresh leaf is
     introduced. All three backends inherit from the base class.
     """
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     c = np.array([1.0, -2.0, 3.0])
-    out = v.prox(Linear(c=c), rhs, gamma=0.5)
+    out = v.prox(Linear(c=c), arg, gamma=0.5)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
@@ -1028,64 +1028,64 @@ def test_linear_returns_linear_expression(method):
 def test_linear_emits_no_steps_on_mip():
     """Linear's prox is pure arithmetic — no Step is added to the canonicalizer."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     n_steps_before = len(v.canonicalizer.steps)
-    v.prox(Linear(c=np.array([1.0, -2.0, 3.0])), rhs, gamma=0.5)
+    v.prox(Linear(c=np.array([1.0, -2.0, 3.0])), arg, gamma=0.5)
     assert len(v.canonicalizer.steps) == n_steps_before
 
 
 def test_linear_const_and_coefficient_with_array_c():
     """
     For numeric ``c``, the output decomposition equals
-    ``I * rhs_leaf`` (coefficient) and ``const == -gamma*c``.
+    ``I * arg_leaf`` (coefficient) and ``const == -gamma*c``.
     """
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     c = np.array([1.0, -2.0, 3.0])
     gamma = 0.5
-    out = v.prox(Linear(c=c), rhs, gamma=gamma)
+    out = v.prox(Linear(c=c), arg, gamma=gamma)
 
     np.testing.assert_allclose(out.const, -gamma * c)
-    # rhs is a leaf — its decomposition is {rhs: I}; after subtracting gamma*c
-    # (a constant), the coefficient on rhs is still I.
-    np.testing.assert_allclose(out.decomposition_dict[rhs].toarray(), np.eye(3))
+    # arg is a leaf — its decomposition is {arg: I}; after subtracting gamma*c
+    # (a constant), the coefficient on arg is still I.
+    np.testing.assert_allclose(out.decomposition_dict[arg].toarray(), np.eye(3))
 
 
 def test_linear_supports_scalar_c():
     """Scalar ``c`` broadcasts via ``LinearExpression - gamma * scalar``."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    out = v.prox(Linear(c=2.5), rhs, gamma=0.4)
+    out = v.prox(Linear(c=2.5), arg, gamma=0.4)
     np.testing.assert_allclose(out.const, np.full(3, -0.4 * 2.5))
 
 
 def test_linear_supports_linexpr_c():
     """
     When ``c`` is itself a ``LinearExpression`` parameter, the output
-    references both leaves: ``+I`` on ``rhs`` and ``-gamma*I`` on ``c``.
+    references both leaves: ``+I`` on ``arg`` and ``-gamma*I`` on ``c``.
     """
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
     c = v.add_param(3, lb=-0.5, ub=0.5)
 
     gamma = 0.5
-    out = v.prox(Linear(c=c), rhs, gamma=gamma)
+    out = v.prox(Linear(c=c), arg, gamma=gamma)
 
-    np.testing.assert_allclose(out.decomposition_dict[rhs].toarray(), np.eye(3))
+    np.testing.assert_allclose(out.decomposition_dict[arg].toarray(), np.eye(3))
     np.testing.assert_allclose(out.decomposition_dict[c].toarray(), -gamma * np.eye(3))
 
 
 def test_linear_prox_matches_closed_form():
-    """Numpy-level: ``Linear(c).prox(rhs, gamma)`` equals ``rhs - gamma*c``."""
+    """Numpy-level: ``Linear(c).prox(arg, gamma)`` equals ``arg - gamma*c``."""
     rng = np.random.default_rng(0)
     for _ in range(5):
         c = rng.standard_normal(4)
-        rhs = rng.standard_normal(4)
+        arg = rng.standard_normal(4)
         gamma = float(rng.uniform(0.1, 2.0))
-        np.testing.assert_allclose(Linear(c=c).prox(rhs, gamma=gamma), rhs - gamma * c)
+        np.testing.assert_allclose(Linear(c=c).prox(arg, gamma=gamma), arg - gamma * c)
     # scalar c case
     np.testing.assert_allclose(
         Linear(c=1.5).prox(np.array([2.0, 3.0]), gamma=0.5),
@@ -1109,9 +1109,9 @@ def test_softnonnegative_returns_linear_expression(method):
     """SoftNonNegative lowers to one Relu step plus arithmetic;
     all three backends accept it."""
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    out = v.prox(SoftNonNegative(alpha=0.1), rhs, gamma=0.5)
+    out = v.prox(SoftNonNegative(alpha=0.1), arg, gamma=0.5)
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
 
@@ -1119,13 +1119,13 @@ def test_softnonnegative_returns_linear_expression(method):
 def test_softnonnegative_emits_one_relu_on_mip():
     """Exactly one Relu step is emitted by the lowering."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    v.prox(SoftNonNegative(alpha=0.2), rhs, gamma=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    v.prox(SoftNonNegative(alpha=0.2), arg, gamma=1.0)
 
     relus = [s for s in v.canonicalizer.steps if isinstance(s, Relu)]
     assert len(relus) == 1
-    # The Relu acts on the input rhs leaf directly.
-    assert relus[0].rhs is rhs
+    # The Relu acts on the input arg leaf directly.
+    assert relus[0].arg is arg
 
 
 def test_softnonnegative_prox_matches_closed_form_gamma_one():
@@ -1134,10 +1134,10 @@ def test_softnonnegative_prox_matches_closed_form_gamma_one():
     for _ in range(5):
         n = int(rng.integers(2, 6))
         alpha = float(rng.uniform(0.05, 0.95))
-        rhs = rng.uniform(-3.0, 3.0, size=n)
+        arg = rng.uniform(-3.0, 3.0, size=n)
 
-        out = SoftNonNegative(alpha=alpha).prox(rhs, gamma=1.0)
-        expected = alpha * rhs + (1.0 - alpha) * np.maximum(rhs, 0.0)
+        out = SoftNonNegative(alpha=alpha).prox(arg, gamma=1.0)
+        expected = alpha * arg + (1.0 - alpha) * np.maximum(arg, 0.0)
         np.testing.assert_allclose(out, expected)
 
 
@@ -1146,26 +1146,26 @@ def test_softnonnegative_prox_matches_closed_form_general_gamma():
     rng = np.random.default_rng(1)
     for gamma in [0.1, 0.5, 1.0, 2.0, 5.0]:
         alpha = 0.3
-        rhs = rng.uniform(-3.0, 3.0, size=4)
-        out = SoftNonNegative(alpha=alpha).prox(rhs, gamma=gamma)
+        arg = rng.uniform(-3.0, 3.0, size=4)
+        out = SoftNonNegative(alpha=alpha).prox(arg, gamma=gamma)
         alpha_tilde = alpha / (alpha + gamma * (1.0 - alpha))
-        expected = alpha_tilde * rhs + (1.0 - alpha_tilde) * np.maximum(rhs, 0.0)
+        expected = alpha_tilde * arg + (1.0 - alpha_tilde) * np.maximum(arg, 0.0)
         np.testing.assert_allclose(out, expected)
 
 
 def test_softnonnegative_alpha_one_is_identity():
     """α=1 ⇒ f ≡ 0, prox is identity for any γ."""
     rng = np.random.default_rng(2)
-    rhs = rng.uniform(-3.0, 3.0, size=5)
+    arg = rng.uniform(-3.0, 3.0, size=5)
     for gamma in [0.1, 1.0, 10.0]:
-        np.testing.assert_allclose(SoftNonNegative(alpha=1.0).prox(rhs, gamma=gamma), rhs)
+        np.testing.assert_allclose(SoftNonNegative(alpha=1.0).prox(arg, gamma=gamma), arg)
 
 
 def test_softnonnegative_small_alpha_approaches_relu():
     """α → 0⁺ ⇒ f → I_{R+}, prox → ReLU."""
-    rhs = np.array([-2.0, -0.5, 0.0, 0.5, 2.0])
-    out = SoftNonNegative(alpha=1e-6).prox(rhs, gamma=1.0)
-    np.testing.assert_allclose(out, np.maximum(rhs, 0.0), atol=1e-5)
+    arg = np.array([-2.0, -0.5, 0.0, 0.5, 2.0])
+    out = SoftNonNegative(alpha=1e-6).prox(arg, gamma=1.0)
+    np.testing.assert_allclose(out, np.maximum(arg, 0.0), atol=1e-5)
 
 
 def test_softnonnegative_eval():
@@ -1199,16 +1199,16 @@ def test_softnonnegative_rejects_alpha_out_of_range():
 
 
 def test_softnonnegative_end_to_end_mip():
-    """Pin rhs via tight bounds, solve, verify the recovered prox value
+    """Pin arg via tight bounds, solve, verify the recovered prox value
     matches the LeakyReLU formula coordinate-wise."""
     alpha = 0.25
     gamma = 1.0
-    rhs_value = np.array([-1.0, 0.5, -0.3])
-    expected = alpha * rhs_value + (1.0 - alpha) * np.maximum(rhs_value, 0.0)
+    arg_value = np.array([-1.0, 0.5, -0.3])
+    expected = alpha * arg_value + (1.0 - alpha) * np.maximum(arg_value, 0.0)
 
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=rhs_value, ub=rhs_value)
-    out = v.prox(SoftNonNegative(alpha=alpha), rhs, gamma=gamma)
+    arg = v.add_param(3, lb=arg_value, ub=arg_value)
+    out = v.prox(SoftNonNegative(alpha=alpha), arg, gamma=gamma)
 
     solver = v.canonicalizer.solver
     for i in range(3):
@@ -1232,13 +1232,13 @@ def test_softnonnegative_end_to_end_mip():
 @pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
 def test_sql2norm_returns_linear_expression(method):
     """
-    SqL2Norm lowers to ``rhs / (1 + gamma)`` — pure scalar shrinkage,
+    SqL2Norm lowers to ``arg / (1 + gamma)`` — pure scalar shrinkage,
     no Step emitted. All three backends inherit from the base class.
     """
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    out = v.prox(SqL2Norm(), rhs, gamma=0.5)
+    out = v.prox(SqL2Norm(), arg, gamma=0.5)
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
 
@@ -1246,40 +1246,40 @@ def test_sql2norm_returns_linear_expression(method):
 def test_sql2norm_emits_no_steps_on_mip():
     """SqL2Norm's prox is pure arithmetic — no Step is added."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     n_steps_before = len(v.canonicalizer.steps)
-    v.prox(SqL2Norm(), rhs, gamma=0.5)
+    v.prox(SqL2Norm(), arg, gamma=0.5)
     assert len(v.canonicalizer.steps) == n_steps_before
 
 
 def test_sql2norm_coefficient_is_scaled_identity():
-    """The output decomposition is ``(1/(1+gamma)) * I`` on the rhs leaf."""
+    """The output decomposition is ``(1/(1+gamma)) * I`` on the arg leaf."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     gamma = 0.5
-    out = v.prox(SqL2Norm(), rhs, gamma=gamma)
+    out = v.prox(SqL2Norm(), arg, gamma=gamma)
 
-    np.testing.assert_allclose(out.decomposition_dict[rhs].toarray(), np.eye(3) / (1.0 + gamma))
+    np.testing.assert_allclose(out.decomposition_dict[arg].toarray(), np.eye(3) / (1.0 + gamma))
     np.testing.assert_allclose(out.const, np.zeros(3))
 
 
 def test_sql2norm_gamma_one_halves_coefficient():
     """At the default ``gamma=1``, the coefficient collapses to ``0.5 * I``."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    out = v.prox(SqL2Norm(), rhs)
-    np.testing.assert_allclose(out.decomposition_dict[rhs].toarray(), 0.5 * np.eye(3))
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    out = v.prox(SqL2Norm(), arg)
+    np.testing.assert_allclose(out.decomposition_dict[arg].toarray(), 0.5 * np.eye(3))
 
 
 def test_sql2norm_prox_matches_closed_form():
-    """Numpy-level: ``SqL2Norm().prox(rhs, gamma)`` equals ``rhs/(1+gamma)``."""
+    """Numpy-level: ``SqL2Norm().prox(arg, gamma)`` equals ``arg/(1+gamma)``."""
     rng = np.random.default_rng(1)
     for _ in range(5):
-        rhs = rng.standard_normal(4)
+        arg = rng.standard_normal(4)
         gamma = float(rng.uniform(0.1, 2.0))
-        np.testing.assert_allclose(SqL2Norm().prox(rhs, gamma=gamma), rhs / (1.0 + gamma))
+        np.testing.assert_allclose(SqL2Norm().prox(arg, gamma=gamma), arg / (1.0 + gamma))
 
 
 def test_sql2norm_eval_and_grad():
@@ -1295,16 +1295,16 @@ def test_sql2norm_eval_and_grad():
 
 def test_quadratic_returns_linear_expression_on_mip():
     """
-    Quadratic lowers to a single linear equality (I + γQ) u == rhs - γq on
+    Quadratic lowers to a single linear equality (I + γQ) u == arg - γq on
     a fresh iterate u. MIP-only: SDP and Simulator backends explicitly
     defer (see the two ``_raises_notimplemented`` tests below).
     """
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     Q = np.eye(3) * 2.0
     q = np.array([0.5, -0.5, 0.1])
-    out = v.prox(Quadratic(Q=Q, q=q), rhs, gamma=0.5)
+    out = v.prox(Quadratic(Q=Q, q=q), arg, gamma=0.5)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
@@ -1313,19 +1313,19 @@ def test_quadratic_returns_linear_expression_on_mip():
 def test_quadratic_simulator_raises_notimplemented():
     """Simulator backend explicitly defers Quadratic with a clear message."""
     v = _make_verifier("simulator")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     with pytest.raises(NotImplementedError, match="Quadratic"):
-        v.prox(Quadratic(Q=np.eye(3), q=np.zeros(3)), rhs)
+        v.prox(Quadratic(Q=np.eye(3), q=np.zeros(3)), arg)
 
 
 def test_quadratic_sdp_works():
     """SDP now accepts Quadratic: finite bounds on u are derived via
-    solve_linexpr through M^{-1} @ (rhs - γq), with no inverse formed
+    solve_linexpr through M^{-1} @ (arg - γq), with no inverse formed
     in the verification model."""
     v = _make_verifier("sdp")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
-    out = v.prox(Quadratic(Q=np.eye(3) * 2.0, q=np.zeros(3)), rhs, gamma=0.5)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    out = v.prox(Quadratic(Q=np.eye(3) * 2.0, q=np.zeros(3)), arg, gamma=0.5)
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
     assert np.all(np.isfinite(out.lb))
@@ -1342,21 +1342,21 @@ def test_quadratic_sdp_obbt_tightens_registered_bounds():
     Q = np.eye(3) * 2.0
     q = np.array([0.5, -0.5, 0.1])
     gamma = 0.5
-    rhs_lb, rhs_ub = np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
+    arg_lb, arg_ub = np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
     M = np.eye(3) + gamma * Q
 
     # Reference: solve-derived bounds (what SDP gets at registration).
     v_ref = _make_verifier("sdp")
-    rhs_ref = v_ref.add_param(3, lb=rhs_lb, ub=rhs_ub)
-    solve_lb, solve_ub = solve_linexpr(M, rhs_ref - gamma * q).bound_propagation()
+    arg_ref = v_ref.add_param(3, lb=arg_lb, ub=arg_ub)
+    solve_lb, solve_ub = solve_linexpr(M, arg_ref - gamma * q).bound_propagation()
 
     # With OBBT: SDP.update_bounds is called by _tighten_constraint_bounds.
     v_obbt = _make_verifier("sdp", obbt="gurobi")
-    rhs = v_obbt.add_param(3, lb=rhs_lb, ub=rhs_ub)
-    u = v_obbt.prox(Quadratic(Q=Q, q=q), rhs, gamma=gamma)
+    arg = v_obbt.add_param(3, lb=arg_lb, ub=arg_ub)
+    u = v_obbt.prox(Quadratic(Q=Q, q=q), arg, gamma=gamma)
 
     # The OBBT-tightened bounds must dominate (be at least as tight as)
-    # the solve-derived ones. For this diagonal Q + box rhs the two
+    # the solve-derived ones. For this diagonal Q + box arg the two
     # coincide because solve-derived is already tight; the assertion
     # catches any regression where tightened values fail to reach the
     # LinearExpression / SDP model.
@@ -1367,7 +1367,7 @@ def test_quadratic_sdp_obbt_tightens_registered_bounds():
 
 
 def test_quadratic_derived_bounds_match_analytic_diagonal_Q():
-    """For diagonal Q, u_i = M_ii^{-1} * (rhs_i - γ q_i) with
+    """For diagonal Q, u_i = M_ii^{-1} * (arg_i - γ q_i) with
     M_ii = 1 + γ q_ii. solve_linexpr + bound_propagation must reproduce
     the analytic interval exactly (M_ii > 0 preserves order)."""
     v = _make_verifier("mip")
@@ -1375,13 +1375,13 @@ def test_quadratic_derived_bounds_match_analytic_diagonal_Q():
     Q = np.diag(diag)
     q = np.array([0.5, -0.5, 0.0])
     gamma = 0.5
-    rhs_lb, rhs_ub = np.array([-1.0, -2.0, -3.0]), np.array([1.0, 2.0, 3.0])
-    rhs = v.add_param(3, lb=rhs_lb, ub=rhs_ub)
+    arg_lb, arg_ub = np.array([-1.0, -2.0, -3.0]), np.array([1.0, 2.0, 3.0])
+    arg = v.add_param(3, lb=arg_lb, ub=arg_ub)
 
-    u = v.prox(Quadratic(Q=Q, q=q), rhs, gamma=gamma)
+    u = v.prox(Quadratic(Q=Q, q=q), arg, gamma=gamma)
     M_diag = 1.0 + gamma * diag
-    expected_lb = (rhs_lb - gamma * q) / M_diag
-    expected_ub = (rhs_ub - gamma * q) / M_diag
+    expected_lb = (arg_lb - gamma * q) / M_diag
+    expected_ub = (arg_ub - gamma * q) / M_diag
     np.testing.assert_allclose(u.lb, expected_lb, atol=1e-10)
     np.testing.assert_allclose(u.ub, expected_ub, atol=1e-10)
 
@@ -1389,10 +1389,10 @@ def test_quadratic_derived_bounds_match_analytic_diagonal_Q():
 def test_quadratic_introduces_one_iterate():
     """The prox lowering introduces exactly one fresh iterate u in verifier.iterates."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     n_before = len(v.iterates)
-    v.prox(Quadratic(Q=np.eye(3), q=np.zeros(3)), rhs)
+    v.prox(Quadratic(Q=np.eye(3), q=np.zeros(3)), arg)
     assert len(v.iterates) == n_before + 1
     # The new iterate is the output u of dim 3.
     assert v.iterates[-1].ndim == 3
@@ -1401,52 +1401,52 @@ def test_quadratic_introduces_one_iterate():
 def test_quadratic_emits_no_step():
     """Quadratic lowers via constraint, not via a Step; canonicalizer.steps unchanged."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     n_steps_before = len(v.canonicalizer.steps)
-    v.prox(Quadratic(Q=np.eye(3), q=np.zeros(3)), rhs)
+    v.prox(Quadratic(Q=np.eye(3), q=np.zeros(3)), arg)
     assert len(v.canonicalizer.steps) == n_steps_before
 
 
 def test_quadratic_prox_matches_closed_form():
-    """Numpy-level: prox solves (I + γQ) u = rhs − γq via np.linalg.solve."""
+    """Numpy-level: prox solves (I + γQ) u = arg − γq via np.linalg.solve."""
     rng = np.random.default_rng(0)
     for _ in range(5):
         n = int(rng.integers(2, 6))
         A = rng.standard_normal((n, n))
         Q = A.T @ A  # PSD
         q = rng.standard_normal(n)
-        rhs = rng.standard_normal(n)
+        arg = rng.standard_normal(n)
         gamma = float(rng.uniform(0.1, 2.0))
 
-        out = Quadratic(Q=Q, q=q).prox(rhs, gamma=gamma)
-        expected = np.linalg.solve(np.eye(n) + gamma * Q, rhs - gamma * q)
+        out = Quadratic(Q=Q, q=q).prox(arg, gamma=gamma)
+        expected = np.linalg.solve(np.eye(n) + gamma * Q, arg - gamma * q)
         np.testing.assert_allclose(out, expected, atol=1e-10)
 
 
 def test_quadratic_supports_linexpr_q():
     """
     When ``q`` is a LinearExpression parameter, the posted equality must
-    reference q's leaf, u's leaf, and rhs's leaf. The output ``u`` is still
+    reference q's leaf, u's leaf, and arg's leaf. The output ``u`` is still
     a fresh leaf.
     """
     v = _make_verifier("mip")
     n = 3
-    rhs = v.add_param(n, lb=-1.0, ub=1.0)
+    arg = v.add_param(n, lb=-1.0, ub=1.0)
     q_param = v.add_param(n, lb=-0.5, ub=0.5)
     Q = np.eye(n) * 2.0
 
-    out = v.prox(Quadratic(Q=Q, q=q_param), rhs, gamma=0.5)
+    out = v.prox(Quadratic(Q=Q, q=q_param), arg, gamma=0.5)
     assert out.is_leaf
     assert out.ndim == n
-    # ``u`` is freshly created — not the same leaf as rhs or q_param.
-    assert out is not rhs
+    # ``u`` is freshly created — not the same leaf as arg or q_param.
+    assert out is not arg
     assert out is not q_param
 
 
 def test_quadratic_end_to_end_mip():
     """
-    Pin ``rhs`` via tight bounds, solve a trivial objective on ``u``, and
+    Pin ``arg`` via tight bounds, solve a trivial objective on ``u``, and
     verify the optimum equals the closed-form np.linalg.solve answer.
     This is the strongest numerical check: it exercises the full
     constraint-posting path (canonicalizer + OBBT + solver).
@@ -1454,14 +1454,14 @@ def test_quadratic_end_to_end_mip():
     Q = np.array([[2.0, 0.5], [0.5, 1.5]])
     q = np.array([1.0, -1.0])
     gamma = 0.5
-    rhs_value = np.array([0.3, -0.2])
+    arg_value = np.array([0.3, -0.2])
 
     v = _make_verifier("mip")
-    rhs = v.add_param(2, lb=rhs_value, ub=rhs_value)  # pinned
-    u = v.prox(Quadratic(Q=Q, q=q), rhs, gamma=gamma)
+    arg = v.add_param(2, lb=arg_value, ub=arg_value)  # pinned
+    u = v.prox(Quadratic(Q=Q, q=q), arg, gamma=gamma)
 
     # Closed-form reference
-    expected = np.linalg.solve(np.eye(2) + gamma * Q, rhs_value - gamma * q)
+    expected = np.linalg.solve(np.eye(2) + gamma * Q, arg_value - gamma * q)
 
     # Minimize then maximize each coordinate of u; the feasible value of u
     # is uniquely determined by the equality, so min == max == expected[i].
@@ -1547,11 +1547,11 @@ def test_leastsquares_returns_linear_expression_on_mip():
     """LeastSquares lowers via the same prox_quadratic the dispatcher
     finds under the 'leastsquares' alias."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
     A = np.eye(3) + 0.1 * np.ones((3, 3))
     b = np.array([0.5, -0.5, 0.1])
 
-    out = v.prox(LeastSquares(A=A, b=b), rhs, gamma=0.5)
+    out = v.prox(LeastSquares(A=A, b=b), arg, gamma=0.5)
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
 
@@ -1560,11 +1560,11 @@ def test_leastsquares_sdp_works():
     """SDP path works without OBBT — inherits Quadratic's solve-based
     bound derivation via solve_linexpr."""
     v = _make_verifier("sdp")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
     A = np.eye(3) + 0.1 * np.ones((3, 3))
     b = np.array([0.5, -0.5, 0.1])
 
-    out = v.prox(LeastSquares(A=A, b=b), rhs, gamma=0.5)
+    out = v.prox(LeastSquares(A=A, b=b), arg, gamma=0.5)
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
     assert np.all(np.isfinite(out.lb))
@@ -1575,25 +1575,25 @@ def test_leastsquares_simulator_raises_notimplemented():
     """Simulator backend defers LeastSquares (same shape as Quadratic);
     the error message names the concrete subclass."""
     v = _make_verifier("simulator")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     with pytest.raises(NotImplementedError, match="LeastSquares"):
-        v.prox(LeastSquares(A=np.eye(3), b=np.zeros(3)), rhs)
+        v.prox(LeastSquares(A=np.eye(3), b=np.zeros(3)), arg)
 
 
 def test_leastsquares_prox_matches_closed_form():
-    """Numpy-level: prox solves (I + γ A.T@A) u = rhs + γ A.T@b."""
+    """Numpy-level: prox solves (I + γ A.T@A) u = arg + γ A.T@b."""
     rng = np.random.default_rng(0)
     for _ in range(5):
         n = int(rng.integers(2, 5))
         m = int(rng.integers(2, 6))
         A = rng.standard_normal((m, n))
         b = rng.standard_normal(m)
-        rhs = rng.standard_normal(n)
+        arg = rng.standard_normal(n)
         gamma = float(rng.uniform(0.1, 2.0))
 
-        out = LeastSquares(A=A, b=b).prox(rhs, gamma=gamma)
-        expected = np.linalg.solve(np.eye(n) + gamma * A.T @ A, rhs + gamma * A.T @ b)
+        out = LeastSquares(A=A, b=b).prox(arg, gamma=gamma)
+        expected = np.linalg.solve(np.eye(n) + gamma * A.T @ A, arg + gamma * A.T @ b)
         np.testing.assert_allclose(out, expected, atol=1e-10)
 
 
@@ -1644,10 +1644,10 @@ def test_leastsquares_grad_matches_AT_residual():
 def test_leastsquares_introduces_one_iterate():
     """Same structural property as Quadratic: one fresh iterate appended."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     n_before = len(v.iterates)
-    v.prox(LeastSquares(A=np.eye(3), b=np.zeros(3)), rhs)
+    v.prox(LeastSquares(A=np.eye(3), b=np.zeros(3)), arg)
     assert len(v.iterates) == n_before + 1
     assert v.iterates[-1].ndim == 3
 
@@ -1655,10 +1655,10 @@ def test_leastsquares_introduces_one_iterate():
 def test_leastsquares_emits_no_step():
     """Same structural property as Quadratic: lowering posts a constraint, not a Step."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     n_steps_before = len(v.canonicalizer.steps)
-    v.prox(LeastSquares(A=np.eye(3), b=np.zeros(3)), rhs)
+    v.prox(LeastSquares(A=np.eye(3), b=np.zeros(3)), arg)
     assert len(v.canonicalizer.steps) == n_steps_before
 
 
@@ -1668,26 +1668,26 @@ def test_leastsquares_supports_linexpr_b():
     v = _make_verifier("mip")
     n, m = 3, 4
     A = np.eye(m, n) + 0.1
-    rhs = v.add_param(n, lb=-1.0, ub=1.0)
+    arg = v.add_param(n, lb=-1.0, ub=1.0)
     b_param = v.add_param(m, lb=-0.5, ub=0.5)
 
-    out = v.prox(LeastSquares(A=A, b=b_param), rhs, gamma=0.5)
+    out = v.prox(LeastSquares(A=A, b=b_param), arg, gamma=0.5)
     assert out.is_leaf
     assert out.ndim == n
 
 
 def test_leastsquares_end_to_end_mip():
-    """Pin rhs via tight bounds, solve, assert u matches the closed form."""
+    """Pin arg via tight bounds, solve, assert u matches the closed form."""
     A = np.array([[1.0, 2.0], [3.0, 1.0]])
     b = np.array([0.5, -0.5])
     gamma = 0.5
-    rhs_value = np.array([0.3, -0.2])
+    arg_value = np.array([0.3, -0.2])
 
     v = _make_verifier("mip")
-    rhs = v.add_param(2, lb=rhs_value, ub=rhs_value)
-    u = v.prox(LeastSquares(A=A, b=b), rhs, gamma=gamma)
+    arg = v.add_param(2, lb=arg_value, ub=arg_value)
+    u = v.prox(LeastSquares(A=A, b=b), arg, gamma=gamma)
 
-    expected = np.linalg.solve(np.eye(2) + gamma * A.T @ A, rhs_value + gamma * A.T @ b)
+    expected = np.linalg.solve(np.eye(2) + gamma * A.T @ A, arg_value + gamma * A.T @ b)
 
     solver = v.canonicalizer.solver
     for i in range(2):
@@ -1727,9 +1727,9 @@ def test_sumpositive_returns_linear_expression(method):
     by a subtraction. All three backends accept this.
     """
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    out = v.prox(SumPositive(), rhs, gamma=0.5)
+    out = v.prox(SumPositive(), arg, gamma=0.5)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
@@ -1738,9 +1738,9 @@ def test_sumpositive_returns_linear_expression(method):
 def test_sumpositive_emits_one_satlin_on_mip():
     """One SaturatedLinear with l == 0, u == gamma; nothing else."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
     gamma = 0.5
-    v.prox(SumPositive(), rhs, gamma=gamma)
+    v.prox(SumPositive(), arg, gamma=gamma)
 
     satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
     assert len(satlins) == 1
@@ -1754,10 +1754,10 @@ def test_sumpositive_prox_matches_closed_form():
     a mixed-sign input crossing all three branches.
     """
     f = SumPositive()
-    rhs = np.array([2.0, 0.3, -0.5, -2.0, 0.0])
+    arg = np.array([2.0, 0.3, -0.5, -2.0, 0.0])
     gamma = 1.0
     expected = np.array([1.0, 0.0, -0.5, -2.0, 0.0])
-    np.testing.assert_allclose(f.prox(rhs, gamma=gamma), expected)
+    np.testing.assert_allclose(f.prox(arg, gamma=gamma), expected)
 
     rng = np.random.default_rng(0)
     for _ in range(5):
@@ -1788,9 +1788,9 @@ def test_sumnegative_returns_linear_expression(method):
     followed by a subtraction. All three backends accept this.
     """
     v = _make_verifier(method)
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    out = v.prox(SumNegative(), rhs, gamma=0.5)
+    out = v.prox(SumNegative(), arg, gamma=0.5)
 
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
@@ -1799,9 +1799,9 @@ def test_sumnegative_returns_linear_expression(method):
 def test_sumnegative_emits_one_satlin_on_mip():
     """One SaturatedLinear with l == -gamma, u == 0; nothing else."""
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
     gamma = 0.5
-    v.prox(SumNegative(), rhs, gamma=gamma)
+    v.prox(SumNegative(), arg, gamma=gamma)
 
     satlins = [s for s in v.canonicalizer.steps if isinstance(s, SaturatedLinear)]
     assert len(satlins) == 1
@@ -1815,10 +1815,10 @@ def test_sumnegative_prox_matches_closed_form():
     a mixed-sign input crossing all three branches.
     """
     f = SumNegative()
-    rhs = np.array([2.0, 0.3, -0.5, -2.0, 0.0])
+    arg = np.array([2.0, 0.3, -0.5, -2.0, 0.0])
     gamma = 1.0
     expected = np.array([2.0, 0.3, 0.0, -1.0, 0.0])
-    np.testing.assert_allclose(f.prox(rhs, gamma=gamma), expected)
+    np.testing.assert_allclose(f.prox(arg, gamma=gamma), expected)
 
     rng = np.random.default_rng(1)
     for _ in range(5):
@@ -1864,10 +1864,10 @@ def test_unsupported_prox_raises_on_every_backend():
 
     for method in ("mip", "sdp", "simulator"):
         v = _make_verifier(method)
-        rhs = v.add_param(3, lb=-1.0, ub=1.0)
+        arg = v.add_param(3, lb=-1.0, ub=1.0)
 
         with pytest.raises(NotImplementedError, match="Unregistered"):
-            v.prox(Unregistered(), rhs)
+            v.prox(Unregistered(), arg)
 
 
 def test_unsupported_prox_error_names_the_backend():
@@ -1877,7 +1877,7 @@ def test_unsupported_prox_error_names_the_backend():
         pass
 
     v = _make_verifier("mip")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
 
     with pytest.raises(NotImplementedError, match="MIPStepDecomposer"):
-        v.prox(Unregistered(), rhs)
+        v.prox(Unregistered(), arg)
