@@ -87,6 +87,14 @@ class CliAgentSpec:
     api_key_aliases:
         Additional env vars to read a key from (resolution order after
         ``api_key_env``), e.g. ``("GOOGLE_API_KEY",)`` for Gemini.
+    login_check_args:
+        Subcommand args that report whether an on-disk login already exists,
+        exiting 0 when authenticated (Codex's ``("login", "status")``); empty if
+        the CLI has no such check.
+    login_args:
+        Subcommand args that persist an API-key login, reading the key from
+        stdin (Codex's ``("login", "--with-api-key")``). Empty means the CLI
+        needs no login step — the forwarded ``api_key_env`` is enough.
     auth_markers:
         Output substrings flagging an auth failure (merged with the defaults).
     display_name, auth_hint, install_hint:
@@ -103,6 +111,8 @@ class CliAgentSpec:
     sysprompt_flag: str | None = None
     api_key_env: str | None = None
     api_key_aliases: tuple[str, ...] = ()
+    login_check_args: tuple[str, ...] = ()
+    login_args: tuple[str, ...] = ()
     auth_markers: tuple[str, ...] = field(default_factory=tuple)
     display_name: str = ""
     auth_hint: str = ""
@@ -138,6 +148,11 @@ CODEX_SPEC = CliAgentSpec(
     cwd_flag="--cd",
     prompt_arg=None,  # positional
     api_key_env="OPENAI_API_KEY",
+    # Codex authenticates from ~/.codex/auth.json written by its own `login`
+    # subcommand; for some transports the bare env var is not enough, so persist
+    # an API-key login first (the key is piped to stdin via --with-api-key).
+    login_check_args=("login", "status"),
+    login_args=("login", "--with-api-key"),
     auth_markers=("codex login", "openai_api_key"),
     display_name="Codex",
     auth_hint="Run `codex login` or set OPENAI_API_KEY.",
@@ -170,7 +185,14 @@ _user_specs_loaded = False
 
 # Field name -> coercion for the YAML loader (everything else is rejected so a
 # typo surfaces loudly instead of being silently ignored).
-_TUPLE_FIELDS = {"base_args", "flags", "api_key_aliases", "auth_markers"}
+_TUPLE_FIELDS = {
+    "base_args",
+    "flags",
+    "api_key_aliases",
+    "login_check_args",
+    "login_args",
+    "auth_markers",
+}
 _STR_FIELDS = {
     "bin",
     "model_flag",

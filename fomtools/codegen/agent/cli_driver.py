@@ -80,6 +80,41 @@ class CliAgentDriver(AgentDriver):
             return None
         return {**os.environ, self.spec.api_key_env: self.api_key}
 
+    def _ensure_login(self) -> None:
+        """Persist an API-key login for CLIs that need one (spec-driven).
+
+        Some CLIs (e.g. Codex) authenticate from an on-disk session written by
+        their own ``login`` subcommand and do not reliably pick the key up from
+        the environment for every transport. When the spec describes an API-key
+        login flow and we have a key, log in once: skip if ``login_check_args``
+        reports an existing session, otherwise pipe the key to ``login_args`` on
+        stdin. A no-op for backends with no login flow or no resolved key.
+        """
+        if not (self.api_key and self.spec.login_args):
+            return
+        # Already authenticated? login_check_args exits 0 when a session exists.
+        if self.spec.login_check_args:
+            check = subprocess.run(
+                [self.bin, *self.spec.login_check_args],
+                capture_output=True,
+                text=True,
+            )
+            if check.returncode == 0:
+                return
+        proc = subprocess.run(
+            [self.bin, *self.spec.login_args],
+            input=self.api_key,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            output = proc.stdout + proc.stderr
+            raise AgentBackendError(
+                f"{self.spec.display_name or self.spec.name} CLI login with the "
+                f"resolved API key failed. {self.spec.auth_hint}\n"
+                f"{self.spec.display_name or self.spec.name} output:\n" + output[-1000:]
+            )
+
     # -- public API --------------------------------------------------------
     def run(self, task: AgentTask) -> AgentResult:
         # Preflight before the retry loop: a missing CLI is fatal and must not be
@@ -91,6 +126,10 @@ class CliAgentDriver(AgentDriver):
                 f"on PATH. {self.spec.install_hint} Or select a different backend "
                 "(`--agent claude`)."
             )
+
+        # Persist an API-key login for backends that authenticate from an
+        # on-disk session rather than the environment (no-op otherwise).
+        self._ensure_login()
         return run_verify_loop(
             task,
             lambda prompt, max_turns: self._invoke_agent(task, prompt, max_turns),

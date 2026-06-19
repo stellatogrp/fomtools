@@ -28,6 +28,11 @@ from fomtools.codegen.agent.specs import (
     register_agent,
 )
 from fomtools.codegen.agent.stub import StubAgentDriver
+from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
+from fomtools.codegen.agent.cli_driver import CliAgentDriver
+from fomtools.codegen.agent.specs import get_spec
+from fomtools.codegen.agent.codex_cli import CodexAgentDriver
+from fomtools.codegen.agent.gemini_cli import GeminiAgentDriver
 
 __all__ = [
     "AgentBackendError",
@@ -62,13 +67,13 @@ def make_agent_driver(backend: str | None = None, config=None) -> AgentDriver:
     never run in CI.
     """
     backend = backend or os.environ.get("FOMTOOLS_CODEGEN_BACKEND") or _DEFAULT_BACKEND
-    if backend == "claude":
-        from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
-
-        return ClaudeAgentDriver(config=config)
-
-    from fomtools.codegen.agent.cli_driver import CliAgentDriver
-    from fomtools.codegen.agent.specs import get_spec
+    match backend:
+        case "claude":
+            return ClaudeAgentDriver(config=config)
+        case "codex":
+            return CodexAgentDriver(config=config)
+        case "gemini":
+            return GeminiAgentDriver(config=config)
 
     try:
         spec = get_spec(backend)
