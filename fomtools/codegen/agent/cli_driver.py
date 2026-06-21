@@ -7,10 +7,6 @@ core: the authoritative verify/retry loop is shared via
 :func:`~fomtools.codegen.agent.driver.run_verify_loop`, and authentication is
 forced to API-key mode when a key is available (the key is forwarded into the
 spawned process environment so it takes precedence over any on-disk login).
-
-These backends are nondeterministic and need auth, so they never run in CI; the
-deterministic pipeline is tested via
-:class:`~fomtools.codegen.agent.stub.StubAgentDriver`.
 """
 
 from __future__ import annotations
@@ -32,7 +28,19 @@ from fomtools.codegen.agent.specs import SYSTEM_PROMPT, CliAgentSpec
 
 
 class CliAgentDriver(AgentDriver):
-    """Drive code generation with a headless CLI described by a :class:`CliAgentSpec`."""
+    """Drive code generation with a headless CLI described by a :class:`CliAgentSpec`.
+
+    A concrete :class:`~fomtools.codegen.agent.driver.AgentDriver` for every
+    prompt-in/files-out CLI backend (Codex, Gemini, and user-registered agents).
+    All per-tool differences are carried by the ``spec``; this class supplies the
+    agent-agnostic core and shares the authoritative verify/retry loop via
+    :func:`~fomtools.codegen.agent.driver.run_verify_loop`.
+
+    Methods
+    -------
+    run
+        Generate/refine the solver source until the verify command passes.
+    """
 
     def __init__(
         self,
@@ -45,24 +53,53 @@ class CliAgentDriver(AgentDriver):
         api_key: str | None = None,
         extra_args: Sequence[str] = (),
     ):
+        """Configure the driver from a CLI spec, model, retry budget, and auth.
+
+        Parameters
+        ----------
+        spec : CliAgentSpec
+            The per-tool specification describing the CLI's binary, flags,
+            prompt/model/cwd flags, login flow, and auth markers.
+        config : optional
+            Codegen configuration object, retained for backend use. Defaults to
+            ``None``.
+        model : str, optional
+            Explicit model identifier, passed via the spec's ``model_flag`` when
+            both are set. When ``None`` the CLI's default model is used.
+        max_attempts : int, optional
+            Maximum number of prompt/verify rounds. Defaults to 5.
+        max_turns : int, optional
+            Per-attempt turn budget, kept for parity with the shared loop; these
+            CLIs loop internally so it is not passed through. Defaults to 16.
+        bin : str, optional
+            Override for the CLI binary name. When ``None`` the spec's ``bin``
+            is used.
+        api_key : str, optional
+            Explicit API key. When ``None`` it falls back to the first set
+            variable among the spec's key env vars; when neither is found the
+            backend keeps its default (login) auth.
+        extra_args : Sequence of str, optional
+            Additional arguments appended to the CLI invocation. Defaults to an
+            empty tuple.
+        """
         self.spec = spec
         self.config = config
         self.model = model
         self.max_attempts = max_attempts
-        # These CLIs loop internally until done (no per-call turn cap to pass);
-        # kept for parity with the shared loop's signature.
         self.max_turns = max_turns
         self.bin = bin or spec.bin
         self.extra_args = tuple(extra_args)
-        # Explicit API key wins; else the first of the spec's env vars that is
-        # set; else None -> the backend keeps its default (login) auth. A
-        # resolved key is forwarded into the spawned process so it takes
-        # precedence over any on-disk login (matching each CLI's resolution
-        # order).
         self.api_key = api_key or self._key_from_env()
 
-    # -- auth helpers ------------------------------------------------------
     def _key_from_env(self) -> str | None:
+        """Return the first API key found among the spec's key env vars.
+
+        Returns
+        -------
+        str or None
+            The value of the first set variable in ``spec.key_env_vars``, or
+            ``None`` when none are set.
+        """
         for var in self.spec.key_env_vars:
             value = os.environ.get(var)
             if value:
@@ -92,7 +129,7 @@ class CliAgentDriver(AgentDriver):
         """
         if not (self.api_key and self.spec.login_args):
             return
-        # Already authenticated? login_check_args exits 0 when a session exists.
+        # login_check_args exits 0 when an already authenticated session exists.
         if self.spec.login_check_args:
             check = subprocess.run(
                 [self.bin, *self.spec.login_check_args],
@@ -115,11 +152,32 @@ class CliAgentDriver(AgentDriver):
                 f"{self.spec.display_name or self.spec.name} output:\n" + output[-1000:]
             )
 
-    # -- public API --------------------------------------------------------
     def run(self, task: AgentTask) -> AgentResult:
-        # Preflight before the retry loop: a missing CLI is fatal and must not be
-        # absorbed as a failed attempt (which, against a stale output dir, could
-        # otherwise verify and look successful).
+        """Generate/refine the solver until the verify command passes.
+
+        Preflights that the CLI binary is on PATH and persists an API-key login
+        if the spec requires one, then delegates to
+        :func:`~fomtools.codegen.agent.driver.run_verify_loop`, which runs the
+        verify command itself to decide success.
+
+        Parameters
+        ----------
+        task : AgentTask
+            The unit of work describing the workspace, the solver path to
+            write, the restore hook, and the verify command to run.
+
+        Returns
+        -------
+        AgentResult
+            The outcome, whose ``success`` reflects whether the verify command
+            passed.
+
+        Raises
+        ------
+        AgentBackendError
+            If the CLI binary is not on PATH, or an API-key login is required
+            but fails — neither is recoverable by retrying.
+        """
         if shutil.which(self.bin) is None:
             raise AgentBackendError(
                 f"{self.spec.display_name or self.spec.name} CLI {self.bin!r} not found "
@@ -127,8 +185,6 @@ class CliAgentDriver(AgentDriver):
                 "(`--agent claude`)."
             )
 
-        # Persist an API-key login for backends that authenticate from an
-        # on-disk session rather than the environment (no-op otherwise).
         self._ensure_login()
         return run_verify_loop(
             task,
@@ -137,8 +193,26 @@ class CliAgentDriver(AgentDriver):
             max_turns=self.max_turns,
         )
 
-    # -- agent invocation --------------------------------------------------
     def _build_argv(self, workdir: str, prompt: str) -> list[str]:
+        """Assemble the full CLI argument vector for one invocation.
+
+        Combines the binary, the spec's base args/flags, and ``extra_args``,
+        then appends the cwd, model, and system-prompt flags when the spec
+        defines them. If the spec has no system-prompt flag, the shared
+        ``SYSTEM_PROMPT`` is prepended to ``prompt`` instead.
+
+        Parameters
+        ----------
+        workdir : str
+            Absolute working directory passed via the spec's ``cwd_flag``.
+        prompt : str
+            The task prompt for this attempt.
+
+        Returns
+        -------
+        list of str
+            The argument vector to pass to :func:`subprocess.run`.
+        """
         spec = self.spec
         argv = [self.bin, *spec.base_args, *spec.flags, *self.extra_args]
         if spec.cwd_flag:
@@ -155,6 +229,29 @@ class CliAgentDriver(AgentDriver):
         return argv
 
     def _invoke_agent(self, task: AgentTask, prompt: str, max_turns: int) -> str:
+        """Run one agent attempt by shelling out to the CLI.
+
+        Parameters
+        ----------
+        task : AgentTask
+            The unit of work supplying the working directory.
+        prompt : str
+            The prompt for this attempt.
+        max_turns : int
+            Turn budget, accepted for the shared loop's signature; not passed to
+            these internally-looping CLIs.
+
+        Returns
+        -------
+        str
+            The combined stdout/stderr from the CLI. Does not decide success.
+
+        Raises
+        ------
+        AgentBackendError
+            If the CLI binary cannot be found at invocation time, or it exits
+            non-zero with output matching one of the spec's auth-failure markers.
+        """
         # Resolve to an ABSOLUTE workdir: some CLIs resolve their dir flag
         # relative to their own cwd, so a relative path applied as both --cd and
         # the subprocess cwd would be doubled.

@@ -1,7 +1,7 @@
 """The (mockable) coding-agent interface.
 
-Code generation delegates the actual translation of the IR into target source to
-an :class:`AgentDriver`. The real driver shells out to the Claude Agent SDK; the
+Code generation delegates the actual translation of the Intermediate Representation (IR) into
+target source to an :class:`AgentDriver`. The real driver shells out to the Claude Agent SDK; the
 :class:`~fomtools.codegen.agent.stub.StubAgentDriver` drops a known-good source so
 the whole pipeline is testable without an LLM.
 """
@@ -39,6 +39,13 @@ class AgentTask:
         Maximum agent turns before giving up.
     bench_cmd:
         Optional benchmark command for the optimization phase.
+    restore_hook:
+        Optional callable invoked before each verify to restore the
+        deterministic files (Makefile, headers, numeric data, solve/ops). The
+        agent may only change the solver body, so any edits it makes elsewhere
+        are reverted.
+    extra:
+        Free-form dictionary for backend-specific extra data.
     """
 
     workdir: Path
@@ -48,16 +55,25 @@ class AgentTask:
     phase: Literal["A_translate", "B_optimize"] = "A_translate"
     max_turns: int = 40
     bench_cmd: list[str] | None = None
-    # Called before each verify to restore the deterministic files (Makefile,
-    # headers, numeric data, solve/ops): the agent may only change the solver
-    # body, so any edits it makes elsewhere are reverted.
     restore_hook: Callable[[], None] | None = None
     extra: dict = field(default_factory=dict)
 
 
 @dataclass
 class AgentResult:
-    """Outcome of an agent run."""
+    """Outcome of an agent run.
+
+    Attributes
+    ----------
+    success:
+        Whether the verify command ultimately passed.
+    log:
+        Captured agent and verify output, concatenated across attempts.
+    turns_used:
+        Number of attempts (or turns) consumed producing this result.
+    artifacts:
+        Paths to the files the agent produced or refined.
+    """
 
     success: bool
     log: str = ""
@@ -71,17 +87,40 @@ class AgentBackendError(RuntimeError):
     Raised when the backend cannot run at all — its CLI is missing, or it is not
     authenticated. Unlike an ordinary failed attempt (a turn-cap, a transient
     API error, or a verify that did not pass yet), this is not something
-    re-prompting can fix, so :func:`run_verify_loop` lets it propagate instead of
-    absorbing it as a silent failed attempt.
+    re-prompting can fix.
     """
 
 
 class AgentDriver(ABC):
-    """Drives generation of one source file until ``verify_cmd`` passes."""
+    """Abstract coding-agent that generates a source file until verify passes.
+
+    Subclasses implement :meth:`run` to drive a particular backend (the real
+    Claude/Codex/Gemini CLIs, or :class:`~fomtools.codegen.agent.stub.StubAgentDriver`
+    for tests). The driver owns only ``task.solver_rel_path``; all other files
+    are restored via ``task.restore_hook`` before each verify.
+
+    Methods
+    -------
+    run
+        Produce/refine the solver source until the verify command passes.
+    """
 
     @abstractmethod
     def run(self, task: AgentTask) -> AgentResult:
-        """Produce/refine ``task.solver_rel_path`` until ``task.verify_cmd`` passes."""
+        """Produce/refine ``task.solver_rel_path`` until ``task.verify_cmd`` passes.
+
+        Parameters
+        ----------
+        task : AgentTask
+            The unit of work describing the workspace, the solver path to
+            write, the restore hook, and the verify command to run.
+
+        Returns
+        -------
+        AgentResult
+            The outcome, whose ``success`` reflects whether the verify command
+            passed.
+        """
 
 
 def run_verify_loop(
@@ -95,14 +134,16 @@ def run_verify_loop(
 
     This is the authoritative retry loop shared by every real backend (the
     Claude SDK/CLI driver, the Codex CLI driver, ...). On each attempt it calls
-    ``invoke_agent(prompt, max_turns)`` to run one backend attempt, restores the
-    deterministic files via ``task.restore_hook`` (the agent may only change the
-    solver body), then runs ``task.verify_cmd`` *itself* to decide success —
-    never trusting the agent's self-report. On failure it re-prompts with the
-    captured verify output until the command passes or the budget is spent.
+    runs one backend attempt, restores the deterministic files via ``task.restore_hook``
+    (the agent may only change the solver body), then runs ``task.verify_cmd`` *itself*
+    to decide success. On failure it re-prompts with the captured verify output until the command
+    passes or the budget is spent.
 
     Parameters
     ----------
+    task:
+        The unit of work describing the workspace, the solver path to
+        write, the restore hook, and the verify command to run.
     invoke_agent:
         Callable running one backend attempt given ``(prompt, max_turns)`` and
         returning its captured log text. It must NOT decide success.
@@ -111,6 +152,18 @@ def run_verify_loop(
     max_turns:
         Per-attempt turn budget for the translation phase (the optimization
         phase uses ``task.max_turns`` instead).
+
+    Returns
+    -------
+    AgentResult
+        The outcome, whose ``success`` reflects whether the verify command
+        passed.
+
+    Raises
+    ------
+    AgentBackendError
+        If the backend cannot run at all (missing CLI or not authenticated);
+        propagated rather than absorbed as a failed attempt.
     """
     log_parts: list[str] = []
     prompt = task.instructions
@@ -135,8 +188,6 @@ def run_verify_loop(
             agent_log = f"[agent invocation raised: {exc}]"
         log_parts.append(agent_log)
 
-        # Revert any agent edits to the immutable deterministic files before the
-        # authoritative verify (the agent may only change the solver body).
         if task.restore_hook is not None:
             task.restore_hook()
         verify = subprocess.run(
@@ -150,7 +201,8 @@ def run_verify_loop(
                 turns_used=attempt + 1,
                 artifacts=[task.workdir / task.solver_rel_path],
             )
-        # Re-prompt with the failure so the agent can fix it.
+
+        # Re-prompt with the failure.
         prompt = (
             task.instructions
             + "\n\nThe verify command FAILED with this output:\n"

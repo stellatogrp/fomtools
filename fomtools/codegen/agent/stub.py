@@ -70,9 +70,8 @@ class StubAgentDriver(AgentDriver):
         Returns
         -------
         AgentResult
-            Result whose ``success`` reflects the verify command's exit code,
-            with the combined stdout/stderr in ``log``, ``turns_used`` always
-            1, and the written file in ``artifacts``.
+            The outcome, whose ``success`` reflects whether the verify command
+            passed.
         """
         target = task.workdir / task.solver_rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
