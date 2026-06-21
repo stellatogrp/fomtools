@@ -14,16 +14,31 @@ from fomtools.codegen.agent.driver import AgentDriver, AgentResult, AgentTask
 
 
 class StubAgentDriver(AgentDriver):
-    """Writes a fixed solver source, then runs the verify command.
+    """A deterministic :class:`AgentDriver` that writes a fixed solver source.
 
-    Parameters
-    ----------
-    solver_source:
-        Either C source text or a path to a ``.c`` file to copy into the
-        workspace as the solver body.
+    Instead of calling an LLM, it writes a pre-supplied ("golden") solver body
+    into the workspace and runs the real verify command, letting the full
+    code-generation pipeline be exercised in CI without a model or network.
+
+    Methods
+    -------
+    run
+        Write the fixed source into the task workspace and verify it.
+
     """
 
     def __init__(self, solver_source: str | Path):
+        """Resolve and store the solver source to write on every :meth:`run`.
+
+        Parameters
+        ----------
+        solver_source : str or Path
+            The golden solver body. Either C source text, or a path (``Path``
+            or ``str``) to a ``.c`` file whose contents are read in. A ``str``
+            is treated as a path only when it has no newlines, is under 4096
+            characters, and names an existing file; otherwise it is taken as
+            source text verbatim.
+        """
         if isinstance(solver_source, Path):
             self._source = solver_source.read_text()
             return
@@ -39,6 +54,26 @@ class StubAgentDriver(AgentDriver):
                 pass
 
     def run(self, task: AgentTask) -> AgentResult:
+        """Write the fixed source into the workspace and run the verify command.
+
+        Implements the :class:`AgentDriver` interface. The stored source is
+        written to ``task.solver_rel_path``, ``task.restore_hook`` is invoked (if present) to
+        restore the deterministic files before verifying; then ``task.verify_cmd`` is run in
+        ``task.workdir`` and its exit code decides success.
+
+        Parameters
+        ----------
+        task : AgentTask
+            The unit of work describing the workspace, the solver path to
+            write, the restore hook, and the verify command to run.
+
+        Returns
+        -------
+        AgentResult
+            Result whose ``success`` reflects the verify command's exit code,
+            with the combined stdout/stderr in ``log``, ``turns_used`` always
+            1, and the written file in ``artifacts``.
+        """
         target = task.workdir / task.solver_rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(self._source)
