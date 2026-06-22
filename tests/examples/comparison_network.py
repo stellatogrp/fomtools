@@ -21,11 +21,8 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import scipy.sparse as spa
-from PEPit import PEP, Point
-from PEPit.functions import ConvexFunction
-from PEPit.operators import LinearOperator
-from PEPit.primitive_steps import proximal_step
 
+from docs.tutorials.pepit_runner import PEPitRunner
 from fomtools.proxable_functions import IndBox, IndNonNegative
 from fomtools.verifier import Verifier
 
@@ -132,55 +129,16 @@ for k in range(1, K + 1):
     print(f"SDP  k={k}: {sdp_residuals[-1]:.6f}")
 
 # ── PEPit — squared 2-norm of combined fixed-point residual ───────────────────
-def _pepit_pdhg_k1(R_val):
-    problem = PEP()
-    f = problem.declare_function(ConvexFunction)
-    g = problem.declare_function(ConvexFunction)
-    linear = problem.declare_function(LinearOperator, L=L)
-    xs = Point()
-    us = Point()
-    f.add_point((xs, -linear.T.gradient(us), f(xs)))
-    g.add_point((us, linear.gradient(xs), g(us)))
-    x0 = problem.set_initial_point()
-    u0 = problem.set_initial_point()
-    problem.set_initial_condition((x0 - xs) ** 2 + (u0 - us) ** 2 <= R_val ** 2)
-    x1, _, _ = proximal_step(x0 - eta * linear.T.gradient(u0), f, eta)
-    u1, _, _ = proximal_step(u0 + eta * linear.gradient(2 * x1 - x0), g, eta)
-    problem.set_performance_metric((x1 - x0) ** 2 + (u1 - u0) ** 2)
-    return problem.solve(solver="SCS", verbose=False)
-
-
-if MATCH_MIP_AT_K1:
-    pepit_unit_k1 = _pepit_pdhg_k1(1.0)
-    R = np.sqrt(mip_residuals[0] / pepit_unit_k1)
-else:
-    R = 1.0
-
-pepit_residuals = []
+pepit_runner = PEPitRunner()
+pepit_residuals, R = pepit_runner.pdhg_residuals(
+    K=K,
+    L=L,
+    eta=eta,
+    R=None if MATCH_MIP_AT_K1 else 1.0,
+    calibrate_to=mip_residuals[0] if MATCH_MIP_AT_K1 else None,
+)
 for k in range(1, K + 1):
-    problem = PEP()
-    f = problem.declare_function(ConvexFunction)
-    g = problem.declare_function(ConvexFunction)
-    linear = problem.declare_function(LinearOperator, L=L)
-    xs = Point()
-    us = Point()
-    f.add_point((xs, -linear.T.gradient(us), f(xs)))
-    g.add_point((us, linear.gradient(xs), g(us)))
-    x0 = problem.set_initial_point()
-    u0 = problem.set_initial_point()
-    problem.set_initial_condition((x0 - xs) ** 2 + (u0 - us) ** 2 <= R ** 2)
-
-    x = [x0]
-    u = [u0]
-    for j in range(k):
-        x_next, _, _ = proximal_step(x[-1] - eta * linear.T.gradient(u[-1]), f, eta)
-        u_next, _, _ = proximal_step(u[-1] + eta * linear.gradient(2 * x_next - x[-1]), g, eta)
-        x.append(x_next)
-        u.append(u_next)
-
-    problem.set_performance_metric((x[k] - x[k - 1]) ** 2 + (u[k] - u[k - 1]) ** 2)
-    pepit_residuals.append(problem.solve(solver="SCS", verbose=False))
-    print(f"PEPit k={k}: {pepit_residuals[-1]:.6f}  (R={R:.4f})")
+    print(f"PEPit k={k}: {pepit_residuals[k - 1]:.6f}  (R={R:.4f})")
 
 # ── Simulator — squared 2-norm, N random demand samples from [x_lb, x_ub] ────
 N = 200

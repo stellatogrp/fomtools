@@ -19,10 +19,8 @@ PEPit is solved with ||z0 - z*|| <= R
 
 import matplotlib.pyplot as plt
 import numpy as np
-from PEPit import PEP
-from PEPit.functions import ConvexIndicatorFunction, SmoothConvexFunction
-from PEPit.primitive_steps import proximal_step
 
+from docs.tutorials.pepit_runner import PEPitRunner
 from fomtools.verifier import Verifier
 
 # ── Problem setup (identical to NNLS.py tutorial) ────────────────────────────
@@ -76,39 +74,17 @@ for k in range(1, K + 1):
     print(f"SDP  k={k}: {sdp_residuals[-1]:.6f}")
 
 # ── PEPit — squared 2-norm of fixed-point residual ───────────────────────────
-if MATCH_MIP_AT_K1:
-    # Solve k=1 with R=1 to calibrate R, then re-solve all k with the true R.
-    problem = PEP()
-    f = problem.declare_function(SmoothConvexFunction, L=L)
-    g = problem.declare_function(ConvexIndicatorFunction)
-    z_star = (f + g).stationary_point()
-    z0_pep = problem.set_initial_point()
-    problem.set_initial_condition((z0_pep - z_star) ** 2 <= 1.0)
-    z_next, _, _ = proximal_step(z0_pep - eta * f.gradient(z0_pep), g, eta)
-    problem.set_performance_metric((z_next - z0_pep) ** 2)
-    pepit_unit_k1 = problem.solve(solver="SCS", verbose=False)
-    R = np.sqrt(mip_residuals[0] / pepit_unit_k1)
-else:
-    R = z0_ub * np.sqrt(n)
-
-pepit_residuals = []
+pepit_runner = PEPitRunner()
+pepit_residuals, R = pepit_runner.proximal_gradient_residuals(
+    K=K,
+    L=L,
+    eta=eta,
+    R=None if MATCH_MIP_AT_K1 else z0_ub * np.sqrt(n),
+    calibrate_to=mip_residuals[0] if MATCH_MIP_AT_K1 else None,
+    nonsmooth="indicator",
+)
 for k in range(1, K + 1):
-    problem = PEP()
-    f = problem.declare_function(SmoothConvexFunction, L=L)
-    g = problem.declare_function(ConvexIndicatorFunction)
-
-    z_star = (f + g).stationary_point()
-    z0_pep = problem.set_initial_point()
-    problem.set_initial_condition((z0_pep - z_star) ** 2 <= R ** 2)
-
-    z = [z0_pep]
-    for j in range(1, k + 1):
-        z_next, _, _ = proximal_step(z[j - 1] - eta * f.gradient(z[j - 1]), g, eta)
-        z.append(z_next)
-
-    problem.set_performance_metric((z[k] - z[k - 1]) ** 2)
-    pepit_residuals.append(problem.solve(solver="SCS", verbose=False))
-    print(f"PEPit k={k}: {pepit_residuals[-1]:.6f}  (R={R:.4f})")
+    print(f"PEPit k={k}: {pepit_residuals[k - 1]:.6f}  (R={R:.4f})")
 
 # ── Simulation — squared 2-norm of fixed-point residual, N random samples ───
 vp_sim = Verifier(method="simulator")

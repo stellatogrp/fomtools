@@ -69,10 +69,11 @@ def _(np):
     m, n = 5, 3
     A = np.random.normal(size=(m, n))
     x_lb, x_ub = 10, 11
+    z0_lb, z0_ub = 4.0, 6.0
     L = np.max(np.linalg.eigvalsh(A.T @ A))  # symmetric routine → real eigenvalues
     eta = 0.5 / L
     K = 10
-    return A, K, eta, m, n, x_lb, x_ub
+    return A, K, L, eta, m, n, x_lb, x_ub, z0_lb, z0_ub
 
 
 @app.cell

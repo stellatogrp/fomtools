@@ -46,7 +46,7 @@ nn = ["torch", "jax", "flax"]
 
 docs = [
        "cvxpy",
-       "marimo",
+       "marimo==0.23.9",
        "matplotlib",
        "mkdocs",
        "mkdocstrings-python",

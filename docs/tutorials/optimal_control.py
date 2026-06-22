@@ -244,9 +244,9 @@ def _(
     _lhs_mat_sparse = csr_matrix(P + sigma*np.eye(n_xz) + rho*(M.T@M))
     _lhs_mat_sim = _lhs_mat_sparse.toarray()
     for _k in range(K):
-        _w[_k+1] = _VP.prox(function=_indbox, rhs=_v[_k])
+        _w[_k+1] = _VP.prox(_indbox, _v[_k])
         _rhs = sigma * _z[_k] - q + rho * M.T @ (2*_w[_k+1] - _v[_k])
-        _z[_k+1] = _VP.step.implicit_linear(rhs=_rhs, lhs_mat=_lhs_mat_sim)
+        _z[_k+1] = _VP.step.implicit_linear(_rhs, output_mat=_lhs_mat_sim)
         _v[_k+1] = _v[_k] + (M @ _z[_k+1] - _w[_k+1])
         _VP.set_objective_norm([
             -sigma*(_z[_k+1]-_z[_k]) - rho*M.T@(_v[_k+1]-_v[_k]),
@@ -417,9 +417,9 @@ def _(
     worst_case_v_admm = []
     for _k in range(K):
         # _w[_k+1] = _VP.step.satlin(_v[_k], l=_l_x, u=_u_x)
-        _w[_k+1] = _VP.prox(function=indbox, rhs=_v[_k])
+        _w[_k+1] = _VP.prox(indbox, _v[_k])
         _rhs = sigma * _z[_k] - q + rho * M.T @ (2*_w[_k+1] - _v[_k])
-        _z[_k+1] = _VP.step.implicit_linear(rhs=_rhs, lhs_mat=_lhs_mat)
+        _z[_k+1] = _VP.step.implicit_linear(_rhs, output_mat=_lhs_mat)
         _v[_k+1] = _v[_k] + (M @ _z[_k+1] - _w[_k+1])
 
         # optimize over scaled fixed-point residual (KKT residual)

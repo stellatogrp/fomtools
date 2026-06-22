@@ -20,11 +20,9 @@ MATCH_MIP_AT_K1 = False -> R = 1.0
 
 import matplotlib.pyplot as plt
 import numpy as np
-from PEPit import PEP
-from PEPit.functions import ConvexIndicatorFunction, SmoothStronglyConvexFunction
-from PEPit.primitive_steps import proximal_step
 from scipy.sparse import csr_matrix
 
+from docs.tutorials.pepit_runner import PEPitRunner
 from fomtools.verifier import Verifier
 
 # ── Problem setup ──────────────────────────────────────────────────────────────
@@ -96,58 +94,16 @@ Sigma_eigs = np.linalg.eigvalsh(Sigma)
 mu_f = float(Sigma_eigs.min())
 L_f = float(Sigma_eigs.max())
 
-
-def _pepit_admm_k1(R_val):
-    problem = PEP()
-    f = problem.declare_function(SmoothStronglyConvexFunction, mu=mu_f, L=L_f)
-    g = problem.declare_function(ConvexIndicatorFunction)
-    F = f + g
-    xs = F.stationary_point()
-    u0 = problem.set_initial_point()
-    x0_p, _, _ = proximal_step(u0, f, 1.)
-    y0, _, _ = proximal_step(2 * x0_p - u0, g, 1.)
-    problem.set_initial_condition((x0_p - xs) ** 2 <= R_val ** 2)
-    problem.set_initial_condition((u0 - xs) ** 2 <= R_val ** 2)
-    u1 = u0 + (y0 - x0_p)
-    x1_p, _, _ = proximal_step(u1, f, 1.)
-    problem.set_performance_metric((x1_p - x0_p) ** 2 + (u1 - u0) ** 2)
-    return problem.solve(solver="SCS", verbose=False)
-
-
-if MATCH_MIP_AT_K1:
-    pepit_unit_k1 = _pepit_admm_k1(1.0)
-    R = np.sqrt(mip_residuals[0] / pepit_unit_k1)
-else:
-    R = 1.0
-
-pepit_residuals = []
+pepit_runner = PEPitRunner()
+pepit_residuals, R = pepit_runner.admm_residuals(
+    K=K,
+    mu=mu_f,
+    L=L_f,
+    R=None if MATCH_MIP_AT_K1 else 1.0,
+    calibrate_to=mip_residuals[0] if MATCH_MIP_AT_K1 else None,
+)
 for k in range(1, K + 1):
-    problem = PEP()
-    f = problem.declare_function(SmoothStronglyConvexFunction, mu=mu_f, L=L_f)
-    g = problem.declare_function(ConvexIndicatorFunction)
-    F = f + g
-    xs = F.stationary_point()
-    u0 = problem.set_initial_point()
-
-    x_p = [None]
-    y_p = [None]
-    u_p = [u0]
-    x_p[0], _, _ = proximal_step(u_p[0], f, 1.)
-    y_p[0], _, _ = proximal_step(2 * x_p[0] - u_p[0], g, 1.)
-
-    problem.set_initial_condition((x_p[0] - xs) ** 2 <= R ** 2)
-    problem.set_initial_condition((u_p[0] - xs) ** 2 <= R ** 2)
-
-    for j in range(k):
-        u_p.append(u_p[j] + (y_p[j] - x_p[j]))
-        x_new, _, _ = proximal_step(u_p[j + 1], f, 1.)
-        y_new, _, _ = proximal_step(2 * x_new - u_p[j + 1], g, 1.)
-        x_p.append(x_new)
-        y_p.append(y_new)
-
-    problem.set_performance_metric((x_p[k] - x_p[k - 1]) ** 2 + (u_p[k] - u_p[k - 1]) ** 2)
-    pepit_residuals.append(problem.solve(solver="SCS", verbose=False))
-    print(f"PEPit k={k}: {pepit_residuals[-1]:.6f}  (R={R:.4f})")
+    print(f"PEPit k={k}: {pepit_residuals[k - 1]:.6f}  (R={R:.4f})")
 
 # ── Simulator — squared 2-norm, N random initial dual conditions ──────────────
 N = 200

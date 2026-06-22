@@ -279,7 +279,7 @@ def _(
     worst_case_s0_ista = []
     worst_case_x_param_ista = []
     for _k in range(1, K+1):
-        _s[_k] = _VP.prox(function=regularizer, rhs=_s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), gamma=eta)
+        _s[_k] = _VP.prox(regularizer, _s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), gamma=eta)
         _VP.set_objective_norm([_s[_k] - _s[_k-1]], np.inf)
         _res = _VP.solve()
         all_residuals.append(_res)
@@ -318,7 +318,7 @@ def _(
         _s[0] = _VP.add_iterate(ndim=n, init=_s0_k)
         _s[0].lb = _s[0].ub = _s0_k
         for _j in range(1, _k + 1):
-            _s[_j] = _VP.prox(function=regularizer, rhs=_s[_j-1] - eta * D.T @ (D @ _s[_j-1] - _x_param), gamma=eta)
+            _s[_j] = _VP.prox(regularizer, _s[_j-1] - eta * D.T @ (D @ _s[_j-1] - _x_param), gamma=eta)
         worst_case_residuals_ista.append(_VP.solve()[0][-1])
 
     worst_case_residuals_ista = np.array(worst_case_residuals_ista)
@@ -356,7 +356,7 @@ def _(
     worst_case_x_param_fista = []
 
     for _k in range(1, K+1):
-        _y[_k] = _VP_fista.prox(function=regularizer, rhs=_z[_k-1] - eta * D.T @ (D @ _z[_k-1] - _x_param_fista), gamma=eta)
+        _y[_k] = _VP_fista.prox(regularizer, _z[_k-1] - eta * D.T @ (D @ _z[_k-1] - _x_param_fista), gamma=eta)
 
 
         # Update momentum parameter
