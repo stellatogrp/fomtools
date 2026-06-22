@@ -81,12 +81,25 @@ def test_reserved_flag_with_solver_option_mip(vp):
 
 
 def test_solve_time_option_overrides_construction(vp_param_2):
-    """Solve-time options override the construction-time ``params`` dict."""
-    # vp_param_2 is constructed with {"TimeLimit": 10, "MIPGap": 1e-4, "OutputFlag": 0}.
+    """A solve-time option overrides the same construction-time param.
+
+    ``vp_param_2`` is built with a construction-time MIP gap of 1e-4. We
+    override it at solve time with a distinctive value and read it back off the
+    solved copy to confirm the solve-time value actually won (not merely that
+    the solve succeeded).
+    """
     _build_mip_problem(vp_param_2)
-    options = VALID_MIP_OPTIONS[vp_param_2.canonicalizer.solver_name]
-    result = vp_param_2.solve(**options)
-    assert np.isfinite(result)
+    solver_name = vp_param_2.canonicalizer.solver_name
+    override = 0.137  # distinct from the construction-time 1e-4
+
+    if solver_name == "gurobi":
+        vp_param_2.solve(MIPGap=override)
+        applied = vp_param_2.canonicalizer._solved_copy.model.Params.MIPGap
+    else:  # highs
+        vp_param_2.solve(mip_rel_gap=override)
+        _, applied = vp_param_2.canonicalizer._solved_copy.model.getOptionValue("mip_rel_gap")
+
+    assert applied == override
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +174,32 @@ def test_highs_construction_param_survives_solve():
 
     _, applied_gap = vp.canonicalizer._solved_copy.model.getOptionValue("mip_rel_gap")
     assert applied_gap == distinctive_gap
+
+
+def test_sdp_solve_time_option_overrides_construction(vp_sdp):
+    """A solve-time SDP option overrides the same construction-time param.
+
+    Construction supplies an invalid ``max_iter``; left in place it surfaces as
+    a ``ValueError`` at solve, while a valid solve-time override replaces it and
+    the solve succeeds. This pins precedence deterministically, without relying
+    on solver convergence behavior (which would be flaky).
+    """
+    solver_name = vp_sdp.canonicalizer.solver_name
+    vp = Verifier(
+        method="sdp",
+        solver=solver_name,
+        obbt_solver=None,
+        params={"max_iter": "not_an_int"},
+    )
+    _build_sdp_problem(vp)
+
+    # Construction-time value is used when not overridden -> invalid -> raises.
+    with pytest.raises(ValueError):
+        vp.solve()
+
+    # Solve-time override replaces it with a valid value -> succeeds.
+    result = vp.solve(max_iter=10000)
+    assert np.isfinite(result)
 
 
 def test_cuclarabel_rejects_params_at_construction():
