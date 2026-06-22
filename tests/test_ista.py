@@ -20,7 +20,10 @@ def test_convergence():
     A = np.random.normal(size=(m, n))
     b = np.random.uniform(size=(m,))
 
-    t = 1 / np.max(np.linalg.eigvals(A.T @ A))
+    # eigvalsh (symmetric routine) returns real eigenvalues; eigvals (general) can return
+    # complex128 on some BLAS backends, yielding a complex step size that breaks
+    # bound_propagation's float accumulator.
+    t = 1 / np.max(np.linalg.eigvalsh(A.T @ A))
     lambd = 1e-2
 
     x_lstsq, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
