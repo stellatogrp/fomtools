@@ -232,7 +232,7 @@ class MIP(Canonicalizer):
             A new canonicalizer instance with copied state.
         """
         new_canon = MIP.__new__(MIP)
-        new_canon.solver_params = self.solver_params
+        new_canon.solver_params = dict(self.solver_params) if self.solver_params else None
         new_canon.solver_name = self.solver_name
         new_canon.solver = self.solver.copy()
         new_canon.obbt_handler = self.obbt_handler
@@ -431,6 +431,14 @@ class MIP(Canonicalizer):
         """
         # Create copy to apply objective without modifying original
         self._solved_copy = self.solver.copy()
+
+        # Re-apply construction-time options: HiGHS's copy() uses passModel,
+        # which copies the model data but not solver options, so the copy
+        # would otherwise reset them to defaults. (Gurobi's copy() preserves
+        # them, making this a harmless no-op there.) solver_kwargs are applied
+        # last so solve-time options override construction-time params.
+        if self.solver_params:
+            self._solved_copy.set_solver_params(self.solver_params)
 
         if convex_hull_cuts:
             self._solved_copy.add_convex_hull_cuts(self.steps)

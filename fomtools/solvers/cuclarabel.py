@@ -80,7 +80,9 @@ class CuClarabelSolver(ClarabelSolver):
         merged = {**self.solver_params, **solve_kwargs}
         if merged:
             raise ValueError(
-                f"CuClarabelSolver does not support custom solver options yet; got {merged}"
+                "cuClarabel does not support custom solver options yet; "
+                f"got {merged}. (Construction-time params are rejected up front "
+                "by the SDP canonicalizer.)"
             )
         q = self.q
         b_psd = [n * (n + 1) // 2 for n in self.cone_dims["psd"]]

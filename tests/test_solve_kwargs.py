@@ -140,6 +140,41 @@ def test_gurobi_construction_param_validation():
         Verifier(method="mip", solver="gurobi", obbt_solver=None, params={"NotARealParam": 1})
 
 
+def test_highs_construction_param_survives_solve():
+    """HiGHS construction-time options must reach the solved copy.
+
+    ``HiGHSSolver.copy()`` uses ``passModel``, which copies model data but not
+    solver options, so without re-applying ``solver_params`` on the copy a
+    construction-time option would silently revert to its default during
+    ``solve_model``. We set a distinctive ``mip_rel_gap`` and read it back off
+    the solved copy to confirm it was applied.
+    """
+    distinctive_gap = 0.123  # clearly different from the HiGHS default (1e-4)
+    vp = Verifier(
+        method="mip",
+        solver="highs",
+        obbt_solver=None,
+        params={"output_flag": False, "mip_rel_gap": distinctive_gap},
+    )
+    _build_mip_problem(vp)
+    vp.solve()
+
+    _, applied_gap = vp.canonicalizer._solved_copy.model.getOptionValue("mip_rel_gap")
+    assert applied_gap == distinctive_gap
+
+
+def test_cuclarabel_rejects_params_at_construction():
+    """cuClarabel rejects custom options eagerly, at Verifier construction.
+
+    Its Julia settings are hardcoded, so options cannot be applied. The error
+    must surface when the Verifier is built (not only at solve time), and
+    without requiring a GPU — the SDP canonicalizer validates before any CUDA
+    check.
+    """
+    with pytest.raises(ValueError, match="cuClarabel does not support"):
+        Verifier(method="sdp", solver="cuclarabel", obbt_solver=None, params={"max_iter": 1000})
+
+
 def test_sdp_construction_param_applied(vp_sdp):
     """SDP construction params are stored and applied at solve time.
 

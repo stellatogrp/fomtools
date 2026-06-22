@@ -128,6 +128,15 @@ class SDP(Canonicalizer):
         """
         super(SDP, self).__init__(solver_params, solver)
         self.solver_name = solver.lower()  # Store for dispatch
+
+        # cuClarabel cannot yet apply custom solver options (its Julia settings
+        # are hardcoded). Reject construction-time params eagerly here rather
+        # than surprising the user with a failure only at solve time.
+        if self.solver_name == "cuclarabel" and self.solver_params:
+            raise ValueError(
+                "cuClarabel does not support custom solver options yet; "
+                f"remove params={self.solver_params} from the Verifier."
+            )
         self.range_marker = 1
         self.var_idx_map = {}
 
@@ -325,7 +334,7 @@ class SDP(Canonicalizer):
             A new canonicalizer instance with copied state.
         """
         new_canon = SDP.__new__(SDP)
-        new_canon.solver_params = self.solver_params
+        new_canon.solver_params = dict(self.solver_params) if self.solver_params else None
         new_canon.solver_name = self.solver_name
         new_canon.solver = None  # SDP solver is instantiated at solve time
         new_canon.range_marker = self.range_marker
@@ -1622,7 +1631,10 @@ class SDP(Canonicalizer):
         merged = {**(self.solver_params or {}), **solver_kwargs}
         try:
             res = prob.solve(solver=cp.CLARABEL, **merged)
-        except Exception as e:
+        except (TypeError, cp.error.SolverError) as e:
+            # cvxpy raises TypeError for an unrecognized option name or a
+            # wrong-typed value (and SolverError on some backends/versions).
+            # Other failures (e.g. genuine solver errors) propagate untouched.
             raise ValueError(f"Invalid cvxpy/Clarabel solver option in {merged}: {e}") from e
         return res
 
