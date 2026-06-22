@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-
+from pathlib import Path
 from fomtools.codegen.agent.driver import (
     AgentBackendError,
     AgentDriver,
@@ -160,9 +160,53 @@ class ClaudeAgentDriver(AgentDriver):
             max_attempts=self.max_attempts,
             max_turns=self.max_turns,
         )
+    def _build_argv(self, workdir: str, prompt: str) -> list[str]:
+        """Assemble the ``claude`` CLI argument vector for one headless attempt.
+
+        Builds a ``claude -p`` invocation that grants the file/build tools in
+        ``_ALLOWED_TOOLS``, scopes the agent to ``workdir`` via ``--add-dir``,
+        applies the configured permission mode, and appends ``_SYSTEM_PROMPT``
+        to the default Claude Code system prompt. The ``--model`` flag is added
+        only when a model is configured.
+
+        Parameters
+        ----------
+        workdir : str
+            Absolute working directory exposed to the CLI via ``--add-dir``.
+        prompt : str
+            The task prompt for this attempt, passed to ``claude -p``.
+
+        Returns
+        -------
+        list of str
+            The argument vector to pass to :func:`subprocess.run`.
+        """
+        argv = [
+            "claude",
+            "-p",
+            prompt,
+            "--add-dir",
+            workdir,
+            "--allowedTools",
+            *_ALLOWED_TOOLS,
+            "--permission-mode",
+            self.cli_permission_mode,
+            "--append-system-prompt",
+            _SYSTEM_PROMPT,
+            "--output-format",
+            "text",
+        ]
+        if self.model:
+            argv += ["--model", self.model]
+        return argv
 
     def _invoke_agent(self, task: AgentTask, prompt: str, max_turns: int) -> str:
         """Run one agent attempt, preferring the SDK and falling back to the CLI.
+
+        Tries the in-process Python SDK first (unless ``prefer_cli`` is set); on
+        :class:`ImportError` it shells out to the ``claude`` CLI instead, scoping
+        it to the task's resolved absolute workdir. Success is decided later by
+        the caller's verify command, not here.
 
         Parameters
         ----------
@@ -172,7 +216,8 @@ class ClaudeAgentDriver(AgentDriver):
         prompt : str
             The prompt for this attempt.
         max_turns : int
-            Turn budget for this attempt (honored by the SDK path only).
+            Turn budget for this attempt (honored by the SDK path only; the CLI
+            loops internally in headless mode).
 
         Returns
         -------
@@ -184,7 +229,8 @@ class ClaudeAgentDriver(AgentDriver):
                 return self._invoke_sdk(task, prompt, max_turns)
             except ImportError:
                 pass  # fall back to CLI
-        return self._invoke_cli(task, prompt)
+        workdir = str(Path(task.workdir).resolve())
+        return self._invoke_cli(self._build_argv(workdir, prompt), workdir)
 
     def _invoke_sdk(self, task: AgentTask, prompt: str, max_turns: int) -> str:
         """Run one attempt in-process via the ``claude_agent_sdk`` Python SDK.
@@ -243,16 +289,22 @@ class ClaudeAgentDriver(AgentDriver):
 
         return asyncio.run(_run())
 
-    def _invoke_cli(self, task: AgentTask, prompt: str) -> str:
+    def _invoke_cli(self, argv:list[str], workdir: str) -> str:
         """Run one attempt by shelling out to the ``claude`` CLI in headless mode.
+
+        Executes ``argv`` in ``workdir`` with the child environment from
+        :meth:`_child_env` (``ANTHROPIC_API_KEY`` injected when configured,
+        otherwise the inherited subscription/OAuth environment), capturing
+        output. Success is left to the caller's verify command; this method only
+        returns the captured text or fails fast on an unrecoverable auth error.
 
         Parameters
         ----------
-        task : AgentTask
-            The unit of work describing the workspace, the solver path to
-            write, the restore hook, and the verify command to run.
-        prompt : str
-            The prompt passed to ``claude -p``.
+        argv : list of str
+            The full ``claude`` CLI argument vector, as built by
+            :meth:`_build_argv`.
+        workdir : str
+            Absolute working directory to run the CLI in.
 
         Returns
         -------
@@ -267,37 +319,19 @@ class ClaudeAgentDriver(AgentDriver):
 
         Note
         -----
-        The `claude` CLI (>=2.x) has no --max-turns flag; in --print mode
-        it loops internally until the task is done. We grant the file/build
-        tools and append (not replace) the default Claude Code system prompt so
-        it retains its tool-use behavior. The agent works inside an isolated
-        output directory, so bypassing permission prompts is safe and required
-        for non-interactive runs.
+        The ``claude`` CLI (>=2.x) has no ``--max-turns`` flag; in ``--print``
+        mode it loops internally until the task is done. The argument vector
+        grants the file/build tools and appends (not replaces) the default
+        Claude Code system prompt so the agent retains its tool-use behavior.
+        The agent works inside an isolated output directory, so bypassing
+        permission prompts is safe and required for non-interactive runs.
         """
-
-        cmd = [
-            "claude",
-            "-p",
-            prompt,
-            "--add-dir",
-            str(task.workdir),
-            "--allowedTools",
-            *_ALLOWED_TOOLS,
-            "--permission-mode",
-            self.cli_permission_mode,
-            "--append-system-prompt",
-            _SYSTEM_PROMPT,
-            "--output-format",
-            "text",
-        ]
-        if self.model:
-            cmd += ["--model", self.model]
         # Forward ANTHROPIC_API_KEY into the CLI's environment when configured so
         # an explicit key forces API-key auth; None keeps the inherited
         # environment (subscription/OAuth auth).
         proc = subprocess.run(
-            cmd,
-            cwd=str(task.workdir),
+            argv,
+            cwd=workdir,
             capture_output=True,
             text=True,
             env=self._child_env(),
