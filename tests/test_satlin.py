@@ -1,7 +1,7 @@
 import numpy as np
 
 from fomtools.verifier import Verifier
-from tests.conftest import TEST_EPS
+from tests.conftest import TEST_EPS, mip_params
 from tests.cvxpy import satlin as satlin_cvxpy
 
 np.set_printoptions(precision=5)  # Print few decimal places
@@ -157,7 +157,7 @@ def test_satlin_sdp_mip(vp_param_2, vp_sdp):
     vp_m = Verifier(
         solver=mip_solver_name,
         obbt_solver=mip_solver_name,
-        params={"TimeLimit": 10, "MIPGap": 1e-4, "OutputFlag": 0},
+        params=mip_params(mip_solver_name, limited=True),
     )
     q_m = vp_m.add_param(n, lb=q - q_offset, ub=q + q_offset)
     z_m = [vp_m.add_iterate(n, lb=z0_init, ub=z0_init)]
@@ -204,7 +204,7 @@ def test_satlin_param_sdp_mip(vp_param_2, vp_sdp):
     vp_m = Verifier(
         solver=mip_solver_name,
         obbt_solver=mip_solver_name,
-        params={"TimeLimit": 10, "MIPGap": 1e-4, "OutputFlag": 0},
+        params=mip_params(mip_solver_name, limited=True),
     )
     q_m = vp_m.add_param(n, lb=q - q_offset, ub=q + q_offset)
     top_m = vp_m.add_param(1, lb=0.5, ub=0.6)

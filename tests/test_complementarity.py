@@ -92,7 +92,7 @@ def test_complementarity_infinite_bound_raises():
     """
     Big-M encoding requires finite upper bounds; otherwise a clear ``ValueError``.
     """
-    vp = Verifier(method="mip", solver="highs", obbt_solver=None, params={"OutputFlag": 0})
+    vp = Verifier(method="mip", solver="highs", obbt_solver=None, params={"output_flag": False})
     a = vp.add_iterate(2, lb=0, ub=np.inf)
     b = vp.add_iterate(2, lb=0, ub=5)
 

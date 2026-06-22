@@ -52,13 +52,20 @@ class CuClarabelSolver(ClarabelSolver):
         _check_cuda_available()
         super(CuClarabelSolver, self).__init__(solver_params=solver_params)
 
-    def solve(self):
+    def solve(self, **solve_kwargs):
         """
         Solve the SDP on GPU and return the objective value.
 
         Transfers the problem data to GPU memory using CuPy and invokes
         Julia's CUDA-enabled Clarabel solver via juliacall. Uses cuDSS
         for the direct linear system solves.
+
+        Parameters
+        ----------
+        **solve_kwargs
+            Accepted for API parity, but native Clarabel settings are
+            not yet wired into the Julia GPU path. Passing any option
+            raises ``ValueError``.
 
         Returns
         -------
@@ -70,6 +77,11 @@ class CuClarabelSolver(ClarabelSolver):
         Requires CUDA-capable GPU and properly configured Julia environment
         with CUDA.jl and Clarabel.jl packages.
         """
+        merged = {**self.solver_params, **solve_kwargs}
+        if merged:
+            raise ValueError(
+                f"CuClarabelSolver does not support custom solver options yet; got {merged}"
+            )
         q = self.q
         b_psd = [n * (n + 1) // 2 for n in self.cone_dims["psd"]]
         b = np.concatenate([self.beq, self.bineq, np.zeros(sum(b_psd))])

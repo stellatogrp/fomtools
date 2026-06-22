@@ -402,7 +402,7 @@ class MIP(Canonicalizer):
         solver.constraints_to_solver(constraints)
         solver.set_objective(expression=q, sense="maximize")
 
-    def solve_model(self, convex_hull_cuts: bool = False) -> float:
+    def solve_model(self, convex_hull_cuts: bool = False, **solver_kwargs) -> float:
         """
         Optimize the underlying MIP problem.
 
@@ -413,11 +413,15 @@ class MIP(Canonicalizer):
 
         Parameters
         ----------
-        steps: Step
-            The step objects for convex hull cut generation.
-
         convex_hull_cuts: bool
             If ``True`` convex hull cuts are added to the MIP problem.
+
+        **solver_kwargs
+            Native solver options forwarded verbatim to the backend
+            (e.g. ``TimeLimit=10``, ``MIPGap=1e-4`` for Gurobi). Applied
+            to the solve copy, so they override construction-time
+            ``params`` for this call. A ``ValueError`` is raised if the
+            backend rejects an option.
 
         Returns
         -------
@@ -430,6 +434,9 @@ class MIP(Canonicalizer):
 
         if convex_hull_cuts:
             self._solved_copy.add_convex_hull_cuts(self.steps)
+
+        if solver_kwargs:
+            self._solved_copy.set_solver_params(solver_kwargs)
 
         self._apply_objective(self._solved_copy)
         self._solved_copy.optimize()

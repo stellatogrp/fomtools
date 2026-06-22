@@ -46,10 +46,10 @@ class ClarabelSolver(SDPSolver):
         Parameters
         ----------
         solver_params : dict, optional
-            Dictionary of solver-specific parameters to configure.
+            Dictionary of native Clarabel settings to configure. Stored
+            and applied to the ``DefaultSettings`` object at solve time.
         """
-        if solver_params is not None:
-            self.set_solver_params(solver_params)
+        self.solver_params = solver_params or {}
 
     def setup_clarabel_data(
         self,
@@ -136,7 +136,7 @@ class ClarabelSolver(SDPSolver):
         self.M = M
         self.cone_dims = cone_dims
 
-    def solve(self):
+    def solve(self, **solve_kwargs):
         """
         Solve the SDP and return the objective value.
 
@@ -145,10 +145,23 @@ class ClarabelSolver(SDPSolver):
         in Clarabel's standard form, so the returned value is negated
         to give the maximization objective.
 
+        Parameters
+        ----------
+        **solve_kwargs
+            Native Clarabel settings applied verbatim to the
+            ``DefaultSettings`` object (e.g. ``max_iter``,
+            ``tol_gap_abs``). These override matching entries in
+            ``solver_params`` for this solve.
+
         Returns
         -------
         float
             The optimal objective value of the SDP maximization problem.
+
+        Raises
+        ------
+        ValueError
+            If Clarabel rejects a settings name or value.
         """
         q = self.q
         b_psd = [n * (n + 1) // 2 for n in self.cone_dims["psd"]]
@@ -167,6 +180,14 @@ class ClarabelSolver(SDPSolver):
         P = spa.csc_matrix((xdim, xdim))
         settings = clarabel.DefaultSettings()
         settings.verbose = False
+
+        # Apply native Clarabel settings; solve-time kwargs override construction params.
+        merged = {**self.solver_params, **solve_kwargs}
+        for k, v in merged.items():
+            try:
+                setattr(settings, k, v)
+            except (AttributeError, TypeError) as e:
+                raise ValueError(f"Invalid Clarabel solver option {k!r}={v!r}: {e}") from e
 
         solver = clarabel.DefaultSolver(P, q, A, b, cones, settings)
         sol = solver.solve()

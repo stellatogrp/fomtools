@@ -40,19 +40,27 @@ class GurobiSolver(MIPSolver):
     def __getitem__(self, item):
         return getattr(self.model, item)
 
-    def set_param(self, param: str, val: int | float):
+    def set_param(self, param: str, val):
         """
-        Configure a solver parameter that controls its behavior.
+        Configure a solver parameter, passed verbatim to Gurobi.
 
         Parameters
         ----------
         param: str
-            The name of the solver parameter to set.
-
-        val: int | float
+            The native Gurobi parameter name to set (e.g. ``TimeLimit``,
+            ``MIPGap``).
+        val:
             The value to assign to the specified parameter.
+
+        Raises
+        ------
+        ValueError
+            If Gurobi rejects the parameter name or value.
         """
-        self.model.setParam(param, val)
+        try:
+            self.model.setParam(param, val)
+        except gp.GurobiError as e:
+            raise ValueError(f"Invalid Gurobi solver option {param!r}={val!r}: {e}") from e
 
     def relax_model(self):
         """

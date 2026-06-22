@@ -1482,7 +1482,7 @@ class SDP(Canonicalizer):
                 self._cut_ineq_matrices.append(-symmetrize(N.tocsc()))
                 self._cut_bineq_upperbounds.append(0.0)
 
-    def solve_model(self, steps=None, convex_hull_cuts=False):
+    def solve_model(self, steps=None, convex_hull_cuts=False, **solver_kwargs):
         """Solve the SDP problem using the configured solver.
 
         Creates a copy of the canonicalizer, applies the objective to the copy,
@@ -1495,6 +1495,12 @@ class SDP(Canonicalizer):
             Unused by SDP, accepted for API compatibility.
         convex_hull_cuts : bool, optional
             Unused by SDP, accepted for API compatibility.
+        **solver_kwargs
+            Native solver options forwarded verbatim to the backend
+            (e.g. ``max_iter=500``, ``tol_gap_abs=1e-9`` for
+            Clarabel/cvxpy). They override construction-time ``params``
+            for this call. A ``ValueError`` is raised if the backend
+            rejects an option.
 
         Returns
         -------
@@ -1519,14 +1525,19 @@ class SDP(Canonicalizer):
                     self._apply_infinity_norm_objective(self._solved_copy, expr_list)
 
         # Solve using the copy's data
-        return self._solved_copy._solve_internal()
+        return self._solved_copy._solve_internal(**solver_kwargs)
 
-    def _solve_internal(self):
+    def _solve_internal(self, **solver_kwargs):
         """
         Actually solve using this canonicalizer's data.
 
         This is the internal solve method called on the copy after
         the objective has been applied.
+
+        Parameters
+        ----------
+        **solver_kwargs
+            Native solver options forwarded verbatim to the backend.
 
         Returns
         -------
@@ -1535,11 +1546,11 @@ class SDP(Canonicalizer):
         """
         match self.solver_name:
             case "clarabel":
-                return self._solve_via_clarabel_internal()
+                return self._solve_via_clarabel_internal(**solver_kwargs)
             case "cvxpy":
-                return self._solve_via_cvxpy_internal()
+                return self._solve_via_cvxpy_internal(**solver_kwargs)
             case "cuclarabel":
-                return self._solve_via_cuclarabel_internal()
+                return self._solve_via_cuclarabel_internal(**solver_kwargs)
             case _:
                 raise ValueError(f"Unknown SDP solver: {self.solver_name}")
 
@@ -1564,12 +1575,17 @@ class SDP(Canonicalizer):
                     _, expr_list = self._objective_spec
                     self._apply_infinity_norm_objective(self, expr_list)
 
-    def solve_via_cvxpy(self):
+    def solve_via_cvxpy(self, **solver_kwargs):
         """
         Solve the SDP using the CVXPY modeling interface.
 
         Constructs a CVXPY problem from the stored constraint matrices
         and solves it using the Clarabel backend via CVXPY.
+
+        Parameters
+        ----------
+        **solver_kwargs
+            Native solver options forwarded verbatim to ``Problem.solve``.
 
         Returns
         -------
@@ -1577,9 +1593,9 @@ class SDP(Canonicalizer):
             The optimal objective value.
         """
         self._ensure_objective_applied()
-        return self._solve_via_cvxpy_internal()
+        return self._solve_via_cvxpy_internal(**solver_kwargs)
 
-    def _solve_via_cvxpy_internal(self):
+    def _solve_via_cvxpy_internal(self, **solver_kwargs):
         """Internal CVXPY solve without checking objective."""
         self._rebuild_cuts_if_dirty()
         Aineq_all = self.Aineq_matrices + self._cut_ineq_matrices
@@ -1602,15 +1618,25 @@ class SDP(Canonicalizer):
             idx = sorted(cone_indices)
             constraints += [X[np.ix_(idx, idx)] >> 0]
         prob = cp.Problem(obj, constraints)
-        res = prob.solve(solver=cp.CLARABEL)
+        # `solver` is reserved by FOMTools; user options override construction params.
+        merged = {**(self.solver_params or {}), **solver_kwargs}
+        try:
+            res = prob.solve(solver=cp.CLARABEL, **merged)
+        except Exception as e:
+            raise ValueError(f"Invalid cvxpy/Clarabel solver option in {merged}: {e}") from e
         return res
 
-    def solve_via_clarabel(self):
+    def solve_via_clarabel(self, **solver_kwargs):
         """
         Solve the SDP using the native Clarabel interface.
 
         Directly invokes the Clarabel solver without going through CVXPY,
         which can be more efficient for large problems.
+
+        Parameters
+        ----------
+        **solver_kwargs
+            Native Clarabel settings forwarded verbatim to the solver.
 
         Returns
         -------
@@ -1618,9 +1644,9 @@ class SDP(Canonicalizer):
             The optimal objective value.
         """
         self._ensure_objective_applied()
-        return self._solve_via_clarabel_internal()
+        return self._solve_via_clarabel_internal(**solver_kwargs)
 
-    def _solve_via_clarabel_internal(self):
+    def _solve_via_clarabel_internal(self, **solver_kwargs):
         """Internal Clarabel solve without checking objective."""
         self._rebuild_cuts_if_dirty()
         Aineq_all = self.Aineq_matrices + self._cut_ineq_matrices
@@ -1636,14 +1662,19 @@ class SDP(Canonicalizer):
             bineq_all,
             self.psd_cone_indices,
         )
-        return solver.solve()
+        return solver.solve(**solver_kwargs)
 
-    def solve_via_cuclarabel(self):
+    def solve_via_cuclarabel(self, **solver_kwargs):
         """
         Solve the SDP using GPU-accelerated Clarabel.
 
         Uses the CUDA-enabled Clarabel solver for GPU acceleration.
         Requires CuPy and Julia with CUDA.jl and Clarabel.jl.
+
+        Parameters
+        ----------
+        **solver_kwargs
+            Native Clarabel settings forwarded verbatim to the solver.
 
         Returns
         -------
@@ -1656,9 +1687,9 @@ class SDP(Canonicalizer):
             If CUDA dependencies (cupy) are not available.
         """
         self._ensure_objective_applied()
-        return self._solve_via_cuclarabel_internal()
+        return self._solve_via_cuclarabel_internal(**solver_kwargs)
 
-    def _solve_via_cuclarabel_internal(self):
+    def _solve_via_cuclarabel_internal(self, **solver_kwargs):
         """Internal CuClarabel solve without checking objective."""
         self._rebuild_cuts_if_dirty()
         Aineq_all = self.Aineq_matrices + self._cut_ineq_matrices
@@ -1674,7 +1705,7 @@ class SDP(Canonicalizer):
             bineq_all,
             self.psd_cone_indices,
         )
-        return solver.solve()
+        return solver.solve(**solver_kwargs)
 
 
 def symmetrize(mat):

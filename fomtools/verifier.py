@@ -1026,6 +1026,20 @@ class Verifier(object):
         optimization problem using the recorded thresholding or
         activation steps.
 
+        Parameters
+        ----------
+        **kwargs
+            Keyword arguments forwarded to the canonicalizer's
+            ``solve_model``. Reserved flags consumed by FOMTools (e.g.
+            ``convex_hull_cuts``) bind to their named parameters; any
+            remaining keyword is passed **verbatim** to the active
+            backend solver as a native option (e.g. ``TimeLimit=10`` or
+            ``MIPGap=1e-4`` for Gurobi, ``max_iter=500`` for
+            Clarabel/cvxpy). These solve-time options override matching
+            entries in the construction-time ``params`` dict. A
+            ``ValueError`` is raised if the backend rejects an option
+            name or value.
+
         Returns
         -------
         float
