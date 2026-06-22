@@ -17,6 +17,23 @@ TEST_EPS = 1e-5
 # equality comparisons against them (and MIP-vs-reference checks) use this looser tolerance.
 PROX_ATOL = 1e-3
 
+# Native MIP solver options per backend (no cross-solver name translation).
+_MIP_SILENT = {"gurobi": {"OutputFlag": 0}, "highs": {"output_flag": False}}
+_MIP_LIMITED = {
+    "gurobi": {"OutputFlag": 0, "TimeLimit": 10, "MIPGap": 1e-4},
+    "highs": {"output_flag": False, "time_limit": 10, "mip_rel_gap": 1e-4},
+}
+
+
+def mip_params(solver, *, limited=False):
+    """Return native MIP solver options for ``solver`` (silences output).
+
+    Tests are parameterized over both Gurobi and HiGHS, which use different
+    native option names. This helper returns the right dict per backend so no
+    name translation is needed at the solver layer.
+    """
+    return dict((_MIP_LIMITED if limited else _MIP_SILENT)[solver])
+
 
 @pytest.fixture(params=SOLVERS, scope="function")
 def vp(request: pytest.FixtureRequest):
@@ -33,7 +50,9 @@ def vp_param_1(request: pytest.FixtureRequest):
     Pytest fixture that provides a `Verifier` instance configured with
     a solver whose output flag is set to 0 (silent mode).
     """
-    return Verifier(solver=request.param, obbt_solver=request.param, params={"OutputFlag": 0})
+    return Verifier(
+        solver=request.param, obbt_solver=request.param, params=mip_params(request.param)
+    )
 
 
 @pytest.fixture(params=SOLVERS, scope="function")
@@ -46,7 +65,7 @@ def vp_param_2(request: pytest.FixtureRequest):
     return Verifier(
         solver=request.param,
         obbt_solver=request.param,
-        params={"TimeLimit": 10, "MIPGap": 1e-4, "OutputFlag": 0},
+        params=mip_params(request.param, limited=True),
     )
 
 
@@ -113,7 +132,7 @@ def build_lasso_ista(obbt, solver, *, method="mip", K=3, seed=0, n=3, m=4, t=0.0
     W = np.eye(n) - t * A.T @ A
     G = t * A.T
 
-    params = {"OutputFlag": 0} if method == "mip" else None
+    params = mip_params(solver) if method == "mip" else None
     v = Verifier(method=method, solver=solver, obbt_solver=obbt, params=params)
     z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
     b = v.add_param(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))

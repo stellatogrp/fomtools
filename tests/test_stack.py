@@ -5,7 +5,7 @@ import scipy.sparse as spa
 import fomtools as fom
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.verifier import Verifier
-from tests.conftest import SOLVERS, TEST_EPS
+from tests.conftest import SOLVERS, TEST_EPS, mip_params
 
 # Map MIP solver class names to solver identifier strings (mirrors
 # ``tests/test_nnls_sdp_mip.py``).
@@ -206,7 +206,7 @@ def test_stack_through_relu_mip(solver):
     nu_ub = np.array([2.0, 1.0])
 
     def build(use_stack: bool):
-        v = Verifier(solver=solver, obbt_solver=solver, params={"OutputFlag": 0})
+        v = Verifier(solver=solver, obbt_solver=solver, params=mip_params(solver))
         x = v.add_iterate(2, lb=x_lb, ub=x_ub)
         nu = v.add_iterate(2, lb=nu_lb, ub=nu_ub)
         if use_stack:
@@ -255,7 +255,7 @@ def test_stack_through_relu_sdp(vp, vp_sdp):
     v_mip = Verifier(
         solver=mip_solver_name,
         obbt_solver=mip_solver_name,
-        params={"OutputFlag": 0},
+        params=mip_params(mip_solver_name),
     )
     x_m = v_mip.add_iterate(2, lb=x_lb, ub=x_ub)
     nu_m = v_mip.add_iterate(2, lb=nu_lb, ub=nu_ub)
@@ -283,7 +283,7 @@ def test_stack_through_affine(solver):
     M = np.random.randn(3, 4)
 
     def build(use_stack):
-        v = Verifier(solver=solver, obbt_solver=solver, params={"OutputFlag": 0})
+        v = Verifier(solver=solver, obbt_solver=solver, params=mip_params(solver))
         x = v.add_iterate(2, lb=x_lb, ub=x_ub)
         nu = v.add_iterate(2, lb=nu_lb, ub=nu_ub)
         if use_stack:
@@ -316,7 +316,7 @@ def test_stack_inherits_leaf_constraint(solver):
     nu_ub = np.array([0.6, 0.5])
 
     def build(use_stack):
-        v = Verifier(solver=solver, obbt_solver=solver, params={"OutputFlag": 0})
+        v = Verifier(solver=solver, obbt_solver=solver, params=mip_params(solver))
         x = v.add_iterate(2, lb=c, ub=c)  # pinned at construction
         nu = v.add_iterate(2, lb=nu_lb, ub=nu_ub)
         if use_stack:
@@ -355,7 +355,7 @@ def test_obbt_tightens_unbounded_dual_via_stack(solver):
     i.e. ``nu = -x``. With ``x in [-1, 1]^2`` the tight bounds on ``nu``
     are ``[-1, 1]^2``.
     """
-    v = Verifier(solver=solver, obbt_solver=solver, params={"OutputFlag": 0})
+    v = Verifier(solver=solver, obbt_solver=solver, params=mip_params(solver))
     x = v.add_iterate(2, lb=-1.0, ub=1.0)
     nu = v.add_iterate(2, lb=-np.inf, ub=np.inf)
 

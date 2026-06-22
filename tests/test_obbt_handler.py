@@ -20,6 +20,7 @@ from tests.conftest import (
     SOLVERS,
     TEST_EPS,
     build_lasso_ista,
+    mip_params,
     step_input_widths,
 )
 
@@ -35,7 +36,7 @@ def build_relu_chain(obbt, solver, *, method="mip", K=3, seed=1, n=3, m=3, t=0.1
     A = np.random.normal(size=(m, n))
     W = np.eye(n) - t * A.T @ A
     G = t * A.T
-    params = {"OutputFlag": 0} if method == "mip" else None
+    params = mip_params(solver) if method == "mip" else None
     v = Verifier(method=method, solver=solver, obbt_solver=obbt, params=params)
     z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
     b = v.add_param(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
@@ -53,7 +54,7 @@ def build_satlin_chain(obbt, solver, *, method="mip", K=3, seed=2, n=3, m=3, t=0
     G = t * A.T
     l = -0.3 * np.ones(n)
     u = 0.3 * np.ones(n)
-    params = {"OutputFlag": 0} if method == "mip" else None
+    params = mip_params(solver) if method == "mip" else None
     v = Verifier(method=method, solver=solver, obbt_solver=obbt, params=params)
     z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
     b = v.add_param(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
@@ -250,7 +251,7 @@ def test_affine_obbt_input_tightening(solver):
     np.random.seed(3)
     n = 3
     W = np.random.normal(size=(n, n))
-    v = Verifier(solver=solver, obbt_solver=solver, params={"OutputFlag": 0})
+    v = Verifier(solver=solver, obbt_solver=solver, params=mip_params(solver))
     z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
     y = v.run_step(z, Affine, weight=W)
 
@@ -294,7 +295,7 @@ def test_affine_obbt_tightens_when_constrained(solver):
     n = 3
     W1 = np.random.normal(size=(n, n))
     W2 = np.random.normal(size=(n, n))
-    v = Verifier(solver=solver, obbt_solver=solver, params={"OutputFlag": 0})
+    v = Verifier(solver=solver, obbt_solver=solver, params=mip_params(solver))
     z = v.add_iterate(n, lb=-1.0 * np.ones(n), ub=1.0 * np.ones(n))
     y = v.run_step(z, Affine, weight=W1)  # Affine_1 equality into OBBT LP
     _ = v.run_step(y, Affine, weight=W2)  # Affine_2 input is what we check

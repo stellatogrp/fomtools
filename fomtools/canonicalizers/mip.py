@@ -232,7 +232,7 @@ class MIP(Canonicalizer):
             A new canonicalizer instance with copied state.
         """
         new_canon = MIP.__new__(MIP)
-        new_canon.solver_params = self.solver_params
+        new_canon.solver_params = dict(self.solver_params) if self.solver_params else None
         new_canon.solver_name = self.solver_name
         new_canon.solver = self.solver.copy()
         new_canon.obbt_handler = self.obbt_handler
@@ -402,7 +402,7 @@ class MIP(Canonicalizer):
         solver.constraints_to_solver(constraints)
         solver.set_objective(expression=q, sense="maximize")
 
-    def solve_model(self, convex_hull_cuts: bool = False) -> float:
+    def solve_model(self, convex_hull_cuts: bool = False, **solver_kwargs) -> float:
         """
         Optimize the underlying MIP problem.
 
@@ -413,11 +413,15 @@ class MIP(Canonicalizer):
 
         Parameters
         ----------
-        steps: Step
-            The step objects for convex hull cut generation.
-
         convex_hull_cuts: bool
             If ``True`` convex hull cuts are added to the MIP problem.
+
+        **solver_kwargs
+            Native solver options forwarded verbatim to the backend
+            (e.g. ``TimeLimit=10``, ``MIPGap=1e-4`` for Gurobi). Applied
+            to the solve copy, so they override construction-time
+            ``params`` for this call. A ``ValueError`` is raised if the
+            backend rejects an option.
 
         Returns
         -------
@@ -428,8 +432,19 @@ class MIP(Canonicalizer):
         # Create copy to apply objective without modifying original
         self._solved_copy = self.solver.copy()
 
+        # Re-apply construction-time options: HiGHS's copy() uses passModel,
+        # which copies the model data but not solver options, so the copy
+        # would otherwise reset them to defaults. (Gurobi's copy() preserves
+        # them, making this a harmless no-op there.) solver_kwargs are applied
+        # last so solve-time options override construction-time params.
+        if self.solver_params:
+            self._solved_copy.set_solver_params(self.solver_params)
+
         if convex_hull_cuts:
             self._solved_copy.add_convex_hull_cuts(self.steps)
+
+        if solver_kwargs:
+            self._solved_copy.set_solver_params(solver_kwargs)
 
         self._apply_objective(self._solved_copy)
         self._solved_copy.optimize()
