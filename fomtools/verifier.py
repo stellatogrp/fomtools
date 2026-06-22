@@ -58,6 +58,8 @@ class Verifier(object):
         relu_envelope_cuts=False,
         rlt_all_pairs=False,
         full_psd_cone=False,
+        cross_cut=False,
+        subgrad_mono_cut=False,
     ):
         """
         Initialize a Verifier instance.
@@ -103,6 +105,16 @@ class Verifier(object):
             SDP-only: union all PSD cones into one full moment matrix; combined
             with ``rlt_cuts`` gives the full Shor + RLT relaxation. No effect for
             ``method != "sdp"``.
+        cross_cut : bool, default False
+            SDP-only: add the PEP "cross" interpolation cuts ``z_a r_b <= 0``
+            coupling pairs of ReLU output components across steps. Self-registers
+            minimal PSD cones (no need for ``full_psd_cone``). No effect for
+            ``method != "sdp"``.
+        subgrad_mono_cut : bool, default False
+            SDP-only: add the PEP subgradient-monotonicity cuts
+            ``<s^i/tau_i - s^j/tau_j, z^i> >= 0`` over pairs of prox steps. On the
+            orthant this reduces to ``cross_cut``; on soft-thresholding it is a
+            distinct coupling. No effect for ``method != "sdp"``.
         """
         self.theory_func = theory_func
         self.iterates = []
@@ -121,6 +133,8 @@ class Verifier(object):
             relu_envelope_cuts=relu_envelope_cuts,
             rlt_all_pairs=rlt_all_pairs,
             full_psd_cone=full_psd_cone,
+            cross_cut=cross_cut,
+            subgrad_mono_cut=subgrad_mono_cut,
         )
         self.obbt_handler = OBBTHandler(solver=obbt_solver) if obbt_solver else None
         self.use_obbt_handler = True if obbt_solver else False
@@ -190,6 +204,8 @@ class Verifier(object):
         relu_envelope_cuts: bool = False,
         rlt_all_pairs: bool = False,
         full_psd_cone: bool = False,
+        cross_cut: bool = False,
+        subgrad_mono_cut: bool = False,
     ):
         """
          Return an initialized instance for the requested method.
@@ -235,6 +251,8 @@ class Verifier(object):
             ("relu_envelope_cuts", relu_envelope_cuts),
             ("rlt_all_pairs", rlt_all_pairs),
             ("full_psd_cone", full_psd_cone),
+            ("cross_cut", cross_cut),
+            ("subgrad_mono_cut", subgrad_mono_cut),
         ]
         if method_lower != "sdp" and any(v for _, v in sdp_only_flags):
             enabled = [name for name, v in sdp_only_flags if v]
@@ -259,6 +277,8 @@ class Verifier(object):
                     relu_envelope_cuts=relu_envelope_cuts,
                     rlt_all_pairs=rlt_all_pairs,
                     full_psd_cone=full_psd_cone,
+                    cross_cut=cross_cut,
+                    subgrad_mono_cut=subgrad_mono_cut,
                 )
             case "simulator":
                 return Simulator()

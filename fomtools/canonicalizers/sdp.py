@@ -74,6 +74,8 @@ class SDP(Canonicalizer):
         relu_envelope_cuts=False,
         rlt_all_pairs=False,
         full_psd_cone=False,
+        cross_cut=False,
+        subgrad_mono_cut=False,
     ):
         """
         Initialize the SDP canonicalizer.
@@ -125,6 +127,26 @@ class SDP(Canonicalizer):
             at solve time. Combined with ``rlt_cuts=True`` this yields the full
             Shor + RLT relaxation (RLT then fires on every variable pair, not
             just cone-mates). Tightest but most expensive configuration.
+        cross_cut : bool, default=False
+            If True, add the PEP "cross" interpolation cuts ``z_a r_b <= 0`` over
+            ordered pairs of ReLU output components, where ``z_a >= 0`` is a ReLU
+            output and ``r_b = v_b - z_b <= 0`` is another ReLU's residual (valid
+            for every orthant projection). Couples *different* steps, which the
+            per-step encoding does not. Each emitted cut self-registers the minimal
+            PSD cone over the indices it touches so it binds without
+            ``full_psd_cone`` (Clarabel handles many small cones efficiently; the
+            ``add_psd_cone_indices`` antichain subsumes a cone already covered by a
+            larger one).
+        subgrad_mono_cut : bool, default=False
+            If True, add the PEP subgradient-monotonicity cuts
+            ``<s^i/tau_i - s^j/tau_j, z^i> >= 0`` over ordered pairs of registered
+            prox steps, with ``s = v - z`` and ``tau`` the prox threshold
+            (``tau = 1`` for ReLU/orthant, ``tau = lambda`` for soft-threshold).
+            Normalizing by ``tau`` places the subgradient in ``d||.||_1`` so steps
+            of the same (homogeneous) function are comparable. On the orthant this
+            reduces to the cross cut; on the soft-threshold (ell-1 prox) it is a
+            genuinely distinct coupling. Self-registers minimal PSD cones like
+            ``cross_cut``.
         """
         super(SDP, self).__init__(solver_params, solver)
         self.solver_name = solver.lower()  # Store for dispatch
@@ -155,10 +177,13 @@ class SDP(Canonicalizer):
         self.relu_envelope_cuts = relu_envelope_cuts
         self.rlt_all_pairs = rlt_all_pairs
         self.full_psd_cone = full_psd_cone
+        self.cross_cut = cross_cut
+        self.subgrad_mono_cut = subgrad_mono_cut
         self._cuts_dirty = True
         self._cut_ineq_matrices = []
         self._cut_bineq_upperbounds = []
-        self._relu_steps = []  # registry for triangle / envelope cuts
+        self._relu_steps = []  # registry for triangle / envelope / cross cuts
+        self._prox_steps = []  # registry for subgradient-monotonicity cuts
         self._ineq_constraints = []  # (constraint, add_product_cuts) for inequality cuts
 
         self.C_obj = None
@@ -355,11 +380,14 @@ class SDP(Canonicalizer):
         new_canon.relu_envelope_cuts = self.relu_envelope_cuts
         new_canon.rlt_all_pairs = self.rlt_all_pairs
         new_canon.full_psd_cone = self.full_psd_cone
+        new_canon.cross_cut = self.cross_cut
+        new_canon.subgrad_mono_cut = self.subgrad_mono_cut
         # Cuts get rebuilt from current state on the copy's first solve.
         new_canon._cuts_dirty = True
         new_canon._cut_ineq_matrices = []
         new_canon._cut_bineq_upperbounds = []
         new_canon._relu_steps = list(self._relu_steps)  # shallow: Relu objs are shared
+        new_canon._prox_steps = list(self._prox_steps)  # shallow: exprs/scalars immutable
         new_canon._ineq_constraints = list(self._ineq_constraints)  # shallow: (constr, flag) tuples
         new_canon.C_obj = self.C_obj.copy() if self.C_obj is not None else None
         new_canon.obbt_handler = self.obbt_handler
@@ -615,6 +643,30 @@ class SDP(Canonicalizer):
         # Constrain the bilinear entries.
         self.add_psd_cone_indices(idx1 + idx2)
 
+    def register_prox_step(self, z: LinearExpression, v: LinearExpression, tau: float) -> None:
+        """
+        Register a prox step for the subgradient-monotonicity cut.
+
+        Records ``(z, v, tau)`` where ``z`` is the prox output expression, ``v``
+        is the prox input expression (so the subgradient is ``s = v - z``), and
+        ``tau`` is the prox threshold (``tau = 1`` for orthant projection / ReLU,
+        ``tau = lambda`` for soft-thresholding). The subgradient cut builder
+        (:meth:`_build_subgrad_mono_cuts`) consumes this registry.
+
+        Parameters
+        ----------
+        z : LinearExpression
+            Prox output. May be composite (e.g. ``relu_pos - relu_neg`` for
+            soft-thresholding); leaves must already be registered in
+            ``var_idx_map`` at call time.
+        v : LinearExpression
+            Prox input (``step.arg``).
+        tau : float
+            Prox threshold used to normalize the subgradient.
+        """
+        self._prox_steps.append({"z": z, "v": v, "tau": float(tau)})
+        self._cuts_dirty = True
+
     def add_psd_cone_indices(self, new_indices):
         """
         Register a new PSD cone constraint on a submatrix.
@@ -699,6 +751,15 @@ class SDP(Canonicalizer):
 
         self.add_psd_cone_indices(relu_psd_cone_indices)
         self._relu_steps.append(step)
+
+        # Register the ReLU as a prox step (orthant projection, tau=1) for the
+        # subgradient-monotonicity cut — unless this ReLU is an internal piece of
+        # a soft-threshold decomposition, in which case the composite prox is
+        # registered by the decomposer instead (see SDPStepDecomposer). The ReLU
+        # still joins ``_relu_steps`` above so the cross cut sees every node.
+        if not getattr(step, "_skip_prox_registration", False):
+            self.register_prox_step(z=step.output, v=step.arg, tau=1.0)
+
         self._cuts_dirty = True
 
     def canonicalize_affine(self, step: Affine) -> None:
@@ -1114,6 +1175,18 @@ class SDP(Canonicalizer):
         if self.relu_envelope_cuts:
             self._build_relu_envelope_cuts()
 
+        # PEP cross-step interpolation cuts. Each builder self-registers the
+        # minimal PSD cone for the indices it touches so the cross-step products
+        # bind without ``full_psd_cone`` (the antichain subsumes a cone already
+        # covered by a larger one). The cone additions set ``_cuts_dirty = True``;
+        # that churn is harmless — it is overridden by ``_cuts_dirty = False`` at
+        # the end of this method (same pattern as the ``rlt_all_pairs`` branch).
+        if self.cross_cut:
+            self._build_cross_cuts()
+
+        if self.subgrad_mono_cut:
+            self._build_subgrad_mono_cuts()
+
         if self._ineq_constraints and (
             self.ineq_product_cuts or self.ineq_box_cuts or self.ineq_square_cuts
         ):
@@ -1489,6 +1562,196 @@ class SDP(Canonicalizer):
                 N[0, 0] = E_ii * b_i - E_ii * lb_i
                 N[y_i_idx, 0] = -1.0
                 self._cut_ineq_matrices.append(-symmetrize(N.tocsc()))
+                self._cut_bineq_upperbounds.append(0.0)
+
+    def _relu_output_components(self) -> list[dict]:
+        """
+        Flatten all registered ReLU steps into per-output-component records.
+
+        Each record describes one projected ReLU output ``z = relu(v)`` at a
+        single coordinate:
+
+        - ``y_idx``  : its SDP matrix index (used for the ``z`` factor),
+        - ``a``      : coefficient row of the affine input ``v = a^T x + beta``,
+        - ``beta``   : constant of ``v`` at this row,
+        - ``x_bounds``: the input leaves' SDP index ranges (parallel to ``a``).
+
+        Used by :meth:`_build_cross_cuts`. The arg coefficients are read via
+        ``linexpr_to_Amat_and_bounds`` once per step.
+        """
+        comps = []
+        for step in self._relu_steps:
+            A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(step.arg)
+            b_vec = np.asarray(step.arg.const)
+            y_leaf = step.output_leaves[0]
+            y_start, _y_end = self.var_idx_map[y_leaf]
+            rhs_to_y_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
+            for rb, y_pos in rhs_to_y_pos.items():
+                comps.append(
+                    {
+                        "y_idx": y_start + y_pos,
+                        "a": np.asarray(A_mat[rb, :]).flatten(),
+                        "beta": float(b_vec[rb]),
+                        "x_bounds": x_idx_bounds,
+                    }
+                )
+        return comps
+
+    def _build_cross_cuts(self) -> None:
+        r"""
+        Append the PEP "cross" interpolation cuts ``z_a r_b <= 0``.
+
+        For any two ReLU output components ``a`` and ``b`` (across all registered
+        ReLU steps), ``z_a >= 0`` and the residual ``r_b = v_b - z_b <= 0``, so
+        ``z_a r_b <= 0`` is valid (PDF eq 3; for ReLU = orthant projection it is
+        the indicator-function specialization of the subgradient inequality). It
+        couples *different* steps, which the per-step encoding does not. With
+        ``r_b = v_b - z_b`` and ``v_b = a_b^T x + beta_b`` this is linear in ``X``:
+
+        ``z_a r_b = sum_p a_b[p] X[ya, x_p] + beta_b X[0, ya] - X[ya, yb] <= 0``.
+
+        The diagonal ``a == b`` (``ya == yb``) is the complementarity identity
+        ``z_a r_a = 0`` already encoded exactly by :meth:`canonicalize_relu`, so it
+        is skipped. Each cut registers the minimal PSD cone ``{0, ya, yb} U x_b``
+        so its second-moment entries bind without ``full_psd_cone``.
+        """
+        n_dim = self.get_sdp_var_dim()
+        comps = self._relu_output_components()
+
+        for comp_a in comps:
+            ya_idx = comp_a["y_idx"]
+            for comp_b in comps:
+                yb_idx = comp_b["y_idx"]
+                if ya_idx == yb_idx:
+                    # Complementarity diagonal z_a r_a = 0 (already exact); skip.
+                    continue
+
+                a_b = comp_b["a"]
+                beta_b = comp_b["beta"]
+                xb_idx_bounds = comp_b["x_bounds"]
+
+                # Couple {0, ya, yb} U x_b so X[ya, yb] and X[ya, x_p] are
+                # constrained by a PSD minor (else the cut is vacuous).
+                self.add_psd_cone_indices(
+                    [(ya_idx, ya_idx + 1), (yb_idx, yb_idx + 1)] + xb_idx_bounds
+                )
+
+                M = spa.lil_matrix((n_dim, n_dim))
+                # z_a * (a_b^T x): single y-row times the x-concat columns.
+                M[process_2d_ranges([(ya_idx, ya_idx + 1)], xb_idx_bounds)] = a_b
+                # beta_b * z_a (linear).
+                M[ya_idx, 0] = beta_b
+                # - z_a z_b (second moment).
+                M[ya_idx, yb_idx] = -1.0
+
+                # Cut is already <= 0: push +symmetrize(M) with ub 0 (no negation).
+                self._cut_ineq_matrices.append(symmetrize(M.tocsc()))
+                self._cut_bineq_upperbounds.append(0.0)
+
+    def _cross_innerprod_block(self, expr1: LinearExpression, expr2: LinearExpression):
+        r"""
+        Build the unsymmetrized lifted block for the inner product
+        ``<expr1, expr2> = <E w + e, F w + f>``.
+
+        Expanding ``(E w + e)^T (F w + f) = w^T E^T F w + e^T F w + f^T E w +
+        e^T f`` and reading each monomial off the lifted ``X`` (``X[p, q]`` the
+        second moment, ``X[0, p]`` the first moment, ``X[0, 0] = 1``):
+
+        - ``E^T F``    -> ``M[idxE, idxF]``  (the second-moment block),
+        - ``f^T E``    -> ``X[0, idxE]``     (first-moment row),
+        - ``e^T F``    -> ``X[0, idxF]``     (first-moment row),
+        - ``e^T f``    -> ``M[0, 0]``.
+
+        Generalizes :meth:`_apply_two_norm_objective` (the self case
+        ``<Ax+b, Ax+b>``) to two *different* expressions. The two first-moment
+        contributions are accumulated **additively** over the union of their SDP
+        indices and scattered once, so a leaf shared by ``expr1`` and ``expr2``
+        does not get one write clobbered by the other. The caller symmetrizes.
+
+        Returns
+        -------
+        scipy.sparse.lil_matrix
+            The unsymmetrized block ``M`` with ``tr(M X) = <expr1, expr2>``.
+        """
+        n_dim = self.get_sdp_var_dim()
+        E_mat, idxE = self.linexpr_to_Amat_and_bounds(expr1)
+        F_mat, idxF = self.linexpr_to_Amat_and_bounds(expr2)
+        e = np.asarray(expr1.const).reshape(-1, 1)
+        f = np.asarray(expr2.const).reshape(-1, 1)
+
+        M = spa.lil_matrix((n_dim, n_dim))
+
+        # Second-moment block E^T F over (idxE rows, idxF cols).
+        M[process_2d_ranges(idxE, idxF)] = E_mat.T @ F_mat
+
+        # First moments: accumulate f^T E (on idxE) and e^T F (on idxF) additively
+        # into a single dense row over the union of SDP indices, then scatter once.
+        # asarray guards against np.matrix (linexpr_to_Amat_and_bounds may return a
+        # matrix), whose .flatten() stays 2-D and breaks integer indexing below.
+        fTE = np.asarray(f.T @ E_mat).flatten()  # length = sum of idxE block widths
+        eTF = np.asarray(e.T @ F_mat).flatten()  # length = sum of idxF block widths
+        row0 = {}
+        for bounds, vec in ((idxE, fTE), (idxF, eTF)):
+            offset = 0
+            for s, end in bounds:
+                for col in range(s, end):
+                    row0[col] = row0.get(col, 0.0) + vec[offset]
+                    offset += 1
+        for col, val in row0.items():
+            M[0, col] = val
+
+        M[0, 0] = float(np.dot(np.asarray(e).flatten(), np.asarray(f).flatten()))
+        return M
+
+    def _build_subgrad_mono_cuts(self) -> None:
+        r"""
+        Append the PEP subgradient-monotonicity cuts
+        ``<s^i/tau_i - s^j/tau_j, z^i> >= 0`` over ordered prox pairs.
+
+        For prox steps ``i, j`` with output ``z``, input ``v``, threshold ``tau``
+        and subgradient ``s = v - z`` (PDF eq 4, normalized by ``tau`` so the
+        subgradient lives in the subdifferential of the same homogeneous
+        function). Expanding,
+
+        ``<s^i/tau_i - s^j/tau_j, z^i>
+            = (1/tau_i)[<v^i, z^i> - <z^i, z^i>]
+            - (1/tau_j)[<v^j, z^i> - <z^j, z^i>]``,
+
+        each term a lifted inner product built by :meth:`_cross_innerprod_block`.
+        On the orthant (``tau = 1``, ``z`` a ReLU output) this reduces to the
+        cross cut; on the soft-threshold (``tau = lambda``, ``z`` composite) it is
+        a distinct coupling. Each cut registers the minimal PSD cone over the
+        indices of ``z^i, v^i, z^j, v^j`` so the cross-step moments bind.
+        """
+        prox = self._prox_steps
+        for i, pi in enumerate(prox):
+            zi, vi, tau_i = pi["z"], pi["v"], pi["tau"]
+            if tau_i < 1e-9:
+                continue
+            for j, pj in enumerate(prox):
+                if i == j:
+                    continue
+                zj, vj, tau_j = pj["z"], pj["v"], pj["tau"]
+                if tau_j < 1e-9:
+                    continue
+
+                # Couple all involved leaves so the cross-step moments bind.
+                _, idx_zi = self.linexpr_to_Amat_and_bounds(zi)
+                _, idx_vi = self.linexpr_to_Amat_and_bounds(vi)
+                _, idx_zj = self.linexpr_to_Amat_and_bounds(zj)
+                _, idx_vj = self.linexpr_to_Amat_and_bounds(vj)
+                self.add_psd_cone_indices(idx_zi + idx_vi + idx_zj + idx_vj)
+
+                # Accumulate the four (unsymmetrized) inner-product blocks.
+                M = (
+                    (1.0 / tau_i) * self._cross_innerprod_block(vi, zi)
+                    - (1.0 / tau_i) * self._cross_innerprod_block(zi, zi)
+                    - (1.0 / tau_j) * self._cross_innerprod_block(vj, zi)
+                    + (1.0 / tau_j) * self._cross_innerprod_block(zj, zi)
+                )
+
+                # Cut is >= 0: push -symmetrize(M) with ub 0.
+                self._cut_ineq_matrices.append(-symmetrize(M.tocsc()))
                 self._cut_bineq_upperbounds.append(0.0)
 
     def solve_model(self, steps=None, convex_hull_cuts=False, **solver_kwargs):
