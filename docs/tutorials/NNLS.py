@@ -59,7 +59,7 @@ def _(np):
     m, n = 5, 3
     A = np.random.normal(size=(m, n))
     x_lb, x_ub = 10, 11
-    L = np.max(np.linalg.eigvals(A.T @ A))
+    L = np.max(np.linalg.eigvalsh(A.T @ A))  # symmetric routine → real eigenvalues
     eta = 0.5 / L
     K = 10
     return A, K, eta, m, n, x_lb, x_ub
