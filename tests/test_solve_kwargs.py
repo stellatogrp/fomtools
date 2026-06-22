@@ -127,3 +127,28 @@ def test_highs_construction_param_is_verbatim():
 
     # Native HiGHS option name is accepted.
     Verifier(method="mip", solver="highs", obbt_solver=None, params={"time_limit": 1})
+
+
+def test_gurobi_construction_param_validation():
+    """Gurobi construction params go through the same verbatim ValueError path.
+
+    A native Gurobi name is accepted; an unrecognized name raises ValueError.
+    """
+    Verifier(method="mip", solver="gurobi", obbt_solver=None, params={"TimeLimit": 1})
+
+    with pytest.raises(ValueError):
+        Verifier(method="mip", solver="gurobi", obbt_solver=None, params={"NotARealParam": 1})
+
+
+def test_sdp_construction_param_applied(vp_sdp):
+    """SDP construction params are stored and applied at solve time.
+
+    Locks in the fix where passing ``params`` to an SDP verifier previously
+    crashed (``NotImplementedError`` in ``set_param``). A valid native option
+    now flows through to the Clarabel/cvxpy solve without error.
+    """
+    solver_name = vp_sdp.canonicalizer.solver_name
+    vp = Verifier(method="sdp", solver=solver_name, obbt_solver=None, params={"max_iter": 10000})
+    _build_sdp_problem(vp)
+    result = vp.solve()
+    assert np.isfinite(result)
