@@ -11,8 +11,10 @@ from fomtools.canonicalizers.simulator import Simulator
 from fomtools.constraint import (
     ComplementarityConstraint,
     Constraint,
+    SumSquares,
     complementarity,
     is_binary_free,
+    sum_squares,
 )
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.nn.layers import LinearLayer, ReLULayer
@@ -53,6 +55,9 @@ class Verifier(object):
         ineq_product_cuts=True,
         ineq_box_cuts=True,
         ineq_square_cuts=True,
+        relu_envelope_cuts=False,
+        rlt_all_pairs=False,
+        full_psd_cone=False,
     ):
         """
         Initialize a Verifier instance.
@@ -86,6 +91,18 @@ class Verifier(object):
         ineq_square_cuts : bool, default True
             SDP-only: add the self-square upper bound ``g_i^2 <= g_i_lower * g_i``
             for each inequality constraint. No effect for ``method != "sdp"``.
+        relu_envelope_cuts : bool, default False
+            SDP-only: add the linear ReLU convex-hull inequalities (lower
+            envelope and mixed-row upper chord) on the first-moment variables.
+            No effect for ``method != "sdp"``.
+        rlt_all_pairs : bool, default False
+            SDP-only: RLT every variable pair by coupling each via a ``{0,p,q}``
+            3x3 PSD minor (the middle tier between cone-mate ``rlt_cuts`` and the
+            dense ``full_psd_cone``). No effect for ``method != "sdp"``.
+        full_psd_cone : bool, default False
+            SDP-only: union all PSD cones into one full moment matrix; combined
+            with ``rlt_cuts`` gives the full Shor + RLT relaxation. No effect for
+            ``method != "sdp"``.
         """
         self.theory_func = theory_func
         self.iterates = []
@@ -101,6 +118,9 @@ class Verifier(object):
             ineq_product_cuts=ineq_product_cuts,
             ineq_box_cuts=ineq_box_cuts,
             ineq_square_cuts=ineq_square_cuts,
+            relu_envelope_cuts=relu_envelope_cuts,
+            rlt_all_pairs=rlt_all_pairs,
+            full_psd_cone=full_psd_cone,
         )
         self.obbt_handler = OBBTHandler(solver=obbt_solver) if obbt_solver else None
         self.use_obbt_handler = True if obbt_solver else False
@@ -167,6 +187,9 @@ class Verifier(object):
         ineq_product_cuts: bool = True,
         ineq_box_cuts: bool = True,
         ineq_square_cuts: bool = True,
+        relu_envelope_cuts: bool = False,
+        rlt_all_pairs: bool = False,
+        full_psd_cone: bool = False,
     ):
         """
          Return an initialized instance for the requested method.
@@ -206,12 +229,15 @@ class Verifier(object):
              If the requested canonicalizer is not one of the supported options.
         """
         method_lower = method.lower()
-        if method_lower != "sdp" and (rlt_cuts or triangle_cuts):
-            enabled = []
-            if rlt_cuts:
-                enabled.append("rlt_cuts")
-            if triangle_cuts:
-                enabled.append("triangle_cuts")
+        sdp_only_flags = [
+            ("rlt_cuts", rlt_cuts),
+            ("triangle_cuts", triangle_cuts),
+            ("relu_envelope_cuts", relu_envelope_cuts),
+            ("rlt_all_pairs", rlt_all_pairs),
+            ("full_psd_cone", full_psd_cone),
+        ]
+        if method_lower != "sdp" and any(v for _, v in sdp_only_flags):
+            enabled = [name for name, v in sdp_only_flags if v]
             warnings.warn(
                 f"{', '.join(enabled)} is SDP-only and will be ignored for method={method!r}.",
                 UserWarning,
@@ -230,6 +256,9 @@ class Verifier(object):
                     ineq_product_cuts=ineq_product_cuts,
                     ineq_box_cuts=ineq_box_cuts,
                     ineq_square_cuts=ineq_square_cuts,
+                    relu_envelope_cuts=relu_envelope_cuts,
+                    rlt_all_pairs=rlt_all_pairs,
+                    full_psd_cone=full_psd_cone,
                 )
             case "simulator":
                 return Simulator()
@@ -477,6 +506,33 @@ class Verifier(object):
             The constraint object.
         """
         return complementarity(expr1, expr2)
+
+    def sum_squares(self, expr: LinearExpression) -> SumSquares:
+        r"""
+        Build a sum-of-squares atom ``\sum_i (a_i^\top x + b_i)^2`` for ``expr``.
+
+        Compare the returned object against a nonnegative scalar to form a quadratic
+        constraint, then pass it to :meth:`add_constraint`::
+
+            vp.add_constraint(vp.sum_squares(expr) <= r**2)   # ||A x + b||_2^2 <= r^2
+            vp.add_constraint(vp.sum_squares(expr) >= r**2)   # nonconvex shell
+            vp.add_constraint(vp.sum_squares(expr) == r**2)   # nonconvex sphere
+
+        The ``<=`` sense is convex; ``>=`` / ``==`` are nonconvex but still representable
+        on the SDP backend (linear in the lifted matrix) and on Gurobi (``NonConvex=2``).
+        Quadratic constraints are unsupported on HiGHS and raise at ``add_constraint``.
+
+        Parameters
+        ----------
+        expr : LinearExpression
+            The expression whose squared two-norm is taken.
+
+        Returns
+        -------
+        SumSquares
+            The atom; compare it with ``<=`` / ``>=`` / ``==`` to obtain a constraint.
+        """
+        return sum_squares(expr)
 
     def _tighten_constraint_bounds(self, constr: Constraint) -> None:
         """

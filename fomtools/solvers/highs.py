@@ -276,6 +276,10 @@ class HiGHSSolver(MIPSolver):
             "Use Gurobi for two-norm objectives, or switch to one-norm/infinity-norm."
         )
 
+    # sum_squares (quadratic) constraints are unsupported on HiGHS; the rejecting
+    # default in MIPSolver.add_sum_squares_constr applies (it names the solver, so no
+    # HiGHS-specific override is needed).
+
     def optimize(self):
         """
         Optimize the underlying HiGHS model.

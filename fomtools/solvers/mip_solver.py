@@ -39,6 +39,26 @@ class MIPSolver(Solver):
     def __init__(self, solver_params=None):
         super(MIPSolver, self).__init__(solver_params=solver_params)
 
+    def add_sum_squares_constr(self, expr, radius_sq, sense) -> None:
+        """
+        Add a sum-of-squares (quadratic) constraint to the model.
+
+        Default implementation: reject it. Most MIP backends (e.g. HiGHS) cannot
+        represent quadratic constraints (MIQCP); quadratic-capable backends (Gurobi)
+        override this. The MIP canonicalizer forwards every ``QuadraticConstraint``
+        straight here, so the rejection surfaces eagerly at ``add_constraint`` time and
+        names the actual solver rather than hardcoding one.
+
+        Raises
+        ------
+        ValueError
+            Always, unless overridden by a quadratic-capable solver.
+        """
+        raise ValueError(
+            f"Solver '{type(self).__name__}' does not support quadratic constraints "
+            f"(MIQCP). Use a quadratic-capable solver such as solver='gurobi'."
+        )
+
     def relax_model(self):
         """
         Relax the MIP model to a continuous linear program.

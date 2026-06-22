@@ -4,7 +4,7 @@ import numpy as np
 
 from fomtools import LinearExpression
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
-from fomtools.constraint import ComplementarityConstraint, Constraint
+from fomtools.constraint import ComplementarityConstraint, Constraint, QuadraticConstraint
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 
@@ -67,6 +67,15 @@ class MIP(Canonicalizer):
         """
         if isinstance(constraint, ComplementarityConstraint):
             self.add_constraints(self._build_complementarity_constraints(constraint))
+            return
+        if isinstance(constraint, QuadraticConstraint):
+            # Quadratic (sum-of-squares) constraints require a solver that supports
+            # quadratic constraints (MIQCP). Gurobi does; HiGHS does not. Each solver
+            # validates this in its own ``add_sum_squares_constr`` (HiGHS raises), so the
+            # error still surfaces eagerly at add-time rather than at solve-time.
+            self.solver.add_sum_squares_constr(
+                constraint.expr, constraint.radius_sq, constraint.sense
+            )
             return
         self.solver.add_constr(constraint)
 

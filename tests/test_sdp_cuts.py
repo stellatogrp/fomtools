@@ -17,7 +17,15 @@ from fomtools.verifier import Verifier
 from tests.conftest import SDP_SOLVERS, TEST_EPS
 
 
-def _build_nnls_sdp(K, sdp_solver, rlt_cuts=False, triangle_cuts=False):
+def _build_nnls_sdp(
+    K,
+    sdp_solver,
+    rlt_cuts=False,
+    triangle_cuts=False,
+    relu_envelope_cuts=False,
+    rlt_all_pairs=False,
+    full_psd_cone=False,
+):
     """Build a small NNLS SDP verifier matching tests/test_nnls_sdp_mip.py.
 
     Returns the solved SDP two-norm-squared objective value.
@@ -33,6 +41,9 @@ def _build_nnls_sdp(K, sdp_solver, rlt_cuts=False, triangle_cuts=False):
         obbt_solver="highs",
         rlt_cuts=rlt_cuts,
         triangle_cuts=triangle_cuts,
+        relu_envelope_cuts=relu_envelope_cuts,
+        rlt_all_pairs=rlt_all_pairs,
+        full_psd_cone=full_psd_cone,
     )
 
     x = vp.add_param(m, lb=0, ub=0.1)
@@ -331,7 +342,7 @@ def test_rlt_cuts_invalidated_by_update_bounds():
 # ============================================================
 
 
-def _build_mixed_relu_problem(triangle_cuts=False, rlt_cuts=False):
+def _build_mixed_relu_problem(triangle_cuts=False, rlt_cuts=False, relu_envelope_cuts=False):
     """A 1D ReLU with z ∈ [-1, 1] so the output is genuinely mixed.
 
     Returns (verifier, solved_value).
@@ -342,6 +353,7 @@ def _build_mixed_relu_problem(triangle_cuts=False, rlt_cuts=False):
         obbt_solver=None,
         triangle_cuts=triangle_cuts,
         rlt_cuts=rlt_cuts,
+        relu_envelope_cuts=relu_envelope_cuts,
     )
     z0 = vp.add_iterate(1, lb=-1.0, ub=1.0)
     z1 = vp.step.relu(z0)
@@ -535,7 +547,15 @@ FLAG_COMBOS = [
 ]
 
 
-def _build_ista_sdp(K, sdp_solver, rlt_cuts=False, triangle_cuts=False):
+def _build_ista_sdp(
+    K,
+    sdp_solver,
+    rlt_cuts=False,
+    triangle_cuts=False,
+    relu_envelope_cuts=False,
+    rlt_all_pairs=False,
+    full_psd_cone=False,
+):
     """ISTA SDP setup mirroring tests/test_ista_sdp_mip.py."""
     m, n = 3, 2
     np.random.seed(0)
@@ -554,6 +574,9 @@ def _build_ista_sdp(K, sdp_solver, rlt_cuts=False, triangle_cuts=False):
         obbt_solver="highs",
         rlt_cuts=rlt_cuts,
         triangle_cuts=triangle_cuts,
+        relu_envelope_cuts=relu_envelope_cuts,
+        rlt_all_pairs=rlt_all_pairs,
+        full_psd_cone=full_psd_cone,
     )
     b_param = vp.add_param(m, lb=b - 0.1, ub=b + 0.1)
     z = [vp.add_iterate(n, lb=1, ub=1.1)]
@@ -563,7 +586,15 @@ def _build_ista_sdp(K, sdp_solver, rlt_cuts=False, triangle_cuts=False):
     return vp, vp.solve()
 
 
-def _build_boxpgd_sdp(K, sdp_solver, rlt_cuts=False, triangle_cuts=False):
+def _build_boxpgd_sdp(
+    K,
+    sdp_solver,
+    rlt_cuts=False,
+    triangle_cuts=False,
+    relu_envelope_cuts=False,
+    rlt_all_pairs=False,
+    full_psd_cone=False,
+):
     """Box PGD SDP setup mirroring tests/test_boxpgd_sdp_mip.py."""
     n = 2
     np.random.seed(0)
@@ -579,6 +610,9 @@ def _build_boxpgd_sdp(K, sdp_solver, rlt_cuts=False, triangle_cuts=False):
         obbt_solver="highs",
         rlt_cuts=rlt_cuts,
         triangle_cuts=triangle_cuts,
+        relu_envelope_cuts=relu_envelope_cuts,
+        rlt_all_pairs=rlt_all_pairs,
+        full_psd_cone=full_psd_cone,
     )
     q_param = vp.add_param(n, lb=q - 0.1, ub=q + 0.1)
     z = [vp.add_iterate(n, lb=0, ub=0.1)]
@@ -692,3 +726,413 @@ def test_both_flags_compose_no_worse_than_either():
     assert with_both <= with_tri + TEST_EPS
     # Sanity: both ≤ baseline (already implied transitively).
     assert with_both <= baseline + TEST_EPS
+
+
+# ============================================================
+# Phase 5: ReLU linear envelope cuts (relu_envelope_cuts)
+# ============================================================
+#
+# These are the convex-hull lines on the FIRST-MOMENT (vector) variables that
+# the lifted ReLU equality + PSD does not imply:
+#   - lower envelope  y_i >= a_i^T x + b_i            (every projected row)
+#   - upper chord     y_i <= E_ii (a_i^T x + b_i - l_i)  (mixed rows only)
+# The y_i >= 0 line is omitted because the y-leaf box bound + PSD imply it.
+
+
+@pytest.mark.parametrize("sdp_solver", SDP_SOLVERS)
+def test_envelope_flag_stored_on_canonicalizer(sdp_solver):
+    """relu_envelope_cuts reaches the SDP canonicalizer instance."""
+    vp = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None, relu_envelope_cuts=True)
+    assert vp.canonicalizer.relu_envelope_cuts is True
+    vp2 = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
+    assert vp2.canonicalizer.relu_envelope_cuts is False
+
+
+@pytest.mark.parametrize("flag", ["relu_envelope_cuts", "rlt_all_pairs", "full_psd_cone"])
+def test_new_cut_flags_warn_for_non_sdp_methods(flag):
+    """The new SDP-only flags emit a UserWarning when method != 'sdp'."""
+    with pytest.warns(UserWarning, match=flag):
+        Verifier(method="mip", solver="highs", obbt_solver=None, **{flag: True})
+
+
+def test_envelope_cuts_emitted_when_mixed():
+    """A 1D mixed ReLU emits 1 lower-envelope + 1 upper-chord = 2 envelope cuts."""
+    vp, _ = _build_mixed_relu_problem(relu_envelope_cuts=True)
+    canon = _solved_canon(vp)
+    assert len(canon._cut_ineq_matrices) == 2
+    assert len(canon._cut_bineq_upperbounds) == 2
+
+
+def test_envelope_cuts_passthrough_no_chord():
+    """All-positive ReLU rows (passthrough) emit only the lower envelope, no chord."""
+    vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, relu_envelope_cuts=True)
+    z0 = vp.add_iterate(2, lb=1.0, ub=2.0)  # both rows passthrough (lb >= 0)
+    z1 = vp.step.relu(z0)
+    vp.set_objective_norm(z1 - z0, 2)
+    vp.solve()
+    canon = _solved_canon(vp)
+    # 2 projected rows -> 2 lower-envelope cuts, 0 chords.
+    assert len(canon._cut_ineq_matrices) == 2
+
+
+def test_envelope_cut_matrices_symmetric():
+    """Each envelope cut matrix is symmetric."""
+    vp, _ = _build_mixed_relu_problem(relu_envelope_cuts=True)
+    canon = _solved_canon(vp)
+    for M in canon._cut_ineq_matrices:
+        diff = M - M.T
+        diff.eliminate_zeros()
+        assert diff.nnz == 0
+
+
+def _build_1d_relu_canon(lb, ub, relu_envelope_cuts=True):
+    """Hand-build an SDP canonicalizer state for a single 1D ReLU y = max(0, z)
+    with z in [lb, ub]. Returns (canon, z_leaf, relu_step)."""
+    from fomtools.canonicalizers.sdp import SDP
+    from fomtools.linearexpression import LinearExpression
+    from fomtools.steps import Relu
+
+    canon = SDP(solver="clarabel", relu_envelope_cuts=relu_envelope_cuts)
+    z = LinearExpression.from_int(1, lb=np.array([float(lb)]), ub=np.array([float(ub)]))
+    canon.add_var(z)
+    step = Relu(arg=z)
+    step.update_bounds(z.lb, z.ub)
+    canon.add_var(step.output)
+    canon.canonicalize_relu(step)
+    return canon, z, step
+
+
+def test_envelope_cut_algebra_on_known_primal():
+    """Lower envelope and chord hold on a rank-1 lift X = [1;z;y][1;z;y]^T for
+    many feasible (z, y = max(0, z))."""
+    canon, z, step = _build_1d_relu_canon(-1.0, 1.0)
+    z_start, _ = canon.var_idx_map[z]
+    y_start, _ = canon.var_idx_map[step.output]
+
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_relu_envelope_cuts()
+    assert len(canon._cut_ineq_matrices) == 2
+
+    n = canon.get_sdp_var_dim()
+    rng = np.random.default_rng(0)
+    for _ in range(50):
+        z_val = rng.uniform(-1.0, 1.0)
+        y_val = max(0.0, z_val)
+        v = np.zeros(n)
+        v[0] = 1.0
+        v[z_start] = z_val
+        v[y_start] = y_val
+        X = np.outer(v, v)
+        for M, b in zip(canon._cut_ineq_matrices, canon._cut_bineq_upperbounds):
+            output = float((M @ X).trace())
+            assert output <= b + 1e-9, (
+                f"Envelope cut violated at z={z_val}, y={y_val}: {output} > {b}"
+            )
+
+
+def test_envelope_lower_cut_not_redundant():
+    """A relaxed X satisfying the lifted ReLU equality + box + PSD can violate the
+    lower envelope y >= input, so the cut genuinely tightens.
+
+    Witness (indices [0, z, y]):  X = [[1, .5, 0], [.5, 1, 0], [0, 0, 0]].
+    PSD; X[z,z]=1 (box z∈[-1,1]); X[y,y]=0=X[z,y] (relu eq y^2 = z*y); but
+    X[0,y]=0 < X[0,z]=0.5 violates y >= z.
+    """
+    canon, z, step = _build_1d_relu_canon(-1.0, 1.0)
+    z_start, _ = canon.var_idx_map[z]
+    y_start, _ = canon.var_idx_map[step.output]
+
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_relu_envelope_cuts()
+    # cut[0] is the lower envelope (appended before the chord).
+    M = canon._cut_ineq_matrices[0]
+    b = canon._cut_bineq_upperbounds[0]
+
+    n = canon.get_sdp_var_dim()
+    X = np.zeros((n, n))
+    X[0, 0] = 1.0
+    X[0, z_start] = X[z_start, 0] = 0.5
+    X[z_start, z_start] = 1.0  # y entries left at 0
+    output = float((M @ X).trace())
+    assert output > b + 1e-6, (
+        "Lower-envelope cut should be violated by the relaxed witness "
+        "(demonstrates it is not implied by the existing constraints)"
+    )
+
+
+def test_envelope_cuts_tighten_bound():
+    """SDP with envelope cuts ≤ baseline (maximizing, tighter relaxation)."""
+    _, baseline = _build_mixed_relu_problem()
+    _, with_env = _build_mixed_relu_problem(relu_envelope_cuts=True)
+    assert with_env <= baseline + TEST_EPS
+
+
+def test_envelope_chord_uses_fresh_leaf_bounds():
+    """The upper chord reads arg.bound_propagation() at rebuild time, so leaf
+    tightening after canonicalize_relu changes the emitted chord (parity with
+    the RLT and triangle cut families)."""
+    canon, z, step = _build_1d_relu_canon(-2.0, 2.0)
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_relu_envelope_cuts()
+    chord_loose = canon._cut_ineq_matrices[1].toarray()
+
+    z.update_bounds(np.array([-1.0]), np.array([1.0]))
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_relu_envelope_cuts()
+    chord_tight = canon._cut_ineq_matrices[1].toarray()
+
+    assert not np.allclose(chord_loose, chord_tight), (
+        "Envelope chord should change when leaf bounds tighten"
+    )
+
+
+# ============================================================
+# Phase 6: full PSD coupling (full_psd_cone)
+# ============================================================
+
+
+def test_full_psd_flag_stored_on_canonicalizer():
+    """full_psd_cone reaches the SDP canonicalizer instance."""
+    vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, full_psd_cone=True)
+    assert vp.canonicalizer.full_psd_cone is True
+
+
+def test_full_psd_unions_cones():
+    """After solve, the rebuilt copy has a single PSD cone over all indices."""
+    vp, _ = _build_nnls_sdp(K=1, sdp_solver="clarabel", full_psd_cone=True)
+    canon = _solved_canon(vp)
+    dim = canon.get_sdp_var_dim()
+    assert canon.psd_cone_indices == [set(range(dim))]
+
+
+def test_full_psd_rlt_fires_on_all_pairs():
+    """With full_psd_cone + rlt_cuts, RLT fires on every off-diagonal pair
+    (4 cuts per pair), not just the per-block cone-mates."""
+    from itertools import combinations
+
+    vp, _ = _build_nnls_sdp(K=1, sdp_solver="clarabel", full_psd_cone=True, rlt_cuts=True)
+    canon = _solved_canon(vp)
+    dim = canon.get_sdp_var_dim()
+    n_pairs = len(list(combinations(range(1, dim), 2)))
+    # Exact equality relies on RLT being the *only* cut source: envelope/triangle are
+    # off, and _build_nnls_sdp makes no add_constraint calls, so _ineq_constraints is
+    # empty (the box bounds from add_var do not populate it). Any inequality constraint
+    # would add box/square/product cuts on top of the 4-per-pair RLT count.
+    assert len(canon._cut_ineq_matrices) == 4 * n_pairs
+
+
+def test_full_psd_tighten_bound():
+    """full_psd_cone (bigger PSD block) ≤ baseline."""
+    _, baseline = _build_nnls_sdp(K=1, sdp_solver="clarabel")
+    _, with_full = _build_nnls_sdp(K=1, sdp_solver="clarabel", full_psd_cone=True)
+    assert with_full <= baseline + TEST_EPS
+
+
+def test_full_psd_does_not_corrupt_original_cones():
+    """The cone union happens on the solved copy; the original's cone list is
+    unchanged across a solve."""
+    m, n = 3, 2
+    np.random.seed(0)
+    A = np.random.normal(size=(m, n))
+    t = 0.01
+    vp = Verifier(method="sdp", solver="clarabel", obbt_solver="highs", full_psd_cone=True)
+    x = vp.add_param(m, lb=0, ub=0.1)
+    z = [vp.add_iterate(n, lb=5, ub=5.1)]
+    z.append(vp.step.relu(z[0] - t * A.T @ (A @ z[0] - x)))
+    vp.set_objective_norm(z[1] - z[0], 2)
+
+    before = [set(s) for s in vp.canonicalizer.psd_cone_indices]
+    vp.solve()
+    after = [set(s) for s in vp.canonicalizer.psd_cone_indices]
+    assert before == after
+
+
+# ============================================================
+# Phase 7: integration of the new cut families (MIP-bound preserved)
+# ============================================================
+
+# The MIP infinity-norm lower-bounds the SDP two-norm. Every new (combination
+# of) cut family must preserve this, i.e. never cut off a true feasible point.
+NEW_FLAG_KWARGS = [
+    {"relu_envelope_cuts": True},
+    {"rlt_all_pairs": True},
+    {"full_psd_cone": True},
+    {"full_psd_cone": True, "rlt_cuts": True},
+    {
+        "relu_envelope_cuts": True,
+        "triangle_cuts": True,
+        "rlt_cuts": True,
+        "full_psd_cone": True,
+    },
+]
+
+
+@pytest.mark.parametrize("kwargs", NEW_FLAG_KWARGS)
+@pytest.mark.parametrize("K", [1, 2])
+def test_nnls_mip_bound_preserved_new_flags(kwargs, K):
+    _, sdp_sq = _build_nnls_sdp(K=K, sdp_solver="clarabel", **kwargs)
+    mip_inf = _mip_inf_norm_nnls(K)
+    assert mip_inf <= np.sqrt(sdp_sq) + TEST_EPS, (
+        f"K={K}, {kwargs}: MIP inf norm ({mip_inf}) > SDP two norm ({np.sqrt(sdp_sq)})"
+    )
+
+
+@pytest.mark.parametrize("kwargs", NEW_FLAG_KWARGS)
+@pytest.mark.parametrize("K", [1, 2])
+def test_ista_mip_bound_preserved_new_flags(kwargs, K):
+    _, sdp_sq = _build_ista_sdp(K=K, sdp_solver="clarabel", **kwargs)
+    mip_inf = _mip_inf_norm_ista(K)
+    assert mip_inf <= np.sqrt(sdp_sq) + TEST_EPS, (
+        f"K={K}, {kwargs}: MIP inf norm ({mip_inf}) > SDP two norm ({np.sqrt(sdp_sq)})"
+    )
+
+
+@pytest.mark.parametrize("kwargs", NEW_FLAG_KWARGS)
+@pytest.mark.parametrize("K", [1, 2])
+def test_boxpgd_mip_bound_preserved_new_flags(kwargs, K):
+    _, sdp_sq = _build_boxpgd_sdp(K=K, sdp_solver="clarabel", **kwargs)
+    mip_inf = _mip_inf_norm_boxpgd(K)
+    assert mip_inf <= np.sqrt(sdp_sq) + TEST_EPS, (
+        f"K={K}, {kwargs}: MIP inf norm ({mip_inf}) > SDP two norm ({np.sqrt(sdp_sq)})"
+    )
+
+
+def test_new_flags_compose_no_worse_than_either():
+    """All cut families together ≤ each individually — every family is a valid
+    inequality, so composing them can only tighten the relaxation."""
+    _, with_env = _build_nnls_sdp(K=1, sdp_solver="clarabel", relu_envelope_cuts=True)
+    _, with_full = _build_nnls_sdp(K=1, sdp_solver="clarabel", full_psd_cone=True, rlt_cuts=True)
+    _, with_all = _build_nnls_sdp(
+        K=1,
+        sdp_solver="clarabel",
+        relu_envelope_cuts=True,
+        triangle_cuts=True,
+        rlt_cuts=True,
+        full_psd_cone=True,
+    )
+    assert with_all <= with_env + TEST_EPS
+    assert with_all <= with_full + TEST_EPS
+
+
+# ============================================================
+# Phase 8: all-pairs RLT via pairwise PSD minors (rlt_all_pairs)
+# ============================================================
+#
+# Middle tier between cone-mate-only rlt_cuts and the dense full_psd_cone: RLT
+# every pair, coupling each via a cheap {0,p,q} 3x3 PSD minor. Pairs already in a
+# larger cone add no new minor (add_psd_cone_indices drops subsumed cones).
+
+
+def test_rlt_all_pairs_flag_stored_on_canonicalizer():
+    """rlt_all_pairs reaches the SDP canonicalizer instance."""
+    vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, rlt_all_pairs=True)
+    assert vp.canonicalizer.rlt_all_pairs is True
+    vp2 = Verifier(method="sdp", solver="clarabel", obbt_solver=None)
+    assert vp2.canonicalizer.rlt_all_pairs is False
+
+
+def _two_independent_relus(rlt_cuts=False, rlt_all_pairs=False):
+    """Two 1-D ReLUs on independent iterates: by default the two PSD cones
+    {0,z0,z1} and {0,w0,w1} are disjoint, so (z, w) cross-pairs are not
+    cone-mates. Returns the solved canonicalizer."""
+    vp = Verifier(
+        method="sdp",
+        solver="clarabel",
+        obbt_solver=None,
+        rlt_cuts=rlt_cuts,
+        rlt_all_pairs=rlt_all_pairs,
+    )
+    z0 = vp.add_iterate(1, lb=-1.0, ub=1.0)
+    z1 = vp.step.relu(z0)
+    w0 = vp.add_iterate(1, lb=-1.0, ub=1.0)
+    _w1 = vp.step.relu(w0)  # registers a second, disjoint ReLU cone
+    vp.set_objective_norm(z1 - z0, 2)
+    vp.solve()
+    return _solved_canon(vp)
+
+
+def test_rlt_all_pairs_subsumed_when_single_cone():
+    """When one cone already spans all variables (a single 2-D ReLU), enabling
+    rlt_all_pairs adds no new cones — every {0,p,q} is subsumed. This is the
+    self-cleaning property of add_psd_cone_indices."""
+
+    def _cones(rlt_cuts, rlt_all_pairs):
+        vp = Verifier(
+            method="sdp",
+            solver="clarabel",
+            obbt_solver=None,
+            rlt_cuts=rlt_cuts,
+            rlt_all_pairs=rlt_all_pairs,
+        )
+        z0 = vp.add_iterate(2, lb=-1.0, ub=1.0)
+        z1 = vp.step.relu(z0)
+        vp.set_objective_norm(z1 - z0, 2)
+        vp.solve()
+        return [set(s) for s in _solved_canon(vp).psd_cone_indices]
+
+    cone_mate = _cones(rlt_cuts=True, rlt_all_pairs=False)
+    all_pairs = _cones(rlt_cuts=False, rlt_all_pairs=True)
+    assert cone_mate == all_pairs  # no extra cones registered
+
+
+def test_rlt_all_pairs_couples_disjoint_cones():
+    """With disjoint cones, rlt_all_pairs registers the cross-pair minors and RLT
+    fires on every pair: 4 * C(dim-1, 2) cuts, strictly more than cone-mate-only."""
+    from itertools import combinations
+
+    canon_mate = _two_independent_relus(rlt_cuts=True)
+    canon_all = _two_independent_relus(rlt_all_pairs=True)
+    dim = canon_all.get_sdp_var_dim()
+    n_all_pairs = len(list(combinations(range(1, dim), 2)))
+
+    assert len(canon_all._cut_ineq_matrices) == 4 * n_all_pairs
+    assert len(canon_all._cut_ineq_matrices) > len(canon_mate._cut_ineq_matrices)
+    # Every pair now shares a cone.
+    for p, q in combinations(range(1, dim), 2):
+        assert any({0, p, q} <= c for c in canon_all.psd_cone_indices)
+
+
+def test_rlt_all_pairs_matrices_symmetric():
+    """Each all-pairs RLT cut matrix is symmetric."""
+    canon = _two_independent_relus(rlt_all_pairs=True)
+    for M in canon._cut_ineq_matrices:
+        diff = M - M.T
+        diff.eliminate_zeros()
+        assert diff.nnz == 0
+
+
+def test_rlt_all_pairs_relaxation_hierarchy():
+    """baseline ≥ rlt_cuts ≥ rlt_all_pairs ≥ full_psd_cone+rlt_cuts (maximizing,
+    so tighter relaxations give smaller values)."""
+    _, baseline = _build_nnls_sdp(K=2, sdp_solver="clarabel")
+    _, rlt = _build_nnls_sdp(K=2, sdp_solver="clarabel", rlt_cuts=True)
+    _, allp = _build_nnls_sdp(K=2, sdp_solver="clarabel", rlt_all_pairs=True)
+    _, full = _build_nnls_sdp(K=2, sdp_solver="clarabel", full_psd_cone=True, rlt_cuts=True)
+    assert rlt <= baseline + TEST_EPS
+    assert allp <= rlt + TEST_EPS
+    assert full <= allp + TEST_EPS
+
+
+def test_rlt_all_pairs_does_not_corrupt_original_cones():
+    """rlt_all_pairs adds the {0,p,q} minors on the solved copy; the original
+    canonicalizer's cone list is unchanged across a solve (matches the
+    full_psd_cone non-corruption guard)."""
+    vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, rlt_all_pairs=True)
+    z0 = vp.add_iterate(1, lb=-1.0, ub=1.0)
+    z1 = vp.step.relu(z0)
+    w0 = vp.add_iterate(1, lb=-1.0, ub=1.0)
+    _w1 = vp.step.relu(w0)  # second, disjoint ReLU cone → cross-pairs need new minors
+    vp.set_objective_norm(z1 - z0, 2)
+
+    before = [set(s) for s in vp.canonicalizer.psd_cone_indices]
+    vp.solve()
+    after = [set(s) for s in vp.canonicalizer.psd_cone_indices]
+    assert before == after
+
+    # Non-vacuity: the solve genuinely coupled the disjoint cones on the copy, so the
+    # test would also fail if the mutation had leaked back onto the original.
+    assert len(_solved_canon(vp).psd_cone_indices) > len(before)
