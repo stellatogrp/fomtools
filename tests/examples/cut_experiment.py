@@ -57,12 +57,16 @@ GUROBI_PARAMS = {
 EPS = 1e-5
 
 # Base config + the three cut layers. Each entry: (label, extra SDP kwargs).
+# The last row is a labeled REFERENCE only (dense full moment matrix, slow, NOT a
+# recommended config) used to bound how much of the base gap is theoretically
+# removable, so the "% gap reduction" of the small-cone cuts is interpretable.
 BASE = {"rlt_cuts": True, "relu_envelope_cuts": True}
 CONFIGS = [
     ("base", {}),
     ("base+cross", {"cross_cut": True}),
     ("base+subgrad", {"subgrad_mono_cut": True}),
     ("base+both", {"cross_cut": True, "subgrad_mono_cut": True}),
+    ("full_psd[ref]", {"full_psd_cone": True}),
 ]
 
 
@@ -224,6 +228,8 @@ def main():
         (2, 3, 2, 0),
         (3, 4, 2, 1),
         (3, 4, 3, 2),
+        (4, 6, 2, 5),
+        (4, 6, 3, 6),
     ]
     for n, m, K, seed in nnls_specs:
         build, args, label = make_nnls_instance(n, m, K, seed)
@@ -236,6 +242,8 @@ def main():
         (2, 3, 2, 10),
         (3, 4, 2, 11),
         (3, 4, 3, 12),
+        (4, 6, 2, 15),
+        (4, 6, 3, 16),
     ]
     for n, m, K, seed in ista_specs:
         build, args, label = make_ista_instance(n, m, K, seed)

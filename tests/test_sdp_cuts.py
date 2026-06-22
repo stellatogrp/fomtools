@@ -1556,3 +1556,118 @@ def test_pep_cuts_compose_no_worse_than_base():
     assert with_subgrad <= baseline + TEST_EPS
     assert with_both <= with_cross + TEST_EPS
     assert with_both <= with_subgrad + TEST_EPS
+
+
+# ============================================================
+# Phase 10: tightening regression — the cuts close the gap to the exact MIP
+# ============================================================
+#
+# The *_tighten_bound tests above only assert the cuts never *loosen* the bound
+# (<= baseline). This locks in the measured *effect*: on mixed-regime instances
+# (iterate boxes straddling the operator kinks) the cuts close most of the
+# SDP-to-exact-MIP gap, and on ISTA the cross and subgradient families are
+# complementary (both strictly beats either alone). Compares against the *exact*
+# MIP with a squared two-norm objective, so it requires Gurobi (HiGHS cannot do
+# the MIQP); skipped if Gurobi is unavailable.
+
+_PEP_GUROBI = {"OutputFlag": 0, "LogToConsole": 0}
+
+
+def _pep_mixed_builder(problem):
+    """Return a ``build(vp, K)`` for a mixed-regime instance with a real
+    SDP-vs-MIP gap (iterate box straddles the kink). Deterministic per problem."""
+    if problem == "nnls":
+        rng = np.random.default_rng(1)
+        m, n, box = 4, 3, 2.0
+        A = rng.normal(size=(m, n))
+        t = 1.0 / float(np.max(np.linalg.eigvalsh(A.T @ A)))
+
+        def build(vp, K=2):
+            x = vp.add_param(m, lb=0.0, ub=box)
+            z = [vp.add_iterate(n, lb=-box, ub=box)]
+            for k in range(K):
+                z.append(vp.step.relu(z[k] - t * A.T @ (A @ z[k] - x)))
+            return z[K] - z[K - 1]
+
+        return build
+
+    rng = np.random.default_rng(15)
+    m, n, box = 6, 4, 1.5
+    A = rng.normal(size=(m, n))
+    b = rng.normal(size=(m,))
+    t = 1.0 / float(np.max(np.linalg.eigvalsh(A.T @ A)))
+    At = np.eye(n) - t * A.T @ A
+    Bt = t * A.T
+    lam = 2.0 * t
+
+    def build(vp, K=2):
+        bp = vp.add_param(m, lb=b - 0.5, ub=b + 0.5)
+        z = [vp.add_iterate(n, lb=-box, ub=box)]
+        for k in range(K):
+            z.append(vp.step.soft_threshold(At @ z[k] + Bt @ bp, lambd=lam))
+        return z[K] - z[K - 1]
+
+    return build
+
+
+def _pep_sdp_value(build, **cut_kwargs):
+    """SDP (clarabel) squared-two-norm value on the light base + given PEP cuts."""
+    vp = Verifier(
+        method="sdp",
+        solver="clarabel",
+        obbt_solver=None,
+        rlt_cuts=True,
+        relu_envelope_cuts=True,
+        **cut_kwargs,
+    )
+    expr = build(vp)
+    vp.set_objective_norm(expr, 2)
+    return vp.solve()
+
+
+@pytest.mark.parametrize(
+    "problem,min_cross,min_subgrad,min_both,complementary",
+    [
+        # thresholds are conservative vs measured (cross 97.7%, subgrad 97.7%,
+        # both 98.7% on NNLS; cross 88.7%, subgrad 80.4%, both 95.0% on ISTA).
+        ("nnls", 0.85, 0.65, 0.85, False),
+        ("ista", 0.70, 0.55, 0.85, True),
+    ],
+)
+def test_pep_cuts_close_gap_to_mip(problem, min_cross, min_subgrad, min_both, complementary):
+    """Regression: the PEP cuts close most of the SDP-to-exact-MIP gap (and on
+    ISTA the two families are complementary)."""
+    pytest.importorskip("gurobipy", reason="exact two-norm MIP requires Gurobi")
+    build = _pep_mixed_builder(problem)
+
+    vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver=None, params=dict(_PEP_GUROBI))
+    vp_mip.set_objective_norm(build(vp_mip), 2)
+    mip = vp_mip.solve()
+
+    base = _pep_sdp_value(build)
+    cross = _pep_sdp_value(build, cross_cut=True)
+    subgrad = _pep_sdp_value(build, subgrad_mono_cut=True)
+    both = _pep_sdp_value(build, cross_cut=True, subgrad_mono_cut=True)
+
+    # Every relaxation is a valid upper bound on the exact value.
+    for label, v in (("base", base), ("cross", cross), ("subgrad", subgrad), ("both", both)):
+        assert v >= mip - TEST_EPS, f"{problem}/{label}: sdp {v} < mip {mip} (invalid cut)"
+
+    base_gap = base - mip
+    assert base_gap > 0.1, f"{problem}: base instance has no gap to close ({base_gap})"
+
+    def closed(v):
+        return (base_gap - (v - mip)) / base_gap
+
+    assert closed(cross) >= min_cross, f"{problem}: cross closed only {closed(cross):.1%}"
+    assert closed(subgrad) >= min_subgrad, f"{problem}: subgrad closed only {closed(subgrad):.1%}"
+    assert closed(both) >= min_both, f"{problem}: both closed only {closed(both):.1%}"
+
+    # Composition is never worse than either family alone.
+    assert both <= cross + TEST_EPS
+    assert both <= subgrad + TEST_EPS
+
+    if complementary:
+        # ISTA: combining strictly beats either family (>= 10% smaller residual gap).
+        assert (both - mip) <= 0.9 * (cross - mip) + TEST_EPS
+        assert (both - mip) <= 0.9 * (subgrad - mip) + TEST_EPS
