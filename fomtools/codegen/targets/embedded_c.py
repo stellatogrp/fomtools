@@ -187,11 +187,15 @@ class EmbeddedCTarget(TargetDescriptor):
             lines.append(f"#define FOM_{step.name.upper()}_DIM {step.out_dim}")
         lines.append("")
 
-        # FomSettings
+        # FomSettings. ``check_termination`` is runtime-tunable (initialized to
+        # the generated FOM_CHECK_TERMINATION default in fom_set_default_settings):
+        # callers may change how often the inf-norm change criterion is evaluated
+        # without regenerating, mirroring OSQP's setting of the same name.
         lines += [
             "typedef struct {",
             "    fom_int max_iter;",
             "    fom_float tol;",
+            "    fom_int check_termination;",
             "} FomSettings;",
             "",
         ]

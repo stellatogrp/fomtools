@@ -321,10 +321,14 @@ def render_markdown(ir: FomIR) -> str:
     if ir.termination.kind == TerminationKind.INF_NORM_CHANGE and ir.termination.check_termination:
         lines.append(
             "Termination: evaluate the residual and exit early (status `FOM_SOLVED`) only "
-            "on iterations where `(it + 1) % FOM_CHECK_TERMINATION == 0` and "
-            "`residual <= tol`; on other iterations skip the residual entirely (plain "
-            "state copy). `FOM_USE_TOL`, `FOM_CHECK_TERMINATION`, and `FOM_TOL` are "
-            "defined in `fom_workspace.h`."
+            "on iterations where `check > 0 && (it + 1) % check == 0` and "
+            "`residual <= work->settings.tol`, with `check = work->settings.check_termination`; "
+            "on other iterations skip the residual entirely (plain state copy). The check "
+            "interval is a RUNTIME setting: initialize `settings->check_termination` to "
+            "`FOM_CHECK_TERMINATION` in `fom_set_default_settings`, then read it from "
+            "`work->settings.check_termination` in the loop (guarding `% check` with "
+            "`check > 0`) so callers can tune it without regenerating. `FOM_USE_TOL`, "
+            "`FOM_CHECK_TERMINATION`, and `FOM_TOL` are defined in `fom_workspace.h`."
         )
         lines.append("")
     lines.append("All matrices/consts are provided numerically in `data.npz` / `fom_data.c`.")

@@ -20,6 +20,27 @@ from fomtools.cvxpygen.builders import FomSpec
 from fomtools.cvxpygen.qpdata import QPData
 
 
+def cmake_solver_sources(target) -> list[str]:
+    """CMake source paths (cvxpygen ``solver_code`` scope) for one target.
+
+    Mirrors the translation units the target actually scaffolds — the solver
+    body, the numeric data, and the matrix-vector / linear-solve sources, which
+    become ``.cu`` on the CUDA backend — plus the generated bridge. cvxpygen
+    globs this list into its build, so the file extensions must match what the
+    target's ``scaffold`` wrote (e.g. ``src/fom_ops.cu`` for CUDA, ``.c`` for
+    embedded / OpenMP). The bridge stays host C on every backend: it only calls
+    the (``extern "C"``) ABI and touches the host-side workspace arrays.
+    """
+    rel = [
+        target.solver_source_path(),
+        "src/fom_data.c",
+        target.linsolve_source_path(),
+        target.ops_source_path(),
+        "src/cpg_fom_bridge.c",
+    ]
+    return [f"${{CMAKE_CURRENT_SOURCE_DIR}}/{r}" for r in rel]
+
+
 def _piece_dims(qp: QPData) -> dict[str, tuple[str, int, int]]:
     """Map each canonical piece to (Canon_Params member, offset, length)."""
     return {
@@ -27,6 +48,65 @@ def _piece_dims(qp: QPData) -> dict[str, tuple[str, int, int]]:
         "b": ("l", 0, qp.n_eq),
         "u_ineq": ("u", qp.n_eq, qp.n_ineq),
     }
+
+
+def _residual_block(qp: QPData, prefix: str, has_quad_term: bool) -> str:
+    """C code computing OSQP-style primal/dual residuals into the info globals.
+
+    ``Canon_Params`` exposes the canonical ``P`` (``n x n`` symmetric, CSC) and
+    ``A`` (``m x n``, CSC by variable columns) matrices plus the bound vectors
+    ``l``/``u`` (length ``m``, infinities clamped to ``+/-1e30``). With the
+    returned primal ``sol_x`` and dual ``sol_y`` this yields the same residuals
+    OSQP reports — replacing the old behaviour where both residual fields were
+    just the FOM's ``||x_k - x_(k-1)||_inf`` state-change metric.
+    """
+    p = prefix
+    n, m = qp.n, qp.m
+    lines: list[str] = []
+
+    # Primal residual: ||Ax - clamp(Ax, l, u)||_inf == max(Ax - u, l - Ax, 0).
+    if m > 0:
+        lines += [
+            f"  for (i = 0; i < {m}; i++) bridge_Ax[i] = 0.0;",
+            f"  for (i = 0; i < {n}; i++) {{  /* A is {m}x{n}, CSC by variable column */",
+            f"    for (j = {p}Canon_Params.A->p[i]; j < {p}Canon_Params.A->p[i + 1]; j++)",
+            f"      bridge_Ax[{p}Canon_Params.A->i[j]] += {p}Canon_Params.A->x[j] * sol_x[i];",
+            "  }",
+            "  fom_pri_res = 0.0;",
+            f"  for (i = 0; i < {m}; i++) {{",
+            f"    double over = bridge_Ax[i] - {p}Canon_Params.u[i];",
+            f"    double under = {p}Canon_Params.l[i] - bridge_Ax[i];",
+            "    double viol = over > under ? over : under;",
+            "    if (viol > fom_pri_res) fom_pri_res = viol;",
+            "  }",
+        ]
+    else:
+        lines.append("  fom_pri_res = 0.0;  /* no constraints */")
+
+    # Dual residual: ||P x + q + A^T y||_inf.
+    lines.append(f"  for (i = 0; i < {n}; i++) bridge_g[i] = {p}Canon_Params.q[i];")
+    if has_quad_term:
+        lines += [
+            f"  for (i = 0; i < {n}; i++) {{  /* + P x (P is {n}x{n} symmetric, CSC) */",
+            f"    for (j = {p}Canon_Params.P->p[i]; j < {p}Canon_Params.P->p[i + 1]; j++)",
+            f"      bridge_g[{p}Canon_Params.P->i[j]] += {p}Canon_Params.P->x[j] * sol_x[i];",
+            "  }",
+        ]
+    if m > 0:
+        lines += [
+            f"  for (i = 0; i < {n}; i++) {{  /* + A^T y */",
+            f"    for (j = {p}Canon_Params.A->p[i]; j < {p}Canon_Params.A->p[i + 1]; j++)",
+            f"      bridge_g[i] += {p}Canon_Params.A->x[j] * sol_y[{p}Canon_Params.A->i[j]];",
+            "  }",
+        ]
+    lines += [
+        "  fom_dua_res = 0.0;",
+        f"  for (i = 0; i < {n}; i++) {{",
+        "    double a = bridge_g[i] < 0.0 ? -bridge_g[i] : bridge_g[i];",
+        "    if (a > fom_dua_res) fom_dua_res = a;",
+        "  }",
+    ]
+    return "\n".join(lines)
 
 
 def emit_bridge(
@@ -61,8 +141,11 @@ extern "C" {{
 extern double sol_x[{n}];
 extern double sol_y[{m}];
 
-/* Solver info (read by cpg_retrieve_info). The residual is the fomtools
- * termination metric ||x_k - x_(k-1)||_inf, reported as both residuals. */
+/* Solver info (read by cpg_retrieve_info). OSQP-style residuals computed from
+ * the canonical data and the returned solution:
+ *   fom_pri_res = || Ax - clamp(Ax, l, u) ||_inf   (primal infeasibility)
+ *   fom_dua_res = || P x + q + A^T y ||_inf         (dual infeasibility / KKT)
+ * (fom_iter / fom_status come straight from the fomtools solver). */
 extern double fom_obj_val;
 extern int fom_iter;
 extern int fom_status;
@@ -102,6 +185,13 @@ extern void {fn}(void);
     else:
         quad_src = "  /* no quadratic term */\n"
 
+    residual_src = _residual_block(qp, prefix, has_quad_term)
+    # Scratch for the residual evaluation (statically allocated, like sol_x).
+    scratch = (
+        f"static double bridge_Ax[{max(m, 1)}];  /* A x, for the primal residual */\n"
+        f"static double bridge_g[{n}];           /* P x + q + A^T y, the dual residual */"
+    )
+
     source = f"""\
 /* Bridge between CVXPYgen canonicalization code and the fomtools solver.
  * Auto-generated by fomtools.cvxpygen — do not edit. */
@@ -119,11 +209,11 @@ double fom_dua_res;
 
 static FomWorkspace fom_work;
 static int fom_initialized = 0;
+{scratch}
 
 void {fn}(void) {{
   FomParams fom_params;
-  int i;
-{"  int j;" if has_quad_term else ""}
+  int i, j;
   if (!fom_initialized) {{
     FomSettings fom_settings;
     fom_set_default_settings(&fom_settings);
@@ -134,6 +224,7 @@ void {fn}(void) {{
   /* Runtime-tunable settings, kept in sync with cpg_set_solver_*. */
   fom_work.settings.max_iter = (fom_int){prefix}Canon_Settings.max_iter;
   fom_work.settings.tol = (fom_float){prefix}Canon_Settings.tol;
+  fom_work.settings.check_termination = (fom_int){prefix}Canon_Settings.check_termination;
 
   /* Canonical parameter vectors -> FomParams (field order = p0, p1, ...). */
 {copies_src}
@@ -148,8 +239,10 @@ void {fn}(void) {{
     sol_y[i] = (double)fom_work.solution.x[{spec.dual_offset} + i];
   }}
   fom_iter = (int)fom_work.solution.iter;
-  fom_pri_res = (double)fom_work.solution.residual;
-  fom_dua_res = (double)fom_work.solution.residual;
+
+  /* OSQP-style primal/dual residuals from the canonical data + the solution. */
+{residual_src}
+  (void)j;
 
   /* Objective 0.5 x'Px + q'x; cvxpygen's retrieve_info adds the constant d
    * and flips the sign for maximization problems. */

@@ -63,6 +63,7 @@ class FomSettings(ctypes.Structure):
     _fields_ = [
         ("max_iter", ctypes.c_int),
         ("tol", fom_float),
+        ("check_termination", ctypes.c_int),
     ]
 
 
