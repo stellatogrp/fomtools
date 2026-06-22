@@ -68,23 +68,11 @@ def _(np):
     np.random.seed(0)
     m, n = 5, 3
     A = np.random.normal(size=(m, n))
-
-    x_lb, x_ub = 0, 1.0
-    z0_lb, z0_ub = 4.0, 6.0
-
-    L = np.max(np.linalg.eigvals(A.T @ A))
-    eta = 1.0 / L
-    K = 7
-    return A, K, L, eta, m, n, x_lb, x_ub, z0_lb, z0_ub
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    We first simulate the algorithms on given problem instances, which are parameterized by the set of parameters $x \in \mathcal{X} = [x_{\text{lb}}, x_{\text{ub}}]$ and initial states $z^0 \in [z^0_{\text{lb}}, z^0_{\text{ub}}]$. We randomly sample $x$ and $z^0$ from uniform distributions over these boxes.
-    The output of `VP.solve(K=K)` will be an array of size `(n_samples, K)` whose $n$-th row is a list of infinity norm of residuals `z[k] - z[k-1]` for `k=1,...,K` of $n$-th simulated instance. After `VP.solve` method has run, the `Verifier` class provides statistics of the residual at last iterate `z[K]`.
-    """)
-    return
+    x_lb, x_ub = 10, 11
+    L = np.max(np.linalg.eigvalsh(A.T @ A))  # symmetric routine → real eigenvalues
+    eta = 0.5 / L
+    K = 10
+    return A, K, eta, m, n, x_lb, x_ub
 
 
 @app.cell

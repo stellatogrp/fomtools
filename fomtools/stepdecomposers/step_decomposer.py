@@ -179,7 +179,7 @@ class StepDecomposer:
         Returns
         -------
         LinearExpression
-            The output expression. For primitive steps, this is step.lhs.
+            The output expression. For primitive steps, this is step.output.
             For composite steps, this is a LinearExpression composed from
             the outputs of the decomposed primitive steps.
         """
@@ -191,7 +191,7 @@ class StepDecomposer:
     def process_prox(
         self,
         prox_function,
-        rhs: LinearExpression,
+        arg: LinearExpression,
         gamma: float = 1.0,
     ) -> LinearExpression:
         """
@@ -207,7 +207,7 @@ class StepDecomposer:
         prox_function : ProxableFunction
             A pre-configured proxable function instance carrying problem
             data (e.g. the ``lambd`` of a weighted L1 norm).
-        rhs : LinearExpression
+        arg : LinearExpression
             The input expression to which the prox is applied.
         gamma : float, default 1.0
             The proximal step size.
@@ -215,7 +215,7 @@ class StepDecomposer:
         Returns
         -------
         LinearExpression
-            The output expression ``prox_{gamma * f}(rhs)``.
+            The output expression ``prox_{gamma * f}(arg)``.
 
         Raises
         ------
@@ -228,7 +228,7 @@ class StepDecomposer:
             raise NotImplementedError(
                 f"{self.__class__.__name__} does not support {type(prox_function).__name__}"
             )
-        return proxer(self, prox_function, rhs, gamma)
+        return proxer(self, prox_function, arg, gamma)
 
     def _decompose_saturatedlinear_to_relus(self, step: SaturatedLinear) -> LinearExpression:
         """
@@ -269,19 +269,19 @@ class StepDecomposer:
             u_lb = u_ub = np.atleast_1d(step.u)
 
         # Create ReLU steps using step.l/step.u directly (type-agnostic arithmetic)
-        relu_lower = Relu(rhs=step.rhs - step.l)
-        relu_upper = Relu(rhs=step.rhs - step.u)
+        relu_lower = Relu(arg=step.arg - step.l)
+        relu_upper = Relu(arg=step.arg - step.u)
 
-        # Bounds on (rhs - l): [x_lb - l_ub, x_ub - l_lb]
+        # Bounds on (arg - l): [x_lb - l_ub, x_ub - l_lb]
         relu_lower.update_bounds(x_lb - l_ub, x_ub - l_lb)
-        # Bounds on (rhs - u): [x_lb - u_ub, x_ub - u_lb]
+        # Bounds on (arg - u): [x_lb - u_ub, x_ub - u_lb]
         relu_upper.update_bounds(x_lb - u_ub, x_ub - u_lb)
 
-        lhs_lower = self.process_step(relu_lower)
-        lhs_upper = self.process_step(relu_upper)
+        output_lower = self.process_step(relu_lower)
+        output_upper = self.process_step(relu_upper)
 
         # satlin(x, l, u) = relu(x - l) - relu(x - u) + l
-        return lhs_lower - lhs_upper + step.l
+        return output_lower - output_upper + step.l
 
     def _process_primitive(self, step: Step) -> LinearExpression:
         """
@@ -314,18 +314,18 @@ class StepDecomposer:
         # Tighten the input bounds BEFORE the output box and envelope
         # coefficients (which bake in lb/ub) are computed.
         if obbt is not None and not step.skip_obbt:
-            result = obbt.obbt(step.rhs, step.lb, step.ub)
+            result = obbt.obbt(step.arg, step.lb, step.ub)
             if result is not None:
                 step.update_bounds(*result)
 
-        if hasattr(step, "sync_lhs_bounds"):
-            step.sync_lhs_bounds()
+        if hasattr(step, "sync_output_bounds"):
+            step.sync_output_bounds()
         # registered as "param" for MIP/SDP compatibility; Simulator registers
-        # step lhs as an iterate with zero init so subsequent steps can reference it.
-        # For steps whose lhs is a composite view (e.g. partial-projection Relu),
-        # lhs_leaves names only the fresh leaves that actually need solver-side
-        # variables; non-fresh rows reuse rhs leaves and are already registered.
-        for leaf in step.lhs_leaves:
+        # step output as an iterate with zero init so subsequent steps can reference it.
+        # For steps whose output is a composite view (e.g. partial-projection Relu),
+        # output_leaves names only the fresh leaves that actually need solver-side
+        # variables; non-fresh rows reuse arg leaves and are already registered.
+        for leaf in step.output_leaves:
             self.register_var(leaf, var_type="param")
 
         self.canonicalizer.canonicalize(step)
@@ -345,7 +345,7 @@ class StepDecomposer:
                     type(step).__name__,
                 )
 
-        return step.lhs
+        return step.output
 
     @staticmethod
     def _to_satlin_bound(value, ndim: int):
@@ -365,7 +365,7 @@ class StepDecomposer:
         return arr
 
     def prox_elasticnet(
-        self, prox: ElasticNet, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: ElasticNet, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower an elastic-net prox to a ``SoftThreshold`` step plus a
@@ -384,16 +384,16 @@ class StepDecomposer:
         ``_DECOMPOSERS``); the $1/(1 + 2\beta\gamma)$ factor applies
         analytically to the resulting composite ``LinearExpression``.
         """
-        soft = self.process_step(SoftThreshold(rhs=rhs, lambd=prox.alpha * gamma))
+        soft = self.process_step(SoftThreshold(arg=arg, lambd=prox.alpha * gamma))
         return soft / (1.0 + 2.0 * prox.beta * gamma)
 
     def prox_hingeloss(
-        self, prox: HingeLoss, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: HingeLoss, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower the standard hinge prox $g(x) = \sum_i \max(0, 1 - x_i)$
         to a single ``SaturatedLinear`` clip on the margin residual
-        $1 - \text{rhs}$ to $[0, \gamma]$, added back to ``rhs``:
+        $1 - \text{arg}$ to $[0, \gamma]$, added back to ``arg``:
 
         $$
             \operatorname{prox}_{\gamma g}(v) = v + \mathrm{satlin}(1 - v;\, 0,\, \gamma).
@@ -402,14 +402,14 @@ class StepDecomposer:
         Backend-independent: registered on the base class so all step
         decomposers inherit it.
         """
-        residual = -rhs + 1.0
-        l = self._to_satlin_bound(0.0, rhs.ndim)
-        u = self._to_satlin_bound(gamma, rhs.ndim)
-        clip = self.process_step(SaturatedLinear(rhs=residual, l=l, u=u))
-        return rhs + clip
+        residual = -arg + 1.0
+        l = self._to_satlin_bound(0.0, arg.ndim)
+        u = self._to_satlin_bound(gamma, arg.ndim)
+        clip = self.process_step(SaturatedLinear(arg=residual, l=l, u=u))
+        return arg + clip
 
     def prox_huberloss(
-        self, prox: HuberLoss, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: HuberLoss, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower an element-wise Huber prox to a single ``SoftThreshold``
@@ -432,11 +432,11 @@ class StepDecomposer:
         decomposers inherit it.
         """
         theta = prox.delta * (1.0 + gamma)
-        soft = self.process_step(SoftThreshold(rhs=rhs, lambd=theta))
-        return (rhs + gamma * soft) / (1.0 + gamma)
+        soft = self.process_step(SoftThreshold(arg=arg, lambd=theta))
+        return (arg + gamma * soft) / (1.0 + gamma)
 
     def prox_indaffine(
-        self, prox: IndAffine, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: IndAffine, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower the affine-set indicator prox $I_{\{Ax = b\}}$ to a
@@ -447,12 +447,12 @@ class StepDecomposer:
             \begin{bmatrix} I & A^\top \\ A & 0 \end{bmatrix}
             \begin{bmatrix} u \\ \nu \end{bmatrix}
             =
-            \begin{bmatrix} \text{rhs} \\ b \end{bmatrix}.
+            \begin{bmatrix} \text{arg} \\ b \end{bmatrix}.
         $$
 
         Independent of $\gamma$ (indicator prox). This is the equality-only case of
-        the generic QP (``P = I``, ``q = -rhs``, no inequalities), so it routes through
-        :meth:`_qp_kkt`, which posts ``x == rhs - A^T nu`` and ``A x == b`` (no
+        the generic QP (``P = I``, ``q = -arg``, no inequalities), so it routes through
+        :meth:`_qp_kkt`, which posts ``x == arg - A^T nu`` and ``A x == b`` (no
         complementarity — there are no inequality constraints). The tight initial
         bounds on ``u`` and ``ν`` are still derived here via interval propagation
         through a throwaway ``LinearExpression`` that represents $M_{\text{block}}^{-1}$
@@ -476,11 +476,11 @@ class StepDecomposer:
                 [A, np.zeros((m, m))],
             ]
         )
-        # Throwaway LE representing M_block^{-1} @ [rhs; b]; never registered.
-        combined_lb, combined_ub = solve_linexpr(M_block, stack([rhs, b_le])).bound_propagation()
+        # Throwaway LE representing M_block^{-1} @ [arg; b]; never registered.
+        combined_lb, combined_ub = solve_linexpr(M_block, stack([arg, b_le])).bound_propagation()
 
         return self._qp_kkt(
-            lin_term=-rhs,
+            lin_term=-arg,
             P=None,
             A_eq=A,
             b_eq=b_le,
@@ -542,7 +542,7 @@ class StepDecomposer:
         Parameters
         ----------
         lin_term : LinearExpression
-            The linear cost ``q`` (dim ``n``); for a projection pass ``-rhs``.
+            The linear cost ``q`` (dim ``n``); for a projection pass ``-arg``.
         P : np.ndarray or scipy.sparse, optional
             The PSD quadratic term. ``None`` or identity uses the ``x = -(...)`` form.
         is_lp : bool, default False
@@ -616,12 +616,12 @@ class StepDecomposer:
         return x
 
     def _prox_polyhedral_kkt(
-        self, rhs, A, b_le, lam_ub, C=None, d_le=None, nu_bounds=None
+        self, arg, A, b_le, lam_ub, C=None, d_le=None, nu_bounds=None
     ) -> LinearExpression:
         r"""
         Projection onto ``{Au <= b}`` and an optional ``{Cu = d}``, as the QP
-        ``min (1/2)||u - rhs||^2`` over that polyhedron. A thin wrapper over
-        :meth:`_qp_kkt` with ``P = I`` and ``q = -rhs``.
+        ``min (1/2)||u - arg||^2`` over that polyhedron. A thin wrapper over
+        :meth:`_qp_kkt` with ``P = I`` and ``q = -arg``.
 
         Note the naming inversion preserved for the existing callers: here ``A`` is the
         **inequality** matrix and ``C`` the **equality** matrix (the opposite of the
@@ -629,7 +629,7 @@ class StepDecomposer:
 
         Parameters
         ----------
-        rhs : LinearExpression
+        arg : LinearExpression
             The point being projected.
         A : np.ndarray
             Inequality matrix, shape ``(m, n)``.
@@ -650,7 +650,7 @@ class StepDecomposer:
             The primal projection ``u`` of dimension ``n``.
         """
         return self._qp_kkt(
-            lin_term=-rhs,
+            lin_term=-arg,
             P=None,
             C_ineq=A,
             d_ineq=b_le,
@@ -665,14 +665,14 @@ class StepDecomposer:
         Lower a :class:`QuadraticProgram` / :class:`LinearProgram` step to its KKT
         system via :meth:`_qp_kkt`.
 
-        ``q`` defaults to ``-step.rhs`` (projection convenience) when ``None``;
+        ``q`` defaults to ``-step.arg`` (projection convenience) when ``None``;
         ``b`` and ``d`` are lifted to ``LinearExpression`` via :meth:`_lift_to_le`
         (numeric or parameter, uniformly). Raises ``ValueError`` eagerly if the QP has
         inequality constraints but no finite ``dual_ub`` (the inequality dual is not
         auto-boundable). Registered in the MIP and SDP ``_DECOMPOSERS`` under both
         ``"quadraticprogram"`` and ``"linearprogram"``.
         """
-        q = step.q if step.q is not None else -step.rhs
+        q = step.q if step.q is not None else -step.arg
         q_le = self._lift_to_le(q, step.n)
 
         A_eq, b_eq = step.A, None
@@ -706,7 +706,7 @@ class StepDecomposer:
         )
 
     def prox_indpolyhedral(
-        self, prox: IndPolyhedral, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: IndPolyhedral, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower the polyhedral-set indicator prox :math:`\operatorname{proj}_{\{Au \le b\}}`
@@ -719,7 +719,7 @@ class StepDecomposer:
         ----------
         prox : IndPolyhedral
             The polyhedral indicator carrying ``A``, ``b`` and a required ``dual_ub``.
-        rhs : LinearExpression
+        arg : LinearExpression
             The point being projected.
         gamma : float, default 1.0
             Step size (irrelevant for an indicator).
@@ -738,10 +738,10 @@ class StepDecomposer:
             )
         b_le = self._lift_to_le(prox.b, m)
         lam_ub = np.broadcast_to(np.asarray(prox.dual_ub, dtype=float), (m,)).copy()
-        return self._prox_polyhedral_kkt(rhs, A, b_le, lam_ub)
+        return self._prox_polyhedral_kkt(arg, A, b_le, lam_ub)
 
     def prox_indsimplex(
-        self, prox: IndSimplex, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: IndSimplex, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower the simplex indicator prox :math:`\operatorname{proj}_{\{u \ge 0,\ 1^\top u = a\}}`
@@ -753,13 +753,13 @@ class StepDecomposer:
         (nu - x_i)_+``,
 
         - ``lambda_i <= max_i x_i - min_i x_i`` over the box, and
-        - ``nu`` (the relu threshold) ``in [min(rhs_lb) - a_max, max(rhs_ub)]``.
+        - ``nu`` (the relu threshold) ``in [min(arg_lb) - a_max, max(arg_ub)]``.
 
         Parameters
         ----------
         prox : IndSimplex
             The simplex indicator carrying the sum ``a`` (scalar or dim-1 LinearExpression).
-        rhs : LinearExpression
+        arg : LinearExpression
             The point being projected.
         gamma : float, default 1.0
             Step size (irrelevant for an indicator).
@@ -769,42 +769,42 @@ class StepDecomposer:
         LinearExpression
             The primal projection ``u`` of dimension ``n``.
         """
-        n = rhs.ndim
+        n = arg.ndim
         a_le = self._lift_to_le(prox.a, 1)
         a_max = float(a_le.bound_propagation()[1][0])
 
-        rhs_lb, rhs_ub = rhs.bound_propagation()
-        lo, hi = float(np.min(rhs_lb)), float(np.max(rhs_ub))
-        # Per-component: lambda_i = (nu - x_i)_+ <= hi - rhs_lb[i] (nu <= max_j x_j <= hi),
+        arg_lb, arg_ub = arg.bound_propagation()
+        lo, hi = float(np.min(arg_lb)), float(np.max(arg_ub))
+        # Per-component: lambda_i = (nu - x_i)_+ <= hi - arg_lb[i] (nu <= max_j x_j <= hi),
         # tighter than the global hi - lo for heterogeneous boxes.
-        lam_ub = hi - rhs_lb
+        lam_ub = hi - arg_lb
         nu_bounds = (np.array([lo - a_max]), np.array([hi]))  # nu = tau in [min x - a, max x]
 
         A = -np.eye(n)
         b_le = self._lift_to_le(0.0, n)  # u >= 0  (-u <= 0)
         C = np.ones((1, n))
-        return self._prox_polyhedral_kkt(rhs, A, b_le, lam_ub, C=C, d_le=a_le, nu_bounds=nu_bounds)
+        return self._prox_polyhedral_kkt(arg, A, b_le, lam_ub, C=C, d_le=a_le, nu_bounds=nu_bounds)
 
     def prox_indballl1(
-        self, prox: IndBallL1, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: IndBallL1, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower the :math:`\ell_1`-ball indicator prox onto the lifted KKT system.
 
         Projection onto :math:`\{u : \|u\|_1 \le r\}` is the QP
-        :math:`\min_{u,t} \tfrac12\|u-\text{rhs}\|^2` s.t. :math:`-t \le u \le t`,
+        :math:`\min_{u,t} \tfrac12\|u-\text{arg}\|^2` s.t. :math:`-t \le u \le t`,
         :math:`\mathbf{1}^\top t \le r`. With multipliers :math:`\alpha` (``u <= t``),
         :math:`\beta` (``-u <= t``), :math:`\mu` (``1^T t <= r``):
 
         .. math::
-            u = \text{rhs} - \alpha + \beta,\quad \alpha + \beta = \mu\mathbf{1},\\
+            u = \text{arg} - \alpha + \beta,\quad \alpha + \beta = \mu\mathbf{1},\\
             0 \le \alpha \perp (t - u) \ge 0,\ \
             0 \le \beta \perp (t + u) \ge 0,\ \
             0 \le \mu \perp (r - \mathbf{1}^\top t) \ge 0.
 
         The projection is routed through the generic QP core :meth:`_qp_kkt` on the
         lifted variable ``x = [u; t]`` (dim ``2n``) with ``P = diag(I_n, 0_n)``,
-        ``q = [-rhs; 0]`` and the stacked inequalities
+        ``q = [-arg; 0]`` and the stacked inequalities
 
         .. math::
             C_{ineq} = \begin{bmatrix} I & -I \\ -I & -I \\ 0 & \mathbf{1}^\top \end{bmatrix},
@@ -816,14 +816,14 @@ class StepDecomposer:
         ``u``- and ``t``-stationarity (the all-zero ``t``-rows of ``P`` give
         ``alpha + beta = mu 1``). The dual upper bound is auto-derived from the input box
         (``<= max_i|x_i|``), independent of ``r``; ``prox.dual_ub`` overrides it. ``P`` is
-        singular, so explicit ``primal_bounds`` are supplied (``u in rhs +/- dub``,
+        singular, so explicit ``primal_bounds`` are supplied (``u in arg +/- dub``,
         ``t in [0, r]``). The returned projection is the slice ``x[:n]``.
 
         Parameters
         ----------
         prox : IndBallL1
             Carries the radius ``r`` (scalar or dim-1 LinearExpression) and ``dual_ub``.
-        rhs : LinearExpression
+        arg : LinearExpression
             The point being projected.
         gamma : float, default 1.0
             Step size (irrelevant for an indicator).
@@ -833,17 +833,17 @@ class StepDecomposer:
         LinearExpression
             The primal projection ``u`` of dimension ``n`` (the slice ``x[:n]``).
         """
-        n = rhs.ndim
+        n = arg.ndim
 
         r_le = self._lift_to_le(prox.r, 1)
         r_ub = float(r_le.bound_propagation()[1][0])  # max radius -> static upper bound on t
 
         # Auto dual bound from the input box (independent of r); override via prox.dual_ub.
-        rhs_lb, rhs_ub = rhs.bound_propagation()
-        M = float(max(np.max(np.abs(rhs_lb)), np.max(np.abs(rhs_ub))))
+        arg_lb, arg_ub = arg.bound_propagation()
+        M = float(max(np.max(np.abs(arg_lb)), np.max(np.abs(arg_ub))))
         dub = M if prox.dual_ub is None else float(prox.dual_ub)
 
-        # Lifted x = [u; t]: P = diag(I_n, 0_n), q = [-rhs; 0].
+        # Lifted x = [u; t]: P = diag(I_n, 0_n), q = [-arg; 0].
         zeros_n = self._lift_to_le(0.0, n)
         eye = np.eye(n)
         C_ineq = np.block(
@@ -854,58 +854,58 @@ class StepDecomposer:
             ]
         )
         x = self._qp_kkt(
-            lin_term=stack([-rhs, zeros_n]),
+            lin_term=stack([-arg, zeros_n]),
             P=spa.block_diag([spa.eye(n), spa.csr_matrix((n, n))], format="csr"),
             C_ineq=C_ineq,
             d_ineq=stack([zeros_n, zeros_n, r_le]),
             lam_ub=np.full(2 * n + 1, dub),
             primal_bounds=(
-                np.concatenate([rhs_lb - dub, np.zeros(n)]),
-                np.concatenate([rhs_ub + dub, np.full(n, r_ub)]),
+                np.concatenate([arg_lb - dub, np.zeros(n)]),
+                np.concatenate([arg_ub + dub, np.full(n, r_ub)]),
             ),
         )
         return x[:n]
 
     def prox_indballlinf(
-        self, prox: IndBallLinf, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: IndBallLinf, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower an $\ell_\infty$-ball indicator prox via a single
         ``SaturatedLinear`` step that clips to $[-r, r]$.
 
         Uses the identity
-        $\operatorname{prox}_{\gamma I_{\|\cdot\|_\infty \leq r}}(\text{rhs})
-        = \operatorname{clip}(\text{rhs}, -r, r)$, independent of $\gamma$.
+        $\operatorname{prox}_{\gamma I_{\|\cdot\|_\infty \leq r}}(\text{arg})
+        = \operatorname{clip}(\text{arg}, -r, r)$, independent of $\gamma$.
 
         Backend-independent: registered on the base class so all step
         decomposers inherit it.
         """
-        l = np.full(rhs.ndim, -prox.r)
-        u = np.full(rhs.ndim, prox.r)
-        return self.process_step(SaturatedLinear(rhs=rhs, l=l, u=u))
+        l = np.full(arg.ndim, -prox.r)
+        u = np.full(arg.ndim, prox.r)
+        return self.process_step(SaturatedLinear(arg=arg, l=l, u=u))
 
     def prox_indbox(
-        self, prox: IndBox, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: IndBox, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower a box-indicator prox via a single ``SaturatedLinear`` step
         that clips to $[l, u]$ element-wise.
 
         Uses the identity
-        $\operatorname{prox}_{\gamma I_{[l, u]}}(\text{rhs})
-        = \min(\max(\text{rhs}, l), u)$, independent of $\gamma$. Scalar
-        bounds are broadcast to ``rhs.ndim``; arrays and
+        $\operatorname{prox}_{\gamma I_{[l, u]}}(\text{arg})
+        = \min(\max(\text{arg}, l), u)$, independent of $\gamma$. Scalar
+        bounds are broadcast to ``arg.ndim``; arrays and
         ``LinearExpression`` parameters are forwarded through.
 
         Backend-independent: registered on the base class so all step
         decomposers inherit it.
         """
-        l = self._to_satlin_bound(prox.l, rhs.ndim)
-        u = self._to_satlin_bound(prox.u, rhs.ndim)
-        return self.process_step(SaturatedLinear(rhs=rhs, l=l, u=u))
+        l = self._to_satlin_bound(prox.l, arg.ndim)
+        u = self._to_satlin_bound(prox.u, arg.ndim)
+        return self.process_step(SaturatedLinear(arg=arg, l=l, u=u))
 
     def prox_indhalfspace(
-        self, prox: IndHalfSpace, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: IndHalfSpace, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower a half-space indicator prox to a single scalar ``Relu``
@@ -917,7 +917,7 @@ class StepDecomposer:
         $$
 
         The ``Relu`` step operates on the scalar signed-distance
-        ``LinearExpression`` ``(a @ rhs - b) / ||a||^2``; the lift back
+        ``LinearExpression`` ``(a @ arg - b) / ||a||^2``; the lift back
         to vector dimension uses ``a.reshape(-1, 1) @ relu_excess`` since
         ``LinearExpression.__mul__`` only accepts scalars. Independent of
         $\gamma$.
@@ -927,62 +927,62 @@ class StepDecomposer:
         """
         # LinearExpression.__rmatmul__ requires a 2-D matrix on the left, so
         # reshape a to (1, n) for the inner product and (n, 1) for the lift.
-        excess = (prox.a.reshape(1, -1) @ rhs - prox.b) / prox._norm_a_sq
-        relu_excess = self.process_step(Relu(rhs=excess))
-        return rhs - prox.a.reshape(-1, 1) @ relu_excess
+        excess = (prox.a.reshape(1, -1) @ arg - prox.b) / prox._norm_a_sq
+        relu_excess = self.process_step(Relu(arg=excess))
+        return arg - prox.a.reshape(-1, 1) @ relu_excess
 
     def prox_indnonnegative(
-        self, prox: IndNonNegative, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: IndNonNegative, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower a non-negative-orthant indicator prox into a single ``Relu`` step.
 
-        Uses the identity $\operatorname{prox}_{\gamma I_{\geq 0}}(\text{rhs})
-        = \max(\text{rhs}, 0)$, which is precisely ``Relu(rhs)``. The
+        Uses the identity $\operatorname{prox}_{\gamma I_{\geq 0}}(\text{arg})
+        = \max(\text{arg}, 0)$, which is precisely ``Relu(arg)``. The
         result is independent of $\gamma$.
 
         Backend-independent: registered on the base class so all step
         decomposers inherit it.
         """
-        return self.process_step(Relu(rhs=rhs))
+        return self.process_step(Relu(arg=arg))
 
     def prox_indnonpositive(
-        self, prox: IndNonPositive, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: IndNonPositive, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower a non-positive-orthant indicator prox via a single ``Relu`` step.
 
         Uses the identity
-        $\operatorname{prox}_{\gamma I_{\leq 0}}(\text{rhs}) =
-        \min(\text{rhs}, 0) = -\max(-\text{rhs}, 0) = -\mathrm{Relu}(-\text{rhs})$.
+        $\operatorname{prox}_{\gamma I_{\leq 0}}(\text{arg}) =
+        \min(\text{arg}, 0) = -\max(-\text{arg}, 0) = -\mathrm{Relu}(-\text{arg})$.
         The result is independent of $\gamma$.
 
         Backend-independent: registered on the base class so all step
         decomposers inherit it.
         """
-        return -self.process_step(Relu(rhs=-rhs))
+        return -self.process_step(Relu(arg=-arg))
 
     def prox_indpoint(
-        self, prox: IndPoint, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: IndPoint, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower a singleton-set indicator prox via a degenerate
         ``SaturatedLinear`` step with $l = u = p$.
 
         Uses the identity
-        $\operatorname{prox}_{\gamma I_{\{p\}}}(\text{rhs}) = p$,
+        $\operatorname{prox}_{\gamma I_{\{p\}}}(\text{arg}) = p$,
         independent of $\gamma$. The lowering encodes this as
-        ``SaturatedLinear(rhs, l=p, u=p)`` whose output bounds collapse
-        to $[p, p]$. Scalar ``p`` is broadcast to ``rhs.ndim``.
+        ``SaturatedLinear(arg, l=p, u=p)`` whose output bounds collapse
+        to $[p, p]$. Scalar ``p`` is broadcast to ``arg.ndim``.
 
         Backend-independent: registered on the base class so all step
         decomposers inherit it.
         """
-        p = self._to_satlin_bound(prox.p, rhs.ndim)
-        return self.process_step(SaturatedLinear(rhs=rhs, l=p, u=p))
+        p = self._to_satlin_bound(prox.p, arg.ndim)
+        return self.process_step(SaturatedLinear(arg=arg, l=p, u=p))
 
     def prox_labeledhingeloss(
-        self, prox: LabeledHingeLoss, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: LabeledHingeLoss, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower the labeled hinge prox
@@ -994,7 +994,7 @@ class StepDecomposer:
         $$
 
         Element-wise scaling by $y$ is encoded as
-        ``scipy.sparse.diags(y) @ rhs`` — ``LinearExpression.__mul__``
+        ``scipy.sparse.diags(y) @ arg`` — ``LinearExpression.__mul__``
         only accepts scalars; the sparse-diagonal matmul keeps the
         resulting LE's coefficients compact (no dense $n \times n$
         matrix is materialized).
@@ -1003,17 +1003,17 @@ class StepDecomposer:
         decomposers inherit it.
         """
         Y = spa.diags(prox.y)
-        residual = -(Y @ rhs) + 1.0
-        l = self._to_satlin_bound(0.0, rhs.ndim)
-        u = self._to_satlin_bound(gamma, rhs.ndim)
-        clip = self.process_step(SaturatedLinear(rhs=residual, l=l, u=u))
-        return rhs + Y @ clip
+        residual = -(Y @ arg) + 1.0
+        l = self._to_satlin_bound(0.0, arg.ndim)
+        u = self._to_satlin_bound(gamma, arg.ndim)
+        clip = self.process_step(SaturatedLinear(arg=residual, l=l, u=u))
+        return arg + Y @ clip
 
     def prox_linear(
-        self, prox: Linear, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: Linear, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
-        Lower a linear cost prox $f(x) = c^\top x$ to ``rhs - gamma * c``.
+        Lower a linear cost prox $f(x) = c^\top x$ to ``arg - gamma * c``.
 
         Pure ``LinearExpression`` arithmetic — no ``Step`` and no fresh
         leaf variables are introduced. ``prox.c`` may be a scalar, an
@@ -1023,17 +1023,17 @@ class StepDecomposer:
         Backend-independent: registered on the base class so all step
         decomposers inherit it.
         """
-        return rhs - gamma * prox.c
+        return arg - gamma * prox.c
 
     def prox_norml1(
-        self, prox: NormL1, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: NormL1, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower a weighted $\ell_1$-norm prox into a single ``SoftThreshold`` step.
 
         Uses the identity
-        $\operatorname{prox}_{\gamma \lambda \|\cdot\|_1}(\text{rhs})
-        = S_{\gamma \lambda}(\text{rhs})$, where $S$ is element-wise soft
+        $\operatorname{prox}_{\gamma \lambda \|\cdot\|_1}(\text{arg})
+        = S_{\gamma \lambda}(\text{arg})$, where $S$ is element-wise soft
         thresholding.
 
         Backend-independent: registered on the base class so all step
@@ -1041,11 +1041,11 @@ class StepDecomposer:
         ``SoftThreshold`` happens automatically — e.g. SDP further
         decomposes it into two ReLUs via ``_DECOMPOSERS``.
         """
-        step = SoftThreshold(rhs=rhs, lambd=prox.lambd * gamma)
+        step = SoftThreshold(arg=arg, lambd=prox.lambd * gamma)
         return self.process_step(step)
 
     def prox_norminf(
-        self, prox: NormInf, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: NormInf, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower the :math:`\ell_\infty`-norm prox via Moreau decomposition:
@@ -1066,21 +1066,21 @@ class StepDecomposer:
         implicit-iterate prox — directly).
         """
         radius = gamma * prox.lambd
-        proj = self.prox_indballl1(IndBallL1(radius, dual_ub=prox.dual_ub), rhs)
-        return rhs - proj
+        proj = self.prox_indballl1(IndBallL1(radius, dual_ub=prox.dual_ub), arg)
+        return arg - proj
 
     def prox_totalvariation1d(
-        self, prox: TotalVariation1D, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: TotalVariation1D, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower the 1-D total-variation prox (fused lasso) via its KKT system.
 
-        For :math:`\min_x \tfrac12\|x-\text{rhs}\|^2 + \tau\|Dx\|_1` (``τ = γλ``, ``D`` the
+        For :math:`\min_x \tfrac12\|x-\text{arg}\|^2 + \tau\|Dx\|_1` (``τ = γλ``, ``D`` the
         first-difference operator), with equality multiplier ``u`` and the split
         ``Dx = z⁺ - z⁻`` (``z⁺,z⁻ ≥ 0``):
 
         .. math::
-            x = \text{rhs} - D^\top u,\quad Dx = z^+ - z^-,\quad
+            x = \text{arg} - D^\top u,\quad Dx = z^+ - z^-,\quad
             0 \le (\tau - u) \perp z^+ \ge 0,\quad 0 \le (\tau + u) \perp z^- \ge 0.
 
         The complementarities' nonnegativity sides encode the dual box ``-τ ≤ u ≤ τ``, so all
@@ -1091,7 +1091,7 @@ class StepDecomposer:
         ----------
         prox : TotalVariation1D
             Carries the weight ``lambd`` (scalar or dim-1 LinearExpression).
-        rhs : LinearExpression
+        arg : LinearExpression
             The input signal being smoothed.
         gamma : float, default 1.0
             Step size.
@@ -1099,12 +1099,12 @@ class StepDecomposer:
         Returns
         -------
         LinearExpression
-            The proximal point ``x = rhs - Dᵀu`` of dimension ``n``.
+            The proximal point ``x = arg - Dᵀu`` of dimension ``n``.
         """
-        n = rhs.ndim
+        n = arg.ndim
         if n < 2:
             warnings.warn(_SHORT_SIGNAL_MSG.format(n=n), UserWarning, stacklevel=2)
-            return rhs  # TV of a scalar is 0 -> identity
+            return arg  # TV of a scalar is 0 -> identity
         m = n - 1
         D = diff_matrix(n)
 
@@ -1115,7 +1115,7 @@ class StepDecomposer:
 
         u = self.add_iterate(m, lb=np.full(m, -tau_max), ub=np.full(m, tau_max))
 
-        x = rhs - D.T @ u  # primal (expression, returned)
+        x = arg - D.T @ u  # primal (expression, returned)
         z_lb, z_ub = (D @ x).bound_propagation()
         zp = self.add_iterate(m, lb=np.zeros(m), ub=np.maximum(0.0, z_ub))
         zm = self.add_iterate(m, lb=np.zeros(m), ub=np.maximum(0.0, -z_lb))
@@ -1126,23 +1126,23 @@ class StepDecomposer:
         return x
 
     def prox_quadratic(
-        self, prox: Quadratic, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: Quadratic, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower a convex-quadratic prox $f(x) = \tfrac{1}{2}x^\top Q x + q^\top x$
         to a single linear equality on a fresh iterate ``u``:
 
         $$
-            (I + \gamma Q)\, u \;=\; \text{rhs} - \gamma q.
+            (I + \gamma Q)\, u \;=\; \text{arg} - \gamma q.
         $$
 
         This is the unconstrained case of the generic QP, so it routes through
-        :meth:`_qp_kkt` with ``P = I + gamma*Q`` and ``q_qp = gamma*q - rhs`` (the
+        :meth:`_qp_kkt` with ``P = I + gamma*Q`` and ``q_qp = gamma*q - arg`` (the
         prox objective expands to :math:`\tfrac12 x^\top(I+\gamma Q)x + (\gamma q -
-        \text{rhs})^\top x`). With no equality/inequality blocks, ``_qp_kkt`` creates
+        \text{arg})^\top x`). With no equality/inequality blocks, ``_qp_kkt`` creates
         only the primal iterate and posts the single stationarity equality
-        ``(I + gamma*Q) x == rhs - gamma*q`` — no duals, no complementarity. Bounds
-        on ``x`` are derived in ``_qp_kkt`` via ``solve_linexpr(M, rhs - gamma*q)``
+        ``(I + gamma*Q) x == arg - gamma*q`` — no duals, no complementarity. Bounds
+        on ``x`` are derived in ``_qp_kkt`` via ``solve_linexpr(M, arg - gamma*q)``
         (per-leaf ``np.linalg.solve`` — no inverse materialized) and tightened by OBBT
         when enabled. ``q`` may be numeric data or a ``LinearExpression`` parameter.
 
@@ -1150,14 +1150,14 @@ class StepDecomposer:
         overrides this with a deferral (no per-step activation callback
         is available for an implicitly-defined iterate).
         """
-        n = rhs.ndim
+        n = arg.ndim
         M = np.eye(n) + gamma * prox.Q
-        # lin_term = q_qp = gamma*q - rhs (negation of the known-good rhs - gamma*q,
+        # lin_term = q_qp = gamma*q - arg (negation of the known-good arg - gamma*q,
         # which keeps the arithmetic on LinearExpression operands).
-        return self._qp_kkt(lin_term=-(rhs - gamma * prox.q), P=M)
+        return self._qp_kkt(lin_term=-(arg - gamma * prox.q), P=M)
 
     def prox_softnonnegative(
-        self, prox: SoftNonNegative, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: SoftNonNegative, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower the one-sided quadratic penalty prox to a scaled LeakyReLU,
@@ -1185,15 +1185,15 @@ class StepDecomposer:
         """
         alpha = prox.alpha
         alpha_tilde = alpha / (alpha + gamma * (1.0 - alpha))
-        relu_out = self.process_step(Relu(rhs=rhs))
-        return alpha_tilde * rhs + (1.0 - alpha_tilde) * relu_out
+        relu_out = self.process_step(Relu(arg=arg))
+        return alpha_tilde * arg + (1.0 - alpha_tilde) * relu_out
 
     def prox_sql2norm(
-        self, prox: SqL2Norm, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: SqL2Norm, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower the squared $\ell_2$-norm prox $f(x) = \tfrac{1}{2}\|x\|_2^2$
-        to ``rhs / (1 + gamma)``.
+        to ``arg / (1 + gamma)``.
 
         Pure scalar shrinkage on the ``LinearExpression`` — no ``Step``
         and no fresh leaf variables are introduced.
@@ -1201,10 +1201,10 @@ class StepDecomposer:
         Backend-independent: registered on the base class so all step
         decomposers inherit it.
         """
-        return rhs / (1.0 + gamma)
+        return arg / (1.0 + gamma)
 
     def prox_sumnegative(
-        self, prox: SumNegative, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: SumNegative, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower the sum-of-negative-parts prox $f(x) = \sum_i \max(0, -x_i)$
@@ -1218,13 +1218,13 @@ class StepDecomposer:
         Backend-independent: registered on the base class so all step
         decomposers inherit it.
         """
-        l = self._to_satlin_bound(-gamma, rhs.ndim)
-        u = self._to_satlin_bound(0.0, rhs.ndim)
-        clip = self.process_step(SaturatedLinear(rhs=rhs, l=l, u=u))
-        return rhs - clip
+        l = self._to_satlin_bound(-gamma, arg.ndim)
+        u = self._to_satlin_bound(0.0, arg.ndim)
+        clip = self.process_step(SaturatedLinear(arg=arg, l=l, u=u))
+        return arg - clip
 
     def prox_sumpositive(
-        self, prox: SumPositive, rhs: LinearExpression, gamma: float = 1.0
+        self, prox: SumPositive, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
         Lower the sum-of-positive-parts prox $f(x) = \sum_i \max(0, x_i)$
@@ -1238,10 +1238,10 @@ class StepDecomposer:
         Backend-independent: registered on the base class so all step
         decomposers inherit it.
         """
-        l = self._to_satlin_bound(0.0, rhs.ndim)
-        u = self._to_satlin_bound(gamma, rhs.ndim)
-        clip = self.process_step(SaturatedLinear(rhs=rhs, l=l, u=u))
-        return rhs - clip
+        l = self._to_satlin_bound(0.0, arg.ndim)
+        u = self._to_satlin_bound(gamma, arg.ndim)
+        clip = self.process_step(SaturatedLinear(arg=arg, l=l, u=u))
+        return arg - clip
 
     _PROX_DECOMPOSERS: ClassVar[dict] = {
         "elasticnet": prox_elasticnet,

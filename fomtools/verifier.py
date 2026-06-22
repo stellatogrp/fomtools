@@ -11,12 +11,15 @@ from fomtools.canonicalizers.simulator import Simulator
 from fomtools.constraint import (
     ComplementarityConstraint,
     Constraint,
+    SumSquares,
     complementarity,
     is_binary_free,
+    sum_squares,
 )
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
+from fomtools.sets import Set
 from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
 from fomtools.stepdecomposers.simulator_step_decomposer import SimulatorStepDecomposer
 from fomtools.steps import (
@@ -52,6 +55,9 @@ class Verifier(object):
         ineq_product_cuts=True,
         ineq_box_cuts=True,
         ineq_square_cuts=True,
+        relu_envelope_cuts=False,
+        rlt_all_pairs=False,
+        full_psd_cone=False,
     ):
         """
         Initialize a Verifier instance.
@@ -85,6 +91,18 @@ class Verifier(object):
         ineq_square_cuts : bool, default True
             SDP-only: add the self-square upper bound ``g_i^2 <= g_i_lower * g_i``
             for each inequality constraint. No effect for ``method != "sdp"``.
+        relu_envelope_cuts : bool, default False
+            SDP-only: add the linear ReLU convex-hull inequalities (lower
+            envelope and mixed-row upper chord) on the first-moment variables.
+            No effect for ``method != "sdp"``.
+        rlt_all_pairs : bool, default False
+            SDP-only: RLT every variable pair by coupling each via a ``{0,p,q}``
+            3x3 PSD minor (the middle tier between cone-mate ``rlt_cuts`` and the
+            dense ``full_psd_cone``). No effect for ``method != "sdp"``.
+        full_psd_cone : bool, default False
+            SDP-only: union all PSD cones into one full moment matrix; combined
+            with ``rlt_cuts`` gives the full Shor + RLT relaxation. No effect for
+            ``method != "sdp"``.
         """
         self.theory_func = theory_func
         self.iterates = []
@@ -100,6 +118,9 @@ class Verifier(object):
             ineq_product_cuts=ineq_product_cuts,
             ineq_box_cuts=ineq_box_cuts,
             ineq_square_cuts=ineq_square_cuts,
+            relu_envelope_cuts=relu_envelope_cuts,
+            rlt_all_pairs=rlt_all_pairs,
+            full_psd_cone=full_psd_cone,
         )
         self.obbt_handler = OBBTHandler(solver=obbt_solver) if obbt_solver else None
         self.use_obbt_handler = True if obbt_solver else False
@@ -166,6 +187,9 @@ class Verifier(object):
         ineq_product_cuts: bool = True,
         ineq_box_cuts: bool = True,
         ineq_square_cuts: bool = True,
+        relu_envelope_cuts: bool = False,
+        rlt_all_pairs: bool = False,
+        full_psd_cone: bool = False,
     ):
         """
          Return an initialized instance for the requested method.
@@ -205,12 +229,15 @@ class Verifier(object):
              If the requested canonicalizer is not one of the supported options.
         """
         method_lower = method.lower()
-        if method_lower != "sdp" and (rlt_cuts or triangle_cuts):
-            enabled = []
-            if rlt_cuts:
-                enabled.append("rlt_cuts")
-            if triangle_cuts:
-                enabled.append("triangle_cuts")
+        sdp_only_flags = [
+            ("rlt_cuts", rlt_cuts),
+            ("triangle_cuts", triangle_cuts),
+            ("relu_envelope_cuts", relu_envelope_cuts),
+            ("rlt_all_pairs", rlt_all_pairs),
+            ("full_psd_cone", full_psd_cone),
+        ]
+        if method_lower != "sdp" and any(v for _, v in sdp_only_flags):
+            enabled = [name for name, v in sdp_only_flags if v]
             warnings.warn(
                 f"{', '.join(enabled)} is SDP-only and will be ignored for method={method!r}.",
                 UserWarning,
@@ -229,6 +256,9 @@ class Verifier(object):
                     ineq_product_cuts=ineq_product_cuts,
                     ineq_box_cuts=ineq_box_cuts,
                     ineq_square_cuts=ineq_square_cuts,
+                    relu_envelope_cuts=relu_envelope_cuts,
+                    rlt_all_pairs=rlt_all_pairs,
+                    full_psd_cone=full_psd_cone,
                 )
             case "simulator":
                 return Simulator()
@@ -477,6 +507,33 @@ class Verifier(object):
         """
         return complementarity(expr1, expr2)
 
+    def sum_squares(self, expr: LinearExpression) -> SumSquares:
+        r"""
+        Build a sum-of-squares atom ``\sum_i (a_i^\top x + b_i)^2`` for ``expr``.
+
+        Compare the returned object against a nonnegative scalar to form a quadratic
+        constraint, then pass it to :meth:`add_constraint`::
+
+            vp.add_constraint(vp.sum_squares(expr) <= r**2)   # ||A x + b||_2^2 <= r^2
+            vp.add_constraint(vp.sum_squares(expr) >= r**2)   # nonconvex shell
+            vp.add_constraint(vp.sum_squares(expr) == r**2)   # nonconvex sphere
+
+        The ``<=`` sense is convex; ``>=`` / ``==`` are nonconvex but still representable
+        on the SDP backend (linear in the lifted matrix) and on Gurobi (``NonConvex=2``).
+        Quadratic constraints are unsupported on HiGHS and raise at ``add_constraint``.
+
+        Parameters
+        ----------
+        expr : LinearExpression
+            The expression whose squared two-norm is taken.
+
+        Returns
+        -------
+        SumSquares
+            The atom; compare it with ``<=`` / ``>=`` / ``==`` to obtain a constraint.
+        """
+        return sum_squares(expr)
+
     def _tighten_constraint_bounds(self, constr: Constraint) -> None:
         """
         Tighten bounds on leaf expressions involved in a constraint using OBBT.
@@ -519,7 +576,7 @@ class Verifier(object):
     def prox(
         self,
         function: ProxableFunction,
-        rhs: LinearExpression,
+        arg: LinearExpression,
         gamma: float = 1.0,
     ) -> LinearExpression:
         """
@@ -534,7 +591,7 @@ class Verifier(object):
         function : ProxableFunction
             A pre-configured proxable function instance carrying problem
             data (e.g. ``NormL1(lambd=0.5)``, ``IndBox(l=l, u=u)``).
-        rhs : LinearExpression
+        arg : LinearExpression
             The input expression to which the prox is applied.
         gamma : float, default 1.0
             The proximal step size.
@@ -543,7 +600,7 @@ class Verifier(object):
         -------
         LinearExpression
             The output expression representing
-            ``prox_{gamma * function}(rhs)``.
+            ``prox_{gamma * function}(arg)``.
 
         Raises
         ------
@@ -552,7 +609,61 @@ class Verifier(object):
             entry for the concrete type of ``function`` in its
             ``_PROX_DECOMPOSERS`` registry.
         """
-        return self.step_decomposer.process_prox(function, rhs, gamma)
+        return self.step_decomposer.process_prox(function, arg, gamma)
+
+    def project(self, proj_set, arg: LinearExpression) -> LinearExpression:
+        r"""
+        Project ``arg`` onto a convex set.
+
+        A friendly, math-named front door over :meth:`prox`: for a set $C$ with
+        indicator $I_C$, the Euclidean projection is exactly
+        $\Pi_C(x) = \operatorname{prox}_{I_C}(x)$. This method simply calls
+        ``self.prox(proj_set.indicator(), arg)``, reusing the entire prox lowering
+        (and inheriting each backend's support, including the simulator's
+        ``NotImplementedError`` for KKT-based projections).
+
+        Parameters
+        ----------
+        proj_set : Set or type[Set]
+            The set to project onto, e.g. ``Box(l, u)`` or ``Polyhedron(A, b, dual_ub=...)``.
+            A parameterless :class:`~fomtools.sets.set.Set` subclass may be passed as a
+            bare class (e.g. ``NonNegative``), which is instantiated automatically.
+        arg : LinearExpression
+            The input expression to project.
+
+        Returns
+        -------
+        LinearExpression
+            The output expression representing $\Pi_{C}(\text{arg})$.
+
+        Raises
+        ------
+        TypeError
+            If ``proj_set`` is not a :class:`~fomtools.sets.set.Set` (or subclass) —
+            penalty/loss functions are not projections, use :meth:`prox` for those; or
+            if a *parameterized* Set class is passed as the bare-class shorthand (the
+            shorthand only works for parameterless Sets like ``NonNegative``).
+
+        Notes
+        -----
+        Projection is independent of the proximal step size, so there is no ``gamma``
+        argument.
+        """
+        if isinstance(proj_set, type) and issubclass(proj_set, Set):
+            try:
+                proj_set = proj_set()
+            except TypeError as exc:
+                raise TypeError(
+                    f"project(): the bare-class shorthand only works for parameterless "
+                    f"Sets; {proj_set.__name__} requires constructor arguments — "
+                    f"instantiate it explicitly, e.g. project({proj_set.__name__}(...), arg)."
+                ) from exc
+        if not isinstance(proj_set, Set):
+            raise TypeError(
+                "project expects a Set (or a parameterless Set subclass); got "
+                f"{type(proj_set).__name__}. For penalties/losses use prox() directly."
+            )
+        return self.prox(proj_set.indicator(), arg)
 
     def quadratic_program(
         self,
@@ -565,7 +676,7 @@ class Verifier(object):
         dual_ub=None,
         primal_bounds=None,
         nu_bounds=None,
-        rhs: LinearExpression = None,
+        arg: LinearExpression = None,
         relax_binary_vars: bool = False,
     ) -> LinearExpression:
         r"""
@@ -580,12 +691,12 @@ class Verifier(object):
         where ``P`` is symmetric PSD (dense or scipy.sparse) and ``q``, ``b``, ``d``
         may be numeric or :class:`LinearExpression` parameters. Unlike ``run_step``,
         this takes the parametric inputs directly (a QP has up to three) rather than a
-        single positional ``rhs``; the ``LinearExpression`` inputs already carry their
+        single positional ``arg``; the ``LinearExpression`` inputs already carry their
         dependence on prior iterates.
 
         Parameters
         ----------
-        P, q, A, b, C, d, dual_ub, primal_bounds, nu_bounds, rhs, relax_binary_vars
+        P, q, A, b, C, d, dual_ub, primal_bounds, nu_bounds, arg, relax_binary_vars
             See :class:`fomtools.steps.QuadraticProgram`. ``dual_ub`` is required when
             inequality constraints ``C`` are present.
 
@@ -604,7 +715,7 @@ class Verifier(object):
             dual_ub=dual_ub,
             primal_bounds=primal_bounds,
             nu_bounds=nu_bounds,
-            rhs=rhs,
+            arg=arg,
             relax_binary_vars=relax_binary_vars,
         )
         # Composite step: the decomposer creates the primal x via add_iterate (already
@@ -623,7 +734,7 @@ class Verifier(object):
         dual_ub=None,
         primal_bounds=None,
         nu_bounds=None,
-        rhs: LinearExpression = None,
+        arg: LinearExpression = None,
         relax_binary_vars: bool = False,
     ) -> LinearExpression:
         r"""
@@ -646,7 +757,7 @@ class Verifier(object):
             dual_ub=dual_ub,
             primal_bounds=primal_bounds,
             nu_bounds=nu_bounds,
-            rhs=rhs,
+            arg=arg,
             relax_binary_vars=relax_binary_vars,
         )
         x = self.step_decomposer.process_step(step)
@@ -661,7 +772,7 @@ class Verifier(object):
         dual_ub=None,
         primal_bounds=None,
         nu_bounds=None,
-        rhs: LinearExpression = None,
+        arg: LinearExpression = None,
         relax_binary_vars: bool = False,
     ) -> LinearExpression:
         r"""
@@ -682,7 +793,7 @@ class Verifier(object):
             dual_ub=dual_ub,
             primal_bounds=primal_bounds,
             nu_bounds=nu_bounds,
-            rhs=rhs,
+            arg=arg,
             relax_binary_vars=relax_binary_vars,
         )
         x = self.step_decomposer.process_step(step)
@@ -703,12 +814,12 @@ class Verifier(object):
         -------
         >>> verifier = Verifier()
         >>> expr = verifier.add_param(2)
-        >>> x = verifier.step.relu(rhs=expr, relax_binary_vars=True)
+        >>> x = verifier.step.relu(arg=expr, relax_binary_vars=True)
 
         """
         return self._step_proxy
 
-    def run_step(self, rhs, step_cls, relax_binary_vars=False, **kwargs):
+    def run_step(self, arg, step_cls, relax_binary_vars=False, **kwargs):
         """
         Construct and execute the specified thresholding or activation step.
 
@@ -719,7 +830,7 @@ class Verifier(object):
 
         Parameters
         ----------
-        rhs: LinearExpression
+        arg: LinearExpression
             Right-hand side linear expression in the operator definition.
 
         step_cls: Step
@@ -735,22 +846,22 @@ class Verifier(object):
         -------
             Left-hand side linear expression in the operator definition.
         """
-        step = step_cls(rhs=rhs, relax_binary_vars=relax_binary_vars, **kwargs)
+        step = step_cls(arg=arg, relax_binary_vars=relax_binary_vars, **kwargs)
 
         # OBBT input-tightening + relaxation building happens per-primitive in
         # StepDecomposer._process_primitive, so decomposed sub-steps are covered.
-        lhs = self.step_decomposer.process_step(step)
+        output = self.step_decomposer.process_step(step)
         self.steps.append(step)
 
-        # Track lhs as iterate only if it's a fresh leaf variable. Use identity
+        # Track output as iterate only if it's a fresh leaf variable. Use identity
         # comparison (not ``in``): LinearExpression.__eq__ builds a Constraint, so a
         # membership test would not behave as expected. Composite KKT-style steps
         # (e.g. QuadraticProgram) return a leaf already registered via add_iterate;
         # the guard avoids a double-append in that case.
-        if lhs.is_leaf and not any(lhs is it for it in self.iterates):
-            self.iterates.append(lhs)
+        if output.is_leaf and not any(output is it for it in self.iterates):
+            self.iterates.append(output)
 
-        return lhs
+        return output
 
     def fixed_point(self, n_dim, operator, lb=-np.inf, ub=np.inf):
         z_star = self.add_iterate(n_dim, lb=lb, ub=ub)
@@ -915,6 +1026,20 @@ class Verifier(object):
         optimization problem using the recorded thresholding or
         activation steps.
 
+        Parameters
+        ----------
+        **kwargs
+            Keyword arguments forwarded to the canonicalizer's
+            ``solve_model``. Reserved flags consumed by FOMTools (e.g.
+            ``convex_hull_cuts``) bind to their named parameters; any
+            remaining keyword is passed **verbatim** to the active
+            backend solver as a native option (e.g. ``TimeLimit=10`` or
+            ``MIPGap=1e-4`` for Gurobi, ``max_iter=500`` for
+            Clarabel/cvxpy). These solve-time options override matching
+            entries in the construction-time ``params`` dict. A
+            ``ValueError`` is raised if the backend rejects an option
+            name or value.
+
         Returns
         -------
         float
@@ -1024,7 +1149,7 @@ class _StepProxy:
     """
     Internal helper used by the `Verifier.step` API.
 
-    This proxy enables the syntax ``verifier.step.<step_name>(rhs=..., **kwargs)``
+    This proxy enables the syntax ``verifier.step.<step_name>(arg=..., **kwargs)``
     where ``step_name`` identifies a thresholding or activation step
     class. Attribute access on the proxy (e.g., ``relu``, ``satlin``)
     is resolved dynamically and returns a callable that constructs and runs
@@ -1068,9 +1193,9 @@ class _StepProxy:
         """
         step_cls = self._get_step_class(name)
 
-        def wrapper(rhs, relax_binary_vars=False, **kwargs):
+        def wrapper(arg, relax_binary_vars=False, **kwargs):
             """Execute the specified thresholding or activation step."""
-            return self._verifier.run_step(rhs, step_cls, relax_binary_vars, **kwargs)
+            return self._verifier.run_step(arg, step_cls, relax_binary_vars, **kwargs)
 
         return wrapper
 

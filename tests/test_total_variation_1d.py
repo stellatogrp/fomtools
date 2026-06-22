@@ -82,8 +82,8 @@ def test_prox_matches_dual_box_qp():
 
 def test_returns_linear_expression_on_mip():
     v = _make_verifier("mip", obbt="gurobi")
-    rhs = v.add_param(4, lb=-2.0, ub=2.0)
-    out = v.prox(TotalVariation1D(0.5), rhs)
+    arg = v.add_param(4, lb=-2.0, ub=2.0)
+    out = v.prox(TotalVariation1D(0.5), arg)
     assert isinstance(out, LinearExpression)
     assert out.ndim == 4
 
@@ -98,7 +98,7 @@ def test_returns_linear_expression_on_mip():
 )
 def test_mip_matches_numeric(x0, lam, g):
     v = _make_verifier("mip", obbt="gurobi")
-    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed rhs
+    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed arg
     out = v.prox(TotalVariation1D(lam), x, gamma=g)
     v.set_objective_norm([out], np.inf)
     v.solve()
@@ -137,18 +137,18 @@ def test_sdp_valid_bound_at_fixed_point(x0, lam):
 
 
 def test_sdp_bound_vs_mip_over_box():
-    """SDP relaxation is a valid bound on the MIP over a box of rhs."""
-    rhs_lb, rhs_ub = -2.0 * np.ones(4), 2.0 * np.ones(4)
+    """SDP relaxation is a valid bound on the MIP over a box of arg."""
+    arg_lb, arg_ub = -2.0 * np.ones(4), 2.0 * np.ones(4)
     lam = 0.5
 
     vm = _make_verifier("mip", obbt="gurobi")
-    xm = vm.add_param(4, lb=rhs_lb, ub=rhs_ub)
+    xm = vm.add_param(4, lb=arg_lb, ub=arg_ub)
     om = vm.prox(TotalVariation1D(lam), xm)
     vm.set_objective_norm([om], np.inf)
     mip_inf = vm.solve()
 
     vs = _make_verifier("sdp")
-    xs = vs.add_param(4, lb=rhs_lb, ub=rhs_ub)
+    xs = vs.add_param(4, lb=arg_lb, ub=arg_ub)
     os_ = vs.prox(TotalVariation1D(lam), xs)
     vs.set_objective_norm(os_, 2)
     sdp_two = np.sqrt(vs.solve())
@@ -159,6 +159,6 @@ def test_sdp_bound_vs_mip_over_box():
 
 def test_simulator_not_supported():
     v = _make_verifier("simulator")
-    rhs = v.add_param(4, lb=-1.0, ub=1.0)
+    arg = v.add_param(4, lb=-1.0, ub=1.0)
     with pytest.raises(NotImplementedError):
-        v.prox(TotalVariation1D(0.5), rhs)
+        v.prox(TotalVariation1D(0.5), arg)

@@ -45,20 +45,20 @@ class ProxableFunction:
         """
         raise NotImplementedError
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
         Compute the proximal point of the function.
 
         Solves
 
         $$
-            \operatorname{prox}_{\gamma f}(\text{rhs}) = \arg\!\min_{u} \left\{
-            f(u) + \frac{1}{2\gamma} \|u - \text{rhs}\|^2 \right\}.
+            \operatorname{prox}_{\gamma f}(\text{arg}) = \arg\!\min_{u} \left\{
+            f(u) + \frac{1}{2\gamma} \|u - \text{arg}\|^2 \right\}.
         $$
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point at which to evaluate the proximal operator.
         gamma : float, default 1.0
             Step size $\gamma > 0$.
@@ -66,7 +66,7 @@ class ProxableFunction:
         Returns
         -------
         np.ndarray
-            The proximal point $\operatorname{prox}_{\gamma f}(\text{rhs})$.
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{arg})$.
 
         Raises
         ------

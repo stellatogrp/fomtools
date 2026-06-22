@@ -5,6 +5,7 @@ from fomtools.utils.sparse_utils import get_submatrix_selection_matrix
 
 # --- Helper Utilities for Testing ---
 
+
 def get_triu_entries_col_major(n):
     """
     Helper to generate raw upper triangular indices in Column-Major order.
@@ -15,6 +16,7 @@ def get_triu_entries_col_major(n):
         for r in range(c + 1):
             entries.append((r, c))
     return entries
+
 
 def manual_vec(Matrix, scale=np.sqrt(2)):
     """
@@ -30,6 +32,7 @@ def manual_vec(Matrix, scale=np.sqrt(2)):
                 val *= scale
             entries.append(val)
     return np.array(entries)
+
 
 @pytest.fixture
 def unique_data_n5():
@@ -49,7 +52,7 @@ def unique_data_n5():
     for c in range(n):
         for r in range(c + 1):
             X[r, c] = raw_vals[k]
-            X[c, r] = raw_vals[k] # Symmetry
+            X[c, r] = raw_vals[k]  # Symmetry
             k += 1
 
     # The 'x' input vector (unscaled decision variables)
@@ -60,6 +63,7 @@ def unique_data_n5():
 
 
 # --- Unit Tests ---
+
 
 def test_full_matrix_vectorization(unique_data_n5):
     """
@@ -80,8 +84,10 @@ def test_full_matrix_vectorization(unique_data_n5):
     #    Apply standard vec(.) to the full matrix
     x_ground_truth = manual_vec(X_full, scale=np.sqrt(2))
 
-    np.testing.assert_allclose(x_output, x_ground_truth,
-                               err_msg="Full matrix vectorization failed to match ground truth.")
+    np.testing.assert_allclose(
+        x_output, x_ground_truth, err_msg="Full matrix vectorization failed to match ground truth."
+    )
+
 
 def test_submatrix_selection(unique_data_n5):
     """
@@ -105,12 +111,12 @@ def test_submatrix_selection(unique_data_n5):
     #    Then vectorize the small matrix
     x_ground_truth = manual_vec(X_sub, scale=np.sqrt(2))
 
-    np.testing.assert_allclose(x_output, x_ground_truth,
-                               err_msg="Submatrix selection failed.")
+    np.testing.assert_allclose(x_output, x_ground_truth, err_msg="Submatrix selection failed.")
 
     # Check dimensions
     # Output size should be r*(r+1)/2 = 2*3/2 = 3
     assert x_output.shape[0] == 3
+
 
 def test_arbitrary_scaling_constant(unique_data_n5):
     """
@@ -126,8 +132,10 @@ def test_arbitrary_scaling_constant(unique_data_n5):
     X_sub = X_full[np.ix_(indices, indices)]
     x_ground_truth = manual_vec(X_sub, scale=custom_scale)
 
-    np.testing.assert_allclose(x_output, x_ground_truth,
-                               err_msg="Custom scaling constant was not applied correctly.")
+    np.testing.assert_allclose(
+        x_output, x_ground_truth, err_msg="Custom scaling constant was not applied correctly."
+    )
+
 
 def test_unsorted_indices(unique_data_n5):
     """
@@ -156,8 +164,10 @@ def test_unsorted_indices(unique_data_n5):
     # The output vector should correspond to vec(X_sub).
     x_ground_truth = manual_vec(X_sub)
 
-    np.testing.assert_allclose(x_output, x_ground_truth,
-                               err_msg="Unsorted indices were not handled correctly.")
+    np.testing.assert_allclose(
+        x_output, x_ground_truth, err_msg="Unsorted indices were not handled correctly."
+    )
+
 
 def test_unsorted_indices_logic_check():
     """
@@ -171,7 +181,7 @@ def test_unsorted_indices_logic_check():
     #
     # x_in (col-major upper) = [0, 1, 3, 2, 4, 5]
     #                           00 01 11 02 12 22
-    x_in = np.array([0., 1., 3., 2., 4., 5.])
+    x_in = np.array([0.0, 1.0, 3.0, 2.0, 4.0, 5.0])
 
     # Submatrix indices [2, 0]
     # Expected Submatrix:
@@ -191,6 +201,6 @@ def test_unsorted_indices_logic_check():
     M = get_submatrix_selection_matrix(n, indices, scale=np.sqrt(2))
     res = M @ x_in
 
-    expected = np.array([5.0, 2.0*np.sqrt(2), 0.0])
+    expected = np.array([5.0, 2.0 * np.sqrt(2), 0.0])
 
     np.testing.assert_allclose(res, expected)

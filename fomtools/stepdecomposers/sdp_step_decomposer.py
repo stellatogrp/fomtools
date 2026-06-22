@@ -38,23 +38,23 @@ class SDPStepDecomposer(StepDecomposer):
         """
         x_lb, x_ub = step.lb, step.ub
         lambd = step.lambd
-        lambd_vec = np.full(step.rhs.ndim, lambd)
+        lambd_vec = np.full(step.arg.ndim, lambd)
 
         # Create ReLU steps for decomposition:
         # relu_pos computes relu(x - lambda)
         # relu_neg computes relu(-x - lambda)
-        relu_pos = Relu(rhs=step.rhs - lambd_vec)
-        relu_neg = Relu(rhs=-step.rhs - lambd_vec)
+        relu_pos = Relu(arg=step.arg - lambd_vec)
+        relu_neg = Relu(arg=-step.arg - lambd_vec)
 
         # Update bounds on ReLU inputs, then propagate to outputs
         relu_pos.update_bounds(x_lb - lambd, x_ub - lambd)
         relu_neg.update_bounds(-x_ub - lambd, -x_lb - lambd)
 
         # Recursively process (handles nested decompositions)
-        lhs_pos = self.process_step(relu_pos)
-        lhs_neg = self.process_step(relu_neg)
+        output_pos = self.process_step(relu_pos)
+        output_neg = self.process_step(relu_neg)
 
-        return lhs_pos - lhs_neg
+        return output_pos - output_neg
 
     def decompose_saturatedlinear(self, step: SaturatedLinear) -> LinearExpression:
         """

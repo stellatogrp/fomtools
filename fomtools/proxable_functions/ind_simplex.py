@@ -29,13 +29,13 @@ class IndSimplex(ProxableFunction):
             raise ValueError("a must be positive")
         self.a = a
 
-    def prox(self, rhs, gamma=1.0):
+    def prox(self, arg, gamma=1.0):
         """
-        Project ``rhs`` onto ``{u : u >= 0, 1^T u = a}`` (independent of ``gamma``).
+        Project ``arg`` onto ``{u : u >= 0, 1^T u = a}`` (independent of ``gamma``).
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Point to project.
         gamma : float, default 1.0
             Step size (irrelevant for an indicator; accepted for interface consistency).
@@ -43,10 +43,10 @@ class IndSimplex(ProxableFunction):
         Returns
         -------
         np.ndarray
-            The Euclidean projection of ``rhs`` onto the simplex.
+            The Euclidean projection of ``arg`` onto the simplex.
         """
-        rhs = np.asarray(rhs, dtype=float)
+        arg = np.asarray(arg, dtype=float)
         a = float(self.a.const[0]) if hasattr(self.a, "decomposition_dict") else float(self.a)
-        u = cp.Variable(rhs.shape[0])
-        cp.Problem(cp.Minimize(cp.sum_squares(u - rhs)), [u >= 0, cp.sum(u) == a]).solve()
+        u = cp.Variable(arg.shape[0])
+        cp.Problem(cp.Minimize(cp.sum_squares(u - arg)), [u >= 0, cp.sum(u) == a]).solve()
         return np.asarray(u.value, dtype=float)

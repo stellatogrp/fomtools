@@ -60,7 +60,7 @@ class SumNegative(ProxableFunction):
         """
         return float(np.sum(np.maximum(0.0, -x)))
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
         Compute the proximal point.
 
@@ -69,7 +69,7 @@ class SumNegative(ProxableFunction):
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Proximal step size.
@@ -79,7 +79,7 @@ class SumNegative(ProxableFunction):
         np.ndarray
             The proximal point.
         """
-        return rhs - np.minimum(np.maximum(rhs, -gamma), 0.0)
+        return arg - np.minimum(np.maximum(arg, -gamma), 0.0)
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""

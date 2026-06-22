@@ -27,10 +27,7 @@ def is_binary_free(constraint: "Constraint") -> bool:
     bool
         ``True`` if no leaf in the constraint is binary, ``False`` otherwise.
     """
-    return not any(
-        getattr(leaf, "is_binary", False)
-        for leaf in constraint.lhs.decomposition_dict
-    )
+    return not any(getattr(leaf, "is_binary", False) for leaf in constraint.lhs.decomposition_dict)
 
 
 class Constraint:
@@ -291,3 +288,138 @@ def complementarity(
         The constraint object; pass it to ``Verifier.add_constraint``.
     """
     return ComplementarityConstraint(expr1, expr2)
+
+
+class QuadraticConstraint(Constraint):
+    r"""
+    A sum-of-squares (quadratic) relation between a linear expression and a scalar:
+
+    $$
+        \sum_i (a_i^\top x + b_i)^2 \;\mathrm{op}\; r^2,
+        \qquad \mathrm{op} \in \{\le, \ge, =\},
+    $$
+
+    i.e. ``op`` compares the squared two-norm of ``expr`` against a nonnegative scalar
+    ``radius_sq``. Like :class:`ComplementarityConstraint`, this is not a single
+    ``lhs op 0`` linear relation, so it stores the expression verbatim (it does **not**
+    invoke ``Constraint.__init__``) and sets ``is_linear = False`` so it is never
+    forwarded to the OBBT LP. The ``<=`` sense is convex; ``>=`` / ``==`` are nonconvex
+    (representable on the SDP backend, which is linear in the lifted matrix, and on
+    Gurobi via ``NonConvex=2``; unsupported on HiGHS).
+
+    Instances are typically created via ``sum_squares(expr) <= r**2`` (and ``>=`` / ``==``)
+    rather than by calling the constructor directly.
+
+    Attributes
+    ----------
+    expr : LinearExpression
+        The expression whose squared two-norm is bounded.
+    radius_sq : float
+        The nonnegative scalar right-hand side (e.g. ``r**2``).
+    sense : str
+        One of ``"<="``, ``">="``, ``"=="``.
+    is_convex : bool
+        ``True`` iff ``sense == "<="``.
+    operator : str
+        Always ``"sum_squares"`` (used by the backend dispatch).
+    ndim : int
+        Dimension of ``expr``.
+    """
+
+    is_linear = False  # router guard: never forward to the OBBT LP
+
+    def __init__(self, expr: "LinearExpression", radius_sq, sense: str):
+        """
+        Initialize a :class:`QuadraticConstraint`.
+
+        Parameters
+        ----------
+        expr : LinearExpression
+            The expression whose squared two-norm is bounded.
+        radius_sq : float
+            The nonnegative scalar right-hand side. Must be ``>= 0``.
+        sense : str {"<=", ">=", "=="}
+            The relational operator comparing ``sum_squares(expr)`` to ``radius_sq``.
+
+        Raises
+        ------
+        ValueError
+            If ``radius_sq`` is negative or ``sense`` is not one of the allowed values.
+        """
+        if sense not in ("<=", ">=", "=="):
+            raise ValueError(f"sum_squares sense must be one of <=, >=, ==, got {sense}.")
+        radius_sq = float(radius_sq)
+        if radius_sq < 0:
+            raise ValueError(
+                f"sum_squares right-hand side must be nonnegative (a squared radius), "
+                f"got {radius_sq}."
+            )
+        # Intentionally bypass Constraint.__init__: keep the expression intact.
+        self.expr = expr
+        self.radius_sq = radius_sq
+        self.sense = sense
+        self.is_convex = sense == "<="
+        self.operator = "sum_squares"
+        self.ndim = expr.ndim
+
+    def __repr__(self):
+        return f"<QuadraticConstraint, sum_squares {self.sense} {self.radius_sq}, dim={self.ndim}>"
+
+
+class SumSquares:
+    r"""
+    Symbolic atom representing the sum of squared entries of a linear expression,
+    ``sum_squares(expr) = \sum_i (a_i^\top x + b_i)^2`` (the squared two-norm).
+
+    This object is not a :class:`LinearExpression` (it is quadratic). Its only purpose
+    is to build a :class:`QuadraticConstraint` via a comparison operator, e.g.
+    ``sum_squares(expr) <= r**2``. Created via :func:`sum_squares` or
+    ``Verifier.sum_squares``.
+
+    Attributes
+    ----------
+    expr : LinearExpression
+        The wrapped linear expression.
+    """
+
+    __hash__ = None  # transient builder; defining __eq__ would otherwise drop hashing
+
+    def __init__(self, expr: "LinearExpression"):
+        self.expr = expr
+
+    def __le__(self, bound) -> QuadraticConstraint:
+        return QuadraticConstraint(self.expr, bound, "<=")
+
+    def __ge__(self, bound) -> QuadraticConstraint:
+        return QuadraticConstraint(self.expr, bound, ">=")
+
+    def __eq__(self, bound) -> QuadraticConstraint:
+        return QuadraticConstraint(self.expr, bound, "==")
+
+    def __repr__(self):
+        return f"<SumSquares, dim={self.expr.ndim}>"
+
+
+def sum_squares(expr: "LinearExpression") -> SumSquares:
+    r"""
+    Build a sum-of-squares atom ``\sum_i (a_i^\top x + b_i)^2`` for use in a quadratic
+    constraint.
+
+    Compare the returned object against a nonnegative scalar to form a
+    :class:`QuadraticConstraint`::
+
+        vp.add_constraint(sum_squares(expr) <= r**2)   # ||A x + b||_2^2 <= r^2
+        vp.add_constraint(sum_squares(expr) >= r**2)   # nonconvex shell
+        vp.add_constraint(sum_squares(expr) == r**2)   # nonconvex sphere
+
+    Parameters
+    ----------
+    expr : LinearExpression
+        The expression whose squared two-norm is taken.
+
+    Returns
+    -------
+    SumSquares
+        The atom; compare it with ``<=`` / ``>=`` / ``==`` to obtain a constraint.
+    """
+    return SumSquares(expr)

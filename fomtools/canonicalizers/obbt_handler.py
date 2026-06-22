@@ -190,21 +190,19 @@ class OBBTHandler(Canonicalizer):
     def _add_binary_free(self, constraints: List[Constraint]) -> None:
         """Check the constraints are binary-free, then add them to the LP."""
         if not all(is_binary_free(c) for c in constraints):
-            raise ValueError(
-                "OBBT handler received a constraint involving a binary variable"
-            )
+            raise ValueError("OBBT handler received a constraint involving a binary variable")
         self.add_constraints(constraints)
 
     def canonicalize_affine(self, step: Affine) -> None:
         """
-        Add the affine equality ``lhs_mat @ lhs == rhs`` to the OBBT LP.
+        Add the affine equality ``output_mat @ output == arg`` to the OBBT LP.
 
-        ``lhs_mat`` is a documented attribute of the :class:`Affine` step
+        ``output_mat`` is a documented attribute of the :class:`Affine` step
         interface; this mirrors ``MIP.canonicalize_affine`` exactly (both rely
         on the same equality), so the two stay consistent if ``Affine`` is
         refactored.
         """
-        self._add_binary_free([step.lhs_mat @ step.lhs == step.rhs])
+        self._add_binary_free([step.output_mat @ step.output == step.arg])
 
     def canonicalize_relu(self, step: Relu) -> None:
         """
@@ -212,25 +210,25 @@ class OBBTHandler(Canonicalizer):
 
         Mirrors ``MIP._build_relu_constraints`` keeping only the equality
         cases and, for the uncertain region, the triangle envelope
-        ``{ lhs >= rhs, lhs <= ub/(ub-lb) * (rhs - lb) }``. The big-M rows are
+        ``{ output >= arg, output <= ub/(ub-lb) * (arg - lb) }``. The big-M rows are
         dropped. Iterates ``proj_indices`` only — for partial-projection
-        ReLU the non-proj rows of ``step.lhs`` share decomposition with
-        ``step.rhs`` (composite passthrough), so emitting ``lhs[i] == rhs[i]``
+        ReLU the non-proj rows of ``step.output`` share decomposition with
+        ``step.arg`` (composite passthrough), so emitting ``output[i] == arg[i]``
         would reduce to a degenerate ``0 == 0`` that the solver rejects.
         """
         constraints = []
         for i in sorted(step.proj_indices):
-            _lhs = step.lhs[i]
-            _rhs = step.rhs[i]
+            _output = step.output[i]
+            _arg = step.arg[i]
             if step.ub[i] <= 0:
-                constraints.append(_lhs == 0)
+                constraints.append(_output == 0)
             elif step.lb[i] > 0:
-                constraints.append(_lhs == _rhs)
+                constraints.append(_output == _arg)
             else:
                 constraints.extend(
                     [
-                        _lhs <= step.ub[i] / (step.ub[i] - step.lb[i]) * (_rhs - step.lb[i]),
-                        _lhs >= _rhs,
+                        _output <= step.ub[i] / (step.ub[i] - step.lb[i]) * (_arg - step.lb[i]),
+                        _output >= _arg,
                     ]
                 )
         self._add_binary_free(constraints)
@@ -244,29 +242,29 @@ class OBBTHandler(Canonicalizer):
         all big-M rows are dropped.
         """
         constraints = []
-        for l, u, lb, ub, lhs, rhs in zip(
-            step.l, step.u, step.lb, step.ub, step.lhs, step.rhs
+        for l, u, lb, ub, output, arg in zip(
+            step.l, step.u, step.lb, step.ub, step.output, step.arg
         ):
             if lb >= u:
-                constraints.append(lhs == u)
+                constraints.append(output == u)
             elif ub <= l:
-                constraints.append(lhs == l)
+                constraints.append(output == l)
             elif lb >= l and ub <= u:
-                constraints.append(lhs == rhs)
+                constraints.append(output == arg)
             elif lb < l and ub > u:
                 constraints.extend(
                     [
-                        lhs <= (u - l) / (u - lb) * (rhs - u) + u,
-                        lhs >= (u - l) / (ub - l) * (rhs - l) + l,
+                        output <= (u - l) / (u - lb) * (arg - u) + u,
+                        output >= (u - l) / (ub - l) * (arg - l) + l,
                     ]
                 )
             elif lb < l and ub < u:
                 constraints.extend(
-                    [lhs >= rhs, lhs <= ((ub - l) / (ub - lb)) * (rhs - ub) + ub]
+                    [output >= arg, output <= ((ub - l) / (ub - lb)) * (arg - ub) + ub]
                 )
             elif lb > l and ub > u:
                 constraints.extend(
-                    [lhs <= rhs, lhs >= ((u - lb) / (ub - lb) * (rhs - lb) + lb)]
+                    [output <= arg, output >= ((u - lb) / (ub - lb) * (arg - lb) + lb)]
                 )
             # No else: boundary cases (e.g. lb == l with ub > u, or lb < l with
             # ub == u) intentionally add no envelope row — they are measure-zero
@@ -282,38 +280,38 @@ class OBBTHandler(Canonicalizer):
         equalities and the convex-envelope rows; all big-M rows are dropped.
         """
         constraints = []
-        for lb, ub, lhs_lb, lhs_ub, lhs, rhs in zip(
-            step.lb, step.ub, step.lhs.lb, step.lhs.ub, step.lhs, step.rhs
+        for lb, ub, output_lb, output_ub, output, arg in zip(
+            step.lb, step.ub, step.output.lb, step.output.ub, step.output, step.arg
         ):
             if lb >= step.lambd:
-                constraints.append(lhs == rhs - step.lambd)
+                constraints.append(output == arg - step.lambd)
             elif ub <= -step.lambd:
-                constraints.append(lhs == rhs + step.lambd)
+                constraints.append(output == arg + step.lambd)
             elif lb >= -step.lambd and ub <= step.lambd:
-                constraints.append(lhs == 0)
+                constraints.append(output == 0)
             elif lb < -step.lambd and ub > step.lambd:
                 constraints.extend(
                     [
-                        lhs >= rhs - step.lambd,
-                        lhs <= rhs + step.lambd,
-                        lhs <= lhs_ub / (ub + step.lambd) * (rhs + step.lambd),
-                        lhs >= lhs_lb / (lb - step.lambd) * (rhs - step.lambd),
+                        output >= arg - step.lambd,
+                        output <= arg + step.lambd,
+                        output <= output_ub / (ub + step.lambd) * (arg + step.lambd),
+                        output >= output_lb / (lb - step.lambd) * (arg - step.lambd),
                     ]
                 )
             elif -step.lambd <= lb <= step.lambd < ub:
                 constraints.extend(
                     [
-                        lhs >= 0,
-                        lhs <= lhs_ub / (ub - lb) * (rhs - lb),
-                        lhs >= rhs - step.lambd,
+                        output >= 0,
+                        output <= output_ub / (ub - lb) * (arg - lb),
+                        output >= arg - step.lambd,
                     ]
                 )
             elif step.lambd >= ub >= -step.lambd >= lb:
                 constraints.extend(
                     [
-                        lhs <= 0,
-                        lhs >= lhs_lb / (lb - ub) * (rhs - ub),
-                        lhs <= rhs + step.lambd,
+                        output <= 0,
+                        output >= output_lb / (lb - ub) * (arg - ub),
+                        output <= arg + step.lambd,
                     ]
                 )
             else:

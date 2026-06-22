@@ -63,8 +63,8 @@ def test_prox_matches_relu_threshold():
 
 def test_returns_linear_expression_on_mip():
     v = _make_verifier("mip", obbt="gurobi")
-    rhs = v.add_param(3, lb=-2.0, ub=2.0)
-    out = v.prox(IndSimplex(1.0), rhs)
+    arg = v.add_param(3, lb=-2.0, ub=2.0)
+    out = v.prox(IndSimplex(1.0), arg)
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
 
@@ -79,7 +79,7 @@ def test_returns_linear_expression_on_mip():
 )
 def test_mip_projection_matches_numeric(x0, a):
     v = _make_verifier("mip", obbt="gurobi")
-    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed rhs
+    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed arg
     u = v.prox(IndSimplex(a), x)
     v.set_objective_norm([u], np.inf)
     v.solve()
@@ -103,7 +103,7 @@ def test_param_a():
     "x0, a", [(np.array([3.0, 0.0, 0.0]), 1.0), (np.array([1.0, 1.0, 1.0, -1.0]), 2.0)]
 )
 def test_sdp_tight_at_fixed_point(x0, a):
-    """At a fixed rhs, max ||u||^2 over the relaxed KKT equals ||proj(x0)||^2."""
+    """At a fixed arg, max ||u||^2 over the relaxed KKT equals ||proj(x0)||^2."""
     v = _make_verifier("sdp")
     x = v.add_param(len(x0), lb=x0, ub=x0)
     u = v.prox(IndSimplex(a), x)
@@ -114,18 +114,18 @@ def test_sdp_tight_at_fixed_point(x0, a):
 
 
 def test_sdp_bound_vs_mip_over_box():
-    """SDP relaxation is a valid bound on the MIP over a box of rhs."""
-    rhs_lb, rhs_ub = -2.0 * np.ones(3), 2.0 * np.ones(3)
+    """SDP relaxation is a valid bound on the MIP over a box of arg."""
+    arg_lb, arg_ub = -2.0 * np.ones(3), 2.0 * np.ones(3)
     a = 1.0
 
     vm = _make_verifier("mip", obbt="gurobi")
-    xm = vm.add_param(3, lb=rhs_lb, ub=rhs_ub)
+    xm = vm.add_param(3, lb=arg_lb, ub=arg_ub)
     um = vm.prox(IndSimplex(a), xm)
     vm.set_objective_norm([um], np.inf)
     mip_inf = vm.solve()
 
     vs = _make_verifier("sdp")
-    xs = vs.add_param(3, lb=rhs_lb, ub=rhs_ub)
+    xs = vs.add_param(3, lb=arg_lb, ub=arg_ub)
     us = vs.prox(IndSimplex(a), xs)
     vs.set_objective_norm(us, 2)
     sdp_two = np.sqrt(vs.solve())
@@ -135,15 +135,15 @@ def test_sdp_bound_vs_mip_over_box():
 
 
 def test_lam_ub_per_component():
-    """The dual bound is per-component (hi - rhs_lb), tighter than the global hi - lo."""
-    rhs_lb = np.array([-1.0, 0.0, 2.0])
-    rhs_ub = np.array([1.0, 3.0, 5.0])
+    """The dual bound is per-component (hi - arg_lb), tighter than the global hi - lo."""
+    arg_lb = np.array([-1.0, 0.0, 2.0])
+    arg_ub = np.array([1.0, 3.0, 5.0])
     v = _make_verifier("mip", obbt=None)
-    x = v.add_param(3, lb=rhs_lb, ub=rhs_ub)
+    x = v.add_param(3, lb=arg_lb, ub=arg_ub)
     v.prox(IndSimplex(1.0), x)
 
-    hi, lo = float(np.max(rhs_ub)), float(np.min(rhs_lb))
-    expected = hi - rhs_lb  # [6, 5, 3]
+    hi, lo = float(np.max(arg_ub)), float(np.min(arg_lb))
+    expected = hi - arg_lb  # [6, 5, 3]
     # The lambda iterate is the dim-3 nonnegative dual registered before u; match by ub.
     lam_ubs = [it.ub for it in v.iterates if it.ndim == 3 and np.allclose(it.lb, 0.0)]
     assert any(np.allclose(ub, expected) for ub in lam_ubs), lam_ubs
@@ -152,6 +152,6 @@ def test_lam_ub_per_component():
 
 def test_simulator_not_supported():
     v = _make_verifier("simulator")
-    rhs = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.add_param(3, lb=-1.0, ub=1.0)
     with pytest.raises(NotImplementedError):
-        v.prox(IndSimplex(1.0), rhs)
+        v.prox(IndSimplex(1.0), arg)

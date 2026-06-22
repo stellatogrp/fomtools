@@ -257,9 +257,7 @@ class Canonicalizer:
             f"{self.__class__.__name__} does not support set_infinity_norm_objective"
         )
 
-    def get_expression_bounds(
-        self, expr: LinearExpression
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def get_expression_bounds(self, expr: LinearExpression) -> tuple[np.ndarray, np.ndarray]:
         """
         Compute bounds for a linear expression.
 

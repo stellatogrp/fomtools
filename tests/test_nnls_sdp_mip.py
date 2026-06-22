@@ -31,9 +31,9 @@ def test_nnls_sdp_mip_comparison(vp, vp_sdp):
     for K in [1, 2]:
         # SDP with two-norm objective
         vp_sdp_local = Verifier(
-            method='sdp',
+            method="sdp",
             solver=sdp_solver_name,
-            obbt_solver='highs',
+            obbt_solver="highs",
         )
 
         x_sdp = vp_sdp_local.add_param(m, lb=0, ub=0.1)
@@ -47,9 +47,9 @@ def test_nnls_sdp_mip_comparison(vp, vp_sdp):
 
         # MIP with infinity-norm objective
         vp_mip = Verifier(
-            method='mip',
+            method="mip",
             solver=mip_solver_name,
-            obbt_solver='highs',
+            obbt_solver="highs",
         )
 
         x_mip = vp_mip.add_param(m, lb=0, ub=0.1)

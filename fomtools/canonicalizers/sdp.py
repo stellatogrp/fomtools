@@ -71,6 +71,9 @@ class SDP(Canonicalizer):
         ineq_product_cuts=True,
         ineq_box_cuts=True,
         ineq_square_cuts=True,
+        relu_envelope_cuts=False,
+        rlt_all_pairs=False,
+        full_psd_cone=False,
     ):
         """
         Initialize the SDP canonicalizer.
@@ -98,9 +101,42 @@ class SDP(Canonicalizer):
         ineq_square_cuts : bool, default=True
             For each inequality constraint, add the self-square upper bound
             ``g_i^2 <= g_i_lower * g_i`` using a propagated lower bound on ``g_i``.
+        relu_envelope_cuts : bool, default=False
+            If True, add the linear ReLU convex-hull inequalities on the
+            first-moment (vector) variables: the lower envelope ``y_i >= a_i^T x
+            + b_i`` for every projected row and, on mixed-bound rows
+            (``l_i < 0 < u_i``), the upper chord ``y_i <= E_ii (a_i^T x + b_i -
+            l_i)`` with ``E_ii = u_i / (u_i - l_i)``. The ``y_i >= 0`` line is
+            omitted because the y-leaf box bound plus the PSD constraint already
+            imply it.
+        rlt_all_pairs : bool, default=False
+            If True, RLT *every* pair of variables (not just cone-mates) by
+            registering a cheap ``{0, p, q}`` 3x3 PSD minor for each pair so the
+            all-pairs McCormick cuts actually bind, then firing ``_build_rlt_cuts``
+            on the resulting (now all-pairs) cone structure. This is the middle
+            tier between cone-mate-only ``rlt_cuts`` and the dense
+            ``full_psd_cone``: ``baseline >= rlt_cuts >= rlt_all_pairs >=
+            full_psd_cone + rlt_cuts``. Pairs already inside a larger cone add no
+            new minor (``add_psd_cone_indices`` drops subsumed cones), so it only
+            couples genuinely-uncoupled pairs. Implies RLT cut emission on its own
+            (no need to also set ``rlt_cuts``).
+        full_psd_cone : bool, default=False
+            If True, union all PSD cones into a single full moment-matrix block
+            at solve time. Combined with ``rlt_cuts=True`` this yields the full
+            Shor + RLT relaxation (RLT then fires on every variable pair, not
+            just cone-mates). Tightest but most expensive configuration.
         """
         super(SDP, self).__init__(solver_params, solver)
         self.solver_name = solver.lower()  # Store for dispatch
+
+        # cuClarabel cannot yet apply custom solver options (its Julia settings
+        # are hardcoded). Reject construction-time params eagerly here rather
+        # than surprising the user with a failure only at solve time.
+        if self.solver_name == "cuclarabel" and self.solver_params:
+            raise ValueError(
+                "cuClarabel does not support custom solver options yet; "
+                f"remove params={self.solver_params} from the Verifier."
+            )
         self.range_marker = 1
         self.var_idx_map = {}
 
@@ -116,10 +152,13 @@ class SDP(Canonicalizer):
         self.ineq_product_cuts = ineq_product_cuts
         self.ineq_box_cuts = ineq_box_cuts
         self.ineq_square_cuts = ineq_square_cuts
+        self.relu_envelope_cuts = relu_envelope_cuts
+        self.rlt_all_pairs = rlt_all_pairs
+        self.full_psd_cone = full_psd_cone
         self._cuts_dirty = True
         self._cut_ineq_matrices = []
         self._cut_bineq_upperbounds = []
-        self._relu_steps = []  # registry for triangle cuts
+        self._relu_steps = []  # registry for triangle / envelope cuts
         self._ineq_constraints = []  # (constraint, add_product_cuts) for inequality cuts
 
         self.C_obj = None
@@ -295,7 +334,7 @@ class SDP(Canonicalizer):
             A new canonicalizer instance with copied state.
         """
         new_canon = SDP.__new__(SDP)
-        new_canon.solver_params = self.solver_params
+        new_canon.solver_params = dict(self.solver_params) if self.solver_params else None
         new_canon.solver_name = self.solver_name
         new_canon.solver = None  # SDP solver is instantiated at solve time
         new_canon.range_marker = self.range_marker
@@ -313,6 +352,9 @@ class SDP(Canonicalizer):
         new_canon.ineq_product_cuts = self.ineq_product_cuts
         new_canon.ineq_box_cuts = self.ineq_box_cuts
         new_canon.ineq_square_cuts = self.ineq_square_cuts
+        new_canon.relu_envelope_cuts = self.relu_envelope_cuts
+        new_canon.rlt_all_pairs = self.rlt_all_pairs
+        new_canon.full_psd_cone = self.full_psd_cone
         # Cuts get rebuilt from current state on the copy's first solve.
         new_canon._cuts_dirty = True
         new_canon._cut_ineq_matrices = []
@@ -345,6 +387,8 @@ class SDP(Canonicalizer):
                 self._add_inequality_constraint_impl(constraint)
             case "complementarity":
                 self._add_complementarity_constraint_impl(constraint)
+            case "sum_squares":
+                self._add_sum_squares_constraint_impl(constraint)
             case _:
                 raise ValueError(f"Unknown constraint operator: {constraint.operator}")
 
@@ -357,7 +401,10 @@ class SDP(Canonicalizer):
         2. Quadratic constraint: diag([b|A] X [b|A]^T) = 0
 
         With the PSD constraint, the diagonal being zero implies the full
-        quadratic form is zero.
+        quadratic form is zero. Note this is already the full equality-RLT
+        closure within the cone: ``c_i^T X c_i = 0`` with ``X ⪰ 0`` forces the
+        whole column ``X c_i = 0``, i.e. every product ``h_i(x) x_p = 0`` for
+        cone-mate ``p`` — so no separate equality-RLT cuts are needed.
 
         Parameters
         ----------
@@ -462,6 +509,55 @@ class SDP(Canonicalizer):
         self._ineq_constraints.append((constraint, add_product_cuts))
         self._cuts_dirty = True
 
+    def _add_sum_squares_constraint_impl(self, constraint) -> None:
+        r"""
+        Add a sum-of-squares constraint ``sum_i (a_i^T x + b_i)^2  op  r^2``.
+
+        With ``C = [b; A]^T [b; A]`` the squared two-norm is linear in the lifted matrix:
+        ``sum_i (a_i^T x + b_i)^2 = tr(C X)`` (since ``X[0, 0] = 1``). Each sense becomes a
+        single linear constraint on ``X``:
+
+        - ``"<="`` : ``tr(C X) <= r^2``      -> ``Aineq``  with ub ``r^2``
+        - ``">="`` : ``tr(C X) >= r^2``      -> ``Aineq``  on ``-C`` with ub ``-r^2``
+        - ``"=="`` : ``tr(C X)  = r^2``      -> ``Aeq``    with rhs ``r^2``
+
+        All senses are valid relaxations: the rank-1 lift ``X = [1; x][1; x]^T`` attains
+        ``tr(C X) = ||A x + b||^2`` exactly, so no feasible point is cut (for ``>=`` / ``==``
+        the PSD relaxation is merely looser, never invalid). A PSD cone over ``{0} U x`` is
+        registered so the quadratic block is coupled, matching the (in)equality impls.
+
+        Parameters
+        ----------
+        constraint : QuadraticConstraint
+            A sum-of-squares constraint (operator ``"sum_squares"``).
+        """
+        A_mat, idx_bounds = self.linexpr_to_Amat_and_bounds(constraint.expr)
+        b_vec = constraint.expr.const.reshape((-1, 1))
+        curr_prob_dim = self.get_sdp_var_dim()
+
+        # Build C = [b; A]^T [b; A] in lifted coordinates, mirroring _apply_two_norm_objective.
+        C_mat = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
+        C_mat[process_2d_ranges(idx_bounds, idx_bounds)] = A_mat.T @ A_mat
+        C_mat[process_1d_ranges(idx_bounds, row=True)] = b_vec.T @ A_mat
+        C_mat[process_1d_ranges(idx_bounds, row=False)] = A_mat.T @ b_vec
+        C_mat[0, 0] = float(b_vec.flatten() @ b_vec.flatten())  # b^T b (scalar)
+        C = symmetrize(C_mat.tocsc())
+
+        r_sq = constraint.radius_sq
+        match constraint.sense:
+            case "<=":
+                self.Aineq_matrices.append(C)
+                self.bineq_upperbounds.append(r_sq)
+            case ">=":
+                self.Aineq_matrices.append(-C)
+                self.bineq_upperbounds.append(-r_sq)
+            case "==":
+                self.Aeq_matrices.append(C)
+                self.beq_consts.append(r_sq)
+
+        # PSD cone for {0} U x_indices (also marks _cuts_dirty via add_psd_cone_indices).
+        self.add_psd_cone_indices(idx_bounds)
+
     def _add_complementarity_constraint_impl(self, constraint) -> None:
         r"""
         Encode elementwise complementarity ``e1 ⊥ e2`` (both ``>= 0``) in the lifted SDP.
@@ -559,25 +655,25 @@ class SDP(Canonicalizer):
         constraint for the lifted formulation.
 
         Operates uniformly over ``step.proj_indices`` and binds equalities to
-        ``step.lhs_leaves[0]``. For full ReLU, ``proj_indices`` covers every
-        rhs row and ``lhs_leaves[0]`` is the full lhs leaf — equivalent to a
+        ``step.output_leaves[0]``. For full ReLU, ``proj_indices`` covers every
+        arg row and ``output_leaves[0]`` is the full output leaf — equivalent to a
         standard full-output encoding. For partial-projection ReLU, only the
-        projected rows get lifted equalities and ``lhs_leaves[0]`` is the
+        projected rows get lifted equalities and ``output_leaves[0]`` is the
         smaller fresh proj-leaf; the non-projected rows are structurally
-        fused into shared rhs leaves at composition time, so no equalities
+        fused into shared arg leaves at composition time, so no equalities
         and no SDP rows are emitted for them.
 
         Parameters
         ----------
         step : Relu
-            The ReLU step containing input expression (rhs) and output
-            variable (lhs).
+            The ReLU step containing input expression (arg) and output
+            variable (output).
         """
-        rhs = step.rhs
-        A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(rhs)
-        b_vec = rhs.const
+        arg = step.arg
+        A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(arg)
+        b_vec = arg.const
 
-        y_leaf = step.lhs_leaves[0]
+        y_leaf = step.output_leaves[0]
         proj_list = sorted(step.proj_indices)
 
         y_idx_bounds = [self.var_idx_map[y_leaf]]
@@ -591,7 +687,7 @@ class SDP(Canonicalizer):
         curr_prob_dim = self.get_sdp_var_dim()
         for j, i in enumerate(proj_list):
             # j indexes y_leaf (size = len(proj_list));
-            # i indexes rhs row in A_mat / b_vec (size = rhs.ndim).
+            # i indexes arg row in A_mat / b_vec (size = arg.ndim).
             Ij = I[j]
             new_A = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
             new_A[y_idx_ranges_2d] = np.outer(Ij, Ij)
@@ -609,7 +705,7 @@ class SDP(Canonicalizer):
         """
         Encode an Affine step as a linear equality constraint.
 
-        The Affine step asserts ``step.lhs_mat @ step.lhs == step.rhs``;
+        The Affine step asserts ``step.output_mat @ step.output == step.arg``;
         this is the same equality MIP encodes (``mip.py:404``). On SDP it
         flows through ``add_constraint`` → ``_add_equality_constraint_impl``,
         which emits the linear matrix, the quadratic strengthening, and
@@ -620,7 +716,7 @@ class SDP(Canonicalizer):
         step : Affine
             The affine step to canonicalize.
         """
-        self.add_constraint(step.lhs_mat @ step.lhs == step.rhs)
+        self.add_constraint(step.output_mat @ step.output == step.arg)
 
     _CANONICALIZERS = {
         "affine": canonicalize_affine,
@@ -774,11 +870,11 @@ class SDP(Canonicalizer):
         expr_list : list[LinearExpression]
             List of expressions whose one-norms are summed in the objective.
         """
-        relu_lhs_vars = []
+        relu_output_vars = []
 
         for expr in expr_list:
-            relu_lhs_vars.append(self._create_relu_step(canon_copy, expr))
-            relu_lhs_vars.append(self._create_relu_step(canon_copy, -expr))
+            relu_output_vars.append(self._create_relu_step(canon_copy, expr))
+            relu_output_vars.append(self._create_relu_step(canon_copy, -expr))
 
         # Build linear objective: maximize sum of all relu outputs
         # For lifted SDP with X = [1, x]^T @ [1, x], linear term c^T x
@@ -787,8 +883,8 @@ class SDP(Canonicalizer):
         C_mat = spa.lil_matrix((curr_prob_dim, curr_prob_dim))
 
         all_idx_bounds = []
-        for lhs_var in relu_lhs_vars:
-            idx_bounds = canon_copy.var_idx_map[lhs_var]
+        for output_var in relu_output_vars:
+            idx_bounds = canon_copy.var_idx_map[output_var]
             all_idx_bounds.append(idx_bounds)
             start, end = idx_bounds
             # Coefficient 1 for each component, divided by 2 for symmetry
@@ -873,14 +969,14 @@ class SDP(Canonicalizer):
         Returns
         -------
         LinearExpression
-            The output (lhs) of the ReLU step.
+            The output (output) of the ReLU step.
         """
-        step = Relu(rhs=expr)
+        step = Relu(arg=expr)
         step.update_bounds(*canon_copy.get_expression_bounds(expr))
-        for leaf in step.lhs_leaves:
+        for leaf in step.output_leaves:
             canon_copy.add_var(leaf)
         canon_copy.canonicalize_relu(step)
-        return step.lhs
+        return step.output
 
     def set_zero_objective(self):
         """
@@ -983,17 +1079,40 @@ class SDP(Canonicalizer):
         if not self._cuts_dirty:
             return
 
+        # Option A: collapse the antichain of cones into one full moment-matrix
+        # block so that ``_build_rlt_cuts`` (which keys off cone membership)
+        # fires on every variable pair. Solve always runs on ``self.copy()``
+        # (see ``solve_model``), so mutating the cone here is local to the copy.
+        if self.full_psd_cone:
+            full_cone = set(range(self.get_sdp_var_dim()))
+            # Guard on the exact target, not the cone count: a single cone that is
+            # not the full moment matrix (e.g. iterates merged but some auxiliary
+            # variables still uncoupled) must still be unioned.
+            if self.psd_cone_indices != [full_cone]:
+                self.psd_cone_indices = [full_cone]
+        elif self.rlt_all_pairs:
+            # Middle tier: couple every pair via a cheap {0, p, q} 3x3 PSD minor
+            # so the all-pairs McCormick cuts bind. add_psd_cone_indices keeps the
+            # antichain, so a pair already inside a larger cone adds no new minor.
+            # (Each call sets _cuts_dirty = True; that churn is harmless — it is
+            # overridden by _cuts_dirty = False at the end of this method.)
+            for p, q in combinations(range(1, self.get_sdp_var_dim()), 2):
+                self.add_psd_cone_indices([(p, p + 1), (q, q + 1)])
+
         self._cut_ineq_matrices = []
         self._cut_bineq_upperbounds = []
 
-        if self.rlt_cuts or self.triangle_cuts:
+        if self.rlt_cuts or self.rlt_all_pairs or self.triangle_cuts:
             sdp_idx_bounds = self._build_sdp_idx_bounds()
 
-            if self.rlt_cuts:
+            if self.rlt_cuts or self.rlt_all_pairs:
                 self._build_rlt_cuts(sdp_idx_bounds)
 
             if self.triangle_cuts:
                 self._build_triangle_cuts()
+
+        if self.relu_envelope_cuts:
+            self._build_relu_envelope_cuts()
 
         if self._ineq_constraints and (
             self.ineq_product_cuts or self.ineq_box_cuts or self.ineq_square_cuts
@@ -1183,34 +1302,34 @@ class SDP(Canonicalizer):
         Append lifted triangle cuts for every registered ReLU step.
 
         For each step, iterate over output index pairs ``(i, j)``: emit one
-        cut whenever row ``i`` has mixed bounds (``rhs_lb[i] < 0 <
-        rhs_ub[i]``) and column ``j`` has finite upper bound. Bounds are
-        recomputed fresh from ``step.rhs.bound_propagation()`` so they
+        cut whenever row ``i`` has mixed bounds (``arg_lb[i] < 0 <
+        arg_ub[i]``) and column ``j`` has finite upper bound. Bounds are
+        recomputed fresh from ``step.arg.bound_propagation()`` so they
         reflect any leaf tightening since ``canonicalize_relu`` ran. See
         paper §4.5 eq 25/26 for the derivation.
         """
         for step in self._relu_steps:
-            rhs = step.rhs
-            rhs_lb, rhs_ub = rhs.bound_propagation()
-            A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(rhs)
-            b_vec = np.asarray(rhs.const)
+            arg = step.arg
+            arg_lb, arg_ub = arg.bound_propagation()
+            A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(arg)
+            b_vec = np.asarray(arg.const)
 
-            # Map each rhs row to its position in the fresh y-leaf. For full
-            # relu this is the identity dict (proj_indices spans rhs.ndim);
-            # for partial relu it maps only projected rhs rows and skips the
+            # Map each arg row to its position in the fresh y-leaf. For full
+            # relu this is the identity dict (proj_indices spans arg.ndim);
+            # for partial relu it maps only projected arg rows and skips the
             # rest (handled by the ``if i not in rhs_to_y_pos`` guard below).
-            y_leaf = step.lhs_leaves[0]
+            y_leaf = step.output_leaves[0]
             rhs_to_y_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
             y_idx_bounds = [self.var_idx_map[y_leaf]]
 
-            d = rhs.ndim
+            d = arg.ndim
             for i in range(d):
                 if i not in rhs_to_y_pos:
                     continue
-                if rhs_lb[i] >= 0 or rhs_ub[i] <= 0:
+                if arg_lb[i] >= 0 or arg_ub[i] <= 0:
                     continue
                 for j in range(d):
-                    if not np.isfinite(rhs_ub[j]):
+                    if not np.isfinite(arg_ub[j]):
                         continue
                     self._build_triangle_cut_for_pair(
                         i,
@@ -1219,8 +1338,8 @@ class SDP(Canonicalizer):
                         b_vec,
                         x_idx_bounds,
                         y_idx_bounds,
-                        rhs_lb,
-                        rhs_ub,
+                        arg_lb,
+                        arg_ub,
                         y_pos=rhs_to_y_pos[i],
                     )
 
@@ -1232,8 +1351,8 @@ class SDP(Canonicalizer):
         b_vec: np.ndarray,
         x_idx_bounds: list,
         y_idx_bounds: list,
-        rhs_lb: np.ndarray,
-        rhs_ub: np.ndarray,
+        arg_lb: np.ndarray,
+        arg_ub: np.ndarray,
         y_pos: int | None = None,
     ) -> None:
         """
@@ -1244,7 +1363,7 @@ class SDP(Canonicalizer):
         ``(E_ii (a_i^T x + b_i) + c_i − y_i)(u_j − a_j^T x − b_j) ≥ 0``
         where ``E_ii = u_i / (u_i − l_i)``, ``c_i = −E_ii · l_i``, and
         ``(l_i, u_i, u_j)`` are taken from the freshly propagated bounds
-        ``rhs_lb`` / ``rhs_ub`` of the ReLU's input expression. Using
+        ``arg_lb`` / ``arg_ub`` of the ReLU's input expression. Using
         propagated bounds (rather than the cached ``step.lb``/``step.ub``)
         keeps the cuts in sync with leaf tightening — see ``_build_triangle_cuts``.
 
@@ -1263,9 +1382,9 @@ class SDP(Canonicalizer):
         """
         n_dim = self.get_sdp_var_dim()
 
-        lb_i = rhs_lb[i]
-        ub_i = rhs_ub[i]
-        ub_j = rhs_ub[j]
+        lb_i = arg_lb[i]
+        ub_i = arg_ub[i]
+        ub_j = arg_ub[j]
         E_ii = ub_i / (ub_i - lb_i)
         c_i = -E_ii * lb_i
 
@@ -1276,7 +1395,7 @@ class SDP(Canonicalizer):
 
         y_start, _y_end = y_idx_bounds[0]
         # ``y_pos`` is the row of the (possibly smaller) fresh leaf that
-        # corresponds to rhs row ``i``. For full-projection it equals ``i``.
+        # corresponds to arg row ``i``. For full-projection it equals ``i``.
         y_i_idx = y_start + (y_pos if y_pos is not None else i)
 
         N = spa.lil_matrix((n_dim, n_dim))
@@ -1293,12 +1412,7 @@ class SDP(Canonicalizer):
         N[y_i_idx, 0] = b_j - ub_j
 
         # x linear at row 0
-        lin = (
-            E_ii * ub_j * a_i
-            - E_ii * b_j * a_i
-            - E_ii * b_i * a_j
-            - c_i * a_j
-        )
+        lin = E_ii * ub_j * a_i - E_ii * b_j * a_i - E_ii * b_i * a_j - c_i * a_j
         x_row0_idx = process_1d_ranges(x_idx_bounds, row=True)
         N[x_row0_idx] = lin
 
@@ -1311,7 +1425,73 @@ class SDP(Canonicalizer):
         self._cut_ineq_matrices.append(-N_sym)
         self._cut_bineq_upperbounds.append(0.0)
 
-    def solve_model(self, steps=None, convex_hull_cuts=False):
+    def _build_relu_envelope_cuts(self) -> None:
+        r"""
+        Append the linear ReLU convex-hull inequalities on the first-moment
+        (vector) variables for every registered ReLU step.
+
+        Unlike the *lifted* triangle cut (a quadratic-in-X product), these are
+        linear in the first moments ``X[0, .]`` and so restrict the relaxation
+        in a way the lifted equality ``y^2 = (a^T x + b) y`` plus PSD does not.
+        For each projected arg row ``i`` with ``hat_x_i = a_i^T x + b_i``:
+
+        - Lower envelope ``y_i >= hat_x_i`` (valid for every row, since
+          ``ReLU(t) >= t``).
+        - Upper chord ``y_i <= E_ii (hat_x_i - l_i)`` with
+          ``E_ii = u_i / (u_i - l_i)``, emitted only on mixed-bound rows
+          (``l_i < 0 < u_i``, finite ``u_i``) where the secant of ``max(0, .)``
+          through ``(l_i, 0)`` and ``(u_i, u_i)`` dominates the true map. On a
+          passthrough row (``l_i >= 0``) this chord would cut the true point, so
+          it is skipped (gated exactly like the triangle cut).
+
+        ``y_i >= 0`` is intentionally omitted: the y-leaf box bound (lb >= 0)
+        together with the PSD ``2x2`` minor already implies it.
+
+        Bounds are recomputed fresh from ``step.arg.bound_propagation()`` so the
+        cuts track any leaf tightening since ``canonicalize_relu`` ran (parity
+        with ``_build_triangle_cuts``).
+        """
+        n_dim = self.get_sdp_var_dim()
+        for step in self._relu_steps:
+            arg = step.arg
+            arg_lb, arg_ub = arg.bound_propagation()
+            A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(arg)
+            b_vec = np.asarray(arg.const)
+
+            y_leaf = step.output_leaves[0]
+            rhs_to_y_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
+            y_start, _y_end = self.var_idx_map[y_leaf]
+            x_row0_idx = process_1d_ranges(x_idx_bounds, row=True)
+
+            for i in range(arg.ndim):
+                if i not in rhs_to_y_pos:
+                    continue
+                a_i = np.asarray(A_mat[i, :]).flatten()
+                b_i = float(b_vec[i])
+                y_i_idx = y_start + rhs_to_y_pos[i]
+
+                # Lower envelope: y_i - (a_i^T x + b_i) >= 0.
+                N = spa.lil_matrix((n_dim, n_dim))
+                N[y_i_idx, 0] = 1.0
+                N[x_row0_idx] = -a_i
+                N[0, 0] = -b_i
+                self._cut_ineq_matrices.append(-symmetrize(N.tocsc()))
+                self._cut_bineq_upperbounds.append(0.0)
+
+                # Upper chord (mixed rows only): E_ii (a_i^T x + b_i - l_i) - y_i >= 0.
+                lb_i = arg_lb[i]
+                ub_i = arg_ub[i]
+                if lb_i >= 0 or ub_i <= 0 or not np.isfinite(ub_i):
+                    continue
+                E_ii = ub_i / (ub_i - lb_i)
+                N = spa.lil_matrix((n_dim, n_dim))
+                N[x_row0_idx] = E_ii * a_i
+                N[0, 0] = E_ii * b_i - E_ii * lb_i
+                N[y_i_idx, 0] = -1.0
+                self._cut_ineq_matrices.append(-symmetrize(N.tocsc()))
+                self._cut_bineq_upperbounds.append(0.0)
+
+    def solve_model(self, steps=None, convex_hull_cuts=False, **solver_kwargs):
         """Solve the SDP problem using the configured solver.
 
         Creates a copy of the canonicalizer, applies the objective to the copy,
@@ -1324,6 +1504,12 @@ class SDP(Canonicalizer):
             Unused by SDP, accepted for API compatibility.
         convex_hull_cuts : bool, optional
             Unused by SDP, accepted for API compatibility.
+        **solver_kwargs
+            Native solver options forwarded verbatim to the backend
+            (e.g. ``max_iter=500``, ``tol_gap_abs=1e-9`` for
+            Clarabel/cvxpy). They override construction-time ``params``
+            for this call. A ``ValueError`` is raised if the backend
+            rejects an option.
 
         Returns
         -------
@@ -1348,14 +1534,19 @@ class SDP(Canonicalizer):
                     self._apply_infinity_norm_objective(self._solved_copy, expr_list)
 
         # Solve using the copy's data
-        return self._solved_copy._solve_internal()
+        return self._solved_copy._solve_internal(**solver_kwargs)
 
-    def _solve_internal(self):
+    def _solve_internal(self, **solver_kwargs):
         """
         Actually solve using this canonicalizer's data.
 
         This is the internal solve method called on the copy after
         the objective has been applied.
+
+        Parameters
+        ----------
+        **solver_kwargs
+            Native solver options forwarded verbatim to the backend.
 
         Returns
         -------
@@ -1364,11 +1555,11 @@ class SDP(Canonicalizer):
         """
         match self.solver_name:
             case "clarabel":
-                return self._solve_via_clarabel_internal()
+                return self._solve_via_clarabel_internal(**solver_kwargs)
             case "cvxpy":
-                return self._solve_via_cvxpy_internal()
+                return self._solve_via_cvxpy_internal(**solver_kwargs)
             case "cuclarabel":
-                return self._solve_via_cuclarabel_internal()
+                return self._solve_via_cuclarabel_internal(**solver_kwargs)
             case _:
                 raise ValueError(f"Unknown SDP solver: {self.solver_name}")
 
@@ -1393,12 +1584,17 @@ class SDP(Canonicalizer):
                     _, expr_list = self._objective_spec
                     self._apply_infinity_norm_objective(self, expr_list)
 
-    def solve_via_cvxpy(self):
+    def solve_via_cvxpy(self, **solver_kwargs):
         """
         Solve the SDP using the CVXPY modeling interface.
 
         Constructs a CVXPY problem from the stored constraint matrices
         and solves it using the Clarabel backend via CVXPY.
+
+        Parameters
+        ----------
+        **solver_kwargs
+            Native solver options forwarded verbatim to ``Problem.solve``.
 
         Returns
         -------
@@ -1406,9 +1602,9 @@ class SDP(Canonicalizer):
             The optimal objective value.
         """
         self._ensure_objective_applied()
-        return self._solve_via_cvxpy_internal()
+        return self._solve_via_cvxpy_internal(**solver_kwargs)
 
-    def _solve_via_cvxpy_internal(self):
+    def _solve_via_cvxpy_internal(self, **solver_kwargs):
         """Internal CVXPY solve without checking objective."""
         self._rebuild_cuts_if_dirty()
         Aineq_all = self.Aineq_matrices + self._cut_ineq_matrices
@@ -1431,15 +1627,30 @@ class SDP(Canonicalizer):
             idx = sorted(cone_indices)
             constraints += [X[np.ix_(idx, idx)] >> 0]
         prob = cp.Problem(obj, constraints)
-        res = prob.solve(solver=cp.CLARABEL)
+        # `solver` is fixed to CLARABEL below (it is a named arg of cvxpy's
+        # Problem.solve, so a user `solver=` kwarg would collide there);
+        # solve-time options override construction-time params.
+        merged = {**(self.solver_params or {}), **solver_kwargs}
+        try:
+            res = prob.solve(solver=cp.CLARABEL, **merged)
+        except (TypeError, cp.error.SolverError) as e:
+            # cvxpy raises TypeError for an unrecognized option name or a
+            # wrong-typed value (and SolverError on some backends/versions).
+            # Other failures (e.g. genuine solver errors) propagate untouched.
+            raise ValueError(f"Invalid cvxpy/Clarabel solver option in {merged}: {e}") from e
         return res
 
-    def solve_via_clarabel(self):
+    def solve_via_clarabel(self, **solver_kwargs):
         """
         Solve the SDP using the native Clarabel interface.
 
         Directly invokes the Clarabel solver without going through CVXPY,
         which can be more efficient for large problems.
+
+        Parameters
+        ----------
+        **solver_kwargs
+            Native Clarabel settings forwarded verbatim to the solver.
 
         Returns
         -------
@@ -1447,9 +1658,9 @@ class SDP(Canonicalizer):
             The optimal objective value.
         """
         self._ensure_objective_applied()
-        return self._solve_via_clarabel_internal()
+        return self._solve_via_clarabel_internal(**solver_kwargs)
 
-    def _solve_via_clarabel_internal(self):
+    def _solve_via_clarabel_internal(self, **solver_kwargs):
         """Internal Clarabel solve without checking objective."""
         self._rebuild_cuts_if_dirty()
         Aineq_all = self.Aineq_matrices + self._cut_ineq_matrices
@@ -1465,14 +1676,19 @@ class SDP(Canonicalizer):
             bineq_all,
             self.psd_cone_indices,
         )
-        return solver.solve()
+        return solver.solve(**solver_kwargs)
 
-    def solve_via_cuclarabel(self):
+    def solve_via_cuclarabel(self, **solver_kwargs):
         """
         Solve the SDP using GPU-accelerated Clarabel.
 
         Uses the CUDA-enabled Clarabel solver for GPU acceleration.
         Requires CuPy and Julia with CUDA.jl and Clarabel.jl.
+
+        Parameters
+        ----------
+        **solver_kwargs
+            Native Clarabel settings forwarded verbatim to the solver.
 
         Returns
         -------
@@ -1485,9 +1701,9 @@ class SDP(Canonicalizer):
             If CUDA dependencies (cupy) are not available.
         """
         self._ensure_objective_applied()
-        return self._solve_via_cuclarabel_internal()
+        return self._solve_via_cuclarabel_internal(**solver_kwargs)
 
-    def _solve_via_cuclarabel_internal(self):
+    def _solve_via_cuclarabel_internal(self, **solver_kwargs):
         """Internal CuClarabel solve without checking objective."""
         self._rebuild_cuts_if_dirty()
         Aineq_all = self.Aineq_matrices + self._cut_ineq_matrices
@@ -1503,7 +1719,7 @@ class SDP(Canonicalizer):
             bineq_all,
             self.psd_cone_indices,
         )
-        return solver.solve()
+        return solver.solve(**solver_kwargs)
 
 
 def symmetrize(mat):

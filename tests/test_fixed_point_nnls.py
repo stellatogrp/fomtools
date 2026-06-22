@@ -26,7 +26,10 @@ def test_nnls_convergence(vp_param_1):
     x_lb, x_ub = 10, 11  # Parameter bounds
 
     ATA = A.T @ A
-    L = np.max(np.linalg.eigvals(ATA))
+    # eigvalsh (symmetric routine) returns real eigenvalues; eigvals (general) can return
+    # complex128 with a zero imaginary part on some BLAS backends, which propagates a
+    # complex step size into bound_propagation and fails its float accumulator.
+    L = np.max(np.linalg.eigvalsh(ATA))
     eta = 0.5 / L
 
     print(f"Matrix A shape: {A.shape}")
@@ -102,7 +105,8 @@ def test_nnls_convergence(vp_param_1):
     x_lb, x_ub = 10, 11
 
     ATA = A.T @ A
-    L = np.max(np.linalg.eigvals(ATA))
+    # eigvalsh (symmetric routine) guarantees real eigenvalues — see note above.
+    L = np.max(np.linalg.eigvalsh(ATA))
     eta = 0.5 / L
 
     sample_residuals = np.zeros((N, K))

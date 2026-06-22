@@ -22,14 +22,14 @@ class SaturatedLinear(Step):
 
     Attributes
     ----------
-    rhs : LinearExpression
+    arg : LinearExpression
         Right-hand side (input) linear expression.
-    lhs : LinearExpression
+    output : LinearExpression
         Left-hand side (output) linear expression.
     lb : np.ndarray
-        Lower bounds on the INPUT (rhs), before saturation is applied.
+        Lower bounds on the INPUT (arg), before saturation is applied.
     ub : np.ndarray
-        Upper bounds on the INPUT (rhs), before saturation is applied.
+        Upper bounds on the INPUT (arg), before saturation is applied.
     relax_binary_vars : bool
         If true, binary decision variables associated with the operator
         are relaxed to take continuous values.
@@ -45,18 +45,18 @@ class SaturatedLinear(Step):
 
     def __init__(
         self,
-        rhs: LinearExpression,
+        arg: LinearExpression,
         l: LinearExpression | np.ndarray[float],
         u: LinearExpression | np.ndarray[float],
         relax_binary_vars: bool = False,
     ):
-        super().__init__(rhs, relax_binary_vars)
+        super().__init__(arg, relax_binary_vars)
         self.l = l
         self.u = u
-        self.update_bounds(*self.rhs.bound_propagation())
+        self.update_bounds(*self.arg.bound_propagation())
 
     def __hash__(self):
-        return hash((self.rhs, self.lhs))
+        return hash((self.arg, self.output))
 
     def satlin_prop(self, x: np.ndarray, bound: str) -> np.ndarray:
         """
@@ -107,7 +107,7 @@ class SaturatedLinear(Step):
 
         """
         self.lb, self.ub = lb, ub
-        self.lhs.update_bounds(
+        self.output.update_bounds(
             lb=self.satlin_prop(lb, "lb"),
             ub=self.satlin_prop(ub, "ub"),
         )

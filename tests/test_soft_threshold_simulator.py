@@ -36,8 +36,8 @@ def test_soft_threshold_simulator():
         z[k] = vp.step.soft_threshold(z[k - 1] - step_size * (P @ z[k - 1] + q_param), lambd=lambd)
 
     residuals = vp.solve()
-    assert vp['n_samples'] == len(q_samples)
-    assert vp['risk_bound'] >= vp['empirical_risk']
+    assert vp["n_samples"] == len(q_samples)
+    assert vp["risk_bound"] >= vp["empirical_risk"]
     assert residuals[:, -1].mean() < residuals[:, 0].mean()
 
     print(

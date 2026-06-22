@@ -4,7 +4,7 @@ import numpy as np
 
 from fomtools import LinearExpression
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
-from fomtools.constraint import ComplementarityConstraint, Constraint
+from fomtools.constraint import ComplementarityConstraint, Constraint, QuadraticConstraint
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 
@@ -67,6 +67,15 @@ class MIP(Canonicalizer):
         """
         if isinstance(constraint, ComplementarityConstraint):
             self.add_constraints(self._build_complementarity_constraints(constraint))
+            return
+        if isinstance(constraint, QuadraticConstraint):
+            # Quadratic (sum-of-squares) constraints require a solver that supports
+            # quadratic constraints (MIQCP). Gurobi does; HiGHS does not. Each solver
+            # validates this in its own ``add_sum_squares_constr`` (HiGHS raises), so the
+            # error still surfaces eagerly at add-time rather than at solve-time.
+            self.solver.add_sum_squares_constr(
+                constraint.expr, constraint.radius_sq, constraint.sense
+            )
             return
         self.solver.add_constr(constraint)
 
@@ -223,7 +232,7 @@ class MIP(Canonicalizer):
             A new canonicalizer instance with copied state.
         """
         new_canon = MIP.__new__(MIP)
-        new_canon.solver_params = self.solver_params
+        new_canon.solver_params = dict(self.solver_params) if self.solver_params else None
         new_canon.solver_name = self.solver_name
         new_canon.solver = self.solver.copy()
         new_canon.obbt_handler = self.obbt_handler
@@ -372,28 +381,28 @@ class MIP(Canonicalizer):
             n = expr.ndim
 
             # Create relu(expr) step
-            step_pos = Relu(rhs=expr)
+            step_pos = Relu(arg=expr)
             step_pos.update_bounds(*self.get_expression_bounds(expr))
-            for leaf in step_pos.lhs_leaves:
+            for leaf in step_pos.output_leaves:
                 solver.add_var(leaf)
             constraints.extend(self._build_relu_constraints(step_pos))
 
             # Create relu(-expr) step
             neg_expr = -expr
-            step_neg = Relu(rhs=neg_expr)
+            step_neg = Relu(arg=neg_expr)
             step_neg.update_bounds(*self.get_expression_bounds(neg_expr))
-            for leaf in step_neg.lhs_leaves:
+            for leaf in step_neg.output_leaves:
                 solver.add_var(leaf)
             constraints.extend(self._build_relu_constraints(step_neg))
 
             # Accumulate: 1^T @ (relu(expr) + relu(-expr))
             ones = np.ones((1, n))
-            q = q + ones @ step_pos.lhs + ones @ step_neg.lhs
+            q = q + ones @ step_pos.output + ones @ step_neg.output
 
         solver.constraints_to_solver(constraints)
         solver.set_objective(expression=q, sense="maximize")
 
-    def solve_model(self, convex_hull_cuts: bool = False) -> float:
+    def solve_model(self, convex_hull_cuts: bool = False, **solver_kwargs) -> float:
         """
         Optimize the underlying MIP problem.
 
@@ -404,11 +413,15 @@ class MIP(Canonicalizer):
 
         Parameters
         ----------
-        steps: Step
-            The step objects for convex hull cut generation.
-
         convex_hull_cuts: bool
             If ``True`` convex hull cuts are added to the MIP problem.
+
+        **solver_kwargs
+            Native solver options forwarded verbatim to the backend
+            (e.g. ``TimeLimit=10``, ``MIPGap=1e-4`` for Gurobi). Applied
+            to the solve copy, so they override construction-time
+            ``params`` for this call. A ``ValueError`` is raised if the
+            backend rejects an option.
 
         Returns
         -------
@@ -419,8 +432,19 @@ class MIP(Canonicalizer):
         # Create copy to apply objective without modifying original
         self._solved_copy = self.solver.copy()
 
+        # Re-apply construction-time options: HiGHS's copy() uses passModel,
+        # which copies the model data but not solver options, so the copy
+        # would otherwise reset them to defaults. (Gurobi's copy() preserves
+        # them, making this a harmless no-op there.) solver_kwargs are applied
+        # last so solve-time options override construction-time params.
+        if self.solver_params:
+            self._solved_copy.set_solver_params(self.solver_params)
+
         if convex_hull_cuts:
             self._solved_copy.add_convex_hull_cuts(self.steps)
+
+        if solver_kwargs:
+            self._solved_copy.set_solver_params(solver_kwargs)
 
         self._apply_objective(self._solved_copy)
         self._solved_copy.optimize()
@@ -467,7 +491,7 @@ class MIP(Canonicalizer):
         None
         """
         self.steps.append(step)
-        self.add_constraint(step.lhs_mat @ step.lhs == step.rhs)
+        self.add_constraint(step.output_mat @ step.output == step.arg)
 
     def canonicalize_relu(self, step: Relu):
         r"""
@@ -553,27 +577,27 @@ class MIP(Canonicalizer):
             MIP constraints for the ReLU activation.
         """
         constraints = []
-        # Iterate proj indices only. For partial projection, ``step.lhs`` is a
-        # composite whose non-proj rows share decomposition with ``step.rhs``;
-        # those rows already satisfy ``lhs[i] == rhs[i]`` structurally, so no
+        # Iterate proj indices only. For partial projection, ``step.output`` is a
+        # composite whose non-proj rows share decomposition with ``step.arg``;
+        # those rows already satisfy ``output[i] == arg[i]`` structurally, so no
         # explicit constraint is needed. For full projection, ``proj_indices``
         # covers every row and behavior matches the previous implementation.
         for i in sorted(step.proj_indices):
-            _lhs = step.lhs[i]
-            _rhs = step.rhs[i]
+            _output = step.output[i]
+            _arg = step.arg[i]
             if step.ub[i] <= 0:
-                constraints.append(_lhs == 0)
+                constraints.append(_output == 0)
             elif step.lb[i] > 0:
-                constraints.append(_lhs == _rhs)
+                constraints.append(_output == _arg)
             else:
-                new_var = LinearExpression.from_int(_rhs.ndim, is_binary=True)
+                new_var = LinearExpression.from_int(_arg.ndim, is_binary=True)
                 step.idx_with_binary_vars.add(i)
-                constraints.append(_lhs <= step.ub[i] * new_var)
+                constraints.append(_output <= step.ub[i] * new_var)
                 constraints.extend(
                     [
-                        _lhs <= step.ub[i] / (step.ub[i] - step.lb[i]) * (_rhs - step.lb[i]),
-                        _lhs >= _rhs,
-                        _lhs <= _rhs - step.lb[i] * (1 - new_var),
+                        _output <= step.ub[i] / (step.ub[i] - step.lb[i]) * (_arg - step.lb[i]),
+                        _output >= _arg,
+                        _output <= _arg - step.lb[i] * (1 - new_var),
                     ]
                 )
         return constraints
@@ -669,33 +693,35 @@ class MIP(Canonicalizer):
         """
         constraints = []
 
-        for l, u, lb, ub, lhs, rhs in zip(step.l, step.u, step.lb, step.ub, step.lhs, step.rhs):
+        for l, u, lb, ub, output, arg in zip(
+            step.l, step.u, step.lb, step.ub, step.output, step.arg
+        ):
             if lb >= u:
-                constraints.append(lhs == u)
+                constraints.append(output == u)
             elif ub <= l:
-                constraints.append(lhs == l)
+                constraints.append(output == l)
             elif lb >= l and ub <= u:
-                constraints.append(lhs == rhs)
+                constraints.append(output == arg)
             else:
                 if not step.relax_binary_vars:
-                    w1 = LinearExpression.from_int(rhs.ndim, is_binary=True)
-                    w2 = LinearExpression.from_int(rhs.ndim, is_binary=True)
+                    w1 = LinearExpression.from_int(arg.ndim, is_binary=True)
+                    w2 = LinearExpression.from_int(arg.ndim, is_binary=True)
 
                     if lb < l:
                         constraints.extend(
                             [
-                                lhs <= rhs + (ub - lb) * w2,
-                                rhs >= l + (lb - l) * w2,
-                                rhs <= l + (ub - l) * (1 - w2),
+                                output <= arg + (ub - lb) * w2,
+                                arg >= l + (lb - l) * w2,
+                                arg <= l + (ub - l) * (1 - w2),
                             ]
                         )
 
                         if ub > u:
                             constraints.extend(
                                 [
-                                    lhs >= u - (u - l) * (1 - w1),
-                                    lhs <= l + (u - l) * (1 - w2),
-                                    lhs >= l + (lb - l) * w2,
+                                    output >= u - (u - l) * (1 - w1),
+                                    output <= l + (u - l) * (1 - w2),
+                                    output >= l + (lb - l) * w2,
                                     w1 + w2 <= 1,
                                 ]
                             )
@@ -703,30 +729,30 @@ class MIP(Canonicalizer):
                     if ub > u:
                         constraints.extend(
                             [
-                                lhs >= rhs - (ub - lb) * w1,
-                                rhs >= u + (lb - u) * (1 - w1),
-                                rhs <= u + (ub - u) * w1,
+                                output >= arg - (ub - lb) * w1,
+                                arg >= u + (lb - u) * (1 - w1),
+                                arg <= u + (ub - u) * w1,
                             ]
                         )
                         if lb > l:
-                            constraints.append(lhs >= u - (u - lb) * (1 - w1))
+                            constraints.append(output >= u - (u - lb) * (1 - w1))
 
                 if lb < l and ub > u:
                     constraints.extend(
                         [
-                            lhs <= (u - l) / (u - lb) * (rhs - u) + u,
-                            lhs >= (u - l) / (ub - l) * (rhs - l) + l,
+                            output <= (u - l) / (u - lb) * (arg - u) + u,
+                            output >= (u - l) / (ub - l) * (arg - l) + l,
                         ]
                     )
 
                 elif lb < l and ub < u:
                     constraints.extend(
-                        [lhs >= rhs, lhs <= ((ub - l) / (ub - lb)) * (rhs - ub) + ub]
+                        [output >= arg, output <= ((ub - l) / (ub - lb)) * (arg - ub) + ub]
                     )
 
                 elif lb > l and ub > u:
                     constraints.extend(
-                        [lhs <= rhs, lhs >= ((u - lb) / (ub - lb) * (rhs - lb) + lb)]
+                        [output <= arg, output >= ((u - lb) / (ub - lb) * (arg - lb) + lb)]
                     )
 
         self.add_constraints(constraints)
@@ -826,81 +852,81 @@ class MIP(Canonicalizer):
         constraints = []
 
         i = 0
-        for lb, ub, lhs_lb, lhs_ub, lhs, rhs in zip(
-            step.lb, step.ub, step.lhs.lb, step.lhs.ub, step.lhs, step.rhs
+        for lb, ub, output_lb, output_ub, output, arg in zip(
+            step.lb, step.ub, step.output.lb, step.output.ub, step.output, step.arg
         ):
             if lb >= step.lambd:
-                constraints.append(lhs == rhs - step.lambd)
+                constraints.append(output == arg - step.lambd)
             elif ub <= -step.lambd:
-                constraints.append(lhs == rhs + step.lambd)
+                constraints.append(output == arg + step.lambd)
             elif lb >= -step.lambd and ub <= step.lambd:
-                constraints.append(lhs == 0)
+                constraints.append(output == 0)
             else:
                 if not step.relax_binary_vars:
-                    w1 = LinearExpression.from_int(rhs.ndim, is_binary=True)
-                    w2 = LinearExpression.from_int(rhs.ndim, is_binary=True)
+                    w1 = LinearExpression.from_int(arg.ndim, is_binary=True)
+                    w2 = LinearExpression.from_int(arg.ndim, is_binary=True)
                     step.idx_with_right_binary_vars.add(i)
 
                     if ub > step.lambd:
                         step.idx_with_left_binary_vars.add(i)
                         constraints.extend(
                             [
-                                rhs >= step.lambd + (lb - step.lambd) * (1 - w1),
-                                rhs <= step.lambd + (ub - step.lambd) * w1,
-                                lhs <= rhs - step.lambd + (2 * step.lambd) * (1 - w1),
+                                arg >= step.lambd + (lb - step.lambd) * (1 - w1),
+                                arg <= step.lambd + (ub - step.lambd) * w1,
+                                output <= arg - step.lambd + (2 * step.lambd) * (1 - w1),
                             ]
                         )
 
                         if lb < -step.lambd:
                             constraints.extend(
                                 [
-                                    lhs <= lhs_ub * w1,
-                                    lhs >= lhs_lb * w2,
+                                    output <= output_ub * w1,
+                                    output >= output_lb * w2,
                                     w1 + w2 <= 1,
                                 ]
                             )
 
                         if -step.lambd <= lb <= step.lambd:
-                            constraints.append(lhs <= lhs_ub * w1)
+                            constraints.append(output <= output_ub * w1)
 
                     if lb < -step.lambd:
                         step.idx_with_left_binary_vars.add(i)
                         constraints.extend(
                             [
-                                rhs <= -step.lambd + (ub + step.lambd) * (1 - w2),
-                                rhs >= -step.lambd + (lb + step.lambd) * w2,
-                                lhs >= rhs + step.lambd + (-2 * step.lambd) * (1 - w2),
+                                arg <= -step.lambd + (ub + step.lambd) * (1 - w2),
+                                arg >= -step.lambd + (lb + step.lambd) * w2,
+                                output >= arg + step.lambd + (-2 * step.lambd) * (1 - w2),
                             ]
                         )
 
                         if -step.lambd <= lb <= step.lambd:
-                            constraints.append(lhs >= lhs_lb * w2)
+                            constraints.append(output >= output_lb * w2)
 
                 if lb < -step.lambd and ub > step.lambd:
                     constraints.extend(
                         [
-                            lhs >= rhs - step.lambd,
-                            lhs <= rhs + step.lambd,
-                            lhs <= lhs_ub / (ub + step.lambd) * (rhs + step.lambd),
-                            lhs >= lhs_lb / (lb - step.lambd) * (rhs - step.lambd),
+                            output >= arg - step.lambd,
+                            output <= arg + step.lambd,
+                            output <= output_ub / (ub + step.lambd) * (arg + step.lambd),
+                            output >= output_lb / (lb - step.lambd) * (arg - step.lambd),
                         ]
                     )
 
                 elif -step.lambd <= lb <= step.lambd < ub:
                     constraints.extend(
                         [
-                            lhs >= 0,
-                            lhs <= lhs_ub / (ub - lb) * (rhs - lb),
-                            lhs >= rhs - step.lambd,
+                            output >= 0,
+                            output <= output_ub / (ub - lb) * (arg - lb),
+                            output >= arg - step.lambd,
                         ]
                     )
 
                 elif step.lambd >= ub >= -step.lambd >= lb:
                     constraints.extend(
                         [
-                            lhs <= 0,
-                            lhs >= lhs_lb / (lb - ub) * (rhs - ub),
-                            lhs <= rhs + step.lambd,
+                            output <= 0,
+                            output >= output_lb / (lb - ub) * (arg - ub),
+                            output <= arg + step.lambd,
                         ]
                     )
 

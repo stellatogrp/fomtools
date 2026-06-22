@@ -15,12 +15,12 @@ class SimulatorStepDecomposer(StepDecomposer):
     """
 
     def _process_primitive(self, step: Step) -> LinearExpression:
-        # Skip sync_lhs_bounds — the simulator evaluates numerically and
+        # Skip sync_output_bounds — the simulator evaluates numerically and
         # handles affine solves itself via canonicalize_affine.
-        for leaf in step.lhs_leaves:
+        for leaf in step.output_leaves:
             self.register_var(leaf, var_type="param")
         self.canonicalizer.canonicalize(step)
-        return step.lhs
+        return step.output
 
     def _qp_step_not_supported(self, step: Step) -> LinearExpression:
         # QuadraticProgram / LinearProgram lower to an implicit-iterate KKT system
@@ -36,7 +36,7 @@ class SimulatorStepDecomposer(StepDecomposer):
         "linearprogram": _qp_step_not_supported,
     }
 
-    def _implicit_iterate_not_supported(self, prox, rhs, gamma=1.0):
+    def _implicit_iterate_not_supported(self, prox, arg, gamma=1.0):
         # TODO(simulator): Implement implicit-iterate proxes on Simulator.
         # Shared deferral for prox lowerings that register a fresh iterate
         # defined implicitly by an equality constraint (Quadratic,

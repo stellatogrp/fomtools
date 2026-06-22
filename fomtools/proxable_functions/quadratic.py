@@ -24,7 +24,7 @@ class Quadratic(ProxableFunction):
     The proximal operator is the unique smooth-stationarity solution
 
     $$
-        (I + \gamma Q)\, u \;=\; \text{rhs} - \gamma q,
+        (I + \gamma Q)\, u \;=\; \text{arg} - \gamma q,
     $$
 
     which is a single linear system. The :meth:`prox` numpy reference
@@ -44,9 +44,7 @@ class Quadratic(ProxableFunction):
             raise ValueError(f"Q must be a square 2-D matrix; got shape {Q.shape}")
         n = Q.shape[0]
         if isinstance(q, np.ndarray) and q.shape != (n,):
-            raise ValueError(
-                f"q must have shape ({n},) to match Q; got shape {q.shape}"
-            )
+            raise ValueError(f"q must have shape ({n},) to match Q; got shape {q.shape}")
         self.Q = Q
         self.q = q
         self.n = n
@@ -81,16 +79,16 @@ class Quadratic(ProxableFunction):
             )
         return 0.5 * float(x @ self.Q @ x) + float(np.dot(self.q, x))
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
         Compute the proximal point.
 
-        Solves $(I + \gamma Q)\, u = \text{rhs} - \gamma q$ via
+        Solves $(I + \gamma Q)\, u = \text{arg} - \gamma q$ via
         :func:`numpy.linalg.solve`.
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Proximal step size.
@@ -101,7 +99,7 @@ class Quadratic(ProxableFunction):
             The proximal point ``u``.
         """
         M = np.eye(self.n) + gamma * self.Q
-        return np.linalg.solve(M, rhs - gamma * self.q)
+        return np.linalg.solve(M, arg - gamma * self.q)
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""

@@ -44,9 +44,9 @@ class IndPoint(ProxableFunction):
             return 0.0
         return np.inf
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Return $p$, broadcast to the shape of ``rhs``.
+        Return $p$, broadcast to the shape of ``arg``.
 
         The prox of an indicator function is the projection onto its
         feasible set; for a singleton this is the constant map returning
@@ -54,7 +54,7 @@ class IndPoint(ProxableFunction):
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point (used only for shape broadcasting).
         gamma : float, default 1.0
             Step size (ignored for indicator functions; kept for interface
@@ -63,9 +63,9 @@ class IndPoint(ProxableFunction):
         Returns
         -------
         np.ndarray
-            The constant $p$ broadcast to ``rhs.shape``.
+            The constant $p$ broadcast to ``arg.shape``.
         """
-        return np.broadcast_to(self.p, rhs.shape).copy()
+        return np.broadcast_to(self.p, arg.shape).copy()
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         raise NotImplementedError("Indicator functions are not differentiable.")

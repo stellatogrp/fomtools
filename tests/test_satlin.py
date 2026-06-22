@@ -1,7 +1,7 @@
 import numpy as np
 
 from fomtools.verifier import Verifier
-from tests.conftest import TEST_EPS
+from tests.conftest import TEST_EPS, mip_params
 from tests.cvxpy import satlin as satlin_cvxpy
 
 np.set_printoptions(precision=5)  # Print few decimal places
@@ -154,8 +154,11 @@ def test_satlin_sdp_mip(vp_param_2, vp_sdp):
     sdp_res = vp_s.solve()
 
     # --- MIP ---
-    vp_m = Verifier(solver=mip_solver_name, obbt_solver=mip_solver_name,
-                     params={"TimeLimit": 10, "MIPGap": 1e-4, "OutputFlag": 0})
+    vp_m = Verifier(
+        solver=mip_solver_name,
+        obbt_solver=mip_solver_name,
+        params=mip_params(mip_solver_name, limited=True),
+    )
     q_m = vp_m.add_param(n, lb=q - q_offset, ub=q + q_offset)
     z_m = [vp_m.add_iterate(n, lb=z0_init, ub=z0_init)]
     for k in range(K):
@@ -198,8 +201,11 @@ def test_satlin_param_sdp_mip(vp_param_2, vp_sdp):
     sdp_res = vp_s.solve()
 
     # --- MIP ---
-    vp_m = Verifier(solver=mip_solver_name, obbt_solver=mip_solver_name,
-                     params={"TimeLimit": 10, "MIPGap": 1e-4, "OutputFlag": 0})
+    vp_m = Verifier(
+        solver=mip_solver_name,
+        obbt_solver=mip_solver_name,
+        params=mip_params(mip_solver_name, limited=True),
+    )
     q_m = vp_m.add_param(n, lb=q - q_offset, ub=q + q_offset)
     top_m = vp_m.add_param(1, lb=0.5, ub=0.6)
     l_rest_m = vp_m.add_param(n - 1, lb=np.array([-1.2, -0.35]), ub=np.array([-1.1, 0]))
@@ -223,10 +229,10 @@ def test_satlin_diamond(vp_param_2):
     with a verification objective whose worst case sits at a diamond corner that
     is NOT on the buggy upper-left diagonal.
 
-    Setup: l=0, u=1 (asymmetric), z0=0, q in [-3, 3] so the satlin input rhs = -q
+    Setup: l=0, u=1 (asymmetric), z0=0, q in [-3, 3] so the satlin input arg = -q
     spans [-3, 3], clearly containing [0, 1]. The objective ||z1 - q||_inf equals
-    |lhs + rhs| with z0=0, and is maximized over the true diamond at the corner
-    (rhs, lhs) = (3, 1) -> value 4 (achieved at q=-3, z1=clip(3,0,1)=1).
+    |output + arg| with z0=0, and is maximized over the true diamond at the corner
+    (arg, output) = (3, 1) -> value 4 (achieved at q=-3, z1=clip(3,0,1)=1).
 
     Under the previously buggy diamond cut (lines 645-647), feasibility collapsed
     onto the line through (lb, l)=(-3, 0) and (u, u)=(1, 1), so the (3, 1) corner

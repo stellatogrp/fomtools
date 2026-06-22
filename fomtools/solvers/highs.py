@@ -21,24 +21,28 @@ class HiGHSSolver(MIPSolver):
         val = {"objVal": self.model.getInfo().objective_function_value}
         return val[item]
 
-    def set_param(self, param: str, val: int | float):
+    def set_param(self, param: str, val):
         """
-        Configure a solver parameter that controls its behavior.
+        Configure a solver option, passed verbatim to HiGHS.
+
+        The option name must be a native HiGHS option (e.g. ``time_limit``,
+        ``mip_rel_gap``, ``output_flag``); no name translation is performed.
 
         Parameters
         ----------
         param: str
-            The name of the solver parameter to set.
+            The native HiGHS option name to set.
+        val:
+            The value to assign to the specified option.
 
-        val: int | float
-            The value to assign to the specified parameter.
+        Raises
+        ------
+        ValueError
+            If HiGHS rejects the option name or value.
         """
-        param_to_highs = {
-            "TimeLimit": "time_limit",
-            "MIPGap": "mip_rel_gap",
-            "OutputFlag": "output_flat",
-        }
-        self.model.setOptionValue(param_to_highs[param], val)
+        status = self.model.setOptionValue(param, val)
+        if status == hp.HighsStatus.kError:
+            raise ValueError(f"Invalid HiGHS solver option {param!r}={val!r}")
 
     def relax_model(self):
         """
@@ -276,6 +280,10 @@ class HiGHSSolver(MIPSolver):
             "Use Gurobi for two-norm objectives, or switch to one-norm/infinity-norm."
         )
 
+    # sum_squares (quadratic) constraints are unsupported on HiGHS; the rejecting
+    # default in MIPSolver.add_sum_squares_constr applies (it names the solver, so no
+    # HiGHS-specific override is needed).
+
     def optimize(self):
         """
         Optimize the underlying HiGHS model.
@@ -368,6 +376,7 @@ class HiGHSSolver(MIPSolver):
         """
         new_solver = HiGHSSolver.__new__(HiGHSSolver)
         new_solver._relaxed_model = None
+        new_solver.solver_params = self.solver_params
         new_solver.model = hp.Highs()
         new_solver._var_counter = self._var_counter
 

@@ -83,10 +83,10 @@ class QuadraticProgram(Step):
     needs a finite upper bound on :math:`\lambda`; supply it via ``dual_ub``
     whenever inequalities are present (OBBT tightens it further when enabled).
 
-    Invoked via :meth:`Verifier.quadratic_program` rather than the single-``rhs``
+    Invoked via :meth:`Verifier.quadratic_program` rather than the single-``arg``
     ``run_step`` path: an arbitrary QP has up to three parametric inputs
     (``q``, ``b``, ``d``), and each ``LinearExpression`` already references the
-    prior iterates it was built from, so no input is forced into an ``rhs`` slot.
+    prior iterates it was built from, so no input is forced into an ``arg`` slot.
 
     Parameters
     ----------
@@ -94,7 +94,7 @@ class QuadraticProgram(Step):
         The ``(n, n)`` quadratic term; must be symmetric and PSD.
     q : None, float, np.ndarray, or LinearExpression, optional
         Linear cost of dimension ``n``. If ``None`` (projection convenience),
-        ``q`` defaults to ``-rhs`` in the decomposer, which requires ``rhs`` to be
+        ``q`` defaults to ``-arg`` in the decomposer, which requires ``arg`` to be
         a dim-``n`` ``LinearExpression``.
     A : np.ndarray or scipy.sparse, optional
         Equality matrix of shape ``(p, n)``. ``None`` for no equality constraints.
@@ -114,8 +114,8 @@ class QuadraticProgram(Step):
     nu_bounds : tuple[np.ndarray, np.ndarray], optional
         ``(lb, ub)`` on the free equality multiplier ``nu``. Defaults to
         ``+/- inf`` (``nu`` only appears in the linear stationarity row).
-    rhs : LinearExpression, optional
-        The projection point used when ``q is None`` (then ``q := -rhs``).
+    arg : LinearExpression, optional
+        The projection point used when ``q is None`` (then ``q := -arg``).
         Optional otherwise; retained only as the nominal Step input.
     relax_binary_vars : bool, default False
         Forwarded to the Step interface (relax big-M binaries when set).
@@ -134,7 +134,7 @@ class QuadraticProgram(Step):
         dual_ub=None,
         primal_bounds=None,
         nu_bounds=None,
-        rhs: LinearExpression = None,
+        arg: LinearExpression = None,
         relax_binary_vars: bool = False,
     ):
         # --- validate P: square, symmetric, PSD (dense or sparse) ---
@@ -154,9 +154,9 @@ class QuadraticProgram(Step):
 
         # --- validate parametric data dimensions ---
         if q is None:
-            if rhs is None or not _is_linexpr(rhs) or rhs.ndim != n:
+            if arg is None or not _is_linexpr(arg) or arg.ndim != n:
                 raise ValueError(
-                    "q=None defaults to -rhs, which requires rhs to be a "
+                    "q=None defaults to -arg, which requires arg to be a "
                     f"LinearExpression of dimension n={n}."
                 )
         elif _vec_dim(q, n) != n:
@@ -179,8 +179,8 @@ class QuadraticProgram(Step):
             if _vec_dim(d, m) != m:
                 raise ValueError(f"d dim {_vec_dim(d, m)} must match C rows {m}")
 
-        # Bypass Step.__init__ (it dereferences rhs.ndim): rhs is optional here.
-        self.rhs = rhs
+        # Bypass Step.__init__ (it dereferences arg.ndim): arg is optional here.
+        self.arg = arg
         self.relax_binary_vars = relax_binary_vars
         self.n = n
         self.proj_indices = set(range(n))
@@ -196,18 +196,18 @@ class QuadraticProgram(Step):
         self.nu_bounds = nu_bounds
 
     @cached_property
-    def lhs(self) -> LinearExpression:
-        """Output is the QP primal solution ``x`` of dimension ``n`` (``!= rhs.ndim``)."""
+    def output(self) -> LinearExpression:
+        """Output is the QP primal solution ``x`` of dimension ``n`` (``!= arg.ndim``)."""
         return LinearExpression.from_int(self.n)
 
     def update_bounds(self, lb, ub):
         """Store primal bounds (interface compliance; QP is a composite step that
         bypasses ``_process_primitive``, so this is rarely invoked)."""
         self.lb, self.ub = lb, ub
-        self.lhs.update_bounds(lb=lb, ub=ub)
+        self.output.update_bounds(lb=lb, ub=ub)
 
     def __hash__(self):
-        return hash((self.rhs, self.lhs))
+        return hash((self.arg, self.output))
 
     def solve(self, q=None, b=None, d=None) -> np.ndarray:
         r"""
@@ -237,7 +237,7 @@ class QuadraticProgram(Step):
         P_dense = P.toarray() if spa.issparse(P := self.P) else np.asarray(P, dtype=float)
         q_val = _resolve(q, self.q, "q")
         if q_val is None:
-            raise ValueError("q is None (defaults to -rhs); pass a numeric q to solve()")
+            raise ValueError("q is None (defaults to -arg); pass a numeric q to solve()")
         q_val = np.broadcast_to(q_val, (self.n,)).astype(float)
 
         x = cp.Variable(self.n)

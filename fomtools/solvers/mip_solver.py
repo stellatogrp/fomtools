@@ -39,6 +39,26 @@ class MIPSolver(Solver):
     def __init__(self, solver_params=None):
         super(MIPSolver, self).__init__(solver_params=solver_params)
 
+    def add_sum_squares_constr(self, expr, radius_sq, sense) -> None:
+        """
+        Add a sum-of-squares (quadratic) constraint to the model.
+
+        Default implementation: reject it. Most MIP backends (e.g. HiGHS) cannot
+        represent quadratic constraints (MIQCP); quadratic-capable backends (Gurobi)
+        override this. The MIP canonicalizer forwards every ``QuadraticConstraint``
+        straight here, so the rejection surfaces eagerly at ``add_constraint`` time and
+        names the actual solver rather than hardcoding one.
+
+        Raises
+        ------
+        ValueError
+            Always, unless overridden by a quadratic-capable solver.
+        """
+        raise ValueError(
+            f"Solver '{type(self).__name__}' does not support quadratic constraints "
+            f"(MIQCP). Use a quadratic-capable solver such as solver='gurobi'."
+        )
+
     def relax_model(self):
         """
         Relax the MIP model to a continuous linear program.
@@ -117,28 +137,28 @@ class MIPSolver(Solver):
         self.relax_model()
 
         for step in steps:
-            y_var, y_val = self.get_relaxed_variables(step.rhs)
-            # ``step.lhs_leaves[0]`` is the fresh MIP variable: the full lhs
+            y_var, y_val = self.get_relaxed_variables(step.arg)
+            # ``step.output_leaves[0]`` is the fresh MIP variable: the full output
             # leaf for full relu, or the smaller proj-leaf for partial relu.
-            # ``rhs_to_pos`` maps each projected rhs row to its row in that
+            # ``arg_to_pos`` maps each projected arg row to its row in that
             # fresh leaf; for full relu this is the identity dict.
-            w_leaf = step.lhs_leaves[0]
+            w_leaf = step.output_leaves[0]
             w_var, w_val = self.get_relaxed_variables(w_leaf)
 
-            rhs_to_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
+            arg_to_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
 
-            l = np.concatenate(step.rhs.lb)
-            u = np.concatenate(step.rhs.ub)
+            l = np.concatenate(step.arg.lb)
+            u = np.concatenate(step.arg.ub)
 
-            for i in range(step.lhs.ndim):
-                if i not in rhs_to_pos:
+            for i in range(step.output.ndim):
+                if i not in arg_to_pos:
                     continue
-                pos = rhs_to_pos[i]
+                pos = arg_to_pos[i]
                 # special case out sparse matrices as needed
                 A = np.concatenate(
                     [
                         np.asarray(v.todense()).reshape(-1) if spa.issparse(v) else v.flatten()
-                        for v in step.rhs[i].decomposition_dict.values()
+                        for v in step.arg[i].decomposition_dict.values()
                     ]
                 )
 

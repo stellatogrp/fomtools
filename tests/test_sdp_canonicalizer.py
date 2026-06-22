@@ -112,9 +112,9 @@ class TestCanonicalizeAffine:
         """Issuing an Affine step on SDP completes without NotImplementedError."""
         v = self._make_verifier()
         x = v.add_iterate(3, lb=-1.0, ub=1.0)
-        # Pure affine: y = W @ x with identity lhs_mat
+        # Pure affine: y = W @ x with identity output_mat
         W = np.eye(3) * 2.0
-        y = v.step.implicit_linear(rhs=W @ x, lhs_mat=np.eye(3))
+        y = v.step.implicit_linear(arg=W @ x, output_mat=np.eye(3))
         assert y.ndim == 3
 
     def test_emits_six_aeq_matrices_for_three_output_coords(self):
@@ -126,7 +126,7 @@ class TestCanonicalizeAffine:
         x = v.add_iterate(3, lb=-1.0, ub=1.0)
         prior = len(v.canonicalizer.Aeq_matrices)
 
-        v.step.implicit_linear(rhs=2.0 * x, lhs_mat=np.eye(3))
+        v.step.implicit_linear(arg=2.0 * x, output_mat=np.eye(3))
 
         assert len(v.canonicalizer.Aeq_matrices) - prior == 2 * 3
 
@@ -136,7 +136,7 @@ class TestCanonicalizeAffine:
         x = v.add_iterate(2, lb=-1.0, ub=1.0)
         prior = len(v.canonicalizer.Aeq_matrices)
 
-        v.step.implicit_linear(rhs=2.0 * x, lhs_mat=np.eye(2))
+        v.step.implicit_linear(arg=2.0 * x, output_mat=np.eye(2))
 
         assert len(v.canonicalizer.Aeq_matrices) - prior == 2 * 2
 
@@ -147,7 +147,7 @@ class TestCanonicalizeAffine:
         """
         v = self._make_verifier()
         x = v.add_iterate(3, lb=-1.0, ub=1.0)
-        y = v.step.implicit_linear(rhs=2.0 * x, lhs_mat=np.eye(3))
+        y = v.step.implicit_linear(arg=2.0 * x, output_mat=np.eye(3))
 
         # At least one PSD cone group covers index 0 + every leaf index in {x, y}
         x_idx = v.canonicalizer.var_idx_map[x]
@@ -163,8 +163,8 @@ class TestCanonicalizeAffine:
         """
         v = self._make_verifier()
         x = v.add_iterate(3, lb=-1.0, ub=1.0)
-        y = v.step.implicit_linear(rhs=-x + np.ones(3), lhs_mat=np.eye(3))
-        z = v.step.relu(rhs=y)
+        y = v.step.implicit_linear(arg=-x + np.ones(3), output_mat=np.eye(3))
+        z = v.step.relu(arg=y)
         v.set_two_norm_objective([z])
 
         residual = v.solve()
