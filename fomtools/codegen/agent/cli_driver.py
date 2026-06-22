@@ -153,30 +153,31 @@ class CliAgentDriver(AgentDriver):
             )
 
     def run(self, task: AgentTask) -> AgentResult:
-        """Generate/refine the solver until the verify command passes.
+        """Drive the CLI until the task's verify command passes (or attempts run out).
 
-        Preflights that the CLI binary is on PATH and persists an API-key login
-        if the spec requires one, then delegates to
-        :func:`~fomtools.codegen.agent.driver.run_verify_loop`, which runs the
-        verify command itself to decide success.
+        Preflights that the CLI binary is on PATH and, when the spec requires
+        it, persists an API-key login as a side effect. It then resolves the
+        task workdir to an absolute path and hands control to
+        :func:`~fomtools.codegen.agent.driver.run_verify_loop`, which repeatedly
+        invokes the CLI and runs the verify command to decide success.
 
         Parameters
         ----------
         task : AgentTask
-            The unit of work describing the workspace, the solver path to
-            write, the restore hook, and the verify command to run.
+            The unit of work describing the workspace, the solver path to write,
+            the restore hook, and the verify command to run.
 
         Returns
         -------
         AgentResult
-            The outcome, whose ``success`` reflects whether the verify command
-            passed.
+            The outcome of the verify/retry loop, whose ``success`` reflects
+            whether the verify command passed.
 
         Raises
         ------
         AgentBackendError
             If the CLI binary is not on PATH, or an API-key login is required
-            but fails — neither is recoverable by retrying.
+            but fails. Neither condition is recoverable by retrying.
         """
         if shutil.which(self.bin) is None:
             raise AgentBackendError(
@@ -186,9 +187,15 @@ class CliAgentDriver(AgentDriver):
             )
 
         self._ensure_login()
+        # Resolve to an ABSOLUTE workdir: some CLIs resolve their dir flag
+        # relative to their own cwd, so a relative path applied as both --cd and
+        # the subprocess cwd would be doubled.
+        workdir = str(Path(task.workdir).resolve())
         return run_verify_loop(
             task,
-            lambda prompt, max_turns: self._invoke_agent(task, prompt, max_turns),
+            lambda prompt, max_turns: self._invoke_agent(
+                self._build_argv(workdir, prompt), workdir
+            ),
             max_attempts=self.max_attempts,
             max_turns=self.max_turns,
         )
@@ -228,18 +235,20 @@ class CliAgentDriver(AgentDriver):
         argv += [spec.prompt_arg, full_prompt] if spec.prompt_arg else [full_prompt]
         return argv
 
-    def _invoke_agent(self, task: AgentTask, prompt: str, max_turns: int) -> str:
+    def _invoke_agent(self, argv: list[str], workdir: str | Path) -> str:
         """Run one agent attempt by shelling out to the CLI.
+
+        Executes ``argv`` in ``workdir`` with the child environment from
+        :meth:`_child_env` (API-key auth injected when configured), capturing
+        output. Success is left to the caller's verify command; this method only
+        returns the captured text or fails fast on an unrecoverable auth error.
 
         Parameters
         ----------
-        task : AgentTask
-            The unit of work supplying the working directory.
-        prompt : str
-            The prompt for this attempt.
-        max_turns : int
-            Turn budget, accepted for the shared loop's signature; not passed to
-            these internally-looping CLIs.
+        argv : list[str]
+            The full CLI argument vector.
+        workdir : str or Path
+            Absolute working directory to run the CLI in.
 
         Returns
         -------
@@ -252,11 +261,7 @@ class CliAgentDriver(AgentDriver):
             If the CLI binary cannot be found at invocation time, or it exits
             non-zero with output matching one of the spec's auth-failure markers.
         """
-        # Resolve to an ABSOLUTE workdir: some CLIs resolve their dir flag
-        # relative to their own cwd, so a relative path applied as both --cd and
-        # the subprocess cwd would be doubled.
-        workdir = str(Path(task.workdir).resolve())
-        argv = self._build_argv(workdir, prompt)
+
         try:
             proc = subprocess.run(
                 argv,
