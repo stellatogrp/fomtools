@@ -25,6 +25,8 @@ def _build_nnls_sdp(
     relu_envelope_cuts=False,
     rlt_all_pairs=False,
     full_psd_cone=False,
+    cross_cut=False,
+    subgrad_mono_cut=False,
 ):
     """Build a small NNLS SDP verifier matching tests/test_nnls_sdp_mip.py.
 
@@ -44,6 +46,8 @@ def _build_nnls_sdp(
         relu_envelope_cuts=relu_envelope_cuts,
         rlt_all_pairs=rlt_all_pairs,
         full_psd_cone=full_psd_cone,
+        cross_cut=cross_cut,
+        subgrad_mono_cut=subgrad_mono_cut,
     )
 
     x = vp.add_param(m, lb=0, ub=0.1)
@@ -555,6 +559,8 @@ def _build_ista_sdp(
     relu_envelope_cuts=False,
     rlt_all_pairs=False,
     full_psd_cone=False,
+    cross_cut=False,
+    subgrad_mono_cut=False,
 ):
     """ISTA SDP setup mirroring tests/test_ista_sdp_mip.py."""
     m, n = 3, 2
@@ -577,6 +583,8 @@ def _build_ista_sdp(
         relu_envelope_cuts=relu_envelope_cuts,
         rlt_all_pairs=rlt_all_pairs,
         full_psd_cone=full_psd_cone,
+        cross_cut=cross_cut,
+        subgrad_mono_cut=subgrad_mono_cut,
     )
     b_param = vp.add_param(m, lb=b - 0.1, ub=b + 0.1)
     z = [vp.add_iterate(n, lb=1, ub=1.1)]
@@ -594,6 +602,8 @@ def _build_boxpgd_sdp(
     relu_envelope_cuts=False,
     rlt_all_pairs=False,
     full_psd_cone=False,
+    cross_cut=False,
+    subgrad_mono_cut=False,
 ):
     """Box PGD SDP setup mirroring tests/test_boxpgd_sdp_mip.py."""
     n = 2
@@ -613,6 +623,8 @@ def _build_boxpgd_sdp(
         relu_envelope_cuts=relu_envelope_cuts,
         rlt_all_pairs=rlt_all_pairs,
         full_psd_cone=full_psd_cone,
+        cross_cut=cross_cut,
+        subgrad_mono_cut=subgrad_mono_cut,
     )
     q_param = vp.add_param(n, lb=q - 0.1, ub=q + 0.1)
     z = [vp.add_iterate(n, lb=0, ub=0.1)]
@@ -1136,3 +1148,411 @@ def test_rlt_all_pairs_does_not_corrupt_original_cones():
     # Non-vacuity: the solve genuinely coupled the disjoint cones on the copy, so the
     # test would also fail if the mutation had leaked back onto the original.
     assert len(_solved_canon(vp).psd_cone_indices) > len(before)
+
+
+# ============================================================
+# Phase 9: PEP cross + subgradient-monotonicity cuts
+# ============================================================
+#
+# Two cross-step operator-interpolation cuts (cross_cut, subgrad_mono_cut):
+#   - cross:   z_a r_b <= 0    over ReLU output/residual component pairs
+#   - subgrad: <s^i/tau_i - s^j/tau_j, z^i> >= 0  over prox-step pairs
+# Both couple DIFFERENT steps (the per-step encoding does not) and self-register
+# the minimal small PSD cones they need to bind (no full_psd_cone needed). They
+# are valid inequalities, so they must never cut off a true trajectory: the core
+# tests verify (a) a known feasible rank-1 lift satisfies every emitted cut and
+# (b) the MIP lower bound is preserved across all flag combinations.
+
+
+def _build_two_relu_canon(cross_cut=False, subgrad_mono_cut=False, lb=-1.0, ub=1.0):
+    """Hand-build an SDP canonicalizer with two independent 1-D ReLUs
+    y = max(0, z) and v = max(0, w), z, w in [lb, ub].
+
+    Returns (canon, info) where info maps names to SDP start indices.
+    """
+    from fomtools.canonicalizers.sdp import SDP
+    from fomtools.linearexpression import LinearExpression
+    from fomtools.steps import Relu
+
+    canon = SDP(solver="clarabel", cross_cut=cross_cut, subgrad_mono_cut=subgrad_mono_cut)
+
+    z = LinearExpression.from_int(1, lb=np.array([float(lb)]), ub=np.array([float(ub)]))
+    canon.add_var(z)
+    sz = Relu(arg=z)
+    sz.update_bounds(z.lb, z.ub)
+    canon.add_var(sz.output)
+    canon.canonicalize_relu(sz)
+
+    w = LinearExpression.from_int(1, lb=np.array([float(lb)]), ub=np.array([float(ub)]))
+    canon.add_var(w)
+    sw = Relu(arg=w)
+    sw.update_bounds(w.lb, w.ub)
+    canon.add_var(sw.output)
+    canon.canonicalize_relu(sw)
+
+    info = {
+        "z": canon.var_idx_map[z][0],
+        "w": canon.var_idx_map[w][0],
+        "y": canon.var_idx_map[sz.output_leaves[0]][0],
+        "v": canon.var_idx_map[sw.output_leaves[0]][0],
+    }
+    return canon, info
+
+
+def _rank1_relu_lift(canon, info, z_val, w_val):
+    """Build the rank-1 lift X = u u^T for the true trajectory point
+    (z=z_val, w=w_val, y=relu(z_val), v=relu(w_val))."""
+    n = canon.get_sdp_var_dim()
+    u = np.zeros(n)
+    u[0] = 1.0
+    u[info["z"]] = z_val
+    u[info["w"]] = w_val
+    u[info["y"]] = max(0.0, z_val)
+    u[info["v"]] = max(0.0, w_val)
+    return np.outer(u, u)
+
+
+# ---- flags + plumbing ---------------------------------------------------- #
+
+
+@pytest.mark.parametrize("sdp_solver", SDP_SOLVERS)
+def test_pep_flags_stored_on_canonicalizer(sdp_solver):
+    """cross_cut / subgrad_mono_cut reach the SDP canonicalizer instance."""
+    vp = Verifier(
+        method="sdp",
+        solver=sdp_solver,
+        obbt_solver=None,
+        cross_cut=True,
+        subgrad_mono_cut=True,
+    )
+    assert vp.canonicalizer.cross_cut is True
+    assert vp.canonicalizer.subgrad_mono_cut is True
+
+    vp2 = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
+    assert vp2.canonicalizer.cross_cut is False
+    assert vp2.canonicalizer.subgrad_mono_cut is False
+
+
+@pytest.mark.parametrize("flag", ["cross_cut", "subgrad_mono_cut"])
+def test_pep_flags_warn_for_non_sdp_methods(flag):
+    """The PEP cut flags emit a UserWarning when method != 'sdp'."""
+    with pytest.warns(UserWarning, match=flag):
+        Verifier(method="mip", solver="highs", obbt_solver=None, **{flag: True})
+
+
+@pytest.mark.parametrize("sdp_solver", SDP_SOLVERS)
+def test_pep_flags_default_off_matches_baseline(sdp_solver):
+    """With both PEP flags explicitly off, the objective matches the baseline."""
+    _, baseline = _build_ista_sdp(K=2, sdp_solver=sdp_solver)
+    _, off = _build_ista_sdp(K=2, sdp_solver=sdp_solver, cross_cut=False, subgrad_mono_cut=False)
+    assert abs(baseline - off) <= TEST_EPS
+
+
+def test_copy_preserves_pep_flags_and_prox_registry():
+    """copy() carries the PEP flags and a (shallow) copy of the prox registry."""
+    vp = Verifier(
+        method="sdp",
+        solver="clarabel",
+        obbt_solver=None,
+        cross_cut=True,
+        subgrad_mono_cut=True,
+    )
+    z = vp.add_iterate(2, lb=-1, ub=1)
+    _ = vp.step.relu(z)
+    canon = vp.canonicalizer
+    assert len(canon._prox_steps) == 1  # the ReLU registered one prox step
+
+    copy = canon.copy()
+    assert copy.cross_cut is True
+    assert copy.subgrad_mono_cut is True
+    assert len(copy._prox_steps) == len(canon._prox_steps)
+    # Shallow copy: a new list, sharing the (immutable) entries.
+    assert copy._prox_steps is not canon._prox_steps
+
+
+# ---- prox registration semantics ----------------------------------------- #
+
+
+def test_relu_registers_unit_tau_prox():
+    """A standalone ReLU registers exactly one prox step with tau = 1."""
+    vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, subgrad_mono_cut=True)
+    z = vp.add_iterate(2, lb=-1, ub=1)
+    _ = vp.step.relu(z)
+    canon = vp.canonicalizer
+    assert len(canon._prox_steps) == 1
+    assert canon._prox_steps[0]["tau"] == 1.0
+
+
+def test_softthreshold_registers_single_composite_prox():
+    """A soft-threshold registers ONE composite prox (tau = lambda), not the two
+    internal decomposition ReLUs — though both internal ReLUs still join
+    _relu_steps (the cross cut wants every ReLU node)."""
+    vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, subgrad_mono_cut=True)
+    z = vp.add_iterate(2, lb=-1, ub=1)
+    _ = vp.step.soft_threshold(z, lambd=0.3)
+    canon = vp.canonicalizer
+    # Two internal ReLUs registered as ReLU nodes ...
+    assert len(canon._relu_steps) == 2
+    # ... but only the single composite prox is registered for the subgrad cut.
+    assert len(canon._prox_steps) == 1
+    assert canon._prox_steps[0]["tau"] == pytest.approx(0.3)
+
+
+# ---- cross cut: emission + validity --------------------------------------- #
+
+
+def test_cross_cut_count_two_relus():
+    """Two 1-D ReLUs -> 2 ordered cross pairs (y,v) and (v,y) -> 2 cuts; the
+    same-component diagonals (y,y), (v,v) are skipped."""
+    canon, _ = _build_two_relu_canon(cross_cut=True)
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_cross_cuts()
+    assert len(canon._cut_ineq_matrices) == 2
+    assert len(canon._cut_bineq_upperbounds) == 2
+
+
+def test_cross_cut_single_1d_relu_skips_diagonal():
+    """A lone 1-D ReLU has only the (a, a) diagonal pair, which is the
+    complementarity identity and is skipped -> 0 cross cuts."""
+    canon, _z, _step = _build_1d_relu_canon(-1.0, 1.0, relu_envelope_cuts=False)
+    canon.cross_cut = True
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_cross_cuts()
+    assert canon._cut_ineq_matrices == []
+
+
+def test_cross_cut_count_single_2d_relu():
+    """A single 2-D ReLU has two output components -> 2 off-diagonal cross cuts."""
+    vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, cross_cut=True)
+    z = vp.add_iterate(2, lb=-1.0, ub=1.0)
+    z1 = vp.step.relu(z)
+    vp.set_objective_norm(z1 - z, 2)
+    vp.solve()
+    canon = _solved_canon(vp)
+    assert len(canon._cut_ineq_matrices) == 2
+
+
+def test_cross_cut_matrices_symmetric():
+    """Each cross cut matrix is symmetric."""
+    canon, _ = _build_two_relu_canon(cross_cut=True)
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_cross_cuts()
+    for M in canon._cut_ineq_matrices:
+        diff = M - M.T
+        diff.eliminate_zeros()
+        assert diff.nnz == 0
+
+
+def test_cross_cut_algebra_on_known_primal():
+    """Every emitted cross cut holds on the rank-1 lift of a true trajectory
+    point, for many feasible (z, w) — i.e. the cut never removes a true point."""
+    canon, info = _build_two_relu_canon(cross_cut=True)
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_cross_cuts()
+    assert len(canon._cut_ineq_matrices) == 2
+
+    rng = np.random.default_rng(0)
+    for _ in range(50):
+        z_val = rng.uniform(-1.0, 1.0)
+        w_val = rng.uniform(-1.0, 1.0)
+        X = _rank1_relu_lift(canon, info, z_val, w_val)
+        for M, b in zip(canon._cut_ineq_matrices, canon._cut_bineq_upperbounds):
+            output = float((M @ X).trace())
+            assert output <= b + 1e-9, f"Cross cut violated at z={z_val}, w={w_val}: {output} > {b}"
+
+
+def test_cross_cut_not_redundant():
+    """A relaxed X feasible for the per-step encoding can violate a cross cut, so
+    the cut genuinely tightens. Witness on two 1-D ReLUs (indices 0,z,y,w,v):
+    set z=w=0 (so both relu eqns y^2=z*y, v^2=w*v hold at y=v=0), but couple the
+    second moment X[y, w-residual] adversarially: take y=1 (free since X[y,y]=1,
+    X[0,y]=1 is allowed by box y in [0,1]) while w's residual r=w-v is negative."""
+    canon, info = _build_two_relu_canon(cross_cut=True)
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_cross_cuts()
+
+    n = canon.get_sdp_var_dim()
+    # Construct a symmetric X that satisfies y>=0, v>=0 first moments and the
+    # diagonal relu identities but puts a positive value on X[y, w] with w<0,
+    # making z_y * (w - v) > 0 (the cut forbids this).
+    X = np.zeros((n, n))
+    X[0, 0] = 1.0
+    iy, iw, iv = info["y"], info["w"], info["v"]
+    # First moments: y = 1 (feasible in [0,1]), w = -1, v = relu(-1) = 0.
+    X[0, iy] = X[iy, 0] = 1.0
+    X[0, iw] = X[iw, 0] = -1.0
+    X[0, iv] = X[iv, 0] = 0.0
+    X[iy, iy] = 1.0
+    X[iw, iw] = 1.0
+    # Adversarial cross moment: y*w = +1 (so y*(w - v) = 1 > 0).
+    X[iy, iw] = X[iw, iy] = 1.0
+
+    # The (y, v) pair cut encodes z_y * (w - v) <= 0; find a cut violated here.
+    violated = False
+    for M, b in zip(canon._cut_ineq_matrices, canon._cut_bineq_upperbounds):
+        if float((M @ X).trace()) > b + 1e-6:
+            violated = True
+            break
+    assert violated, "Expected at least one cross cut to be violated by the relaxed witness"
+
+
+def test_cross_cut_tighten_bound():
+    """SDP with cross cut <= baseline (maximizing -> tighter relaxation)."""
+    _, baseline = _build_ista_sdp(K=2, sdp_solver="clarabel")
+    _, with_cross = _build_ista_sdp(K=2, sdp_solver="clarabel", cross_cut=True)
+    assert with_cross <= baseline + TEST_EPS
+
+
+# ---- subgradient-monotonicity cut: emission + validity -------------------- #
+
+
+def test_subgrad_cut_count_two_proxes():
+    """Two prox steps -> 2 ordered pairs (i,j), (j,i) -> 2 subgradient cuts."""
+    canon, _ = _build_two_relu_canon(subgrad_mono_cut=True)
+    assert len(canon._prox_steps) == 2
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_subgrad_mono_cuts()
+    assert len(canon._cut_ineq_matrices) == 2
+
+
+def test_subgrad_cut_matrices_symmetric():
+    """Each subgradient cut matrix is symmetric."""
+    canon, _ = _build_two_relu_canon(subgrad_mono_cut=True)
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_subgrad_mono_cuts()
+    assert len(canon._cut_ineq_matrices) == 2
+    for M in canon._cut_ineq_matrices:
+        diff = M - M.T
+        diff.eliminate_zeros()
+        assert diff.nnz == 0
+
+
+def test_subgrad_cut_algebra_on_known_primal():
+    """Every subgradient cut holds on the rank-1 lift of a true trajectory point
+    (for two orthant proxes, where the cut reduces to the cross relation)."""
+    canon, info = _build_two_relu_canon(subgrad_mono_cut=True)
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_subgrad_mono_cuts()
+    assert len(canon._cut_ineq_matrices) == 2
+
+    rng = np.random.default_rng(1)
+    for _ in range(50):
+        z_val = rng.uniform(-1.0, 1.0)
+        w_val = rng.uniform(-1.0, 1.0)
+        X = _rank1_relu_lift(canon, info, z_val, w_val)
+        for M, b in zip(canon._cut_ineq_matrices, canon._cut_bineq_upperbounds):
+            output = float((M @ X).trace())
+            assert output <= b + 1e-9, (
+                f"Subgrad cut violated at z={z_val}, w={w_val}: {output} > {b}"
+            )
+
+
+def test_subgrad_cut_tau_guard_skips_tiny_threshold():
+    """Prox pairs touching a near-zero tau are skipped (avoids 1/tau blow-up)."""
+    canon, _ = _build_two_relu_canon(subgrad_mono_cut=True)
+    # Force one prox threshold to ~0; both ordered pairs touch it -> 0 cuts.
+    canon._prox_steps[0]["tau"] = 0.0
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_subgrad_mono_cuts()
+    assert canon._cut_ineq_matrices == []
+
+
+def test_subgrad_cut_tighten_bound():
+    """SDP with subgradient cut <= baseline (maximizing -> tighter relaxation)."""
+    _, baseline = _build_ista_sdp(K=2, sdp_solver="clarabel")
+    _, with_subgrad = _build_ista_sdp(K=2, sdp_solver="clarabel", subgrad_mono_cut=True)
+    assert with_subgrad <= baseline + TEST_EPS
+
+
+# ---- validity across all combinations (MIP lower bound preserved) --------- #
+#
+# The core "do not tighten too much" guarantee: for every combination of the two
+# PEP flags, on every problem family and depth, the exact MIP infinity-norm must
+# still lower-bound the SDP two-norm. A bug that cuts off a true trajectory would
+# drop the SDP below the MIP and trip these.
+
+PEP_FLAG_COMBOS = [
+    (False, False),
+    (True, False),
+    (False, True),
+    (True, True),
+]
+
+
+@pytest.mark.parametrize("use_cross,use_subgrad", PEP_FLAG_COMBOS)
+@pytest.mark.parametrize("K", [1, 2])
+def test_nnls_mip_bound_preserved_pep_combos(use_cross, use_subgrad, K):
+    _, sdp_sq = _build_nnls_sdp(
+        K=K, sdp_solver="clarabel", cross_cut=use_cross, subgrad_mono_cut=use_subgrad
+    )
+    mip_inf = _mip_inf_norm_nnls(K)
+    assert mip_inf <= np.sqrt(sdp_sq) + TEST_EPS, (
+        f"K={K}, cross={use_cross}, subgrad={use_subgrad}: "
+        f"MIP inf norm ({mip_inf}) > SDP two norm ({np.sqrt(sdp_sq)})"
+    )
+
+
+@pytest.mark.parametrize("use_cross,use_subgrad", PEP_FLAG_COMBOS)
+@pytest.mark.parametrize("K", [1, 2])
+def test_ista_mip_bound_preserved_pep_combos(use_cross, use_subgrad, K):
+    _, sdp_sq = _build_ista_sdp(
+        K=K, sdp_solver="clarabel", cross_cut=use_cross, subgrad_mono_cut=use_subgrad
+    )
+    mip_inf = _mip_inf_norm_ista(K)
+    assert mip_inf <= np.sqrt(sdp_sq) + TEST_EPS, (
+        f"K={K}, cross={use_cross}, subgrad={use_subgrad}: "
+        f"MIP inf norm ({mip_inf}) > SDP two norm ({np.sqrt(sdp_sq)})"
+    )
+
+
+@pytest.mark.parametrize("use_cross,use_subgrad", PEP_FLAG_COMBOS)
+@pytest.mark.parametrize("K", [1, 2])
+def test_boxpgd_mip_bound_preserved_pep_combos(use_cross, use_subgrad, K):
+    _, sdp_sq = _build_boxpgd_sdp(
+        K=K, sdp_solver="clarabel", cross_cut=use_cross, subgrad_mono_cut=use_subgrad
+    )
+    mip_inf = _mip_inf_norm_boxpgd(K)
+    assert mip_inf <= np.sqrt(sdp_sq) + TEST_EPS, (
+        f"K={K}, cross={use_cross}, subgrad={use_subgrad}: "
+        f"MIP inf norm ({mip_inf}) > SDP two norm ({np.sqrt(sdp_sq)})"
+    )
+
+
+def test_pep_cuts_preserve_mip_bound_with_all_other_cuts():
+    """Stacking the PEP cuts on top of every other cut family still preserves the
+    MIP lower bound — composing valid inequalities never removes a true point."""
+    _, sdp_sq = _build_ista_sdp(
+        K=2,
+        sdp_solver="clarabel",
+        rlt_cuts=True,
+        triangle_cuts=True,
+        relu_envelope_cuts=True,
+        cross_cut=True,
+        subgrad_mono_cut=True,
+    )
+    mip_inf = _mip_inf_norm_ista(2)
+    assert mip_inf <= np.sqrt(sdp_sq) + TEST_EPS
+
+
+def test_pep_cuts_compose_no_worse_than_base():
+    """base+both <= base+cross and base+subgrad and base (maximizing). Every PEP
+    cut is a valid inequality, so adding more can only tighten the relaxation."""
+    _, baseline = _build_ista_sdp(K=2, sdp_solver="clarabel")
+    _, with_cross = _build_ista_sdp(K=2, sdp_solver="clarabel", cross_cut=True)
+    _, with_subgrad = _build_ista_sdp(K=2, sdp_solver="clarabel", subgrad_mono_cut=True)
+    _, with_both = _build_ista_sdp(
+        K=2, sdp_solver="clarabel", cross_cut=True, subgrad_mono_cut=True
+    )
+    assert with_cross <= baseline + TEST_EPS
+    assert with_subgrad <= baseline + TEST_EPS
+    assert with_both <= with_cross + TEST_EPS
+    assert with_both <= with_subgrad + TEST_EPS
