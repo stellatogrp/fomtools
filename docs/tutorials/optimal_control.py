@@ -16,14 +16,28 @@ def _():
     import matplotlib.pyplot as plt
     import numpy as np
     import scipy.sparse as spa
+    from pepit_runner import PEPitRunner
     from scipy.sparse import csr_matrix
 
-    from fomtools.verifier import Verifier
     from fomtools.proxable_functions import IndBox
+    from fomtools.verifier import Verifier
 
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
-    return IndBox, Verifier, csr_matrix, np, plt, spa
+
+    solver_params = {
+        'OutputFlag': 0,
+    }
+    return (
+        IndBox,
+        PEPitRunner,
+        Verifier,
+        csr_matrix,
+        np,
+        plt,
+        solver_params,
+        spa,
+    )
 
 
 @app.cell(hide_code=True)
@@ -82,8 +96,7 @@ def _(np, spa):
     Q = spa.diags([0., 0., 10., 10., 10., 10., 0., 0., 0., 5., 5., 5.]) # state cost matrix Q_t = Q_T = Q
     R = 0.1*spa.eye(n_u) # input cost matrix
 
-    s_min = -np.inf*np.ones(n_s)
-    s_max =  np.inf*np.ones(n_s)
+    # State constraints are unconstrained in this tutorial.
 
     # initial state s_init as parameter x: the set X = [x_lb, x_ub]
     x_lb = np.array([-np.pi/6, -np.pi/6, 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
@@ -93,7 +106,6 @@ def _(np, spa):
     # input constraint
     u_min = -0.99*np.ones(n_u)
     u_max =  2.41*np.ones(n_u)
-    # u_max = -2.41*np.ones(n_u)
 
     # # input constraint
     # u_0 = 10.5916
@@ -159,13 +171,15 @@ def _(A_dym, B_dym, Q, R, T, n_s, n_u, np, spa):
 
     # Define M
     M = spa.eye(n_xz)
-    return M, P, n_xz, q
+    z0_lb, z0_ub = -np.ones(n_xz), np.ones(n_xz)
+    v0_lb, v0_ub = np.zeros(n_xz), np.ones(n_xz)
+    return M, P, n_xz, q, v0_lb, v0_ub, z0_lb, z0_ub
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We first simulate the ADMM algorithm on given problem instances by randomly sampling the fixed initial state parameter $x_\text{init}$ around its nominal value.
+    We first simulate the ADMM algorithm on given problem instances by randomly sampling the fixed initial state parameter $x_\text{init}$ around its nominal value and the initial iterates $(z^0, v^0)$ over their prescribed boxes.
     The output will be residuals computed for each iteration $k=1,\ldots,K$.
     """)
     return
@@ -173,10 +187,12 @@ def _(mo):
 
 @app.cell
 def _(
+    IndBox,
     K,
     M,
     P,
     T,
+    Verifier,
     csr_matrix,
     n_s,
     n_u,
@@ -188,50 +204,118 @@ def _(
     spa,
     u_stack_max,
     u_stack_min,
+    v0_lb,
+    v0_ub,
     x_init,
+    z0_lb,
+    z0_ub,
 ):
-    # Simulate ADMM on sampled problem instances
-    _n_samples = 100
+    n_samples = 10000
+
+    _VP = Verifier(method='simulator', obbt_solver=None)
     _rng = np.random.default_rng(0)
+
     _offset_range = 0.1
-    _x_samples = _rng.uniform(low=x_init - _offset_range, high=x_init + _offset_range, size=(_n_samples, n_s))
+    _x_samples = _rng.uniform(
+        low=x_init - _offset_range,
+        high=x_init + _offset_range,
+        size=(n_samples, n_s),
+    )
+    _z0_samples = _rng.uniform(low=z0_lb, high=z0_ub, size=(n_samples, n_xz))
+    _v0_samples = _rng.uniform(low=v0_lb, high=v0_ub, size=(n_samples, n_xz))
 
-    # Convert to xz_stack format: [x; 0_{n_z}]
-    _xz_stacks = np.hstack([_x_samples, np.zeros((_n_samples, (T-1)*n_u))])
+    _x_param = _VP.add_param(ndim=n_s, samples=_x_samples)
+    _x_param.lb, _x_param.ub = x_init - _offset_range, x_init + _offset_range
+    _l_param = _VP.add_param((T-1)*n_u, lb=u_stack_min, ub=u_stack_min)
+    _u_param = _VP.add_param((T-1)*n_u, lb=u_stack_max, ub=u_stack_max)
+    _l_x = _VP.add_param_stack([_x_param, _l_param])
+    _u_x = _VP.add_param_stack([_x_param, _u_param])
 
-    # ADMM iteration over samples (batched)
-    _z_batch = np.zeros((_n_samples, n_xz), dtype=float)
-    _v_batch = np.zeros((_n_samples, n_xz), dtype=float)
-    _w_batch = np.zeros((_n_samples, n_xz), dtype=float)
+    _z = [None] * (K + 1)
+    _v = [None] * (K + 1)
+    _w = [None] * (K + 1)
+    _z[0] = _VP.add_param(n_xz, samples=_z0_samples)
+    _z[0].lb, _z[0].ub = z0_lb, z0_ub
+    _v[0] = _VP.add_param(n_xz, samples=_v0_samples)
+    _v[0].lb, _v[0].ub = v0_lb, v0_ub
+    _w[0] = np.zeros(n_xz)
 
-    _lhs_mat = csr_matrix(P + sigma*np.eye(n_xz) + rho*(M.T@M))
-    _lhs_mat_lu = spa.linalg.splu(_lhs_mat.tocsc())
+    _indbox = IndBox(l=_l_x, u=_u_x)
+    _lhs_mat_sparse = csr_matrix(P + sigma*np.eye(n_xz) + rho*(M.T@M))
+    _lhs_mat_sim = _lhs_mat_sparse.toarray()
+    for _k in range(K):
+        _w[_k+1] = _VP.prox(function=_indbox, rhs=_v[_k])
+        _rhs = sigma * _z[_k] - q + rho * M.T @ (2*_w[_k+1] - _v[_k])
+        _z[_k+1] = _VP.step.implicit_linear(rhs=_rhs, lhs_mat=_lhs_mat_sim)
+        _v[_k+1] = _v[_k] + (M @ _z[_k+1] - _w[_k+1])
+        _VP.set_objective_norm([
+            -sigma*(_z[_k+1]-_z[_k]) - rho*M.T@(_v[_k+1]-_v[_k]),
+            _v[_k+1]-_v[_k],
+        ], np.inf)
 
-    _residuals_sim = np.empty((_n_samples, K), dtype=float)
+    _residuals = _VP.solve()
 
-    for k in range(K):
-        # satlin: clip w to [l_x, u_x]
-        _l_x = np.hstack([_x_samples, u_stack_min[np.newaxis, :].repeat(_n_samples, axis=0)])
-        _u_x = np.hstack([_x_samples, u_stack_max[np.newaxis, :].repeat(_n_samples, axis=0)])
-        _w_batch = np.clip(_v_batch, _l_x, _u_x)
+    print(
+        f"Summary statistics:\n"
+        f"mean: {_VP['mean']:.6e}\n"
+        f"std: {_VP['std']:.6e}\n"
+        f"min: {_VP['min']:.6e}\n"
+        f"max: {_VP['max']:.6e}\n"
+        f"median: {_VP['median']:.6e}\n"
+        f"empirical_risk: {_VP['empirical_risk']:.4f}\n"
+        f"risk_bound: {_VP['risk_bound']:.4f}\n"
+        f"n_samples: {_VP['n_samples']}\n"
+        f"n_iteration: {_VP['n_iterations']}\n"
+        f"runtime: {_VP['runtime']:.4f}\n"
+        f"time_per_sample: {_VP['time_per_sample']:.4f}\n"
+        f"throughput: {_VP['throughput']:.4f}\n"
+        f"residuals: {_residuals}"
+    )
 
-        # implicit_linear: solve for z
-        _rhs_batch = sigma * _z_batch - q[np.newaxis, :] + rho * (2*_w_batch - _v_batch) @ M
-        _z_new_batch = np.array([_lhs_mat_lu.solve(_rhs_batch[i]) for i in range(_n_samples)])
+    simulation_residuals_admm = np.mean(_residuals, axis=0)
+    simulation_residual_quantiles_admm = np.quantile(_residuals, [0.90, 0.50, 0.10], axis=0)
 
-        # v update
-        _v_new_batch = _v_batch + _z_new_batch @ M - _w_batch
-
-        # residual: scaled fixed-point residual
-        _residual_1 = -sigma*(_z_new_batch - _z_batch) - rho*(_v_new_batch - _v_batch) @ M
-        _residual_2 = _v_new_batch - _v_batch
-        _residuals_sim[:, k] = np.max(np.abs(np.hstack([_residual_1, _residual_2])), axis=1)
-
-        _z_batch = _z_new_batch
-        _v_batch = _v_new_batch
-
-    simulation_residuals_admm = np.mean(_residuals_sim, axis=0)
-    return (simulation_residuals_admm,)
+    _lhs_mat_lu = spa.linalg.splu(_lhs_mat_sparse.tocsc())
+    _z_star_samples = _z0_samples.copy()
+    _v_star_samples = _v0_samples.copy()
+    _l_x_samples = np.hstack([
+        _x_samples,
+        u_stack_min[np.newaxis, :].repeat(n_samples, axis=0),
+    ])
+    _u_x_samples = np.hstack([
+        _x_samples,
+        u_stack_max[np.newaxis, :].repeat(n_samples, axis=0),
+    ])
+    for _ in range(2000):
+        _w_star_samples = np.clip(_v_star_samples, _l_x_samples, _u_x_samples)
+        _rhs_samples = sigma * _z_star_samples - q[np.newaxis, :] + rho * (
+            2*_w_star_samples - _v_star_samples
+        ) @ M
+        _z_next_samples = _lhs_mat_lu.solve(_rhs_samples.T).T
+        _v_next_samples = _v_star_samples + _z_next_samples @ M - _w_star_samples
+        _step_norm = np.max(np.linalg.norm(
+            np.hstack([
+                _z_next_samples - _z_star_samples,
+                _v_next_samples - _v_star_samples,
+            ]),
+            axis=1,
+        ))
+        _z_star_samples = _z_next_samples
+        _v_star_samples = _v_next_samples
+        if _step_norm <= 1e-10:
+            break
+    pepit_radius = np.max(np.linalg.norm(
+        np.hstack([
+            _z0_samples - _z_star_samples,
+            _v0_samples - _v_star_samples,
+        ]),
+        axis=1,
+    ))
+    return (
+        pepit_radius,
+        simulation_residual_quantiles_admm,
+        simulation_residuals_admm,
+    )
 
 
 @app.cell
@@ -263,6 +347,14 @@ def _(P, T, n_u, np, q, u_max, u_min, x_init):
     return u_stack_max, u_stack_min
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    We now obtain worst-case guarantee by solving the corresponding verification problem using MIP solver.
+    """)
+    return
+
+
 @app.cell
 def _(
     IndBox,
@@ -279,20 +371,21 @@ def _(
     q,
     rho,
     sigma,
+    solver_params,
     u_stack_max,
     u_stack_min,
+    v0_lb,
+    v0_ub,
     x_init,
     x_lb,
     x_ub,
+    z0_lb,
+    z0_ub,
 ):
     fix_initial_x = True # True if x is fixed, False if x is in set X
 
-    solver_params = {
-        'OutputFlag': 0,
-    }
-
     # Solve VP for optimal control example
-    _VP = Verifier(solver='gurobi', params=solver_params)
+    _VP = Verifier(method='mip', solver='gurobi', params=solver_params)
 
     if fix_initial_x :
         offset = 0.0
@@ -310,8 +403,8 @@ def _(
     _v = [None for _ in range(K+1)]
     _w = [None for _ in range(K+1)]
 
-    _z[0] = np.zeros(n_xz)
-    _v[0] = _VP.add_param(n_xz, lb=np.zeros(n_xz), ub=np.ones(n_xz))
+    _z[0] = _VP.add_iterate(n_xz, lb=z0_lb, ub=z0_ub)
+    _v[0] = _VP.add_iterate(n_xz, lb=v0_lb, ub=v0_ub)
     _w[0] = np.zeros(n_xz)
 
     # ADMM (OSQP) iterations
@@ -320,6 +413,7 @@ def _(
 
     all_residuals = []
     worst_case_x_param_admm = []
+    worst_case_z_admm = []
     worst_case_v_admm = []
     for _k in range(K):
         # _w[_k+1] = _VP.step.satlin(_v[_k], l=_l_x, u=_u_x)
@@ -334,10 +428,16 @@ def _(
         all_residuals.append(_res)
         # Store the horizon-specific worst-case initial state for this k.
         worst_case_x_param_admm.append(_VP.get_solution_value(_x_param))
+        worst_case_z_admm.append(_VP.get_solution_value(_z[0]))
         worst_case_v_admm.append(_VP.get_solution_value(_v[0]))
 
     print(all_residuals)
-    return all_residuals, worst_case_v_admm, worst_case_x_param_admm
+    return (
+        all_residuals,
+        worst_case_v_admm,
+        worst_case_x_param_admm,
+        worst_case_z_admm,
+    )
 
 
 @app.cell
@@ -356,6 +456,7 @@ def _(
     u_stack_min,
     worst_case_v_admm,
     worst_case_x_param_admm,
+    worst_case_z_admm,
 ):
     # Simulate each horizon with the corresponding worst-case initial state.
     _lhs_mat = csr_matrix(P + sigma*np.eye(n_xz) + rho*(M.T@M))
@@ -364,8 +465,7 @@ def _(
     worst_case_residuals_admm = []
     for _k in range(1, K + 1):
         _x_k = np.array(worst_case_x_param_admm[_k-1], dtype=float)
-        _z = np.zeros(n_xz, dtype=float)
-        # _v = np.zeros(n_xz, dtype=float)
+        _z = np.array(worst_case_z_admm[_k-1], dtype=float)
         _v = np.array(worst_case_v_admm[_k-1], dtype=float)
         _last_residual = 0.0
 
@@ -391,29 +491,12 @@ def _(
     return (worst_case_residuals_admm,)
 
 
-@app.cell
-def _(
-    K,
-    all_residuals,
-    plt,
-    simulation_residuals_admm,
-    worst_case_residuals_admm,
-):
-    plt.plot(range(1, K+1), all_residuals, label='ADMM (MIP worst-case)')
-    plt.plot(range(1, K+1), simulation_residuals_admm, '--', label='ADMM (in-sample avg)')
-    plt.plot(range(1, K+1), worst_case_residuals_admm, '-.', color='gray', linewidth=.7, label='worst-case ADMM instance')
-    plt.suptitle('optimal control example (MIP)')
-    plt.yscale('log')
-    plt.xlabel(r'$K$')
-    plt.ylabel('Worst-case fixed-point residual')
-    plt.legend()
-    return
-
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We compare our results to the worst-case performance of the algorithm returned by the performance estimation problem (PEP), using the package [`PEPit`](https://pepit.readthedocs.io/en/0.5.1/). Specifically, we measure the performance of ADMM solving
+    We compare our results to the worst-case performance of the algorithm returned
+    by the performance estimation problem (PEP), using the shared `PEPitRunner`.
+    Specifically, we measure the performance of ADMM solving
 
     \begin{array}{ll}
         \textnormal{minimize} & f(x) + g(x),
@@ -425,63 +508,47 @@ def _(mo):
 
 
 @app.cell
-def _(K, P, np, spa):
-    from PEPit import PEP
-    from PEPit.functions import ConvexIndicatorFunction, SmoothStronglyConvexFunction
-    from PEPit.primitive_steps import proximal_step
-
-    P_eigs, _ = spa.linalg.eigs(P)
-    P_eigs = np.real(P_eigs)
-    mu = np.min(P_eigs)
-    L = np.max(P_eigs)
-    print(mu, L)
-
-    all_residuals_PEP = []
-    for _k_PEP in range(1, K+1):
-        _problem = PEP()
-        _f = _problem.declare_function(SmoothStronglyConvexFunction, mu=mu, L=L)
-        _g = _problem.declare_function(ConvexIndicatorFunction)
-        _F = _f + _g
-
-        # Define optimal solution xs
-        _xs = _F.stationary_point()
-
-        # Declare initial point x0
-        _u0 = _problem.set_initial_point()
-
-        _x = [None for _ in range(K+1)]
-        _y = [None for _ in range(K+1)]
-        _u = [None for _ in range(K+1)]
-        _u[0] = _u0
-        _x[0], _, _ = proximal_step(_u[0], _f, 1.)
-        _y[0], _, _ = proximal_step(2*_x[0] - _u[0], _g, 1.)
-
-        for _k in range(_k_PEP):
-            _u[_k+1] = _u[_k] + (_y[_k] - _x[_k])
-            _x[_k+1], _, _ = proximal_step(_u[_k+1], _f, 1.)
-            _y[_k+1], _, _ = proximal_step(2*_x[_k+1] - _u[_k+1], _g, 1.)
-
-        _problem.set_initial_condition((_x[0] - _xs)**2 <= 1.0)
-        _problem.set_initial_condition((_u0 - _xs)**2 <= 1.0)
-
-        _problem.set_performance_metric((_x[_k_PEP] - _x[_k_PEP-1])**2 + (_u[_k_PEP] - _u[_k_PEP-1])**2)
-        _res = _problem.solve(solver='SCS')
-        all_residuals_PEP.append(_res) # account for L-infinity norm of VP
+def _(K, P, PEPitRunner, np, pepit_radius, spa):
+    _P_eigs = np.real(spa.linalg.eigs(P)[0])
+    _positive_eigs = _P_eigs[_P_eigs > 1e-10]
+    _mu = float(np.min(_positive_eigs)) if len(_positive_eigs) else 0.0
+    _L = float(np.max(_P_eigs))
+    all_residuals_PEP, _ = PEPitRunner().admm_residuals(
+        K=K, mu=_mu, L=_L, R=pepit_radius)
     return (all_residuals_PEP,)
 
 
-@app.cell
-def _(K, all_residuals_PEP, plt):
-    H_norm = 14.14213564
-    r = 8.31227985242667
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    Now we plot the verification results against the PEPit bound and the
+    horizon-specific worst-case instances extracted from MIP.
+    """)
+    return
 
+
+@app.cell
+def _(
+    K,
+    all_residuals,
+    all_residuals_PEP,
+    plt,
+    simulation_residual_quantiles_admm,
+    simulation_residuals_admm,
+    worst_case_residuals_admm,
+):
     plt.figure()
-    plt.plot(range(1, K+1), all_residuals_PEP, label='OSQP (ADMM)')
+    _ks = range(1, K+1)
+    plt.plot(_ks, all_residuals_PEP, label='ADMM (PEPit)')
+    plt.plot(_ks, all_residuals, label='ADMM (MIP worst-case)')
+    plt.plot(_ks, simulation_residuals_admm, '--', label='ADMM (in-sample avg)')
+    plt.fill_between(_ks, simulation_residual_quantiles_admm[2], simulation_residual_quantiles_admm[0], alpha=.18, label='ADMM simulation 10%-90% band')
+    plt.plot(_ks, worst_case_residuals_admm, '-.', color='k', linewidth=.7, label='worst-case ADMM instance')
+    plt.suptitle('optimal control example')
     plt.yscale('log')
     plt.xlabel(r'$K$')
     plt.ylabel('Worst-case fixed-point residual')
     plt.legend()
-    plt.suptitle('optimal control example (PEP)')
     return
 
 

@@ -16,6 +16,7 @@ def _():
     import cvxpy as cp
     import matplotlib.pyplot as plt
     import numpy as np
+    from pepit_runner import PEPitRunner
 
     from fomtools.proxable_functions import IndBox, IndNonNegative
     from fomtools.verifier import Verifier
@@ -23,8 +24,22 @@ def _():
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
 
+    solver_params = {
+        'OutputFlag': 0,
+        'LogToConsole': 0,
+    }
+
     np.random.seed(2)
-    return IndBox, IndNonNegative, Verifier, cp, np, plt
+    return (
+        IndBox,
+        IndNonNegative,
+        PEPitRunner,
+        Verifier,
+        cp,
+        np,
+        plt,
+        solver_params,
+    )
 
 
 @app.cell(hide_code=True)
@@ -108,62 +123,35 @@ def _(np):
     # Parameter set X = [x_lb, x_ub] of demands
     x_lb = d_lb * np.ones(n_d)
     x_ub = d_ub * np.ones(n_d)
+    z0_lb, z0_ub = np.zeros(n_e), c.copy()
+    v0_lb, v0_ub = np.zeros(n_s), np.ones(n_s)
+    w0_lb, w0_ub = -np.ones(n_d), np.ones(n_d)
+
+    # Step size choice
+    L = np.linalg.norm(np.hstack([A_s.T, A_d.T]), 2)
+    eta = 0.5 / L
     return (
         A_d,
         A_s,
+        L,
         b_s,
         c,
         c_lb,
         c_ub,
-        d_lb,
+        eta,
         mu,
         n_d,
         n_e,
         n_s,
-        s_lb,
+        v0_lb,
+        v0_ub,
+        w0_lb,
+        w0_ub,
         x_lb,
         x_ub,
+        z0_lb,
+        z0_ub,
     )
-
-
-@app.cell
-def _(A_d, A_s, c, cp, d_lb, mu, n_d, n_e, n_s, np, s_lb):
-    # Initial iterate s^0 as primal-dual solution to the problem instance
-    # with all demand nodes having maximum demand
-    import scipy.sparse as spa
-
-    A_block = spa.bmat([
-            [A_s, spa.eye(n_s), None],
-            [A_d, None, None],
-            [spa.eye(n_e), None, spa.eye(n_e)]
-        ])
-    A_block = A_block.todense()
-
-    b_block = np.hstack([
-                s_lb * np.ones(n_s),
-                d_lb * np.ones(n_d),
-                c,
-            ])
-
-    c_block = np.zeros(A_block.shape[1])
-    c_block[:n_e] = mu
-
-    # Solve cvxpy problem to get initial z[0]
-    x_block = cp.Variable(A_block.shape[1])
-
-    objective = c_block.T @ x_block
-
-    constraints = [
-        A_block @ x_block == b_block,
-        x_block >= 0
-    ]
-
-    problem = cp.Problem(cp.Minimize(objective), constraints)
-    problem.solve(solver=cp.SCS)
-
-    print(problem.status, problem.value)
-    z0_value = x_block.value[:n_e]
-    return (z0_value,)
 
 
 @app.cell
@@ -184,142 +172,26 @@ def _(A_d, A_s, b_s, c, cp, mu, n_e, x_ub):
     return
 
 
-@app.cell
-def _(A_d, A_s, np):
-    K = 5
-    L = np.linalg.norm(np.hstack([A_s.T, A_d.T]), 2)
-    eta = 0.5 / L
-
-    solver_params = {
-        'OutputFlag': 0,
-        'LogToConsole': 0,
-    }
-
-    n_samples = 10000
-    return K, L, eta, n_samples, solver_params
-
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We first simulate the PDHG algorithm on given problem instances by randomly sampling the parameter $x$ (demand vector) over the parameter set $\mathcal{X}$.
+    We verify the performance of first-order method solving the network optimization example, up to given iteration budget $K>0$.
     """)
     return
 
 
 @app.cell
-def _(
-    A_d,
-    A_s,
-    IndBox,
-    IndNonNegative,
-    K,
-    b_s,
-    c,
-    eta,
-    mu,
-    n_d,
-    n_s,
-    n_samples,
-    np,
-    x_lb,
-    x_ub,
-    z0_value,
-):
-    # Simulate PDHG on sampled problem instances
-    _rng = np.random.default_rng(0)
-    _x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, n_d))
-
-    # PDHG iteration over samples (batched)
-    _z_batch = np.tile(z0_value, (n_samples, 1))
-    _v_batch = np.zeros((n_samples, n_s), dtype=float)
-    _w_batch = np.zeros((n_samples, n_d), dtype=float)
-
-    _residuals_sim = np.empty((n_samples, K), dtype=float)
-    _flow_box = IndBox(l=0.0, u=c)
-    _dual_nonnegative = IndNonNegative()
-
-    for _k in range(1, K + 1):
-        _z_rhs = _z_batch - eta * (mu[np.newaxis, :] + _v_batch @ A_s - _w_batch @ A_d)
-        _z_new_batch = _flow_box.prox(_z_rhs)
-
-        _v_rhs = _v_batch + eta * (-b_s[np.newaxis, :] + (2*_z_new_batch - _z_batch) @ A_s.T)
-        _v_new_batch = _dual_nonnegative.prox(_v_rhs)
-
-        # linear: w update
-        _w_new_batch = _w_batch + eta * (_x_samples - (2*_z_new_batch - _z_batch) @ A_d.T)
-
-        # residual (scaled fixed-point residual)
-        _residual_1 = (1/eta) * (_z_new_batch - _z_batch) - (_v_new_batch - _v_batch) @ A_s + (_w_new_batch - _w_batch) @ A_d
-        _residual_2 = -(_z_new_batch - _z_batch) @ A_s.T + (1/eta) * (_v_new_batch - _v_batch)
-        _residual_3 = (_z_new_batch - _z_batch) @ A_d.T + (1/eta) * (_w_new_batch - _w_batch)
-        _residuals_sim[:, _k - 1] = np.max(np.abs(np.hstack([_residual_1, _residual_2, _residual_3])), axis=1)
-
-        _z_batch = _z_new_batch
-        _v_batch = _v_new_batch
-        _w_batch = _w_new_batch
-
-    simulation_residuals_pdhg = np.mean(_residuals_sim, axis=0)
-    return (simulation_residuals_pdhg,)
+def _():
+    K = 5
+    return (K,)
 
 
-@app.cell
-def _(
-    A_d,
-    A_s,
-    IndBox,
-    IndNonNegative,
-    K,
-    b_s,
-    c,
-    eta,
-    mu,
-    n_d,
-    n_s,
-    n_samples,
-    np,
-    x_lb,
-    x_ub,
-    z0_value,
-):
-    # Simulate momentum PDHG on sampled problem instances
-    _rng = np.random.default_rng(0)
-    _x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, n_d))
-
-    # Momentum PDHG iteration over samples (batched)
-    _z_batch = np.tile(z0_value, (n_samples, 1))
-    _v_batch = np.zeros((n_samples, n_s), dtype=float)
-    _w_batch = np.zeros((n_samples, n_d), dtype=float)
-
-    _residuals_sim_mom = np.empty((n_samples, K), dtype=float)
-    _flow_box = IndBox(l=0.0, u=c)
-    _dual_nonnegative = IndNonNegative()
-
-    for _k in range(1, K + 1):
-        _z_rhs = _z_batch - eta * (mu[np.newaxis, :] + _v_batch @ A_s - _w_batch @ A_d)
-        _z_new_batch = _flow_box.prox(_z_rhs)
-
-        # momentum extrapolation
-        _z_tilde_batch = _z_new_batch + (_k - 1) / (_k + 2) * (_z_new_batch - _z_batch)
-
-        _v_rhs = _v_batch + eta * (-b_s[np.newaxis, :] + (2*_z_tilde_batch - _z_batch) @ A_s.T)
-        _v_new_batch = _dual_nonnegative.prox(_v_rhs)
-
-        # linear: w update
-        _w_new_batch = _w_batch + eta * (_x_samples - (2*_z_tilde_batch - _z_batch) @ A_d.T)
-
-        # residual (scaled fixed-point residual with momentum correction)
-        _residual_1 = (1/eta) * (_z_new_batch - _z_batch) - (_v_new_batch - _v_batch) @ A_s + (_w_new_batch - _w_batch) @ A_d
-        _residual_2 = -(1 + 2*(_k-1)/(_k+2)) * (_z_new_batch - _z_batch) @ A_s.T + (1/eta) * (_v_new_batch - _v_batch)
-        _residual_3 = (1 + 2*(_k-1)/(_k+2)) * (_z_new_batch - _z_batch) @ A_d.T + (1/eta) * (_w_new_batch - _w_batch)
-        _residuals_sim_mom[:, _k - 1] = np.max(np.abs(np.hstack([_residual_1, _residual_2, _residual_3])), axis=1)
-
-        _z_batch = _z_new_batch
-        _v_batch = _v_new_batch
-        _w_batch = _w_new_batch
-
-    simulation_residuals_pdhg_mom = np.mean(_residuals_sim_mom, axis=0)
-    return (simulation_residuals_pdhg_mom,)
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    We first simulate the PDHG algorithm on given problem instances by randomly sampling the parameter $x$ (demand vector) over the parameter set $\mathcal{X}$ and the initial iterates $(z^0, v^0, w^0)$ over their prescribed boxes.
+    """)
+    return
 
 
 @app.cell
@@ -332,6 +204,218 @@ def _(
     Verifier,
     b_s,
     c,
+    eta,
+    mu,
+    n_d,
+    n_s,
+    np,
+    v0_lb,
+    v0_ub,
+    w0_lb,
+    w0_ub,
+    x_lb,
+    x_ub,
+    z0_lb,
+    z0_ub,
+):
+    n_samples = 10000
+
+    _VP = Verifier(method='simulator', obbt_solver=None)
+    _rng = np.random.default_rng(0)
+    _x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, n_d))
+    _z0_samples = _rng.uniform(low=z0_lb, high=z0_ub, size=(n_samples, len(z0_lb)))
+    _v0_samples = _rng.uniform(low=v0_lb, high=v0_ub, size=(n_samples, n_s))
+    _w0_samples = _rng.uniform(low=w0_lb, high=w0_ub, size=(n_samples, n_d))
+    _x_param = _VP.add_param(ndim=n_d, samples=_x_samples)
+    _x_param.lb, _x_param.ub = x_lb, x_ub
+
+    _flow_box = IndBox(l=0.0, u=c)
+    _dual_nonnegative = IndNonNegative()
+    _z = [None] * (K + 1)
+    _v = [None] * (K + 1)
+    _w = [None] * (K + 1)
+    _z[0] = _VP.add_param(len(z0_lb), samples=_z0_samples)
+    _z[0].lb, _z[0].ub = z0_lb, z0_ub
+    _v[0] = _VP.add_param(n_s, samples=_v0_samples)
+    _v[0].lb, _v[0].ub = v0_lb, v0_ub
+    _w[0] = _VP.add_param(n_d, samples=_w0_samples)
+    _w[0].lb, _w[0].ub = w0_lb, w0_ub
+
+    for _k in range(1, K + 1):
+        _z[_k] = _VP.prox(_flow_box, _z[_k-1] - eta * (mu + A_s.T @ _v[_k-1] - A_d.T @ _w[_k-1]))
+        _v[_k] = _VP.prox(_dual_nonnegative, _v[_k-1] + eta * (-b_s + A_s @ (2*_z[_k] - _z[_k-1])))
+        _w[_k] = _w[_k-1] + eta * (_x_param - A_d @ (2*_z[_k] - _z[_k-1]))
+        _VP.set_objective_norm([
+            (1/eta) * (_z[_k] - _z[_k-1]) - A_s.T@(_v[_k] - _v[_k-1]) + A_d.T@(_w[_k] - _w[_k-1]),
+            - A_s@(_z[_k] - _z[_k-1]) + (1/eta) * (_v[_k] - _v[_k-1]),
+            A_d@(_z[_k] - _z[_k-1]) + (1/eta) * (_w[_k] - _w[_k-1]),
+        ], ord=np.inf)
+
+    _residuals = _VP.solve()
+
+    print(
+        f"Summary statistics:\n"
+        f"mean: {_VP['mean']:.6e}\n"
+        f"std: {_VP['std']:.6e}\n"
+        f"min: {_VP['min']:.6e}\n"
+        f"max: {_VP['max']:.6e}\n"
+        f"median: {_VP['median']:.6e}\n"
+        f"empirical_risk: {_VP['empirical_risk']:.4f}\n"
+        f"risk_bound: {_VP['risk_bound']:.4f}\n"
+        f"n_samples: {_VP['n_samples']}\n"
+        f"n_iteration: {_VP['n_iterations']}\n"
+        f"runtime: {_VP['runtime']:.4f}\n"
+        f"time_per_sample: {_VP['time_per_sample']:.4f}\n"
+        f"throughput: {_VP['throughput']:.4f}\n"
+        f"residuals: {_residuals}"
+    )
+
+    simulation_residuals_pdhg = np.mean(_residuals, axis=0)
+    simulation_residual_quantiles_pdhg = np.quantile(_residuals, [0.90, 0.50, 0.10], axis=0)
+
+    _z_star_samples = _z0_samples.copy()
+    _v_star_samples = _v0_samples.copy()
+    _w_star_samples = _w0_samples.copy()
+    for _ in range(2000):
+        _z_rhs = _z_star_samples - eta * (
+            mu[np.newaxis, :] + _v_star_samples @ A_s - _w_star_samples @ A_d
+        )
+        _z_next_samples = np.clip(_z_rhs, 0.0, c)
+        _v_rhs = _v_star_samples + eta * (
+            -b_s[np.newaxis, :] + (2*_z_next_samples - _z_star_samples) @ A_s.T
+        )
+        _v_next_samples = np.maximum(_v_rhs, 0.0)
+        _w_next_samples = _w_star_samples + eta * (
+            _x_samples - (2*_z_next_samples - _z_star_samples) @ A_d.T
+        )
+        _step_norm = np.max(np.linalg.norm(
+            np.hstack([
+                _z_next_samples - _z_star_samples,
+                _v_next_samples - _v_star_samples,
+                _w_next_samples - _w_star_samples,
+            ]),
+            axis=1,
+        ))
+        _z_star_samples = _z_next_samples
+        _v_star_samples = _v_next_samples
+        _w_star_samples = _w_next_samples
+        if _step_norm <= 1e-10:
+            break
+    pepit_radius = np.max(np.linalg.norm(
+        np.hstack([
+            _z0_samples - _z_star_samples,
+            _v0_samples - _v_star_samples,
+            _w0_samples - _w_star_samples,
+        ]),
+        axis=1,
+    ))
+    return (
+        n_samples,
+        pepit_radius,
+        simulation_residual_quantiles_pdhg,
+        simulation_residuals_pdhg,
+    )
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    We also consider a momentum variant of PDHG. After the primal update,
+    the method extrapolates the flow iterate as
+
+    \[
+        \tilde z^{k} = z^{k} + \frac{k-1}{k+2}(z^{k} - z^{k-1}),
+    \]
+
+    and uses $\tilde z^k$ in the dual updates.
+    """)
+    return
+
+
+@app.cell
+def _(
+    A_d,
+    A_s,
+    IndBox,
+    IndNonNegative,
+    K,
+    Verifier,
+    b_s,
+    c,
+    eta,
+    mu,
+    n_d,
+    n_s,
+    n_samples,
+    np,
+    v0_lb,
+    v0_ub,
+    w0_lb,
+    w0_ub,
+    x_lb,
+    x_ub,
+    z0_lb,
+    z0_ub,
+):
+    _VP = Verifier(method='simulator', obbt_solver=None)
+    _rng = np.random.default_rng(0)
+    _x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, n_d))
+    _z0_samples = _rng.uniform(low=z0_lb, high=z0_ub, size=(n_samples, len(z0_lb)))
+    _v0_samples = _rng.uniform(low=v0_lb, high=v0_ub, size=(n_samples, n_s))
+    _w0_samples = _rng.uniform(low=w0_lb, high=w0_ub, size=(n_samples, n_d))
+    _x_param = _VP.add_param(ndim=n_d, samples=_x_samples)
+    _x_param.lb, _x_param.ub = x_lb, x_ub
+
+    _flow_box = IndBox(l=0.0, u=c)
+    _dual_nonnegative = IndNonNegative()
+    _z = [None] * (K + 1)
+    _ztilde = [None] * (K + 1)
+    _v = [None] * (K + 1)
+    _w = [None] * (K + 1)
+    _z[0] = _VP.add_param(len(z0_lb), samples=_z0_samples)
+    _z[0].lb, _z[0].ub = z0_lb, z0_ub
+    _v[0] = _VP.add_param(n_s, samples=_v0_samples)
+    _v[0].lb, _v[0].ub = v0_lb, v0_ub
+    _w[0] = _VP.add_param(n_d, samples=_w0_samples)
+    _w[0].lb, _w[0].ub = w0_lb, w0_ub
+
+    for _k in range(1, K + 1):
+        _z[_k] = _VP.prox(_flow_box, _z[_k-1] - eta * (mu + A_s.T @ _v[_k-1] - A_d.T @ _w[_k-1]))
+        _ztilde[_k] = _z[_k] + (_k-1)/(_k+2) * (_z[_k] - _z[_k-1])
+        _v[_k] = _VP.prox(_dual_nonnegative, _v[_k-1] + eta * (-b_s + A_s @ (2*_ztilde[_k] - _z[_k-1])))
+        _w[_k] = _w[_k-1] + eta * (_x_param - A_d @ (2*_ztilde[_k] - _z[_k-1]))
+        _VP.set_objective_norm([
+            (1/eta) * (_z[_k] - _z[_k-1]) - A_s.T@(_v[_k] - _v[_k-1]) + A_d.T@(_w[_k] - _w[_k-1]),
+            - (1 + 2*(_k-1)/(_k+2)) * A_s@(_z[_k] - _z[_k-1]) + (1/eta) * (_v[_k] - _v[_k-1]),
+            (1 + 2*(_k-1)/(_k+2)) * A_d@(_z[_k] - _z[_k-1]) + (1/eta) * (_w[_k] - _w[_k-1]),
+        ], ord=np.inf)
+
+    _residuals = _VP.solve()
+    simulation_residuals_pdhg_mom = np.mean(_residuals, axis=0)
+    simulation_residual_quantiles_pdhg_mom = np.quantile(_residuals, [0.90, 0.50, 0.10], axis=0)
+    return (
+        simulation_residual_quantiles_pdhg_mom,
+        simulation_residuals_pdhg_mom,
+    )
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    We now obtain worst-case guarantee by solving the corresponding verification problem using MIP solver.
+    """)
+    return
+
+
+@app.cell
+def _(
+    A_d,
+    A_s,
+    IndBox,
+    IndNonNegative,
+    K,
+    Verifier,
+    b_s,
     c_lb,
     c_ub,
     eta,
@@ -341,9 +425,14 @@ def _(
     n_s,
     np,
     solver_params,
+    v0_lb,
+    v0_ub,
+    w0_lb,
+    w0_ub,
     x_lb,
     x_ub,
-    z0_value,
+    z0_lb,
+    z0_ub,
 ):
     _VP = Verifier(method='mip', solver='gurobi', params=solver_params)
     _x_param = _VP.add_param(n_d, lb=x_lb, ub=x_ub)
@@ -351,9 +440,9 @@ def _(
     _b_s_param = _VP.add_param(n_s, lb=b_s, ub=b_s)
     _mu_param = _VP.add_param(n_e, lb=mu, ub=mu)
 
-    _z0 = _VP.add_iterate(n_e, lb=z0_value, ub=z0_value)
-    _v0 = _VP.add_iterate(n_s, lb=np.zeros(n_s), ub=np.zeros(n_s))
-    _w0 = _VP.add_iterate(n_d, lb=np.zeros(n_d), ub=np.zeros(n_d))
+    _z0 = _VP.add_iterate(n_e, lb=z0_lb, ub=z0_ub)
+    _v0 = _VP.add_iterate(n_s, lb=v0_lb, ub=v0_ub)
+    _w0 = _VP.add_iterate(n_d, lb=w0_lb, ub=w0_ub)
     _z = [None for _ in range(K+1)]
     _v = [None for _ in range(K+1)]
     _w = [None for _ in range(K+1)]
@@ -362,6 +451,9 @@ def _(
     _w[0] = _w0
 
     all_residuals = []
+    worst_case_z0_pdhg = []
+    worst_case_v0_pdhg = []
+    worst_case_w0_pdhg = []
     worst_case_x_param_pdhg = []
     _flow_box = IndBox(l=0.0, u=_c_param)
     _dual_nonnegative = IndNonNegative()
@@ -377,10 +469,19 @@ def _(
         ], 'inf')
         _res = _VP.solve()
         all_residuals.append(_res)
+        worst_case_z0_pdhg.append(_VP.get_solution_value(_z0))
+        worst_case_v0_pdhg.append(_VP.get_solution_value(_v0))
+        worst_case_w0_pdhg.append(_VP.get_solution_value(_w0))
         worst_case_x_param_pdhg.append(_VP.get_solution_value(_x_param))
 
     print(all_residuals)
-    return all_residuals, worst_case_x_param_pdhg
+    return (
+        all_residuals,
+        worst_case_v0_pdhg,
+        worst_case_w0_pdhg,
+        worst_case_x_param_pdhg,
+        worst_case_z0_pdhg,
+    )
 
 
 @app.cell
@@ -394,11 +495,11 @@ def _(
     c,
     eta,
     mu,
-    n_d,
-    n_s,
     np,
+    worst_case_v0_pdhg,
+    worst_case_w0_pdhg,
     worst_case_x_param_pdhg,
-    z0_value,
+    worst_case_z0_pdhg,
 ):
     # Simulate each horizon with its own worst-case demand vector.
     worst_case_residuals_pdhg = []
@@ -407,9 +508,9 @@ def _(
     for _k in range(1, K+1):
         _x_k = np.array(worst_case_x_param_pdhg[_k-1], dtype=float)
 
-        _z = np.array(z0_value, dtype=float)
-        _v = np.zeros(n_s, dtype=float)
-        _w = np.zeros(n_d, dtype=float)
+        _z = np.array(worst_case_z0_pdhg[_k-1], dtype=float)
+        _v = np.array(worst_case_v0_pdhg[_k-1], dtype=float)
+        _w = np.array(worst_case_w0_pdhg[_k-1], dtype=float)
         _last_residual = 0.0
 
         for _j in range(1, _k + 1):
@@ -445,7 +546,6 @@ def _(
     K,
     Verifier,
     b_s,
-    c,
     c_lb,
     c_ub,
     eta,
@@ -455,9 +555,14 @@ def _(
     n_s,
     np,
     solver_params,
+    v0_lb,
+    v0_ub,
+    w0_lb,
+    w0_ub,
     x_lb,
     x_ub,
-    z0_value,
+    z0_lb,
+    z0_ub,
 ):
     # Solve verification problem for momentum PDHG
     _VP = Verifier(method='mip', solver='gurobi', params=solver_params)
@@ -466,9 +571,9 @@ def _(
     _b_s_param = _VP.add_param(n_s, lb=b_s, ub=b_s)
     _mu_param = _VP.add_param(n_e, lb=mu, ub=mu)
 
-    _z0 = _VP.add_iterate(n_e, lb=z0_value, ub=z0_value)
-    _v0 = _VP.add_iterate(n_s, lb=np.zeros(n_s), ub=np.zeros(n_s))
-    _w0 = _VP.add_iterate(n_d, lb=np.zeros(n_d), ub=np.zeros(n_d))
+    _z0 = _VP.add_iterate(n_e, lb=z0_lb, ub=z0_ub)
+    _v0 = _VP.add_iterate(n_s, lb=v0_lb, ub=v0_ub)
+    _w0 = _VP.add_iterate(n_d, lb=w0_lb, ub=w0_ub)
     _z = [None for _ in range(K+1)]
     _ztilde = [None for _ in range(K+1)]
     _v = [None for _ in range(K+1)]
@@ -478,6 +583,9 @@ def _(
     _w[0] = _w0
 
     all_residuals_momentum = []
+    worst_case_z0_pdhg_mom = []
+    worst_case_v0_pdhg_mom = []
+    worst_case_w0_pdhg_mom = []
     worst_case_x_param_pdhg_mom = []
     _flow_box = IndBox(l=0.0, u=_c_param)
     _dual_nonnegative = IndNonNegative()
@@ -493,10 +601,19 @@ def _(
         ], 'inf')
         _res = _VP.solve()
         all_residuals_momentum.append(_res)
+        worst_case_z0_pdhg_mom.append(_VP.get_solution_value(_z0))
+        worst_case_v0_pdhg_mom.append(_VP.get_solution_value(_v0))
+        worst_case_w0_pdhg_mom.append(_VP.get_solution_value(_w0))
         worst_case_x_param_pdhg_mom.append(_VP.get_solution_value(_x_param))
 
     print(all_residuals_momentum)
-    return all_residuals_momentum, worst_case_x_param_pdhg_mom
+    return (
+        all_residuals_momentum,
+        worst_case_v0_pdhg_mom,
+        worst_case_w0_pdhg_mom,
+        worst_case_x_param_pdhg_mom,
+        worst_case_z0_pdhg_mom,
+    )
 
 
 @app.cell
@@ -510,11 +627,11 @@ def _(
     c,
     eta,
     mu,
-    n_d,
-    n_s,
     np,
+    worst_case_v0_pdhg_mom,
+    worst_case_w0_pdhg_mom,
     worst_case_x_param_pdhg_mom,
-    z0_value,
+    worst_case_z0_pdhg_mom,
 ):
     # Simulate each horizon with its own worst-case demand vector for momentum PDHG.
     worst_case_residuals_pdhg_mom = []
@@ -523,9 +640,9 @@ def _(
     for _k in range(1, K + 1):
         _x_k = np.array(worst_case_x_param_pdhg_mom[_k - 1], dtype=float)
 
-        _z = np.array(z0_value, dtype=float)
-        _v = np.zeros(n_s, dtype=float)
-        _w = np.zeros(n_d, dtype=float)
+        _z = np.array(worst_case_z0_pdhg_mom[_k - 1], dtype=float)
+        _v = np.array(worst_case_v0_pdhg_mom[_k - 1], dtype=float)
+        _w = np.array(worst_case_w0_pdhg_mom[_k - 1], dtype=float)
         _last_residual = 0.0
 
         for _j in range(1, _k + 1):
@@ -554,36 +671,12 @@ def _(
     return (worst_case_residuals_pdhg_mom,)
 
 
-@app.cell
-def _(
-    K,
-    all_residuals,
-    all_residuals_momentum,
-    plt,
-    simulation_residuals_pdhg,
-    simulation_residuals_pdhg_mom,
-    worst_case_residuals_pdhg,
-    worst_case_residuals_pdhg_mom,
-):
-    plt.figure()
-    plt.plot(range(1, K+1), all_residuals, label='PDHG (MIP worst-case)')
-    plt.plot(range(1, K+1), simulation_residuals_pdhg, '--', label='PDHG (in-sample avg)')
-    plt.plot(range(1, K+1), worst_case_residuals_pdhg, '-.', color='k', linewidth=.5, label='worst-case PDHG instance')
-    plt.plot(range(1, K+1), all_residuals_momentum, label='momentum PDHG (MIP worst-case)')
-    plt.plot(range(1, K+1), simulation_residuals_pdhg_mom, '--', label='momentum PDHG (in-sample avg)')
-    plt.plot(range(1, K+1), worst_case_residuals_pdhg_mom, ':', color='k', linewidth=.8, label='worst-case momentum PDHG instance')
-    # plt.yscale('log')
-    plt.xlabel(r'$K$')
-    plt.ylabel('Worst-case KKT residual')
-    plt.legend()
-    plt.suptitle('network optimization example (MIP)')
-    return
-
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We compare our results to the worst-case performance of the algorithm returned by the performance estimation problem (PEP), using the package [`PEPit`](https://pepit.readthedocs.io/en/0.5.1/). Specifically, we measure the performance of PDHG applied on
+    We compare our results to the worst-case performance of the algorithm returned
+    by the performance estimation problem (PEP), using the shared `PEPitRunner`.
+    Specifically, we measure the performance of PDHG applied on
 
     \begin{array}{ll}
         \textnormal{minimize}_x & \textnormal{maximize}_u & \mathcal{L}(x, u) = f(x) + u^T (Ax-b) - g^*(u),
@@ -600,112 +693,74 @@ def _(mo):
 
 
 @app.cell
-def _(K, L, eta):
-    from PEPit import PEP, Point
-    from PEPit.functions import ConvexFunction
-    from PEPit.operators import LinearOperator
-    from PEPit.primitive_steps import proximal_step
-
-    all_residuals_PEP = []
-    for _k_PEP in range(1, K+1):
-        _problem = PEP()
-        _f = _problem.declare_function(ConvexFunction)
-        _g = _problem.declare_function(ConvexFunction)
-        _linear = _problem.declare_function(LinearOperator, L=L)
-
-        # Define optimal primal-dual pair (xs, us)
-        _xs = Point()
-        _us = Point()
-        _f.add_point((_xs, -_linear.T.gradient(_us), _f(_xs)))
-        _g.add_point((_us, _linear.gradient(_xs), _g(_us)))
-
-        # Declare initial points (x0, u0)
-        _x0 = _problem.set_initial_point()
-        _u0 = _problem.set_initial_point()
-        _problem.set_initial_condition((_x0 - _xs)**2 + (_u0 - _us)**2 <= 1.0)
-
-        _x = [None for _ in range(_k_PEP+1)]
-        _u = [None for _ in range(_k_PEP+1)]
-        _x[0] = _x0
-        _u[0] = _u0
-
-        for _k in range(1, _k_PEP+1):
-            _x[_k], _, _ = proximal_step(_x[_k-1] - eta * _linear.T.gradient(_u[_k-1]), _f, eta)
-            _u[_k], _, _ = proximal_step(_u[_k-1] + eta * _linear.gradient(2*_x[_k] - _x[_k-1]), _g, eta)
-        _problem.set_performance_metric((_x[_k_PEP] - _x[_k_PEP-1])**2 + (_u[_k_PEP] - _u[_k_PEP-1])**2)
-        _res = _problem.solve(solver='SCS')
-        all_residuals_PEP.append(_res) # account for L-infinity norm of VP
-    return (
-        ConvexFunction,
-        LinearOperator,
-        PEP,
-        Point,
-        all_residuals_PEP,
-        proximal_step,
-    )
+def _(K, L, PEPitRunner, eta, pepit_radius):
+    all_residuals_PEP, _ = PEPitRunner().pdhg_residuals(
+        K=K, L=float(L), eta=float(eta), R=pepit_radius)
+    return (all_residuals_PEP,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Now obtain the result for momentum PDHG:
-
-    \begin{array}{lll}
-        x^{k+1} &=& \mathbf{prox}_{\eta f} (x^k - \eta A^T u^k) \\
-        \tilde{x}^{k+1} &=& x^{k+1} + \frac{k}{k+3} (x^{k+1} - x^k) \\
-        u^{k+1} &=& \mathbf{prox}_{\eta g^*} (u^k + \eta ( A (2\tilde{x}^{k+1} - x^k) - b ) ).
-    \end{array}
+    Now we plot the verification results against the PEPit bound and the
+    horizon-specific worst-case instances extracted from MIP.
     """)
     return
 
 
 @app.cell
-def _(ConvexFunction, K, L, LinearOperator, PEP, Point, eta, proximal_step):
-    all_residuals_momentum_PEP = []
-    for _k_PEP in range(1, K+1):
-        _problem = PEP()
-        _f = _problem.declare_function(ConvexFunction)
-        _g = _problem.declare_function(ConvexFunction)
-        _linear = _problem.declare_function(LinearOperator, L=L)
+def _(
+    K,
+    all_residuals,
+    all_residuals_PEP,
+    plt,
+    simulation_residual_quantiles_pdhg,
+    simulation_residuals_pdhg,
+    worst_case_residuals_pdhg,
+):
+    plt.figure()
+    _ks = range(1, K+1)
+    plt.plot(_ks, all_residuals_PEP, label='PDHG (PEPit)')
+    plt.plot(_ks, all_residuals, label='PDHG (MIP worst-case)')
+    plt.plot(_ks, simulation_residuals_pdhg, '--', label='PDHG (in-sample avg)')
+    plt.fill_between(_ks, simulation_residual_quantiles_pdhg[2], simulation_residual_quantiles_pdhg[0], alpha=.18, label='PDHG simulation 10%-90% band')
+    plt.plot(_ks, worst_case_residuals_pdhg, '-.', color='k', linewidth=.7, label='worst-case PDHG instance')
+    plt.yscale('log')
+    plt.xlabel(r'$K$')
+    plt.ylabel('Worst-case KKT residual')
+    plt.legend()
+    plt.suptitle('network optimization example')
+    return
 
-        # Define optimal primal-dual pair (xs, us)
-        _xs = Point()
-        _us = Point()
-        _f.add_point((_xs, -_linear.T.gradient(_us), _f(_xs)))
-        _g.add_point((_us, _linear.gradient(_xs), _g(_us)))
 
-        # Declare initial points (x0, u0)
-        _x0 = _problem.set_initial_point()
-        _u0 = _problem.set_initial_point()
-        _problem.set_initial_condition((_x0 - _xs)**2 + (_u0 - _us)**2 <= 1.0)
-
-        _x = [None for _ in range(_k_PEP+1)]
-        _xtilde = [None for _ in range(_k_PEP+1)]
-        _u = [None for _ in range(_k_PEP+1)]
-        _x[0] = _x0
-        _u[0] = _u0
-
-        for _k in range(1, _k_PEP+1):
-            _x[_k], _, _ = proximal_step(_x[_k-1] - eta * _linear.T.gradient(_u[_k-1]), _f, eta)
-            _xtilde[_k] = _x[_k] + (_k-1)/(_k+2) * (_x[_k] - _x[_k-1])
-            _u[_k], _, _ = proximal_step(_u[_k-1] + eta * _linear.gradient(2*_xtilde[_k] - _x[_k-1]), _g, eta)
-        _problem.set_performance_metric((_x[_k_PEP] - _x[_k_PEP-1])**2 + (_u[_k_PEP] - _u[_k_PEP-1])**2)
-        _res = _problem.solve(solver='SCS')
-        all_residuals_momentum_PEP.append(_res) # account for L-infinity norm of VP
-    return (all_residuals_momentum_PEP,)
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    We also plot the verification results for momentum PDHG.
+    """)
+    return
 
 
 @app.cell
-def _(K, all_residuals_PEP, all_residuals_momentum_PEP, plt):
+def _(
+    K,
+    all_residuals_momentum,
+    plt,
+    simulation_residual_quantiles_pdhg_mom,
+    simulation_residuals_pdhg_mom,
+    worst_case_residuals_pdhg_mom,
+):
     plt.figure()
-    plt.plot(range(1, K+1), all_residuals_PEP, label='PDHG')
-    plt.plot(range(1, K+1), all_residuals_momentum_PEP, label='momentum PDHG')
+    _ks = range(1, K+1)
+    plt.plot(_ks, all_residuals_momentum, label='momentum PDHG (MIP worst-case)')
+    plt.plot(_ks, simulation_residuals_pdhg_mom, '--', label='momentum PDHG (in-sample avg)')
+    plt.fill_between(_ks, simulation_residual_quantiles_pdhg_mom[2], simulation_residual_quantiles_pdhg_mom[0], alpha=.18, label='momentum PDHG simulation 10%-90% band')
+    plt.plot(_ks, worst_case_residuals_pdhg_mom, '-.', color='k', linewidth=.7, label='worst-case momentum PDHG instance')
     plt.yscale('log')
-    plt.xscale('log')
-    plt.ylabel('Worst-case fixed-point residual')
     plt.xlabel(r'$K$')
-    plt.suptitle('network optimization example (PEP)')
+    plt.ylabel('Worst-case KKT residual')
     plt.legend()
+    plt.suptitle('network optimization momentum PDHG example')
     return
 
 
