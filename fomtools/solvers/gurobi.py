@@ -487,6 +487,7 @@ class GurobiSolver(MIPSolver):
         """
         new_solver = GurobiSolver.__new__(GurobiSolver)
         new_solver._relaxed_model = None
+        new_solver.solver_params = self.solver_params
         new_solver.model = self.model.copy()
 
         # Rebuild vector_var_map with variables from the copied model

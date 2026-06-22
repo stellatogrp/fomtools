@@ -376,6 +376,7 @@ class HiGHSSolver(MIPSolver):
         """
         new_solver = HiGHSSolver.__new__(HiGHSSolver)
         new_solver._relaxed_model = None
+        new_solver.solver_params = self.solver_params
         new_solver.model = hp.Highs()
         new_solver._var_counter = self._var_counter
 

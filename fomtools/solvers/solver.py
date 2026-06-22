@@ -27,6 +27,9 @@ class Solver(object):
         """
         self._relaxed_model = None
         self.vector_var_map = {}
+        # Retain the params so the attribute always exists (and copies can carry
+        # it over); subclasses such as ClarabelSolver also read it at solve time.
+        self.solver_params = solver_params
         if solver_params is not None:
             self.set_solver_params(solver_params)
 

@@ -1627,7 +1627,9 @@ class SDP(Canonicalizer):
             idx = sorted(cone_indices)
             constraints += [X[np.ix_(idx, idx)] >> 0]
         prob = cp.Problem(obj, constraints)
-        # `solver` is reserved by FOMTools; user options override construction params.
+        # `solver` is fixed to CLARABEL below (it is a named arg of cvxpy's
+        # Problem.solve, so a user `solver=` kwarg would collide there);
+        # solve-time options override construction-time params.
         merged = {**(self.solver_params or {}), **solver_kwargs}
         try:
             res = prob.solve(solver=cp.CLARABEL, **merged)
