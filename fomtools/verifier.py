@@ -107,14 +107,17 @@ class Verifier(object):
             ``method != "sdp"``.
         cross_cut : bool, default False
             SDP-only: add the PEP "cross" interpolation cuts ``z_a r_b <= 0``
-            coupling pairs of ReLU output components across steps. Self-registers
-            minimal PSD cones (no need for ``full_psd_cone``). No effect for
-            ``method != "sdp"``.
+            coupling pairs of ReLU output components across steps; for
+            saturated-linear (box projection) steps it also adds the box
+            normal-cone cuts. Self-registers minimal PSD cones (no need for
+            ``full_psd_cone``). No effect for ``method != "sdp"``.
         subgrad_mono_cut : bool, default False
             SDP-only: add the PEP subgradient-monotonicity cuts
-            ``<s^i/tau_i - s^j/tau_j, z^i> >= 0`` over pairs of prox steps. On the
-            orthant this reduces to ``cross_cut``; on soft-thresholding it is a
-            distinct coupling. No effect for ``method != "sdp"``.
+            ``<s^i/tau_i - s^j/tau_j, z^i> >= 0`` over pairs of prox steps; for
+            saturated-linear steps it also adds the box firm-nonexpansiveness /
+            monotonicity cuts. On the orthant the prox form reduces to
+            ``cross_cut``; on soft-thresholding it is a distinct coupling. No effect
+            for ``method != "sdp"``.
         """
         self.theory_func = theory_func
         self.iterates = []

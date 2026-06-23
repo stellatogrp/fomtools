@@ -92,7 +92,17 @@ class SDPStepDecomposer(StepDecomposer):
             A composite expression representing the saturated linear
             output as relu(x - l) - relu(x - u) + l.
         """
-        return self._decompose_saturatedlinear_to_relus(step)
+        z = self._decompose_saturatedlinear_to_relus(step)
+
+        # Register the composite box-projection prox for the PEP box cuts (normal
+        # cone under cross_cut, monotonicity under subgrad_mono_cut). The internal
+        # ReLUs are NOT skipped — their orthant cuts stay valid; the box cuts are
+        # added on top. Guarded for non-SDP decomposers.
+        register = getattr(self.canonicalizer, "register_box_prox_step", None)
+        if register is not None:
+            register(z=z, v=step.arg, l=step.l, u=step.u)
+
+        return z
 
     _DECOMPOSERS = {
         "saturatedlinear": decompose_saturatedlinear,

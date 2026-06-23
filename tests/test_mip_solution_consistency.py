@@ -252,3 +252,81 @@ def test_satlin_solution_on_graph_smoke():
             arg = np.atleast_1d(vp.get_solution_value(step.arg))
             out = np.atleast_1d(vp.get_solution_value(step.output))
             assert np.allclose(out, np.clip(arg, lo, hi), atol=TEST_EPS)
+
+
+# ---- satlin mixed-regime consistency (regression for the lower-or-middle bug) ---- #
+#
+# The native canonicalize_saturatedlinear had the same bug class as soft-threshold:
+# its "lower-or-middle" case (lb < l <= ub <= u) failed to pin the lower-saturation
+# branch to l, admitting off-graph outputs (e.g. output=-0.577 where arg=-1.236 < l=-1
+# should give exactly l). These tests drive satlin into all uncertain sub-cases via an
+# iterate box straddling the saturation faces, and assert the returned iterates are
+# on-graph and the reported objective matches the true forward-simulated value.
+
+
+def _build_boxpgd(seed, K, obbt_solver=None):
+    """Chained box-PGD whose wide iterate box drives satlin rows into the
+    uncertain (mixed) cases. Returns the data needed to forward-simulate."""
+    rng = np.random.default_rng(seed)
+    n = 2
+    P = np.eye(n) + 0.1 * rng.normal(size=(n, n))
+    P = (P + P.T) / 2
+    q = rng.normal(size=n)
+    lo = np.array([-1.0, -0.5])
+    hi = np.array([0.5, 1.0])
+    t = 0.5
+
+    vp = Verifier(method="mip", solver="gurobi", obbt_solver=obbt_solver, params=dict(GUROBI_SILENT))
+    q_param = vp.add_param(n, lb=q - 0.5, ub=q + 0.5)
+    z = [vp.add_iterate(n, lb=-1.5, ub=1.5)]  # straddles [lo, hi] faces
+    for k in range(K):
+        z.append(vp.step.satlin(z[k] - t * (P @ z[k] + q_param), l=lo, u=hi))
+    vp.set_objective_norm(z[K] - z[K - 1], 2)
+    return vp, z, q_param, P, q, lo, hi, t, K
+
+
+def _boxpgd_forward_objective(vp, z, q_param, P, q, lo, hi, t, K):
+    q_star = vp.get_solution_value(q_param)
+    zt = [vp.get_solution_value(z[0])]
+    for _ in range(K):
+        zt.append(np.clip(zt[-1] - t * (P @ zt[-1] + q_star), lo, hi))
+    return float(np.sum((zt[K] - zt[K - 1]) ** 2))
+
+
+@pytest.mark.parametrize("obbt_solver", [None, "highs"])
+@pytest.mark.parametrize("K", [2, 3])
+@pytest.mark.parametrize("seed", [22, 13, 0, 7])
+def test_satlin_solution_on_graph_mixed(seed, K, obbt_solver):
+    """Every satlin iterate is on-graph (output == clip(arg, l, u)) and the reported
+    objective equals the true forward-simulated objective — across seeds, depths, and
+    OBBT on/off, in the box-straddling regime that exposed the lower-or-middle bug."""
+    vp, z, q_param, P, q, lo, hi, t, K = _build_boxpgd(seed, K, obbt_solver)
+    objval = vp.solve()
+    for step in vp.steps:
+        if isinstance(step, SaturatedLinear):
+            arg = np.atleast_1d(vp.get_solution_value(step.arg))
+            out = np.atleast_1d(vp.get_solution_value(step.output))
+            assert np.allclose(out, np.clip(arg, lo, hi), atol=TEST_EPS), (
+                f"off-graph satlin: arg={arg}, out={out}, clip={np.clip(arg, lo, hi)}"
+            )
+    true_obj = _boxpgd_forward_objective(vp, z, q_param, P, q, lo, hi, t, K)
+    assert objval == pytest.approx(true_obj, abs=TEST_EPS)
+
+
+def test_satlin_lower_or_middle_branch_exercised():
+    """Confirm the regression actually drives a satlin row into the lower-or-middle
+    case (lb < l <= ub <= u) — the branch that carried the bug — so the on-graph
+    test above is meaningful."""
+    vp, *_ = _build_boxpgd(22, 3)
+    vp.solve()
+    lo = np.array([-1.0, -0.5])
+    hi = np.array([0.5, 1.0])
+    seen_lower_or_middle = False
+    for step in vp.steps:
+        if isinstance(step, SaturatedLinear):
+            lb = np.atleast_1d(step.lb)
+            ub = np.atleast_1d(step.ub)
+            for j in range(step.arg.ndim):
+                if lb[j] < lo[j] and lo[j] <= ub[j] <= hi[j]:
+                    seen_lower_or_middle = True
+    assert seen_lower_or_middle, "regression did not exercise the lower-or-middle case"

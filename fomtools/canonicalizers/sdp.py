@@ -136,7 +136,10 @@ class SDP(Canonicalizer):
             PSD cone over the indices it touches so it binds without
             ``full_psd_cone`` (Clarabel handles many small cones efficiently; the
             ``add_psd_cone_indices`` antichain subsumes a cone already covered by a
-            larger one).
+            larger one). For saturated-linear (box projection) steps this flag also
+            emits the box normal-cone cuts (per coordinate ``j``: ``r_j(z_j-l_j)>=0``,
+            ``r_j(z_j-u_j)>=0`` within a step, and ``r_j^b(z_j^a-z_j^b)<=0`` across
+            same-box steps), via :meth:`_build_box_normalcone_cuts`.
         subgrad_mono_cut : bool, default=False
             If True, add the PEP subgradient-monotonicity cuts
             ``<s^i/tau_i - s^j/tau_j, z^i> >= 0`` over ordered pairs of registered
@@ -146,7 +149,10 @@ class SDP(Canonicalizer):
             of the same (homogeneous) function are comparable. On the orthant this
             reduces to the cross cut; on the soft-threshold (ell-1 prox) it is a
             genuinely distinct coupling. Self-registers minimal PSD cones like
-            ``cross_cut``.
+            ``cross_cut``. For saturated-linear (box projection) steps this flag also
+            emits the box firm-nonexpansiveness/monotonicity cuts (per coordinate:
+            ``(z_j^a-z_j^b)(r_j^a-r_j^b)>=0`` across same-box steps), via
+            :meth:`_build_box_mono_cuts`.
         """
         super(SDP, self).__init__(solver_params, solver)
         self.solver_name = solver.lower()  # Store for dispatch
@@ -184,6 +190,7 @@ class SDP(Canonicalizer):
         self._cut_bineq_upperbounds = []
         self._relu_steps = []  # registry for triangle / envelope / cross cuts
         self._prox_steps = []  # registry for subgradient-monotonicity cuts
+        self._box_prox_steps = []  # registry for satlin (box projection) PEP cuts
         self._ineq_constraints = []  # (constraint, add_product_cuts) for inequality cuts
 
         self.C_obj = None
@@ -388,6 +395,7 @@ class SDP(Canonicalizer):
         new_canon._cut_bineq_upperbounds = []
         new_canon._relu_steps = list(self._relu_steps)  # shallow: Relu objs are shared
         new_canon._prox_steps = list(self._prox_steps)  # shallow: exprs/scalars immutable
+        new_canon._box_prox_steps = list(self._box_prox_steps)  # shallow: exprs/arrays immutable
         new_canon._ineq_constraints = list(self._ineq_constraints)  # shallow: (constr, flag) tuples
         new_canon.C_obj = self.C_obj.copy() if self.C_obj is not None else None
         new_canon.obbt_handler = self.obbt_handler
@@ -665,6 +673,29 @@ class SDP(Canonicalizer):
             Prox threshold used to normalize the subgradient.
         """
         self._prox_steps.append({"z": z, "v": v, "tau": float(tau)})
+        self._cuts_dirty = True
+
+    def register_box_prox_step(self, z: LinearExpression, v: LinearExpression, l, u) -> None:
+        """
+        Register a saturated-linear (box projection) step for the PEP box cuts.
+
+        Records ``(z, v, l, u)`` where ``z = clip(v, l, u)`` is the composite
+        projection output (``relu(v - l) - relu(v - u) + l`` in the SDP lift), ``v``
+        is the input expression (``step.arg``; residual ``r = v - z``), and ``l`` /
+        ``u`` are the box bounds (constant arrays or ``LinearExpression`` if
+        parametric). Consumed by :meth:`_build_box_normalcone_cuts` (under
+        ``cross_cut``) and :meth:`_build_box_mono_cuts` (under ``subgrad_mono_cut``).
+
+        Parameters
+        ----------
+        z : LinearExpression
+            Box-projection output (composite); leaves already in ``var_idx_map``.
+        v : LinearExpression
+            Box-projection input (``step.arg``).
+        l, u : np.ndarray | LinearExpression
+            Lower/upper box bounds (per the operator's ``l`` / ``u``).
+        """
+        self._box_prox_steps.append({"z": z, "v": v, "l": l, "u": u})
         self._cuts_dirty = True
 
     def add_psd_cone_indices(self, new_indices):
@@ -1183,9 +1214,11 @@ class SDP(Canonicalizer):
         # the end of this method (same pattern as the ``rlt_all_pairs`` branch).
         if self.cross_cut:
             self._build_cross_cuts()
+            self._build_box_normalcone_cuts()
 
         if self.subgrad_mono_cut:
             self._build_subgrad_mono_cuts()
+            self._build_box_mono_cuts()
 
         if self._ineq_constraints and (
             self.ineq_product_cuts or self.ineq_box_cuts or self.ineq_square_cuts
@@ -1753,6 +1786,104 @@ class SDP(Canonicalizer):
                 # Cut is >= 0: push -symmetrize(M) with ub 0.
                 self._cut_ineq_matrices.append(-symmetrize(M.tocsc()))
                 self._cut_bineq_upperbounds.append(0.0)
+
+    @staticmethod
+    def _box_bound_scalar(bound, j):
+        """Scalar j-th box bound: a float for constant arrays, or the j-th slice
+        (a length-1 LinearExpression) when the bound is parametric."""
+        if isinstance(bound, LinearExpression):
+            return bound[j]
+        return float(np.atleast_1d(bound)[j])
+
+    @staticmethod
+    def _box_bound_eq(x, y) -> bool:
+        """Whether two box bounds are 'the same' for cross-step pairing: identity
+        for parametric (LinearExpression) bounds, value-equality for constants."""
+        if isinstance(x, LinearExpression) or isinstance(y, LinearExpression):
+            return x is y
+        return np.array_equal(np.atleast_1d(x), np.atleast_1d(y))
+
+    def _same_box(self, a: dict, b: dict) -> bool:
+        """Two box-prox steps project onto the same box ``[l, u]``."""
+        return self._box_bound_eq(a["l"], b["l"]) and self._box_bound_eq(a["u"], b["u"])
+
+    def _emit_scalar_product_cut(self, e1: LinearExpression, e2: LinearExpression, sense: str):
+        r"""
+        Emit the per-component cut ``e1 . e2  {<=,>=}  0`` where ``e1``, ``e2`` are
+        scalar (length-1) affine expressions. ``tr(M X) = e1 . e2`` via
+        :meth:`_cross_innerprod_block` (inner product of 1-vectors = the scalar
+        product). Registers the minimal PSD cone over the involved leaves so the
+        bilinear term binds, then pushes ``+sym`` (for ``<=``) or ``-sym`` (for
+        ``>=``) with ub 0 — the standard convention.
+        """
+        _, idx1 = self.linexpr_to_Amat_and_bounds(e1)
+        _, idx2 = self.linexpr_to_Amat_and_bounds(e2)
+        self.add_psd_cone_indices(idx1 + idx2)
+        M = self._cross_innerprod_block(e1, e2)
+        sym = symmetrize(M.tocsc())
+        self._cut_ineq_matrices.append(sym if sense == "<=" else -sym)
+        self._cut_bineq_upperbounds.append(0.0)
+
+    def _build_box_normalcone_cuts(self) -> None:
+        r"""
+        Append the PEP box-projection normal-cone cuts for satlin steps (the box
+        analog of the ReLU cross cut; emitted under ``cross_cut``).
+
+        For a box projection ``z_j = clip(v_j, l_j, u_j)`` with residual
+        ``r_j = v_j - z_j`` (``r_j in N_{[l_j,u_j]}(z_j)``):
+
+        - **C1/C2 (within step):** ``r_j (z_j - l_j) >= 0`` and ``r_j (z_j - u_j) >= 0``
+          (the residual vs the two box corners).
+        - **C3 (cross step, same coord, same box):** ``r_j^b (z_j^a - z_j^b) <= 0``
+          for any other box-projection output ``z^a`` onto the same box (since
+          ``z_j^a in [l_j, u_j]`` and ``r_j^b`` is in the normal cone at ``z_j^b``).
+
+        Cuts are **per-coordinate** (the box ``z``/``r`` are not sign-definite, so
+        cross-coordinate products are NOT valid — unlike the ReLU cone cross cut).
+        """
+        boxes = self._box_prox_steps
+        for b_idx, b in enumerate(boxes):
+            zb, vb = b["z"], b["v"]
+            rb = vb - zb
+            n = zb.ndim
+            for j in range(n):
+                rbj = rb[j]
+                lj = self._box_bound_scalar(b["l"], j)
+                uj = self._box_bound_scalar(b["u"], j)
+                # C1: r_j (z_j - l_j) >= 0 ; C2: r_j (z_j - u_j) >= 0
+                self._emit_scalar_product_cut(rbj, zb[j] - lj, ">=")
+                self._emit_scalar_product_cut(rbj, zb[j] - uj, ">=")
+
+            # C3: r_j^b (z_j^a - z_j^b) <= 0 over ordered same-box pairs.
+            for a_idx, a in enumerate(boxes):
+                if a_idx == b_idx or not self._same_box(a, b):
+                    continue
+                za = a["z"]
+                for j in range(n):
+                    self._emit_scalar_product_cut(rb[j], za[j] - zb[j], "<=")
+
+    def _build_box_mono_cuts(self) -> None:
+        r"""
+        Append the PEP box-projection firm-nonexpansiveness / monotonicity cuts for
+        satlin steps (the box analog of the subgradient-monotonicity cut; emitted
+        under ``subgrad_mono_cut``).
+
+        For two box projections onto the **same** box, per coordinate ``j``:
+        ``(z_j^a - z_j^b)(r_j^a - r_j^b) >= 0`` with ``r = v - z`` — equivalently
+        the firm-nonexpansiveness inequality ``<z^a-z^b, v^a-v^b> >= ||z^a-z^b||^2``
+        read per coordinate. Valid because the scalar clip and its residual are both
+        monotone nondecreasing. Unordered pairs (the cut is symmetric in ``a, b``).
+        """
+        boxes = self._box_prox_steps
+        for a_idx, b_idx in combinations(range(len(boxes)), 2):
+            a, b = boxes[a_idx], boxes[b_idx]
+            if not self._same_box(a, b):
+                continue
+            za, va = a["z"], a["v"]
+            zb, vb = b["z"], b["v"]
+            ra, rb = va - za, vb - zb
+            for j in range(za.ndim):
+                self._emit_scalar_product_cut(za[j] - zb[j], ra[j] - rb[j], ">=")
 
     def solve_model(self, steps=None, convex_hull_cuts=False, **solver_kwargs):
         """Solve the SDP problem using the configured solver.

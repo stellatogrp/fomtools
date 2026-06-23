@@ -1671,3 +1671,160 @@ def test_pep_cuts_close_gap_to_mip(problem, min_cross, min_subgrad, min_both, co
         # ISTA: combining strictly beats either family (>= 10% smaller residual gap).
         assert (both - mip) <= 0.9 * (cross - mip) + TEST_EPS
         assert (both - mip) <= 0.9 * (subgrad - mip) + TEST_EPS
+
+
+# ============================================================
+# Phase 11: PEP box-projection cuts for saturated-linear (satlin)
+# ============================================================
+#
+# satlin = clip(v, l, u) (box projection). It decomposes to relu(v-l)-relu(v-u)+l,
+# so the ReLU-level cross/subgrad cuts already fire on its internal ReLUs; these add
+# the box-operator-level cuts on the composite z and residual r = v - z (emitted
+# under the same cross_cut / subgrad_mono_cut flags):
+#   normal-cone (cross_cut): r_j(z_j-l_j)>=0, r_j(z_j-u_j)>=0, r_j^b(z_j^a-z_j^b)<=0
+#   monotonicity (subgrad_mono_cut): (z_j^a-z_j^b)(r_j^a-r_j^b)>=0
+# Per-coordinate, same-box only (cross-coordinate is invalid; verified in planning).
+
+GUROBI_SILENT_BOX = {"OutputFlag": 0, "LogToConsole": 0}
+
+
+def _build_boxpgd_mixed(vp, K, P, q, lo, hi, t):
+    """Box-PGD objective expr with a straddling iterate box so satlin rows land in
+    the uncertain (mixed) cases. Identical build for SDP and MIP."""
+    n = P.shape[0]
+    qp = vp.add_param(n, lb=q - 0.5, ub=q + 0.5)
+    z = [vp.add_iterate(n, lb=-1.5, ub=1.5)]
+    for k in range(K):
+        z.append(vp.step.satlin(z[k] - t * (P @ z[k] + qp), l=lo, u=hi))
+    return z[K] - z[K - 1]
+
+
+def _boxpgd_mixed_data(seed=22):
+    rng = np.random.default_rng(seed)
+    n = 2
+    P = np.eye(n) + 0.1 * rng.normal(size=(n, n))
+    P = (P + P.T) / 2
+    q = rng.normal(size=n)
+    lo = np.array([-1.0, -0.5])
+    hi = np.array([0.5, 1.0])
+    return P, q, lo, hi, 0.5
+
+
+def _sdp_true_trajectory_lift(canon, rng):
+    """Rank-1 lift X = u u^T of a true feed-forward trajectory: free leaves
+    (params/iterates) sampled in-bounds, ReLU output leaves filled topologically
+    from their args. Used to check every emitted cut holds on a true point."""
+    dim = canon.get_sdp_var_dim()
+    u = np.zeros(dim)
+    u[0] = 1.0
+    relu_out = {s.output_leaves[0] for s in canon._relu_steps}
+    for leaf, (s, e) in canon.var_idx_map.items():
+        if leaf in relu_out:
+            continue
+        lbv = np.atleast_1d(leaf.lb)
+        ubv = np.atleast_1d(leaf.ub)
+        u[s:e] = rng.uniform(lbv, ubv)
+    for step in canon._relu_steps:
+        A, idxs = canon.linexpr_to_Amat_and_bounds(step.arg)
+        xv = np.concatenate([u[a:b] for (a, b) in idxs])
+        argv = np.asarray(A @ xv).flatten() + np.asarray(step.arg.const).flatten()
+        ys, ye = canon.var_idx_map[step.output_leaves[0]]
+        u[ys:ye] = np.maximum(0.0, argv[sorted(step.proj_indices)])
+    return np.outer(u, u)
+
+
+def test_box_cuts_registered_and_emitted():
+    """A satlin step registers a box prox and, with the flags on, emits box cuts."""
+    P, q, lo, hi, t = _boxpgd_mixed_data()
+    vp = Verifier(
+        method="sdp", solver="clarabel", obbt_solver=None, cross_cut=True, subgrad_mono_cut=True
+    )
+    expr = _build_boxpgd_mixed(vp, 2, P, q, lo, hi, t)
+    vp.set_objective_norm(expr, 2)
+    # Two satlin steps -> two box-prox entries registered.
+    assert len(vp.canonicalizer._box_prox_steps) == 2
+    vp.solve()
+    # Box cuts are emitted (more than the ReLU-only cross cuts would produce).
+    base = Verifier(method="sdp", solver="clarabel", obbt_solver=None, cross_cut=True)
+    _ = _build_boxpgd_mixed(base, 2, P, q, lo, hi, t)
+    base.set_objective_norm(_, 2)
+    base.solve()
+    assert len(_solved_canon(vp)._cut_ineq_matrices) > 0
+
+
+@pytest.mark.parametrize("seed", [22, 0, 7])
+def test_box_cuts_valid_on_true_trajectory(seed):
+    """Every emitted cut (ReLU cross + box normal-cone + box monotonicity) holds on
+    the rank-1 lift of many true box-PGD trajectories — i.e. no cut removes a true
+    point."""
+    P, q, lo, hi, t = _boxpgd_mixed_data(seed)
+    vp = Verifier(
+        method="sdp", solver="clarabel", obbt_solver=None, cross_cut=True, subgrad_mono_cut=True
+    )
+    vp.set_objective_norm(_build_boxpgd_mixed(vp, 3, P, q, lo, hi, t), 2)
+    vp.solve()
+    canon = _solved_canon(vp)
+    rng = np.random.default_rng(123)
+    for _ in range(40):
+        X = _sdp_true_trajectory_lift(canon, rng)
+        for M, b in zip(canon._cut_ineq_matrices, canon._cut_bineq_upperbounds):
+            assert float((M @ X).trace()) <= b + 1e-7, "box/ReLU cut cuts a true point"
+
+
+def test_box_mono_cuts_same_box_only():
+    """Box monotonicity (C4) fires only between satlin steps with the SAME box;
+    a differently-boxed step shares no C4 cut with the others."""
+
+    # Build through the decomposer path so box proxes register, then count C4 cuts.
+    def _count(boxes):
+        vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, subgrad_mono_cut=True)
+        x = vp.add_iterate(1, lb=-2.0, ub=2.0)
+        for lo, hi in boxes:
+            x = vp.step.satlin(x, l=np.array([lo]), u=np.array([hi]))
+        vp.set_objective_norm(x, 2)
+        vp.solve()
+        canon = _solved_canon(vp)
+        canon._cut_ineq_matrices = []
+        canon._cut_bineq_upperbounds = []
+        canon._build_box_mono_cuts()
+        return len(canon._cut_ineq_matrices)
+
+    same = _count([(-1.0, 1.0), (-1.0, 1.0), (-1.0, 1.0)])  # 3 same-box -> C(3,2)=3 pairs * 1 coord
+    mixed = _count([(-1.0, 1.0), (-1.0, 1.0), (-0.5, 0.5)])  # only 1 same-box pair
+    assert same == 3
+    assert mixed == 1
+
+
+def test_box_cuts_close_gap_to_mip():
+    """Tightening regression: on a mixed-regime box-PGD instance the box cuts close
+    most of the SDP-to-exact-MIP gap (and stay valid)."""
+    pytest.importorskip("gurobipy", reason="exact two-norm MIP requires Gurobi")
+    P, q, lo, hi, t = _boxpgd_mixed_data(22)
+    K = 3
+
+    vp_mip = Verifier(
+        method="mip", solver="gurobi", obbt_solver=None, params=dict(GUROBI_SILENT_BOX)
+    )
+    vp_mip.set_objective_norm(_build_boxpgd_mixed(vp_mip, K, P, q, lo, hi, t), 2)
+    mip = vp_mip.solve()
+
+    def sdp(**kw):
+        vp = Verifier(
+            method="sdp", solver="clarabel", obbt_solver=None,
+            rlt_cuts=True, relu_envelope_cuts=True, **kw,
+        )
+        vp.set_objective_norm(_build_boxpgd_mixed(vp, K, P, q, lo, hi, t), 2)
+        return vp.solve()
+
+    base = sdp()
+    cross = sdp(cross_cut=True)
+    subgrad = sdp(subgrad_mono_cut=True)
+    both = sdp(cross_cut=True, subgrad_mono_cut=True)
+
+    for label, v in (("base", base), ("cross", cross), ("subgrad", subgrad), ("both", both)):
+        assert v >= mip - TEST_EPS, f"{label}: sdp {v} < mip {mip} (invalid box cut)"
+
+    base_gap = base - mip
+    assert base_gap > 0.1
+    assert (base_gap - (cross - mip)) / base_gap >= 0.85
+    assert (base_gap - (both - mip)) / base_gap >= 0.85

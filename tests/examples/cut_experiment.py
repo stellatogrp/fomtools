@@ -95,6 +95,16 @@ def build_ista(vp, K, At, Bt, lambda_t, b, b_hw, z0_lo, z0_hi):
     return z[K] - z[K - 1]
 
 
+def build_boxpgd(vp, K, P, q, lo, hi, t, q_hw, z0_lo, z0_hi):
+    """Box-PGD: z_{k+1} = satlin(z_k - t (P z_k + q), l, u) (box projection)."""
+    n = P.shape[0]
+    q_p = vp.add_param(n, lb=q - q_hw, ub=q + q_hw)
+    z = [vp.add_iterate(n, lb=z0_lo, ub=z0_hi)]
+    for k in range(K):
+        z.append(vp.step.satlin(z[k] - t * (P @ z[k] + q_p), l=lo, u=hi))
+    return z[K] - z[K - 1]
+
+
 # --------------------------------------------------------------------------- #
 # Instance generators. Each returns (build_fn, build_args, label) for a given  #
 # size, with gap-inducing boxes (z0 straddles zero -> mixed-regime steps).     #
@@ -122,6 +132,19 @@ def make_ista_instance(n, m, K, seed, box=1.5, lam_scale=2.0):
     lambda_t = lam_scale * t
     args = (At, Bt, lambda_t, b, 0.5, -box, box)
     return build_ista, args, f"ISTA n={n} m={m} K={K}"
+
+
+def make_boxpgd_instance(n, K, seed, box=1.5):
+    rng = np.random.default_rng(seed)
+    P = np.eye(n) + 0.1 * rng.normal(size=(n, n))
+    P = (P + P.T) / 2
+    q = rng.normal(size=n)
+    # Asymmetric box so lower/upper faces differ; iterate box straddles both faces.
+    lo = -0.5 - 0.5 * np.abs(rng.normal(size=n))
+    hi = 0.5 + 0.5 * np.abs(rng.normal(size=n))
+    t = 0.5
+    args = (P, q, lo, hi, t, 0.5, -box, box)
+    return build_boxpgd, args, f"BoxPGD n={n} K={K}"
 
 
 def _cut_cone_counts(vp):
@@ -247,6 +270,20 @@ def main():
     ]
     for n, m, K, seed in ista_specs:
         build, args, label = make_ista_instance(n, m, K, seed)
+        ok &= run_instance(build, args, K, label)
+
+    print("\n" + "=" * 92)
+    print("BoxPGD (saturated-linear) — z0 straddles the box faces -> mixed-regime satlin")
+    print("=" * 92)
+    boxpgd_specs = [
+        (2, 2, 22),
+        (2, 3, 13),
+        (3, 2, 30),
+        (3, 3, 31),
+        (4, 2, 40),
+    ]
+    for n, K, seed in boxpgd_specs:
+        build, args, label = make_boxpgd_instance(n, K, seed)
         ok &= run_instance(build, args, K, label)
 
     print("\n" + "=" * 92)

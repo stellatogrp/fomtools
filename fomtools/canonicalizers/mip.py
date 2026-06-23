@@ -725,6 +725,16 @@ class MIP(Canonicalizer):
                                     w1 + w2 <= 1,
                                 ]
                             )
+                        else:
+                            # Lower-or-middle (lb < l, ub <= u): the upper face is
+                            # never active, so only w2 (lower-saturation vs interior)
+                            # matters. Pin the saturated branch: w2=1 => output <= l
+                            # (with the output-variable bound output >= l this forces
+                            # output = l); w2=0 => output <= ub (interior, slack).
+                            # Without this the lower-sat output was unpinned and the
+                            # MIP admitted off-graph points (mirror of the
+                            # soft-threshold left-or-middle bug).
+                            constraints.append(output <= l + (ub - l) * (1 - w2))
 
                     if ub > u:
                         constraints.extend(
