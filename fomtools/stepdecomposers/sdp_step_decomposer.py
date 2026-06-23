@@ -95,9 +95,18 @@ class SDPStepDecomposer(StepDecomposer):
         z = self._decompose_saturatedlinear_to_relus(step)
 
         # Register the composite box-projection prox for the PEP box cuts (normal
-        # cone under cross_cut, monotonicity under subgrad_mono_cut). The internal
-        # ReLUs are NOT skipped — their orthant cuts stay valid; the box cuts are
-        # added on top. Guarded for non-SDP decomposers.
+        # cone under cross_cut, monotonicity under subgrad_mono_cut).
+        #
+        # Unlike soft-threshold, the internal ReLUs are NOT tagged
+        # ``_skip_prox_registration``: they stay registered as tau=1 orthant proxes.
+        # That is correct here because satlin = relu(v - l) - relu(v - u) + l, and
+        # relu(v - l), relu(v - u) genuinely ARE orthant projections (tau = 1) of
+        # their shifted inputs — so the subgradient cut is valid for them as-is. By
+        # contrast soft-threshold's internal relu(v - lambda)/relu(-v - lambda) are
+        # NOT the ell-1 prox (whose subgradient needs the tau = lambda
+        # normalization), so those are skipped and only the composite is registered.
+        # Here the box-level cuts are simply added on top of the valid orthant ones.
+        # Guarded for non-SDP decomposers.
         register = getattr(self.canonicalizer, "register_box_prox_step", None)
         if register is not None:
             register(z=z, v=step.arg, l=step.l, u=step.u)

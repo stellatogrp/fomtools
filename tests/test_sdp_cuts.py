@@ -1735,22 +1735,29 @@ def _sdp_true_trajectory_lift(canon, rng):
 
 
 def test_box_cuts_registered_and_emitted():
-    """A satlin step registers a box prox and, with the flags on, emits box cuts."""
+    """A satlin step registers a box prox, and each flag strictly increases the cut
+    count — so a silently-dropped box-cut family would be caught.
+
+    With no PEP flags there are no cross/box cuts at all; ``cross_cut`` adds the box
+    normal-cone family (C1/C2/C3, plus the ReLU-level cross cuts on the internal
+    ReLUs); adding ``subgrad_mono_cut`` adds the box monotonicity family (C4, plus
+    the ReLU-level subgradient cuts)."""
     P, q, lo, hi, t = _boxpgd_mixed_data()
-    vp = Verifier(
-        method="sdp", solver="clarabel", obbt_solver=None, cross_cut=True, subgrad_mono_cut=True
-    )
-    expr = _build_boxpgd_mixed(vp, 2, P, q, lo, hi, t)
-    vp.set_objective_norm(expr, 2)
-    # Two satlin steps -> two box-prox entries registered.
-    assert len(vp.canonicalizer._box_prox_steps) == 2
-    vp.solve()
-    # Box cuts are emitted (more than the ReLU-only cross cuts would produce).
-    base = Verifier(method="sdp", solver="clarabel", obbt_solver=None, cross_cut=True)
-    _ = _build_boxpgd_mixed(base, 2, P, q, lo, hi, t)
-    base.set_objective_norm(_, 2)
-    base.solve()
-    assert len(_solved_canon(vp)._cut_ineq_matrices) > 0
+
+    def _n_cuts(**flags):
+        vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, **flags)
+        vp.set_objective_norm(_build_boxpgd_mixed(vp, 2, P, q, lo, hi, t), 2)
+        assert len(vp.canonicalizer._box_prox_steps) == 2  # two satlin steps registered
+        vp.solve()
+        return len(_solved_canon(vp)._cut_ineq_matrices)
+
+    none = _n_cuts()
+    cross = _n_cuts(cross_cut=True)
+    both = _n_cuts(cross_cut=True, subgrad_mono_cut=True)
+
+    assert none == 0, "no PEP flags should emit no cross/box cuts"
+    assert cross > none, "cross_cut must emit the box normal-cone (+ ReLU cross) cuts"
+    assert both > cross, "subgrad_mono_cut must emit the box monotonicity (+ ReLU subgrad) cuts"
 
 
 @pytest.mark.parametrize("seed", [22, 0, 7])
@@ -1827,5 +1834,13 @@ def test_box_cuts_close_gap_to_mip():
 
     base_gap = base - mip
     assert base_gap > 0.1
-    assert (base_gap - (cross - mip)) / base_gap >= 0.85
-    assert (base_gap - (both - mip)) / base_gap >= 0.85
+
+    def closed(v):
+        return (base_gap - (v - mip)) / base_gap
+
+    # On box-PGD all three families close most of the gap (measured ~99.8-100%);
+    # unlike ISTA, the box monotonicity (subgrad) cut is on par with the box
+    # normal-cone (cross) cut here, so it gets its own threshold.
+    assert closed(cross) >= 0.85, f"cross closed only {closed(cross):.1%}"
+    assert closed(subgrad) >= 0.85, f"subgrad closed only {closed(subgrad):.1%}"
+    assert closed(both) >= 0.85, f"both closed only {closed(both):.1%}"
