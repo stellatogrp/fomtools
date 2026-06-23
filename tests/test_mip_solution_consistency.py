@@ -27,6 +27,10 @@ from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
 
+# Every test here solves an exact MIP with a squared two-norm objective, which is a
+# MIQP that only Gurobi can do (HiGHS raises). Skip the whole module without Gurobi.
+pytest.importorskip("gurobipy", reason="exact two-norm MIP requires Gurobi")
+
 GUROBI_SILENT = {"OutputFlag": 0, "LogToConsole": 0}
 
 
@@ -153,7 +157,8 @@ def test_softthreshold_solution_on_graph(seed, K, obbt_solver):
     (the OBBT fresh/stale-bounds path)."""
     vp, z, bp, At, Bt, lam, K = _build_ista(seed=seed, K=K, obbt_solver=obbt_solver)
     objval = vp.solve()
-    _assert_softthreshold_steps_on_graph(vp)
+    n_checked = _assert_softthreshold_steps_on_graph(vp)
+    assert n_checked > 0  # the sweep must actually contain soft-threshold rows
     true_obj = _ista_forward_objective(vp, z, bp, At, Bt, lam, K)
     assert objval == pytest.approx(true_obj, abs=TEST_EPS)
 

@@ -1556,6 +1556,7 @@ def test_pep_cuts_compose_no_worse_than_base():
     assert with_subgrad <= baseline + TEST_EPS
     assert with_both <= with_cross + TEST_EPS
     assert with_both <= with_subgrad + TEST_EPS
+    assert with_both <= baseline + TEST_EPS  # explicit (also implied transitively)
 
 
 # ============================================================

@@ -148,8 +148,12 @@ class SDP(Canonicalizer):
             Normalizing by ``tau`` places the subgradient in ``d||.||_1`` so steps
             of the same (homogeneous) function are comparable. On the orthant this
             reduces to the cross cut; on the soft-threshold (ell-1 prox) it is a
-            genuinely distinct coupling. Self-registers minimal PSD cones like
-            ``cross_cut``. For saturated-linear (box projection) steps this flag also
+            genuinely distinct coupling. Self-registers the PSD cone over the leaves
+            each cut couples (without needing ``full_psd_cone``); note that for a
+            composite prox (e.g. soft-threshold ``z = relu_pos - relu_neg``) this
+            cone spans several index ranges, so it is not as tight as the cross
+            cut's truly-minimal ``{0, ya, yb} U x_b``. For saturated-linear (box
+            projection) steps this flag also
             emits the box firm-nonexpansiveness/monotonicity cuts (per coordinate:
             ``(z_j^a-z_j^b)(r_j^a-r_j^b)>=0`` across same-box steps), via
             :meth:`_build_box_mono_cuts`.
@@ -1647,6 +1651,12 @@ class SDP(Canonicalizer):
         ``z_a r_a = 0`` already encoded exactly by :meth:`canonicalize_relu`, so it
         is skipped. Each cut registers the minimal PSD cone ``{0, ya, yb} U x_b``
         so its second-moment entries bind without ``full_psd_cone``.
+
+        TODO(scaling): this emits O(N^2) cuts and cones, where ``N`` is the total
+        number of scalar ReLU outputs across the unrolled network, so cost grows
+        quadratically with depth. Fine at current scales (a few seconds for the
+        tested instances); large networks will want a budget/cap or per-step
+        batching of the (a, b) pairs.
         """
         n_dim = self.get_sdp_var_dim()
         comps = self._relu_output_components()
@@ -1753,8 +1763,10 @@ class SDP(Canonicalizer):
         each term a lifted inner product built by :meth:`_cross_innerprod_block`.
         On the orthant (``tau = 1``, ``z`` a ReLU output) this reduces to the
         cross cut; on the soft-threshold (``tau = lambda``, ``z`` composite) it is
-        a distinct coupling. Each cut registers the minimal PSD cone over the
-        indices of ``z^i, v^i, z^j, v^j`` so the cross-step moments bind.
+        a distinct coupling. Each cut registers a PSD cone over the indices of
+        ``z^i, v^i, z^j, v^j`` so the cross-step moments bind (this is the smallest
+        cone that couples the involved leaves, but for composite proxes it spans
+        several index ranges, so it is not as small as the cross cut's cone).
         """
         prox = self._prox_steps
         for i, pi in enumerate(prox):
