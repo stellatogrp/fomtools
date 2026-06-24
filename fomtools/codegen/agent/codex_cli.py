@@ -26,7 +26,6 @@ from fomtools.codegen.agent.driver import (
     AgentTask,
     run_verify_loop,
 )
-from fomtools.codegen.agent.specs import CODEX_SPEC, replace
 
 _ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 
