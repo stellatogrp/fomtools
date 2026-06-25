@@ -383,7 +383,7 @@ def test_cg_scaffold_emits_pcg_solver(tmp_path):
     assert "FOM_FAC_T0_L_DATA" not in linsolve  # no triangular factor
     assert "void fom_lin_solve_t0(" in linsolve
     # SPEC documents the CG solve for the agent.
-    assert "conjugate gradient" in (tmp_path / "test" / "SPEC.md").read_text()
+    assert "conjugate gradient" in (tmp_path / "SPEC.md").read_text()
 
 
 def test_cg_openmp_golden_verifies(tmp_path, requires_compiler):

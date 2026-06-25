@@ -39,7 +39,7 @@ generated and must not be changed:
   implemented sparse (CSR) where the matrix is structured. Assemble each
   `linear_op` by zeroing the output and calling these — do NOT write your own
   dense matvec loops, and do not hardcode the matrices.
-- The algorithm is specified in `test/SPEC.md`.
+- The algorithm is specified in `SPEC.md`.
 {notes_block}
 Hard constraints for the embedded target:
 - No dynamic memory: no malloc/calloc/realloc/free, no variable-length arrays.
@@ -83,7 +83,7 @@ turns editing them). Work as a tight, profile-guided loop:
    - hoist iteration-invariant work out of the loop (precompute once in
      `fom_setup` / `fom_update_params` into workspace scratch);
    - exploit matrix structure (sparsity, symmetry, identity/zero blocks — see
-     `test/spec.json`);
+     `spec.json`);
    - improve memory access / enable vectorization; reduce redundant passes.
 3. VERIFY. Run `{verify}` — it MUST still print `VERIFY OK`. If it fails, revert
    that change and try a different one. Never keep a change that breaks

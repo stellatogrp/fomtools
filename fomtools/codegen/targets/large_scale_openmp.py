@@ -99,7 +99,7 @@ class OpenMpTarget(EmbeddedCTarget):
                 "",
                 "`src/fom_solver.c` implements the iteration (the agent may add further",
                 "OpenMP pragmas); all numeric data lives in `src/fom_data.c`. See",
-                "`test/SPEC.md`.",
+                "`SPEC.md`.",
                 "",
             ]
         )

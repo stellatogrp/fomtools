@@ -536,7 +536,7 @@ class CudaTarget(EmbeddedCTarget):
                 "where structured) and `src/fom_linsolve.cu` (device CG; host LDL^T/LU",
                 "behind a staging wrapper - triangular solves are sequential). All",
                 "`fom_apply_*` / `fom_lin_solve_*` arguments are DEVICE pointers.",
-                "Host-side numeric data lives in `src/fom_data.c`. See `test/SPEC.md`.",
+                "Host-side numeric data lives in `src/fom_data.c`. See `SPEC.md`.",
                 "",
             ]
         )

@@ -19,7 +19,7 @@ def test_scaffold_only_ista(tmp_path):
 def test_scaffold_only_dr(tmp_path):
     rc = main(["--example", "dr", "--out", str(tmp_path), "--scaffold-only"])
     assert rc == 0
-    assert (tmp_path / "test" / "SPEC.md").exists()
+    assert (tmp_path / "SPEC.md").exists()
 
 
 def test_stub_requires_golden(tmp_path):

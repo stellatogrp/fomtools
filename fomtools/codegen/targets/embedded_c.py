@@ -9,8 +9,8 @@ Emits (deterministically, *not* the solver body):
 * ``test/verify_data.h``      — random parameter samples + oracle-expected solutions.
 * ``test/verify_main.c``      — runs the solver over the samples and checks them.
 * ``Makefile``                — ``make verify`` / ``make lib`` targets.
-* ``README.md``, ``SPEC.md``, ``spec.json``, ``data.npz`` (the IR), and the
-  Python wrapper (via :mod:`fomtools.codegen.wrapper`).
+* ``README.md``, ``SPEC.md``, ``spec.json``, ``data.npz`` (the IR, at the
+  output root), and the Python wrapper (via :mod:`fomtools.codegen.wrapper`).
 
 The coding agent (or a golden fixture) supplies ``src/fom_solver.c``.
 """
@@ -131,9 +131,11 @@ class EmbeddedCTarget(TargetDescriptor):
         (out / "src").mkdir(parents=True, exist_ok=True)
         (out / "test").mkdir(parents=True, exist_ok=True)
 
-        # IR spec (for the agent + harness)
-        spec.save(ir, out / "test")
-        (out / "test" / "SPEC.md").write_text(spec.render_markdown(ir))
+        # IR spec (for the agent + harness). Lives at the output root so it is
+        # the first thing a developer or the agent sees; nothing in the build
+        # consumes it, so it is intentionally not buried under test/.
+        spec.save(ir, out)
+        (out / "SPEC.md").write_text(spec.render_markdown(ir))
 
         (out / "include" / "fom_workspace.h").write_text(self._workspace_header(ir))
         (out / "include" / "fom_solver.h").write_text(self._solver_header())
@@ -933,7 +935,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 "```",
                 "",
                 "`src/fom_solver.c` implements the iteration; all numeric data lives in",
-                "`src/fom_data.c`. The algorithm is specified in `test/SPEC.md`.",
+                "`src/fom_data.c`. The algorithm is specified in `SPEC.md`.",
                 "",
             ]
         )
