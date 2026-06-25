@@ -346,6 +346,8 @@ def _cg_factorization(Md: np.ndarray, n: int, is_sym: bool, cg_tol: float = 1e-1
             "solve_method='ldlt' (direct) for symmetric-indefinite systems."
         ) from exc
     diag = np.diag(Md)
+    if np.any(diag <= 0):
+        raise ValueError("SPD check passed but diagonal has non-positive entry")
     return Factorization(
         method="cg",
         dim=n,
