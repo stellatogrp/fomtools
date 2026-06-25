@@ -34,7 +34,7 @@ jobs:
         run: python -m build
 
       - name: Install Package with docs extra
-        run: pip install .[docs, cvxpygen]
+        run: pip install ."[docs, cvxpygen]"
 
       - name: List dependencies
         run: pip freeze
