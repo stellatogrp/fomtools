@@ -95,7 +95,7 @@ class AgentDriver(ABC):
     """Abstract coding-agent that generates a source file until verify passes.
 
     Subclasses implement :meth:`run` to drive a particular backend (the real
-    Claude/Codex/Gemini CLIs, or :class:`~fomtools.codegen.agent.stub.StubAgentDriver`
+    Claude/Codex/Pi CLIs, or :class:`~fomtools.codegen.agent.stub.StubAgentDriver`
     for tests). The driver owns only ``task.solver_rel_path``; all other files
     are restored via ``task.restore_hook`` before each verify.
 

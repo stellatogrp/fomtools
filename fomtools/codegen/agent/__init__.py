@@ -3,10 +3,10 @@
 Code generation is **agent-agnostic**: any prompt-in/files-out CLI agent is
 supported via a declarative :class:`~fomtools.codegen.agent.specs.CliAgentSpec`
 driven by the generic :class:`~fomtools.codegen.agent.cli_driver.CliAgentDriver`.
-Built-in specs cover ``codex`` and ``gemini``; users add their own agents with no
-code changes — at runtime via :func:`~fomtools.codegen.agent.specs.register_agent`
-or declaratively via a YAML config (see
-:func:`~fomtools.codegen.agent.specs.load_user_specs`). ``claude`` is served by
+A built-in spec for ``pi`` (https://pi.dev) ships in ``agents.yaml``; users add
+their own agents with no code changes — at runtime via
+:func:`~fomtools.codegen.agent.specs.register_agent` or declaratively via a YAML
+config (see :func:`~fomtools.codegen.agent.specs.load_user_specs`). ``claude`` is served by
 the dedicated :class:`~fomtools.codegen.agent.claude_sdk.ClaudeAgentDriver`
 (in-process SDK with a CLI fallback). Anything that is not a CLI can implement the
 :class:`~fomtools.codegen.agent.driver.AgentDriver` ABC directly.
@@ -32,7 +32,6 @@ from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
 from fomtools.codegen.agent.cli_driver import CliAgentDriver
 from fomtools.codegen.agent.specs import get_spec
 from fomtools.codegen.agent.codex_sdk import CodexAgentDriver
-from fomtools.codegen.agent.gemini_sdk import GeminiAgentDriver
 
 __all__ = [
     "AgentBackendError",
@@ -61,10 +60,10 @@ def make_agent_driver(backend: str | None = None, config=None) -> AgentDriver:
     """Construct a real coding-agent driver for the selected backend.
 
     ``backend`` is any name from :func:`available_backends` (built-in
-    ``claude`` / ``codex`` / ``gemini`` or a user-registered CLI agent). When
-    ``None`` it is read from ``FOMTOOLS_CODEGEN_BACKEND`` and otherwise defaults
-    to ``"claude"``. These backends are nondeterministic and need auth, so they
-    never run in CI.
+    ``claude`` / ``codex``, the bundled ``pi`` CLI spec, or a user-registered CLI
+    agent). When ``None`` it is read from ``FOMTOOLS_CODEGEN_BACKEND`` and
+    otherwise defaults to ``"claude"``. These backends are nondeterministic and
+    need auth, so they never run in CI.
     """
     backend = backend or os.environ.get("FOMTOOLS_CODEGEN_BACKEND") or _DEFAULT_BACKEND
     match backend:
@@ -72,8 +71,6 @@ def make_agent_driver(backend: str | None = None, config=None) -> AgentDriver:
             return ClaudeAgentDriver(config=config)
         case "codex":
             return CodexAgentDriver(config=config)
-        case "gemini":
-            return GeminiAgentDriver(config=config)
 
     try:
         spec = get_spec(backend)
@@ -100,5 +97,5 @@ def get_default_driver(config=None, backend: str | None = None) -> AgentDriver:
     raise RuntimeError(
         "No coding-agent driver provided. Either pass driver=... (e.g. "
         "StubAgentDriver) or set FOMTOOLS_CODEGEN_AGENT=1 to use a real "
-        "coding-agent backend (claude, codex, gemini, or a custom CLI agent)."
+        "coding-agent backend (claude, codex, pi, or a custom CLI agent)."
     )

@@ -9,8 +9,9 @@ differences so a single generic driver
 (:class:`~fomtools.codegen.agent.cli_driver.CliAgentDriver`) can drive any of
 them.
 
-This makes code generation agent-agnostic: built-in specs cover Codex and
-Gemini, and users add *their own* agents with no code changes — either at runtime
+This makes code generation agent-agnostic: a built-in spec for the Pi CLI
+(https://pi.dev) ships in ``agents.yaml``, and users add *their own* agents with
+no code changes — either at runtime
 via :func:`register_agent`, or declaratively via a YAML config file (see
 :func:`load_user_specs`). Anything that is not a prompt-in/files-out CLI (an
 in-process SDK, an HTTP API) is still served by implementing the
@@ -58,7 +59,7 @@ _REGISTRY = {}
 class CliAgentSpec:
     """How to drive one headless coding-agent CLI.
 
-    Everything that varies between Codex, Gemini, and any user-supplied agent is
+    Everything that varies between Codex, Pi, and any user-supplied agent is
     a field here; the invocation logic lives once in
     :class:`~fomtools.codegen.agent.cli_driver.CliAgentDriver`.
 
@@ -87,7 +88,7 @@ class CliAgentSpec:
         key is forwarded here to force API-key auth over any on-disk login.
     api_key_aliases:
         Additional env vars to read a key from (resolution order after
-        ``api_key_env``), e.g. ``("GOOGLE_API_KEY",)`` for Gemini.
+        ``api_key_env``), e.g. ``("GOOGLE_API_KEY",)`` as a provider alias.
     login_check_args:
         Subcommand args that report whether an on-disk login already exists,
         exiting 0 when authenticated (Codex's ``("login", "status")``); empty if
@@ -215,7 +216,7 @@ def load_user_specs(*, force: bool = False) -> None:
             display_name: Aider
             auth_hint: Set OPENAI_API_KEY.
 
-    Built-in specs (``codex``, ``gemini``) can be overridden by name. Missing
+    The bundled spec (``pi``) can be overridden by name. Missing
     files are skipped; a malformed file raises so the user sees the problem.
     """
     global _user_specs_loaded

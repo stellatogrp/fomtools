@@ -14,6 +14,29 @@
 # key raises so typos surface loudly. `bin` is the only required key.
 
 agents:
+  # Pi coding agent (https://pi.dev). A minimal, multi-provider agent harness;
+  # drives `pi` in headless print mode, looping internally on the workspace
+  # until it stops. Pi is a CLI (npm `@earendil-works/pi-coding-agent` or
+  # `curl -fsSL https://pi.dev/install.sh | sh`) with no Python SDK, so it is a
+  # declarative spec rather than an SDK driver.
+  pi:
+    bin: pi
+    # --print: non-interactive (print the response and exit instead of the TUI).
+    # --approve: trust this project's local files for the run so the agent can
+    # apply edits and run `make` unattended in its isolated output dir.
+    flags: ["--print", "--approve"]
+    # The prompt is passed POSITIONALLY (`pi [options] [messages...]`), so do not
+    # set `prompt_arg`. Pi has no system-prompt flag, so the shared SYSTEM_PROMPT
+    # is automatically prepended to the task prompt, and no working-directory
+    # flag, so the workspace is scoped via the subprocess cwd.
+    model_flag: --model            # e.g. --model "anthropic/claude-..."
+    # Pi is multi-provider (Anthropic, OpenAI, Google, ... via API keys or
+    # OAuth), so no single api_key_env is forwarded: it reads whichever provider
+    # key is in the environment (e.g. ANTHROPIC_API_KEY) or an OAuth login.
+    display_name: Pi
+    auth_hint: Run `pi` once and `/login`, or set your provider key (e.g. ANTHROPIC_API_KEY).
+    install_hint: Install the Pi CLI (https://pi.dev) and ensure `pi` is on PATH.
+
   # Cursor CLI agent (https://cursor.com/docs/cli). Drives `cursor-agent` in
   # non-interactive mode, looping internally on the workspace until it stops.
   cursor:
