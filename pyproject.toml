@@ -55,6 +55,7 @@ dev = [
        "ipdb",
        "hydra-core",
        "pandas",
+       "pydantic",
        "networkx",
 ]
 
