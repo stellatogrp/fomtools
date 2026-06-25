@@ -214,7 +214,7 @@ class SdkAgentDriver(AgentDriver):
         if not self.prefer_cli:
             try:
                 return self._invoke_sdk(task, prompt, max_turns)
-            except ImportError:
+            except (ImportError, NotImplementedError):
                 pass  # fall back to CLI
         workdir = str(Path(task.workdir).resolve())
         return self._invoke_cli(self._build_argv(workdir, prompt), workdir)
