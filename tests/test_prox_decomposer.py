@@ -482,14 +482,15 @@ def test_indaffine_sdp_obbt_tightens_registered_bounds():
     assert np.all(np.isfinite(nu.lb))
 
 
-def test_indaffine_simulator_raises_notimplemented():
-    """Simulator backend defers IndAffine (shares the implicit-iterate
-    limitation with Quadratic/LeastSquares)."""
+def test_indaffine_simulator_supported():
+    """Simulator now lowers IndAffine to a batched Affine block-KKT solve,
+    returning the primal slice as a LinearExpression of the input dimension."""
     v = _make_verifier("simulator")
     arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    with pytest.raises(NotImplementedError, match="IndAffine"):
-        v.prox(IndAffine(A=np.array([[1.0, 1.0, 1.0]]), b=np.array([0.0])), arg)
+    out = v.prox(IndAffine(A=np.array([[1.0, 1.0, 1.0]]), b=np.array([0.0])), arg)
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
 
 
 def test_indaffine_introduces_two_iterates():
@@ -1310,13 +1311,15 @@ def test_quadratic_returns_linear_expression_on_mip():
     assert out.ndim == 3
 
 
-def test_quadratic_simulator_raises_notimplemented():
-    """Simulator backend explicitly defers Quadratic with a clear message."""
+def test_quadratic_simulator_supported():
+    """Simulator now lowers Quadratic to a batched Affine solve of
+    (I + gamma*Q) x = arg - gamma*q, returning a LinearExpression."""
     v = _make_verifier("simulator")
     arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    with pytest.raises(NotImplementedError, match="Quadratic"):
-        v.prox(Quadratic(Q=np.eye(3), q=np.zeros(3)), arg)
+    out = v.prox(Quadratic(Q=np.eye(3), q=np.zeros(3)), arg)
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
 
 
 def test_quadratic_sdp_works():
@@ -1571,14 +1574,15 @@ def test_leastsquares_sdp_works():
     assert np.all(np.isfinite(out.ub))
 
 
-def test_leastsquares_simulator_raises_notimplemented():
-    """Simulator backend defers LeastSquares (same shape as Quadratic);
-    the error message names the concrete subclass."""
+def test_leastsquares_simulator_supported():
+    """Simulator now lowers LeastSquares via the shared Quadratic path
+    (Q = A^T A, q = -A^T b), returning a LinearExpression."""
     v = _make_verifier("simulator")
     arg = v.add_param(3, lb=-1.0, ub=1.0)
 
-    with pytest.raises(NotImplementedError, match="LeastSquares"):
-        v.prox(LeastSquares(A=np.eye(3), b=np.zeros(3)), arg)
+    out = v.prox(LeastSquares(A=np.eye(3), b=np.zeros(3)), arg)
+    assert isinstance(out, LinearExpression)
+    assert out.ndim == 3
 
 
 def test_leastsquares_prox_matches_closed_form():

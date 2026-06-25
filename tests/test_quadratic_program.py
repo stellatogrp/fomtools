@@ -190,11 +190,20 @@ def test_singular_P_without_primal_bounds_raises():
         v.quadratic_program(P=np.diag([1.0, 0.0]), q=np.array([0.0, 0.0]))
 
 
-def test_simulator_not_supported():
+def test_simulator_equality_only_supported():
+    """Simulator now lowers an unconstrained / equality-only QP to a batched
+    Affine block-KKT solve; only inequality QPs remain deferred."""
+    v = _make_verifier("simulator")
+    arg = v.add_param(2, lb=-1.0, ub=1.0)
+    out = v.quadratic_program(P=np.eye(2), q=-arg)
+    assert out.ndim == 2
+
+
+def test_simulator_inequality_not_supported():
     v = _make_verifier("simulator")
     arg = v.add_param(2, lb=-1.0, ub=1.0)
     with pytest.raises(NotImplementedError):
-        v.quadratic_program(P=np.eye(2), q=-arg)
+        v.quadratic_program(P=np.eye(2), q=-arg, C=np.eye(2), d=np.ones(2), dual_ub=10.0)
 
 
 # --- SDP backend (complementarity encoding) ---------------------------------

@@ -658,14 +658,19 @@ class Simulator(Canonicalizer):
         output_mat_cp = self._sparse_to_cp(step.output_mat)
 
         if csp.issparse(output_mat_cp):
-            lu = cpspla.splu(output_mat_cp)
+            # Factor once (the matrix is constant) and solve all N right-hand
+            # sides in a single multi-RHS triangular solve. ``arg`` is (N, d);
+            # SuperLU.solve accepts a 2-D RHS of shape (d, N) -> (d, N).
+            lu = cpspla.splu(output_mat_cp.tocsc())
 
             def activation(arg):
-                return cp.array([lu.solve(r) for r in arg])
+                return lu.solve(arg.T).T
         else:
 
             def activation(arg):
-                return cp.array([cp.linalg.solve(output_mat_cp, r) for r in arg])
+                # cp.linalg.solve broadcasts over the columns of the (d, N) RHS,
+                # so all samples are solved at once (no per-sample Python loop).
+                return cp.linalg.solve(output_mat_cp, arg.T).T
 
         self.step_descriptors.append((step, activation))
 

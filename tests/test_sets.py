@@ -74,7 +74,7 @@ _CASES = [
         "affinesubspace",
         lambda: AffineSubspace(np.array([[1.0, 1.0, 1.0]]), np.array([1.0])),
         np.array([0.0, 0.0, 0.0]),
-        False,
+        True,  # IndAffine lowers to a batched Affine block-KKT solve on the simulator
         "IndAffine",
     ),
     ("simplex", lambda: Simplex(1.0), np.array([0.5, 0.2, 0.9]), False, "IndSimplex"),
@@ -285,7 +285,9 @@ def test_sdp_projection_tight_at_fixed_point(make, x0):
 
 @pytest.mark.parametrize("name, make, x0, sim_supported, _ind", _CASES, ids=_IDS)
 def test_simulator_support_matches_prox(name, make, x0, sim_supported, _ind):
-    """Clip/step-based projections run on the simulator; KKT/lifted ones defer."""
+    """Clip/step-based projections and the equality-only affine KKT solve run on
+    the simulator; complementarity/lifted projections (polyhedron, simplex, l1ball)
+    defer."""
     v = _make_verifier("simulator")
     arg = v.add_param(len(x0), lb=x0, ub=x0)
     if sim_supported:
