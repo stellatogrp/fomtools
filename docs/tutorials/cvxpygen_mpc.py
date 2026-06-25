@@ -34,7 +34,9 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""MPC problem data""")
+    mo.md(r"""
+    MPC problem data
+    """)
     return
 
 
@@ -51,7 +53,9 @@ def _(np):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""CVXPY model with the initial state as a parameter""")
+    mo.md(r"""
+    CVXPY model with the initial state as a parameter
+    """)
     return
 
 
@@ -77,7 +81,9 @@ def _(Ad, Bd, N, Q, QN, R, cp, nu, nx, rng):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r""" Generate the embedded solver """)
+    mo.md(r"""
+    Generate the embedded solver
+    """)
     return
 
 
@@ -96,7 +102,9 @@ def _(CodegenConfig, TerminationSpec, fcpg, problem, x0):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""Solve through the generated code""")
+    mo.md(r"""
+    Solve through the generated code
+    """)
     return
 
 
@@ -115,9 +123,9 @@ def _(cp, nx, problem, rng, us, x0):
 @app.cell
 def _():
     import marimo as mo
+
     return (mo,)
 
 
 if __name__ == "__main__":
     app.run()
-
