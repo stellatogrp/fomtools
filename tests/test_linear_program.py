@@ -84,10 +84,13 @@ def test_without_dual_ub_raises():
         v.linear_program(q=np.array([1.0, -1.0]), C=C, d=d)
 
 
-def test_simulator_not_supported():
+def test_simulator_supported():
+    """Simulator now lowers an LP to a per-sample cvxpy solve; the lowering returns
+    a LinearExpression of the cost dimension."""
     v = _make_verifier("simulator")
-    with pytest.raises(NotImplementedError):
-        v.linear_program(q=np.array([1.0, -1.0]))
+    C, d = _box(2, -np.ones(2), np.ones(2))
+    out = v.linear_program(q=np.array([1.0, -1.0]), C=C, d=d)
+    assert out.ndim == 2
 
 
 # --- StandardFormLinearProgram:  min c^T x  s.t.  A x = b,  x >= 0 -----------
@@ -140,8 +143,9 @@ def test_standardform_without_dual_ub_raises():
         v.standard_form_linear_program(c=_SF_C, A=_SF_A, b=_SF_B)
 
 
-def test_standardform_simulator_not_supported():
-    """Resolves to the LinearProgram decomposer via the MRO; Simulator defers it."""
+def test_standardform_simulator_supported():
+    """Resolves to the LinearProgram decomposer via the MRO; Simulator now lowers it
+    to a per-sample cvxpy solve."""
     v = _make_verifier("simulator")
-    with pytest.raises(NotImplementedError):
-        v.standard_form_linear_program(c=_SF_C, A=_SF_A, b=_SF_B, dual_ub=10.0)
+    out = v.standard_form_linear_program(c=_SF_C, A=_SF_A, b=_SF_B, dual_ub=10.0)
+    assert out.ndim == 3

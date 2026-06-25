@@ -3,6 +3,14 @@ from typing import ClassVar
 import numpy as np
 import scipy.sparse as spa
 
+from fomtools.canonicalizers.simulator_subproblems import (
+    l1_ball_activation,
+    norm_inf_activation,
+    polyhedral_activation,
+    qp_activation,
+    simplex_activation,
+    tv_activation,
+)
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.stepdecomposers.step_decomposer import StepDecomposer
 from fomtools.steps import Affine
@@ -32,17 +40,20 @@ class SimulatorStepDecomposer(StepDecomposer):
     """
     Simulator Step Decomposer.
 
-    Most steps are forwarded as primitive operations handled directly by the
-    Simulator canonicalizer. Implicit-iterate proxes/steps whose output is
-    defined by a *pure linear system* with a constant matrix and a per-sample
-    right-hand side (``Quadratic``/``LeastSquares``, ``IndAffine``, and the
-    equality-only ``QuadraticProgram``) are lowered to an :class:`Affine` step,
-    which the simulator evaluates with a single batched multi-RHS solve.
+    Lowers each prox/step to a numeric evaluator recorded with the Simulator
+    canonicalizer. Three families:
 
-    Implicit-iterate proxes/steps carrying complementarity constraints
-    (``IndPolyhedral``, ``IndBallL1``, ``NormInf``, ``IndSimplex``,
-    ``TotalVariation1D``, and any QP/LP with inequalities) are *not* a single
-    linear system — the active set varies per sample — so they remain deferred.
+    - **Primitive** activations (``Relu``/``SaturatedLinear``/``SoftThreshold``):
+      forwarded directly via :meth:`_process_primitive`.
+    - **Pure linear solve** (``Quadratic``/``LeastSquares``, ``IndAffine``, and the
+      equality-only / unconstrained ``QuadraticProgram``): lowered to an
+      :class:`Affine` step (one batched multi-RHS solve, no Python loop).
+    - **Subproblem** activations for the complementarity cases. The simplex,
+      ℓ1-ball and ℓ∞-norm proxes use batched solver-free projections; the 1-D
+      total-variation prox uses Condat's O(n) algorithm; polyhedral projection and
+      inequality QP/LP loop a parametrized cvxpy solve per sample. All are wired
+      through :meth:`Simulator.register_subproblem_step` (see
+      :mod:`fomtools.canonicalizers.simulator_subproblems`).
     """
 
     def _process_primitive(self, step: Step) -> LinearExpression:
@@ -54,7 +65,39 @@ class SimulatorStepDecomposer(StepDecomposer):
         return step.output
 
     # ------------------------------------------------------------------
-    # Type-1 (pure linear solve) prox overrides — lower to an Affine step
+    # Shared helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _const_scalar(value, name: str) -> float:
+        """
+        Resolve a scalar parameter (``a``/``r``/``lambd``) to a Python float.
+
+        Constants and constant-only ``LinearExpression``s are accepted; a genuinely
+        per-sample ``LinearExpression`` parameter (one that depends on leaves) is
+        rejected with a clear message — the batched projections bake the scalar into
+        the activation closure, so it must not vary across samples.
+        """
+        if hasattr(value, "decomposition_dict"):
+            if value.decomposition_dict:
+                raise NotImplementedError(
+                    f"{name} as a per-sample LinearExpression parameter is not "
+                    "supported on the Simulator backend; pass a constant."
+                )
+            return float(np.asarray(value.const).reshape(-1)[0])
+        return float(value)
+
+    def _register_subproblem(
+        self, arg_expr: LinearExpression, n: int, activation
+    ) -> LinearExpression:
+        """Create a fresh output leaf, register it, and record the subproblem step."""
+        out = LinearExpression.from_int(n)
+        self.register_var(out, var_type="param")
+        self.canonicalizer.register_subproblem_step(arg_expr, out, activation)
+        return out
+
+    # ------------------------------------------------------------------
+    # Pure linear solve — lower to an Affine step
     # ------------------------------------------------------------------
 
     def prox_quadratic(self, prox, arg: LinearExpression, gamma: float = 1.0) -> LinearExpression:
@@ -94,37 +137,72 @@ class SimulatorStepDecomposer(StepDecomposer):
         return out[:n]
 
     # ------------------------------------------------------------------
-    # QuadraticProgram step override — equality-only / unconstrained QP
+    # Subproblem proxes — batched / Condat / cvxpy activations
+    # ------------------------------------------------------------------
+
+    def prox_indsimplex(self, prox, arg: LinearExpression, gamma: float = 1.0) -> LinearExpression:
+        """Project each sample onto the scaled simplex ``{u >= 0, 1^T u = a}`` (batched)."""
+        a = self._const_scalar(prox.a, "IndSimplex sum a")
+        return self._register_subproblem(arg, arg.ndim, simplex_activation(a))
+
+    def prox_indballl1(self, prox, arg: LinearExpression, gamma: float = 1.0) -> LinearExpression:
+        """Project each sample onto the ℓ1-ball ``{||u||_1 <= r}`` (batched)."""
+        r = self._const_scalar(prox.r, "IndBallL1 radius r")
+        return self._register_subproblem(arg, arg.ndim, l1_ball_activation(r))
+
+    def prox_norminf(self, prox, arg: LinearExpression, gamma: float = 1.0) -> LinearExpression:
+        """ℓ∞-norm prox via Moreau: ``v - proj_{||.||_1 <= gamma*lambd}(v)`` (batched)."""
+        lambd = self._const_scalar(prox.lambd, "NormInf weight lambd")
+        return self._register_subproblem(arg, arg.ndim, norm_inf_activation(gamma * lambd))
+
+    def prox_totalvariation1d(
+        self, prox, arg: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        """1-D total-variation prox via Condat's direct algorithm (per sample)."""
+        lambd = self._const_scalar(prox.lambd, "TotalVariation1D weight lambd")
+        return self._register_subproblem(arg, arg.ndim, tv_activation(gamma * lambd))
+
+    def prox_indpolyhedral(
+        self, prox, arg: LinearExpression, gamma: float = 1.0
+    ) -> LinearExpression:
+        """Project each sample onto ``{u : A u <= b}`` via a per-sample cvxpy solve."""
+        A, m, n = prox.A, prox.m, prox.n
+        if hasattr(prox.b, "decomposition_dict") and prox.b.decomposition_dict:
+            # Per-sample b: stack it after the point so the activation can read it.
+            arg_expr = stack([arg, prox.b])
+            activation = polyhedral_activation(A, None, n, m, b_is_param=True)
+            return self._register_subproblem(arg_expr, n, activation)
+
+        if hasattr(prox.b, "decomposition_dict"):  # constant-only LinearExpression
+            b_val = np.asarray(prox.b.const, dtype=float)
+        else:
+            b_val = np.broadcast_to(np.asarray(prox.b, dtype=float), (m,)).copy()
+        activation = polyhedral_activation(A, b_val, n, m, b_is_param=False)
+        return self._register_subproblem(arg, n, activation)
+
+    # ------------------------------------------------------------------
+    # QuadraticProgram / LinearProgram step
     # ------------------------------------------------------------------
 
     def decompose_quadraticprogram(self, step: Step) -> LinearExpression:
         r"""
-        Lower an equality-only / unconstrained :class:`QuadraticProgram` to an
-        :class:`Affine` step.
+        Lower a :class:`QuadraticProgram` / :class:`LinearProgram` step.
 
-        With no inequality constraints, the QP optimum is the unique solution of
-        the KKT linear system
-
-        .. math::
-            \begin{bmatrix} P & A^\top \\ A & 0 \end{bmatrix}
-            \begin{bmatrix} x \\ \nu \end{bmatrix}
-            = \begin{bmatrix} -q \\ b \end{bmatrix}
-            \qquad (\text{or } P x = -q \text{ when } A \text{ is absent}),
-
-        which the simulator solves batched. QPs with inequality constraints
-        (``step.C is not None``) and linear programs (``P = 0``, whose vertex
-        solution is set by active inequalities/bounds, not a linear system) are
-        not a single linear solve and are deferred.
+        Equality-only / unconstrained QPs with a nonsingular ``P`` are a pure linear
+        system and lower to an :class:`Affine` block-KKT solve (batched). QPs with
+        inequality constraints, and all LPs (``P = 0``, whose vertex solution is set
+        by the active inequalities), are solved per sample with a parametrized cvxpy
+        problem (:func:`qp_activation`).
         """
-        if step.C is not None:
-            self._qp_step_not_supported(step)
-        if (
-            getattr(step, "is_lp", False)
-            or (spa.issparse(step.P) and step.P.nnz == 0)
-            or (not spa.issparse(step.P) and not np.any(step.P))
-        ):
-            self._qp_step_not_supported(step)
+        has_ineq = step.C is not None
+        is_lp = getattr(step, "is_lp", False)
+        p_is_zero = (spa.issparse(step.P) and step.P.nnz == 0) or (
+            not spa.issparse(step.P) and not np.any(step.P)
+        )
+        if has_ineq or is_lp or p_is_zero:
+            return self._qp_via_cvxpy(step)
 
+        # Equality-only / unconstrained linear-solve path.
         n = step.n
         q = step.q if step.q is not None else -step.arg
         q_le = self._lift_to_le(q, n)
@@ -145,39 +223,41 @@ class SimulatorStepDecomposer(StepDecomposer):
         out = self.process_step(Affine(arg=stack([-q_le, b_le]), output_mat=M_block))
         return out[:n]
 
-    def _qp_step_not_supported(self, step: Step) -> LinearExpression:
-        # QuadraticProgram with inequalities / LinearProgram lower to a KKT system
-        # with complementarity (a per-sample active-set / QP solve), which the
-        # Simulator's single stacked linear solve cannot produce. Defer.
-        raise NotImplementedError(
-            f"{type(step).__name__} with inequality constraints is not supported on the "
-            "Simulator backend (it requires a per-sample active-set solve, not a single "
-            "linear system)."
-        )
+    def _qp_via_cvxpy(self, step: Step) -> LinearExpression:
+        """Record a per-sample cvxpy QP/LP solve, stacking ``[q | b | d]`` as input."""
+        n = step.n
+        q = step.q if step.q is not None else -step.arg
+        blocks = [self._lift_to_le(q, n)]
+
+        p = m = 0
+        if step.A is not None:
+            p = step.A.shape[0]
+            blocks.append(self._lift_to_le(step.b, p))
+        if step.C is not None:
+            m = step.C.shape[0]
+            blocks.append(self._lift_to_le(step.d, m))
+
+        arg_expr = stack(blocks) if len(blocks) > 1 else blocks[0]
+        activation = qp_activation(step.P, step.A, step.C, n, p, m, getattr(step, "is_lp", False))
+
+        out = step.output  # the QP step's own fresh dim-n leaf
+        self.register_var(out, var_type="param")
+        self.canonicalizer.register_subproblem_step(arg_expr, out, activation)
+        return out
 
     _DECOMPOSERS: ClassVar[dict] = {
         "quadraticprogram": decompose_quadraticprogram,
-        "linearprogram": _qp_step_not_supported,
+        "linearprogram": decompose_quadraticprogram,
     }
-
-    def _implicit_iterate_not_supported(self, prox, arg, gamma=1.0):
-        # Shared deferral for complementarity-based implicit-iterate proxes
-        # (IndPolyhedral, NormInf, IndSimplex, IndBallL1, TotalVariation1D).
-        # These are not a single linear system: the active set varies per
-        # sample, so a stacked linear solve cannot evaluate them. Supporting
-        # them would require a per-sample projection / QP solver.
-        raise NotImplementedError(
-            f"{type(prox).__name__} prox is not yet supported on the Simulator backend"
-        )
 
     _PROX_DECOMPOSERS: ClassVar[dict] = {
         **StepDecomposer._PROX_DECOMPOSERS,
         "quadratic": prox_quadratic,
         "leastsquares": prox_quadratic,
         "indaffine": prox_indaffine,
-        "indpolyhedral": _implicit_iterate_not_supported,
-        "indballl1": _implicit_iterate_not_supported,
-        "norminf": _implicit_iterate_not_supported,
-        "indsimplex": _implicit_iterate_not_supported,
-        "totalvariation1d": _implicit_iterate_not_supported,
+        "indpolyhedral": prox_indpolyhedral,
+        "indballl1": prox_indballl1,
+        "norminf": prox_norminf,
+        "indsimplex": prox_indsimplex,
+        "totalvariation1d": prox_totalvariation1d,
     }

@@ -32,6 +32,24 @@ from contextlib import nullcontext
 from typing import Any
 
 
+class _ActivationStep:
+    """
+    Minimal step holder for subproblem activations that have no ``Step`` class.
+
+    Projection / QP / LP proxes are encoded via KKT on the MIP/SDP backends, so
+    there is no concrete ``Step`` to record. This lightweight object exposes the
+    three attributes the simulator's ``_compile_steps`` reads off a step — ``arg``
+    (the assembled input expression), ``output`` (the fresh leaf the activation
+    writes), and ``output_leaves`` — so such proxes flow through the same
+    ``step_descriptors`` machinery as ``Relu``/``Affine``.
+    """
+
+    def __init__(self, arg: LinearExpression, output: LinearExpression):
+        self.arg = arg
+        self.output = output
+        self.output_leaves = [output]
+
+
 class Simulator(Canonicalizer):
     """
     An interface for simulating a Verification Problem using CuPy.
@@ -680,6 +698,32 @@ class Simulator(Canonicalizer):
         "saturatedlinear": canonicalize_saturatedlinear,
         "softthreshold": canonicalize_softthreshold,
     }
+
+    def register_subproblem_step(
+        self, arg: LinearExpression, output_leaf: LinearExpression, activation
+    ) -> None:
+        """
+        Record a subproblem step for deferred evaluation at solve time.
+
+        Used by the step decomposer for proxes/steps that have no ``Step`` class
+        on the simulator (projections onto the simplex / ℓ1-ball, the ℓ∞-norm and
+        total-variation proxes, polyhedral projections, and inequality QP/LP). The
+        ``activation`` is a callable mapping the assembled input batch
+        ``(N, arg.ndim)`` to the output batch ``(N, output_leaf.ndim)``; the result
+        is written into ``output_leaf``'s slot. See
+        :mod:`fomtools.canonicalizers.simulator_subproblems` for the activation
+        factories.
+
+        Parameters
+        ----------
+        arg : LinearExpression
+            The assembled per-sample input to the subproblem.
+        output_leaf : LinearExpression
+            The fresh leaf the activation result is written into.
+        activation : Callable
+            Maps the input batch to the output batch.
+        """
+        self.step_descriptors.append((_ActivationStep(arg, output_leaf), activation))
 
     # ------------------------------------------------------------------
     # Objective methods — store residual specs keyed by step index

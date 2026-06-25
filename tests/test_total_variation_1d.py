@@ -157,8 +157,10 @@ def test_sdp_bound_vs_mip_over_box():
     assert mip_inf <= sdp_two + TEST_EPS
 
 
-def test_simulator_not_supported():
+def test_simulator_supported():
+    """Simulator now evaluates the 1-D TV prox via Condat's direct algorithm,
+    returning a LinearExpression of the input dimension."""
     v = _make_verifier("simulator")
     arg = v.add_param(4, lb=-1.0, ub=1.0)
-    with pytest.raises(NotImplementedError):
-        v.prox(TotalVariation1D(0.5), arg)
+    out = v.prox(TotalVariation1D(0.5), arg)
+    assert out.ndim == 4

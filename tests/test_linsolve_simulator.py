@@ -8,14 +8,14 @@ reference in numpy, registers it as a parameter, and uses the public infinity-no
 objective as an oracle: the recorded residual per sample is ``||x_sim - x_ref||_inf``,
 which must be ~0 if the batched solve is correct.
 
-Complementarity-based implicit-iterate proxes/steps remain deferred; the final
-tests assert they still raise ``NotImplementedError`` on the simulator backend.
+The complementarity proxes/steps (simplex, ℓ1-ball, ℓ∞-norm, total variation,
+polyhedral projection, inequality QP/LP) are covered in
+``tests/test_subproblem_simulator.py``.
 """
 
 import numpy as np
-import pytest
 
-from fomtools.proxable_functions import IndAffine, IndSimplex, LeastSquares, Quadratic
+from fomtools.proxable_functions import IndAffine, LeastSquares, Quadratic
 from fomtools.verifier import Verifier
 
 TOL = 1e-5
@@ -136,32 +136,3 @@ def test_unconstrained_qp_simulator():
 
     residuals = vp.solve()
     assert residuals[:, -1].max() < TOL
-
-
-def test_inequality_qp_still_deferred():
-    """A QP with inequality constraints is not a single linear system: defer."""
-    rng = np.random.default_rng(5)
-    n, N = 3, 4
-
-    Y = rng.normal(size=(n, n))
-    P = Y.T @ Y + np.eye(n)
-    q_samples = rng.uniform(-1.0, 1.0, size=(N, n))
-    C = np.eye(n)
-    d = np.ones(n)
-
-    vp = Verifier(method="simulator", obbt_solver=None)
-    q_param = vp.add_param(ndim=n, samples=q_samples)
-    with pytest.raises(NotImplementedError):
-        vp.quadratic_program(P=P, q=q_param, C=C, d=d, dual_ub=10.0)
-
-
-def test_complementarity_prox_still_deferred():
-    """A complementarity-based prox (simplex projection) is still deferred."""
-    rng = np.random.default_rng(6)
-    n, N = 3, 4
-    v_samples = rng.uniform(-1.0, 1.0, size=(N, n))
-
-    vp = Verifier(method="simulator", obbt_solver=None)
-    v = vp.add_param(ndim=n, samples=v_samples)
-    with pytest.raises(NotImplementedError):
-        vp.prox(IndSimplex(a=1.0), v)
