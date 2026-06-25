@@ -51,6 +51,7 @@ DEFAULT_AUTH_MARKERS: tuple[str, ...] = (
     "please log in",
     "authentication",
 )
+_REGISTRY = {}
 
 
 @dataclass(frozen=True)
@@ -131,56 +132,6 @@ class CliAgentSpec:
         """Env vars to read an API key from, in resolution order."""
         return tuple(v for v in (self.api_key_env, *self.api_key_aliases) if v)
 
-
-# --- built-in specs ---------------------------------------------------------
-
-CODEX_SPEC = CliAgentSpec(
-    name="codex",
-    bin="codex",
-    # `codex exec` runs non-interactively and loops internally until done.
-    base_args=("exec",),
-    # --skip-git-repo-check lets it run in a non-git output dir; the bypass flag
-    # auto-approves writes/`make` (safe: the agent works in an isolated dir).
-    flags=("--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"),
-    # Codex resolves --cd relative to its own cwd; the driver passes an ABSOLUTE
-    # path for both --cd and the subprocess cwd to avoid double-resolution
-    # ("out/ista/out/ista" -> os error 2).
-    cwd_flag="--cd",
-    prompt_arg=None,  # positional
-    api_key_env="OPENAI_API_KEY",
-    # Codex authenticates from ~/.codex/auth.json written by its own `login`
-    # subcommand; for some transports the bare env var is not enough, so persist
-    # an API-key login first (the key is piped to stdin via --with-api-key).
-    login_check_args=("login", "status"),
-    login_args=("login", "--with-api-key"),
-    auth_markers=("codex login", "openai_api_key"),
-    display_name="Codex",
-    auth_hint="Run `codex login` or set OPENAI_API_KEY.",
-    install_hint="Install it (e.g. `npm install -g @openai/codex`) and ensure it is on PATH.",
-)
-
-GEMINI_SPEC = CliAgentSpec(
-    name="gemini",
-    bin="gemini",
-    flags=("--yolo",),  # auto-approve writes/`make` in the isolated output dir
-    prompt_arg="--prompt",  # -p/--prompt triggers headless mode
-    api_key_env="GEMINI_API_KEY",
-    api_key_aliases=("GOOGLE_API_KEY",),
-    auth_markers=(
-        "gemini_api_key",
-        "google_api_key",
-        "please set an auth method",
-        "permission denied",
-    ),
-    display_name="Gemini",
-    auth_hint="Set GEMINI_API_KEY (an `AIza...` AI Studio key) or run `gemini` once to sign in.",
-    install_hint="Install it (e.g. `npm install -g @google/gemini-cli`) and ensure it is on PATH.",
-)
-
-BUILTIN_SPECS: dict[str, CliAgentSpec] = {s.name: s for s in (CODEX_SPEC, GEMINI_SPEC)}
-
-
-_REGISTRY: dict[str, CliAgentSpec] = dict(BUILTIN_SPECS)
 _user_specs_loaded = False
 
 # Field name -> coercion for the YAML loader (everything else is rejected so a
@@ -298,12 +249,9 @@ __all__ = [
     "SYSTEM_PROMPT",
     "DEFAULT_AUTH_MARKERS",
     "CliAgentSpec",
-    "BUILTIN_SPECS",
-    "CODEX_SPEC",
-    "GEMINI_SPEC",
     "register_agent",
     "load_user_specs",
     "get_spec",
     "available_specs",
-    "replace",  # re-exported for thin subclasses that tweak a built-in spec
+    "replace",
 ]

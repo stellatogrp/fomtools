@@ -1,0 +1,29 @@
+# Example user agent config for fomtools codegen.
+#
+# Copy (the relevant part of) this file to one of:
+#   ~/.config/fomtools/agents.yaml          # default location
+#   $FOMTOOLS_CODEGEN_AGENTS                 # explicit path (takes precedence)
+#
+# Each entry under `agents:` registers a headless coding-agent CLI as a backend
+# you can select with `--agent <name>` or FOMTOOLS_CODEGEN_BACKEND=<name>.
+# Valid keys map 1:1 onto fomtools.codegen.agent.specs.CliAgentSpec; an unknown
+# key raises so typos surface loudly. `bin` is the only required key.
+
+agents:
+  # Cursor CLI agent (https://cursor.com/docs/cli). Drives `cursor-agent` in
+  # non-interactive mode, looping internally on the workspace until it stops.
+  cursor:
+    bin: cursor-agent
+    # --print: non-interactive (print to stdout instead of launching the TUI).
+    # --force: auto-approve file edits / shell commands (alias: --yolo).
+    flags: ["--print", "--force"]
+    # The prompt is passed POSITIONALLY (`cursor-agent ... "<prompt>"`), so do
+    # not set `prompt_arg`. cursor-agent has no system-prompt flag, so the shared
+    # SYSTEM_PROMPT is automatically prepended to the task prompt.
+    model_flag: --model            # e.g. --agent cursor with model "sonnet-4.5"
+    # API key is read from CURSOR_API_KEY and forwarded into the child process,
+    # forcing API-key auth over any on-disk `cursor-agent login` session.
+    api_key_env: CURSOR_API_KEY
+    display_name: ursor
+    auth_hint: Run `cursor-agent login` or set CURSOR_API_KEY.
+    install_hint: Install the Cursor CLI (https://cursor.com/docs/cli) and ensure `cursor-agent` is on PATH.
