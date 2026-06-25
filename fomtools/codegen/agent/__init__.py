@@ -31,8 +31,8 @@ from fomtools.codegen.agent.stub import StubAgentDriver
 from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
 from fomtools.codegen.agent.cli_driver import CliAgentDriver
 from fomtools.codegen.agent.specs import get_spec
-from fomtools.codegen.agent.codex_cli import CodexAgentDriver
-from fomtools.codegen.agent.gemini_cli import GeminiAgentDriver
+from fomtools.codegen.agent.codex_sdk import CodexAgentDriver
+from fomtools.codegen.agent.gemini_sdk import GeminiAgentDriver
 
 __all__ = [
     "AgentBackendError",
