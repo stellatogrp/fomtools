@@ -38,17 +38,17 @@ class IndNonNegative(ProxableFunction):
             return 0.0
         return np.inf
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Project ``rhs`` onto the non-negative orthant.
+        Project ``arg`` onto the non-negative orthant.
 
         The prox of an indicator function is the projection onto its
         feasible set; for $I_{\geq 0}$ this is element-wise
-        $\max(\text{rhs}, 0)$, independent of $\gamma$.
+        $\max(\text{arg}, 0)$, independent of $\gamma$.
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Step size (ignored for indicator functions; kept for interface
@@ -57,9 +57,9 @@ class IndNonNegative(ProxableFunction):
         Returns
         -------
         np.ndarray
-            The projection $\max(\text{rhs}, 0)$.
+            The projection $\max(\text{arg}, 0)$.
         """
-        return np.maximum(rhs, 0)
+        return np.maximum(arg, 0)
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         raise NotImplementedError("Indicator functions are not differentiable.")

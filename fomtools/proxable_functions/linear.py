@@ -50,16 +50,16 @@ class Linear(ProxableFunction):
         """
         return float(np.dot(self.c, x))
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
         Compute the proximal point of the linear function.
 
         Uses the closed form
-        $\operatorname{prox}_{\gamma f}(\text{rhs}) = \text{rhs} - \gamma c$.
+        $\operatorname{prox}_{\gamma f}(\text{arg}) = \text{arg} - \gamma c$.
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Proximal step size.
@@ -67,9 +67,9 @@ class Linear(ProxableFunction):
         Returns
         -------
         np.ndarray
-            The proximal point $\text{rhs} - \gamma c$.
+            The proximal point $\text{arg} - \gamma c$.
         """
-        return rhs - gamma * self.c
+        return arg - gamma * self.c
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""

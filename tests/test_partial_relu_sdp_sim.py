@@ -3,7 +3,7 @@ Tests for partial-projection ReLU on the SDP and Simulator canonicalizers.
 
 The existing ``tests/test_partial_relu.py`` exercises MIP only. This file
 covers:
-- Structural invariants of the composite lhs (Step API surface).
+- Structural invariants of the composite output (Step API surface).
 - SDP-side: only ``len(proj_indices)`` fresh SDP rows are allocated, lifted
   equalities are emitted only for projected outputs.
 - Simulator-side: activation honors ``proj_indices``, non-proj rows are
@@ -31,38 +31,38 @@ def _leaf(ndim, lb=-1.0, ub=1.0):
 
 def test_partial_relu_lhs_is_composite():
     x = _leaf(3)
-    step = Relu(rhs=x, proj_ranges=(1, 3))
-    assert step._lhs_proj_leaf is not None
-    assert step._lhs_proj_leaf.ndim == 2
-    assert step.lhs.is_leaf is False
-    assert step.lhs.ndim == 3
+    step = Relu(arg=x, proj_ranges=(1, 3))
+    assert step._output_proj_leaf is not None
+    assert step._output_proj_leaf.ndim == 2
+    assert step.output.is_leaf is False
+    assert step.output.ndim == 3
 
 
 def test_partial_relu_lhs_shares_rhs_for_nonproj():
-    """Critical invariant: non-proj rows of step.lhs are structurally
-    identical to the corresponding rows of step.rhs (same decomposition)."""
+    """Critical invariant: non-proj rows of step.output are structurally
+    identical to the corresponding rows of step.arg (same decomposition)."""
     x = _leaf(3)
-    step = Relu(rhs=x, proj_ranges=(1, 3))
+    step = Relu(arg=x, proj_ranges=(1, 3))
     # proj_indices = {1, 2}, so coord 0 is non-proj.
-    lhs_row0 = step.lhs[0]
-    rhs_row0 = step.rhs[0]
+    lhs_row0 = step.output[0]
+    rhs_row0 = step.arg[0]
     # Both should resolve to the same coefficient on x (an identity row at 0).
     assert set(lhs_row0.decomposition_dict.keys()).issuperset({x})
-    coeff_lhs = lhs_row0.decomposition_dict[x]
-    coeff_rhs = rhs_row0.decomposition_dict[x]
-    if spa.issparse(coeff_lhs):
-        coeff_lhs = coeff_lhs.toarray()
-    if spa.issparse(coeff_rhs):
-        coeff_rhs = coeff_rhs.toarray()
-    assert np.allclose(coeff_lhs, coeff_rhs)
+    coeff_output = lhs_row0.decomposition_dict[x]
+    coeff_arg = rhs_row0.decomposition_dict[x]
+    if spa.issparse(coeff_output):
+        coeff_output = coeff_output.toarray()
+    if spa.issparse(coeff_arg):
+        coeff_arg = coeff_arg.toarray()
+    assert np.allclose(coeff_output, coeff_arg)
 
 
 def test_partial_relu_lhs_proj_rows_use_fresh_leaf():
-    """Proj rows of the composite lhs reference _lhs_proj_leaf with identity."""
+    """Proj rows of the composite output reference _output_proj_leaf with identity."""
     x = _leaf(3)
-    step = Relu(rhs=x, proj_ranges=(1, 3))
-    # proj_indices = {1, 2} → positions 0, 1 of _lhs_proj_leaf.
-    coeff = step.lhs.decomposition_dict[step._lhs_proj_leaf]
+    step = Relu(arg=x, proj_ranges=(1, 3))
+    # proj_indices = {1, 2} → positions 0, 1 of _output_proj_leaf.
+    coeff = step.output.decomposition_dict[step._output_proj_leaf]
     if spa.issparse(coeff):
         coeff = coeff.toarray()
     expected = np.zeros((3, 2))
@@ -73,27 +73,27 @@ def test_partial_relu_lhs_proj_rows_use_fresh_leaf():
 
 def test_full_relu_lhs_is_leaf_regression():
     x = _leaf(3)
-    step = Relu(rhs=x)  # no proj_ranges → full
-    assert step._lhs_proj_leaf is None
-    assert step.lhs.is_leaf is True
-    assert step.lhs.ndim == 3
-    assert step.lhs_leaves == [step.lhs]
+    step = Relu(arg=x)  # no proj_ranges → full
+    assert step._output_proj_leaf is None
+    assert step.output.is_leaf is True
+    assert step.output.ndim == 3
+    assert step.output_leaves == [step.output]
 
 
 def test_partial_relu_proj_leaf_bounds():
-    """_lhs_proj_leaf bounds are max(0, rhs_proj_bounds)."""
+    """_output_proj_leaf bounds are max(0, arg_proj_bounds)."""
     x = _leaf(3, lb=-1.0, ub=2.0)
-    step = Relu(rhs=x, proj_ranges=(1, 3))
-    assert np.allclose(step._lhs_proj_leaf.lb, [0.0, 0.0])
-    assert np.allclose(step._lhs_proj_leaf.ub, [2.0, 2.0])
+    step = Relu(arg=x, proj_ranges=(1, 3))
+    assert np.allclose(step._output_proj_leaf.lb, [0.0, 0.0])
+    assert np.allclose(step._output_proj_leaf.ub, [2.0, 2.0])
 
 
 def test_partial_relu_lhs_prunes_dead_rhs_leaves():
-    """A rhs leaf whose coefficient is nonzero only on projected rows
-    contributes zero to the composite lhs (S_nonproj masks those rows).
+    """A arg leaf whose coefficient is nonzero only on projected rows
+    contributes zero to the composite output (S_nonproj masks those rows).
     The composite must prune that dead entry instead of carrying a leaf
     with an all-zero coefficient — otherwise a canonicalizer walking
-    ``lhs.decomposition_dict`` would do a wasted ``var_idx_map`` lookup
+    ``output.decomposition_dict`` would do a wasted ``var_idx_map`` lookup
     (and KeyError if the leaf isn't registered).
     """
     x = _leaf(3)
@@ -104,13 +104,13 @@ def test_partial_relu_lhs_prunes_dead_rhs_leaves():
     N = np.zeros((3, 3))
     N[1, 0] = 1.0
     N[2, 0] = 1.0
-    rhs_expr = M @ x + N @ y
-    step = Relu(rhs=rhs_expr, proj_ranges=(1, 3))
-    assert y not in step.lhs.decomposition_dict
+    arg_expr = M @ x + N @ y
+    step = Relu(arg=arg_expr, proj_ranges=(1, 3))
+    assert y not in step.output.decomposition_dict
     # x still contributes via row 0, so it stays.
-    assert x in step.lhs.decomposition_dict
+    assert x in step.output.decomposition_dict
     # And of course the fresh proj leaf is in the dict.
-    assert step._lhs_proj_leaf in step.lhs.decomposition_dict
+    assert step._output_proj_leaf in step.output.decomposition_dict
 
 
 def test_get_ranges_does_not_mutate_caller_list():
@@ -143,18 +143,18 @@ def test_sdp_partial_relu_var_count(sdp_solver):
     v = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
     x = v.add_iterate(3, lb=-1.0, ub=1.0)
     pre_marker = v.canonicalizer.range_marker
-    step_lhs = v.step.relu(x, proj_ranges=(1, 3))
+    step_output = v.step.relu(x, proj_ranges=(1, 3))
     delta = v.canonicalizer.range_marker - pre_marker
-    # Without the composite-lhs optimization, delta would equal rhs.ndim = 3.
+    # Without the composite-output optimization, delta would equal arg.ndim = 3.
     # With it, only the proj-leaf rows are fresh (= 2).
     assert delta == 2
-    # And the composite lhs is what got returned.
-    assert step_lhs.is_leaf is False
+    # And the composite output is what got returned.
+    assert step_output.is_leaf is False
 
 
 @pytest.mark.parametrize("sdp_solver", ["clarabel"])
 def test_sdp_partial_relu_aeq_count(sdp_solver):
-    """canonicalize_relu emits len(proj_indices) lifted equalities, not rhs.ndim."""
+    """canonicalize_relu emits len(proj_indices) lifted equalities, not arg.ndim."""
     v = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
     x = v.add_iterate(4, lb=-1.0, ub=1.0)
     pre = len(v.canonicalizer.Aeq_matrices)
@@ -166,7 +166,7 @@ def test_sdp_partial_relu_aeq_count(sdp_solver):
 
 @pytest.mark.parametrize("sdp_solver", ["clarabel"])
 def test_sdp_full_relu_unchanged_var_count(sdp_solver):
-    """Regression: full relu still allocates rhs.ndim rows."""
+    """Regression: full relu still allocates arg.ndim rows."""
     v = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
     x = v.add_iterate(3, lb=-1.0, ub=1.0)
     pre = v.canonicalizer.range_marker
@@ -282,7 +282,7 @@ def test_simulator_partial_relu_default_residual_matches_explicit():
 
 
 def test_simulator_partial_relu_differs_from_full():
-    """Partial-relu output diverges from full-relu output when rhs has a
+    """Partial-relu output diverges from full-relu output when arg has a
     negative coord in a non-proj position (full would clamp to 0; partial
     must pass it through)."""
     np.random.seed(0)

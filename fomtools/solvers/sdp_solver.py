@@ -44,6 +44,5 @@ class SDPSolver(Solver):
             canonicalizer level.
         """
         raise NotImplementedError(
-            "SDPSolver does not support copy(). "
-            "SDP state is managed at the canonicalizer level."
+            "SDPSolver does not support copy(). SDP state is managed at the canonicalizer level."
         )

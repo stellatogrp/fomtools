@@ -42,9 +42,9 @@ class IndBallLinf(ProxableFunction):
             return 0.0
         return np.inf
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Project ``rhs`` onto the $\ell_\infty$ ball, element-wise clip to
+        Project ``arg`` onto the $\ell_\infty$ ball, element-wise clip to
         $[-r, r]$.
 
         The prox of an indicator function is the projection onto its
@@ -52,7 +52,7 @@ class IndBallLinf(ProxableFunction):
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Step size (ignored for indicator functions; kept for interface
@@ -61,9 +61,9 @@ class IndBallLinf(ProxableFunction):
         Returns
         -------
         np.ndarray
-            The projection $\operatorname{clip}(\text{rhs}, -r, r)$.
+            The projection $\operatorname{clip}(\text{arg}, -r, r)$.
         """
-        return np.clip(rhs, -self.r, self.r)
+        return np.clip(arg, -self.r, self.r)
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         raise NotImplementedError("Indicator functions are not differentiable.")

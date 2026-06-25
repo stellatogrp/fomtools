@@ -59,16 +59,16 @@ class IndHalfSpace(ProxableFunction):
             return 0.0
         return np.inf
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Project ``rhs`` onto the half-space $\{a^\top x \le b\}$.
+        Project ``arg`` onto the half-space $\{a^\top x \le b\}$.
 
         The prox of an indicator function is the projection onto its
         feasible set, independent of $\gamma$.
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Step size (ignored for indicator functions; kept for interface
@@ -77,10 +77,10 @@ class IndHalfSpace(ProxableFunction):
         Returns
         -------
         np.ndarray
-            The projection $\text{rhs} - \max(0, a^\top\text{rhs} - b)/\|a\|^2 \cdot a$.
+            The projection $\text{arg} - \max(0, a^\top\text{arg} - b)/\|a\|^2 \cdot a$.
         """
-        excess = max(0.0, float(np.dot(self.a, rhs)) - self.b)
-        return rhs - (excess / self._norm_a_sq) * self.a
+        excess = max(0.0, float(np.dot(self.a, arg)) - self.b)
+        return arg - (excess / self._norm_a_sq) * self.a
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         raise NotImplementedError("Indicator functions are not differentiable.")

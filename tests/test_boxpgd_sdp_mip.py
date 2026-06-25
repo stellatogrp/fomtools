@@ -44,7 +44,7 @@ def test_boxpgd_sdp_mip_comparison(vp, vp_sdp):
         vp_sdp_local = Verifier(
             method="sdp",
             solver=sdp_solver_name,
-            obbt_solver='highs',
+            obbt_solver="highs",
         )
 
         q_sdp = vp_sdp_local.add_param(n, lb=q - 0.1, ub=q + 0.1)
@@ -62,7 +62,7 @@ def test_boxpgd_sdp_mip_comparison(vp, vp_sdp):
         vp_mip = Verifier(
             method="mip",
             solver=mip_solver_name,
-            obbt_solver='highs',
+            obbt_solver="highs",
         )
 
         q_mip = vp_mip.add_param(n, lb=q - 0.1, ub=q + 0.1)
@@ -110,21 +110,21 @@ def test_boxpgd_sdp_satlin_vs_relus(vp_sdp):
     vp_manual = Verifier(
         method="sdp",
         solver=sdp_solver_name,
-        obbt_solver='highs',
+        obbt_solver="highs",
     )
 
     q_manual = vp_manual.add_param(n, lb=q - 0.1, ub=q + 0.1)
     z0_manual = vp_manual.add_iterate(n, lb=0, ub=0.1)
 
-    # Compute the input to satlin: rhs = z0 - t * (P @ z0 + q)
-    rhs = z0_manual - t * (P @ z0_manual + q_manual)
+    # Compute the input to satlin: arg = z0 - t * (P @ z0 + q)
+    arg = z0_manual - t * (P @ z0_manual + q_manual)
 
     # Manual ReLU decomposition
-    relu_lower_lhs = vp_manual.step.relu(rhs - l)
-    relu_upper_lhs = vp_manual.step.relu(rhs - u)
+    relu_lower_output = vp_manual.step.relu(arg - l)
+    relu_upper_output = vp_manual.step.relu(arg - u)
 
     # z1 = relu(x - l) - relu(x - u) + l (this is the satlin output)
-    z1_manual = relu_lower_lhs - relu_upper_lhs + l
+    z1_manual = relu_lower_output - relu_upper_output + l
 
     # Set objective on z1 - z0
     vp_manual.set_objective_norm(z1_manual - z0_manual, 2)
@@ -134,15 +134,15 @@ def test_boxpgd_sdp_satlin_vs_relus(vp_sdp):
     vp_auto = Verifier(
         method="sdp",
         solver=sdp_solver_name,
-        obbt_solver='highs',
+        obbt_solver="highs",
     )
 
     q_auto = vp_auto.add_param(n, lb=q - 0.1, ub=q + 0.1)
     z0_auto = vp_auto.add_iterate(n, lb=0, ub=0.1)
 
     # Use automatic satlin decomposition
-    rhs_auto = z0_auto - t * (P @ z0_auto + q_auto)
-    z1_auto = vp_auto.step.satlin(rhs_auto, l=l, u=u)
+    arg_auto = z0_auto - t * (P @ z0_auto + q_auto)
+    z1_auto = vp_auto.step.satlin(arg_auto, l=l, u=u)
 
     vp_auto.set_objective_norm(z1_auto - z0_auto, 2)
     result_auto = vp_auto.solve()

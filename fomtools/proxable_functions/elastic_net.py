@@ -56,15 +56,15 @@ class ElasticNet(ProxableFunction):
         """
         return float(self.alpha * np.sum(np.abs(x)) + self.beta * np.sum(x * x))
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
         Compute the proximal point of the elastic-net regularizer.
 
         Uses the closed form
 
         $$
-            \operatorname{prox}_{\gamma f}(\text{rhs}) \;=\;
-                \frac{S_{\alpha\gamma}(\text{rhs})}{1 + 2\beta\gamma}.
+            \operatorname{prox}_{\gamma f}(\text{arg}) \;=\;
+                \frac{S_{\alpha\gamma}(\text{arg})}{1 + 2\beta\gamma}.
         $$
 
         Soft-thresholding is sign-equivariant, so the formula treats
@@ -73,7 +73,7 @@ class ElasticNet(ProxableFunction):
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Proximal step size.
@@ -81,10 +81,10 @@ class ElasticNet(ProxableFunction):
         Returns
         -------
         np.ndarray
-            The proximal point $\operatorname{prox}_{\gamma f}(\text{rhs})$.
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{arg})$.
         """
         thresh = self.alpha * gamma
-        soft = np.sign(rhs) * np.maximum(np.abs(rhs) - thresh, 0.0)
+        soft = np.sign(arg) * np.maximum(np.abs(arg) - thresh, 0.0)
         return soft / (1.0 + 2.0 * self.beta * gamma)
 
     def grad(self, x: np.ndarray) -> np.ndarray:

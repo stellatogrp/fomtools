@@ -47,7 +47,7 @@ def test_portfolio():
     # test with DR splitting
     Am, An = A.shape
     M = np.block([[P, A.T], [-A, np.zeros((Am, Am))]])
-    lhs = np.eye(Am + An) + M
+    output = np.eye(Am + An) + M
     c = np.hstack([q, b])
     sk = np.hstack([z_full, y_full])
 
@@ -61,7 +61,7 @@ def test_portfolio():
     K = 1000
     print(c)
     for _ in range(K):
-        utilde = np.linalg.solve(lhs, sk - c)
+        utilde = np.linalg.solve(output, sk - c)
 
         u = proj(2 * utilde - sk)
         sk = sk + u - utilde
@@ -100,7 +100,7 @@ def test_portfolio_l1():
 
     Am, An = A.shape
     M = np.block([[P, A.T], [-A, np.zeros((Am, Am))]])
-    lhs = np.eye(Am + An) + M
+    output = np.eye(Am + An) + M
     c = np.hstack([q, b])
     sk = np.zeros(Am + An)
 
@@ -112,7 +112,7 @@ def test_portfolio_l1():
 
     K = 1000
     for _ in range(K):
-        utilde = np.linalg.solve(lhs, sk - c)
+        utilde = np.linalg.solve(output, sk - c)
         u = proj(2 * utilde - sk)
         sk = sk + u - utilde
 

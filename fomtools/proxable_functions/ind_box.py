@@ -68,9 +68,9 @@ class IndBox(ProxableFunction):
             return 0.0
         return np.inf
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Project ``rhs`` onto the box $[l, u]$ element-wise.
+        Project ``arg`` onto the box $[l, u]$ element-wise.
 
         The prox of an indicator function is the projection onto its
         feasible set, independent of $\gamma$.
@@ -81,7 +81,7 @@ class IndBox(ProxableFunction):
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Step size (ignored for indicator functions; kept for interface
@@ -90,7 +90,7 @@ class IndBox(ProxableFunction):
         Returns
         -------
         np.ndarray
-            The projection $\min(\max(\text{rhs}, l), u)$.
+            The projection $\min(\max(\text{arg}, l), u)$.
 
         Raises
         ------
@@ -102,7 +102,7 @@ class IndBox(ProxableFunction):
                 "IndBox.prox requires numeric l and u; got LinearExpression. "
                 "Symbolic bounds are supported only by the verification-side lowering."
             )
-        return np.minimum(np.maximum(rhs, self.l), self.u)
+        return np.minimum(np.maximum(arg, self.l), self.u)
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         raise NotImplementedError("Indicator functions are not differentiable.")

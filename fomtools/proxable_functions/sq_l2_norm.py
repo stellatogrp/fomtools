@@ -44,16 +44,16 @@ class SqL2Norm(ProxableFunction):
         """
         return 0.5 * float(np.sum(x * x))
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
         Compute the proximal point of the squared $\ell_2$-norm.
 
         Uses the closed form
-        $\operatorname{prox}_{\gamma f}(\text{rhs}) = \text{rhs}/(1 + \gamma)$.
+        $\operatorname{prox}_{\gamma f}(\text{arg}) = \text{arg}/(1 + \gamma)$.
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Proximal step size.
@@ -61,9 +61,9 @@ class SqL2Norm(ProxableFunction):
         Returns
         -------
         np.ndarray
-            The proximal point $\text{rhs}/(1 + \gamma)$.
+            The proximal point $\text{arg}/(1 + \gamma)$.
         """
-        return rhs / (1.0 + gamma)
+        return arg / (1.0 + gamma)
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""

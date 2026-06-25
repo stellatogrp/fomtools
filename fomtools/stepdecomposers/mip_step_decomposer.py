@@ -47,4 +47,6 @@ class MIPStepDecomposer(StepDecomposer):
 
     _DECOMPOSERS = {
         "saturatedlinear": decompose_saturatedlinear,
+        "quadraticprogram": StepDecomposer.decompose_quadraticprogram,
+        "linearprogram": StepDecomposer.decompose_quadraticprogram,
     }

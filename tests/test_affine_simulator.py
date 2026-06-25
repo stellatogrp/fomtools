@@ -27,7 +27,7 @@ def test_affine_simulator():
     max_eig = np.linalg.eigvalsh(P).max()
     step_size = 1.0 / max_eig
 
-    lhs_mat = np.eye(n) + step_size * P
+    output_mat = np.eye(n) + step_size * P
 
     vp = Verifier(method="simulator", obbt_solver=None)
     z = [None] * (K + 1)
@@ -38,7 +38,7 @@ def test_affine_simulator():
     q_param = vp.add_param(ndim=n, samples=q_samples)
 
     for k in range(1, K + 1):
-        z[k] = vp.step.implicit_linear(z[k - 1] - q_param, lhs_mat=lhs_mat)
+        z[k] = vp.step.implicit_linear(z[k - 1] - q_param, output_mat=output_mat)
 
     residuals = vp.solve()
 
@@ -67,7 +67,7 @@ def test_affine_simulator():
 def test_affine_sparse_simulator():
     """
     Tests that the simulator executes the affine (implicit linear) step
-    correctly using a sparse tridiagonal lhs_mat.
+    correctly using a sparse tridiagonal output_mat.
 
     Note
     ----
@@ -87,7 +87,7 @@ def test_affine_sparse_simulator():
     max_eig = 4.0
     step_size = 1.0 / max_eig
 
-    lhs_mat = spa.eye(n, format="csr") + step_size * A
+    output_mat = spa.eye(n, format="csr") + step_size * A
 
     vp = Verifier(method="simulator", obbt_solver=None)
     z = [None] * (K + 1)
@@ -98,7 +98,7 @@ def test_affine_sparse_simulator():
     q_param = vp.add_param(ndim=n, samples=q_samples)
 
     for k in range(1, K + 1):
-        z[k] = vp.step.implicit_linear(z[k - 1] - step_size * q_param, lhs_mat=lhs_mat)
+        z[k] = vp.step.implicit_linear(z[k - 1] - step_size * q_param, output_mat=output_mat)
 
     residuals = vp.solve()
 

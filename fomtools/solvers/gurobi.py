@@ -40,19 +40,27 @@ class GurobiSolver(MIPSolver):
     def __getitem__(self, item):
         return getattr(self.model, item)
 
-    def set_param(self, param: str, val: int | float):
+    def set_param(self, param: str, val):
         """
-        Configure a solver parameter that controls its behavior.
+        Configure a solver parameter, passed verbatim to Gurobi.
 
         Parameters
         ----------
         param: str
-            The name of the solver parameter to set.
-
-        val: int | float
+            The native Gurobi parameter name to set (e.g. ``TimeLimit``,
+            ``MIPGap``).
+        val:
             The value to assign to the specified parameter.
+
+        Raises
+        ------
+        ValueError
+            If Gurobi rejects the parameter name or value.
         """
-        self.model.setParam(param, val)
+        try:
+            self.model.setParam(param, val)
+        except gp.GurobiError as e:
+            raise ValueError(f"Invalid Gurobi solver option {param!r}={val!r}: {e}") from e
 
     def relax_model(self):
         """
@@ -325,6 +333,42 @@ class GurobiSolver(MIPSolver):
             self.model.setObjective(self.expression_to_solver(expression), sense=sense)
         self.model.update()
 
+    def add_sum_squares_constr(self, expr, radius_sq, sense) -> None:
+        """
+        Add a sum-of-squares (quadratic) constraint to the Gurobi model.
+
+        Encodes ``sum_i (a_i^T x + b_i)^2  op  radius_sq`` where ``op`` is given by
+        ``sense``. The squared two-norm is built as ``gp_expr @ gp_expr`` (a dot product),
+        the same construct used by :meth:`set_two_norm_objective`. The const term ``b`` is
+        included via :meth:`expression_to_solver`.
+
+        The ``>=`` / ``==`` senses are nonconvex quadratic constraints; ``NonConvex=2`` is
+        set for them so Gurobi accepts the model across versions (the convex ``<=`` sense
+        does not need it).
+
+        Parameters
+        ----------
+        expr : LinearExpression
+            The expression whose squared two-norm is constrained.
+        radius_sq : float
+            The nonnegative scalar right-hand side (e.g. ``r**2``).
+        sense : str {"<=", ">=", "=="}
+            The relational operator.
+        """
+        gp_expr = self.expression_to_solver(expr)
+        ss = gp_expr @ gp_expr  # 0-d MQuadExpr = sum of squares (matrix API)
+        if sense != "<=":
+            self.model.Params.NonConvex = 2
+        # The matrix-API MQuadExpr is added via addConstr (addQConstr rejects the 0-d MQuadExpr).
+        match sense:
+            case "<=":
+                self.model.addConstr(ss <= radius_sq)
+            case ">=":
+                self.model.addConstr(ss >= radius_sq)
+            case "==":
+                self.model.addConstr(ss == radius_sq)
+        self.model.update()
+
     def set_two_norm_objective(self, expr_list, lb_list, ub_list) -> None:
         """
         Set a quadratic two-norm objective for the underlying Gurobi model.
@@ -443,6 +487,7 @@ class GurobiSolver(MIPSolver):
         """
         new_solver = GurobiSolver.__new__(GurobiSolver)
         new_solver._relaxed_model = None
+        new_solver.solver_params = self.solver_params
         new_solver.model = self.model.copy()
 
         # Rebuild vector_var_map with variables from the copied model

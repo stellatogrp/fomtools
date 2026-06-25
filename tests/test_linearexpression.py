@@ -29,7 +29,9 @@ def test_LinearExpression_dense():
     assert np.linalg.norm(Axhalf.decomposition_dict[x] - A / 2) <= TEST_EPS
 
     Axhalfmult = Ax * 0.5
-    assert np.linalg.norm(Axhalfmult.decomposition_dict[x] - Axhalf.decomposition_dict[x]) <= TEST_EPS
+    assert (
+        np.linalg.norm(Axhalfmult.decomposition_dict[x] - Axhalf.decomposition_dict[x]) <= TEST_EPS
+    )
 
     z2 = x - y
     assert x in z2.decomposition_dict

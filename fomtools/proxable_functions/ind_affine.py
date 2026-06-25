@@ -56,14 +56,11 @@ class IndAffine(ProxableFunction):
         if isinstance(b, np.ndarray):
             if b.shape != (m,):
                 raise ValueError(
-                    f"b must have shape ({m},) to match A's row count; "
-                    f"got shape {b.shape}"
+                    f"b must have shape ({m},) to match A's row count; got shape {b.shape}"
                 )
         elif hasattr(b, "decomposition_dict"):  # LinearExpression
             if b.ndim != m:
-                raise ValueError(
-                    f"b LinearExpression must have ndim {m}; got ndim {b.ndim}"
-                )
+                raise ValueError(f"b LinearExpression must have ndim {m}; got ndim {b.ndim}")
         # else: scalar — broadcasts in numpy arithmetic; LE-stacking lifts as a const.
         self.A = A
         self.b = b
@@ -103,14 +100,14 @@ class IndAffine(ProxableFunction):
             return 0.0
         return np.inf
 
-    def prox(self, rhs: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Project ``rhs`` onto the affine set $\{Ax = b\}$.
+        Project ``arg`` onto the affine set $\{Ax = b\}$.
 
         The prox of an indicator function is the projection onto its
         feasible set, independent of $\gamma$. Solves the small
-        $m \times m$ system $\nu = (AA^\top)^{-1}(A\,\text{rhs} - b)$
-        and returns $\text{rhs} - A^\top \nu$. Forming $AA^\top$ is
+        $m \times m$ system $\nu = (AA^\top)^{-1}(A\,\text{arg} - b)$
+        and returns $\text{arg} - A^\top \nu$. Forming $AA^\top$ is
         allowed at the numpy reference level; the verification model
         never forms it.
 
@@ -120,7 +117,7 @@ class IndAffine(ProxableFunction):
 
         Parameters
         ----------
-        rhs : np.ndarray
+        arg : np.ndarray
             Input point.
         gamma : float, default 1.0
             Step size (ignored for indicator functions).
@@ -140,8 +137,8 @@ class IndAffine(ProxableFunction):
                 "IndAffine.prox requires numeric b; got LinearExpression. "
                 "Symbolic b is supported only by the verification-side lowering."
             )
-        nu = np.linalg.solve(self.A @ self.A.T, self.A @ rhs - self.b)
-        return rhs - self.A.T @ nu
+        nu = np.linalg.solve(self.A @ self.A.T, self.A @ arg - self.b)
+        return arg - self.A.T @ nu
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         raise NotImplementedError("Indicator functions are not differentiable.")
