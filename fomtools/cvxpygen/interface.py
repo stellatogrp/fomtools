@@ -121,13 +121,12 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
 
     header_files = ['"cpg_fom_bridge.h"']
     cmake_headers = ["${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"]
-    cmake_sources = [
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/fom_solver.c",
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/fom_data.c",
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/fom_linsolve.c",
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/fom_ops.c",
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/cpg_fom_bridge.c",
-    ]
+    # Placeholder only: the real list is target-dependent (CUDA emits ``.cu``
+    # translation units, not ``.c``) and is always set per instance in
+    # ``__init__`` via ``cmake_solver_sources(get_target(...))``. Left as ``None``
+    # so any access before ``__init__`` fails loudly rather than silently
+    # building the wrong (``.c``-only) source set.
+    cmake_sources = None
     has_qdldl = False
     inmemory_preconditioning = False
 
