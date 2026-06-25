@@ -128,7 +128,7 @@ def build_admm_qp(
     y = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
 
     rhs = stack([sigma * x - q_e, z - Rinv @ y])
-    sol = v.step.implicit_linear(rhs, lhs_mat=kkt)
+    sol = v.step.implicit_linear(rhs, output_mat=kkt)
     x_tilde = sol[:n]
     nu = sol[n : n + m]
 
