@@ -129,7 +129,7 @@ def build_dr(*, K=5, seed=5, n=4, m=3, max_iters=200, tol=None, dtype="float64")
     z0 = v.add_iterate(m + n, lb=np.zeros(n + m), ub=np.zeros(n + m))
     z = [z0]
     for _ in range(K):
-        u = v.step.implicit_linear(z[-1] - q_param, lhs_mat=lhs.todense())
+        u = v.step.implicit_linear(z[-1] - q_param, output_mat=lhs.todense())
         utilde = v.step.relu(2 * u - z[-1], proj_ranges=(n, n + m))
         z.append(z[-1] + utilde - u)
 
@@ -212,7 +212,7 @@ def build_indefinite_kkt(*, n=3, seed=4, max_iters=60, tol=None, dtype="float64"
     x = v.add_iterate(2 * n, lb=np.zeros(2 * n), ub=np.zeros(2 * n))
     iterates = [x]
     for _ in range(3):
-        x = v.step.implicit_linear(x + q, lhs_mat=K)
+        x = v.step.implicit_linear(x + q, output_mat=K)
         iterates.append(x)
 
     kind = TerminationKind.INF_NORM_CHANGE if tol is not None else TerminationKind.MAX_ITERS
@@ -338,7 +338,7 @@ def build_spd_cg(*, n=5, seed=3, max_iters=100, dtype="float64"):
     x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
     iterates = [x]
     for _ in range(3):
-        x = v.step.implicit_linear(x + q, lhs_mat=M)
+        x = v.step.implicit_linear(x + q, output_mat=M)
         iterates.append(x)
 
     config = CodegenConfig(

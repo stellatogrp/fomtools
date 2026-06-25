@@ -101,7 +101,7 @@ def dr_example(*, n: int = 4, m: int = 3, seed: int = 5, K: int = 3) -> dict:
     z0 = v.add_iterate(m + n, lb=np.zeros(n + m), ub=np.zeros(n + m))
     z = [z0]
     for _ in range(K):
-        u = v.step.implicit_linear(z[-1] - q_param, lhs_mat=lhs.todense())
+        u = v.step.implicit_linear(z[-1] - q_param, output_mat=lhs.todense())
         utilde = v.step.relu(2 * u - z[-1], proj_ranges=(n, n + m))
         z.append(z[-1] + utilde - u)
     return {"verifier": v, "next_state": z[1], "name": "dr"}
@@ -192,7 +192,7 @@ def mpc_osqp_example(
 
     # Solve the KKT system for (x_tilde, nu_dual).
     rhs = stack([sigma * x - q, z - (1.0 / rho) * y])
-    sol = v.step.implicit_linear(rhs, lhs_mat=KKT)
+    sol = v.step.implicit_linear(rhs, output_mat=KKT)
     x_tilde = sol[:nv]
     nu_dual = sol[nv : nv + nc]
 
@@ -253,7 +253,7 @@ def cg_qp_example(*, n: int = 6, seed: int = 3, bandwidth: int | None = None) ->
     x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
     iterates = [x]
     for _ in range(3):
-        x = v.step.implicit_linear(x + q, lhs_mat=M)
+        x = v.step.implicit_linear(x + q, output_mat=M)
         iterates.append(x)
     return {"verifier": v, "next_state": iterates[1], "name": "cgqp"}
 
@@ -326,7 +326,7 @@ def indefinite_kkt_example(*, n: int = 4, seed: int = 4) -> dict:
     x = v.add_iterate(2 * n, lb=np.zeros(2 * n), ub=np.zeros(2 * n))
     iters = [x]
     for _ in range(3):
-        x = v.step.implicit_linear(x + q, lhs_mat=K)
+        x = v.step.implicit_linear(x + q, output_mat=K)
         iters.append(x)
     return {"verifier": v, "next_state": iters[1], "name": "indef_kkt"}
 

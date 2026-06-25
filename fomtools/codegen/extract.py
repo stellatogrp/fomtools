@@ -73,7 +73,7 @@ def eval_expr(expr: LinearExpression, values: dict[LinearExpression, np.ndarray]
 
 def fresh_leaf_of(step) -> LinearExpression:
     """The single fresh leaf a step introduces."""
-    leaves = step.lhs_leaves
+    leaves = step.output_leaves
     if len(leaves) != 1:
         raise NonStationaryFOMError(
             f"{type(step).__name__} introduces {len(leaves)} leaves; "
@@ -91,22 +91,22 @@ def _step_source_activation(step) -> tuple[LinearExpression, ActivationOp, int]:
     the identity.
     """
     if isinstance(step, Affine):
-        return step.rhs, ActivationOp(ActivationKind.IDENTITY), step.rhs.ndim
+        return step.arg, ActivationOp(ActivationKind.IDENTITY), step.arg.ndim
     if isinstance(step, SoftThreshold):
         return (
-            step.rhs,
+            step.arg,
             ActivationOp(ActivationKind.SOFT_THRESHOLD, lambd=float(step.lambd)),
-            step.rhs.ndim,
+            step.arg.ndim,
         )
     if isinstance(step, Relu):
         proj = sorted(step.proj_indices)
-        if proj == list(range(step.rhs.ndim)):
-            return step.rhs, ActivationOp(ActivationKind.RELU), step.rhs.ndim
-        return _row_slice_expr(step.rhs, proj), ActivationOp(ActivationKind.RELU), len(proj)
+        if proj == list(range(step.arg.ndim)):
+            return step.arg, ActivationOp(ActivationKind.RELU), step.arg.ndim
+        return _row_slice_expr(step.arg, proj), ActivationOp(ActivationKind.RELU), len(proj)
     if isinstance(step, SaturatedLinear):
         # Bounds (scalar or vector) are finalized into IR matrices by the caller;
         # return a placeholder activation here.
-        return step.rhs, ActivationOp(ActivationKind.SATURATED_LINEAR), step.rhs.ndim
+        return step.arg, ActivationOp(ActivationKind.SATURATED_LINEAR), step.arg.ndim
     raise NonStationaryFOMError(f"Unsupported step type for code generation: {type(step).__name__}")
 
 
@@ -120,7 +120,7 @@ def _satlin_arrays(step: SaturatedLinear) -> tuple[np.ndarray, np.ndarray]:
             "saturated_linear with parameter-dependent (LinearExpression) bounds "
             "is not yet supported by code generation."
         )
-    n = step.rhs.ndim
+    n = step.arg.ndim
     lower = np.asarray(step.l, dtype=float).reshape(-1)
     upper = np.asarray(step.u, dtype=float).reshape(-1)
     lower = np.full(n, lower[0]) if lower.size == 1 else lower
@@ -134,19 +134,19 @@ def _eval_step_fresh(step, values: dict[LinearExpression, np.ndarray]) -> np.nda
     Used by the oracle trust-check: the affine case solves the *original* system
     rather than reusing the precomputed inverse.
     """
-    rhs_val = eval_expr(step.rhs, values)
+    rhs_val = eval_expr(step.arg, values)
     if isinstance(step, Affine):
         mat = (
-            np.asarray(step.lhs_mat.todense(), dtype=float)
-            if spa.issparse(step.lhs_mat)
-            else np.asarray(step.lhs_mat, dtype=float)
+            np.asarray(step.output_mat.todense(), dtype=float)
+            if spa.issparse(step.output_mat)
+            else np.asarray(step.output_mat, dtype=float)
         )
         return np.linalg.solve(mat, rhs_val)
     if isinstance(step, SoftThreshold):
         return np.sign(rhs_val) * np.maximum(np.abs(rhs_val) - step.lambd, 0.0)
     if isinstance(step, Relu):
         proj = sorted(step.proj_indices)
-        if proj == list(range(step.rhs.ndim)):
+        if proj == list(range(step.arg.ndim)):
             return np.maximum(0.0, rhs_val)
         return np.maximum(0.0, rhs_val[proj])
     if isinstance(step, SaturatedLinear):
@@ -167,8 +167,8 @@ def _cg_tol_for_dtype(dtype: str) -> float:
     return _CG_TOL_BY_DTYPE.get(dtype, 1e-12)
 
 
-def _resolve_solve_method(lhs_mat, config: CodegenConfig) -> str:
-    """Pick the concrete solve method for an affine operator ``lhs_mat w = rhs``.
+def _resolve_solve_method(output_mat, config: CodegenConfig) -> str:
+    """Pick the concrete solve method for an affine operator ``output_mat w = rhs``.
 
     An explicit ``solve_method`` is honored as-is. For ``AUTO`` on the
     large-scale **CUDA** backend, upgrade to CG when the system is large
@@ -183,8 +183,8 @@ def _resolve_solve_method(lhs_mat, config: CodegenConfig) -> str:
         config.solve_method == SolveMethod.AUTO
         and config.version == Version.LARGE_SCALE
         and config.backend == Backend.CUDA
-        and lhs_mat.shape[0] >= config.cg_auto_min_dim
-        and is_spd(lhs_mat)
+        and output_mat.shape[0] >= config.cg_auto_min_dim
+        and is_spd(output_mat)
     ):
         return "cg"
     return config.solve_method.value
@@ -214,7 +214,7 @@ def _dependency_cone(steps, next_state_leaves: set[LinearExpression]):
         if step is None:
             continue  # external leaf (state or param)
         needed.add(step_index[id(step)])
-        worklist.extend(step.rhs.decomposition_dict.keys())
+        worklist.extend(step.arg.decomposition_dict.keys())
 
     return [steps[i] for i in sorted(needed)]
 
@@ -250,7 +250,7 @@ def resolve_structure(verifier, next_state, state=None, params=None):
     external: list[LinearExpression] = []
     seen: set[LinearExpression] = set()
     for step in body_steps:
-        for leaf in step.rhs.decomposition_dict.keys():
+        for leaf in step.arg.decomposition_dict.keys():
             if leaf not in body_fresh_set and leaf not in seen:
                 seen.add(leaf)
                 external.append(leaf)
@@ -338,9 +338,9 @@ def extract_ir(
         # division-free triangular solves to the assembled right-hand side.
         if isinstance(step, Affine):
             solve_name = prefix
-            method = _resolve_solve_method(step.lhs_mat, config)
+            method = _resolve_solve_method(step.output_mat, config)
             factorizations[prefix] = factorize(
-                step.lhs_mat, method=method, cg_tol=_cg_tol_for_dtype(config.dtype)
+                step.output_mat, method=method, cg_tol=_cg_tol_for_dtype(config.dtype)
             )
         # Saturated-linear clip bounds become per-coordinate IR arrays.
         if activation.kind == ActivationKind.SATURATED_LINEAR:
