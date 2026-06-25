@@ -1,7 +1,8 @@
 """Generic driver for any headless coding-agent CLI, configured by a spec.
 
 A single :class:`CliAgentDriver` drives every prompt-in/files-out CLI backend
-(Codex, the bundled Pi spec, and any user-registered agent); the per-tool differences live in
+(the example Cursor spec and any user-registered agent); the per-tool differences
+live in
 :class:`~fomtools.codegen.agent.specs.CliAgentSpec`. This is the agent-agnostic
 core: the authoritative verify/retry loop is shared via
 :func:`~fomtools.codegen.agent.driver.run_verify_loop`, and authentication is
@@ -31,7 +32,8 @@ class CliAgentDriver(AgentDriver):
     """Drive code generation with a headless CLI described by a :class:`CliAgentSpec`.
 
     A concrete :class:`~fomtools.codegen.agent.driver.AgentDriver` for every
-    prompt-in/files-out CLI backend (Codex, the bundled Pi spec, and user-registered agents).
+    prompt-in/files-out CLI backend (the example Cursor spec and user-registered
+    agents).
     All per-tool differences are carried by the ``spec``; this class supplies the
     agent-agnostic core and shares the authoritative verify/retry loop via
     :func:`~fomtools.codegen.agent.driver.run_verify_loop`.
