@@ -23,6 +23,26 @@ from fomtools.linearexpression import stack
 from fomtools.verifier import Verifier
 
 
+def importorskip_cvxpygen():
+    """Import and return ``cvxpygen``, skipping the whole module if it can't load.
+
+    ``pytest.importorskip`` only treats :class:`ImportError` as "missing". But
+    importing ``cvxpygen`` eagerly pulls in its solver registry -> ``pdaqp`` ->
+    ``juliacall``, which on first init tries to download Julia over the network;
+    on an offline machine (e.g. an HPC compute node) that raises ``URLError`` —
+    not ``ImportError`` — *during* import, which would otherwise turn a clean
+    skip into a collection error. Skip on any import-time exception instead.
+    """
+    try:
+        import cvxpygen
+    except Exception as exc:  # noqa: BLE001 - any import-time failure -> skip
+        pytest.skip(
+            f"cvxpygen unavailable ({type(exc).__name__}: {exc})",
+            allow_module_level=True,
+        )
+    return cvxpygen
+
+
 @pytest.fixture
 def requires_compiler():
     """Skip a test when no C compiler is available."""

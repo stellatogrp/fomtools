@@ -36,9 +36,19 @@ from fomtools.codegen.agent.driver import AgentDriver
 from fomtools.codegen.config import Backend, CodegenConfig, Version
 from fomtools.codegen.generate import CodegenResult
 from fomtools.codegen.generate import generate_code as fomtools_generate_code
+from fomtools.codegen.targets import get_target
 from fomtools.cvxpygen.builders import resolve_builder
-from fomtools.cvxpygen.glue import emit_bridge, write_solver_cmake_stub
+from fomtools.cvxpygen.glue import cmake_solver_sources, emit_bridge, write_solver_cmake_stub
 from fomtools.cvxpygen.qpdata import extract_qp_data
+
+#: (version, backend) combinations the cvxpygen integration can emit a build for.
+_SUPPORTED_TARGETS = frozenset(
+    {
+        (Version.EMBEDDED, Backend.C),
+        (Version.LARGE_SCALE, Backend.OPENMP),
+        (Version.LARGE_SCALE, Backend.CUDA),
+    }
+)
 
 
 @dataclass
@@ -123,6 +133,7 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
     stgs = {
         "max_iter": Setting(type="cpg_int", default="1000"),
         "tol": Setting(type="cpg_float", default="0.0"),
+        "check_termination": Setting(type="cpg_int", default="1"),
     }
 
     ws_ptrs = WorkspacePointerInfo(
@@ -141,10 +152,17 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
         opts = _current_options()
         term = opts.config.termination
         # Instance-level settings so defaults reflect the actual configuration.
+        # check_termination is runtime-tunable (the bridge copies it into the
+        # FomWorkspace each solve), so callers can change the inf-norm-change
+        # check interval via cpg_set_solver_check_termination without rebuilding.
         self.stgs = {
             "max_iter": Setting(type="cpg_int", default=str(term.max_iters)),
             "tol": Setting(type="cpg_float", default=repr(float(term.tol or 0.0))),
+            "check_termination": Setting(type="cpg_int", default=str(term.check_termination)),
         }
+        # Build sources follow the chosen target: OpenMP reuses the embedded C
+        # files; CUDA emits .cu translation units. The bridge stays host C.
+        self.cmake_sources = cmake_solver_sources(get_target(opts.config))
         super().__init__(data, p_prob, enable_settings)
 
     def generate_code(
@@ -154,10 +172,11 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
             raise NotImplementedError("gradient code generation is not supported for FOMTOOLS")
         opts = _current_options()
         config = opts.config
-        if config.version != Version.EMBEDDED or config.backend != Backend.C:
+        if (config.version, config.backend) not in _SUPPORTED_TARGETS:
             raise NotImplementedError(
-                "the cvxpygen integration currently supports the embedded C target only "
-                f"(got version={config.version.value!r}, backend={config.backend.value!r})"
+                "the cvxpygen integration supports the embedded C target and the "
+                "large-scale OpenMP / CUDA targets; got "
+                f"version={config.version.value!r}, backend={config.backend.value!r}"
             )
         if config.dtype != "float64":
             raise NotImplementedError(

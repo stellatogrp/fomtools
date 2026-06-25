@@ -15,10 +15,12 @@ import numpy as np
 import pytest
 
 cp = pytest.importorskip("cvxpy")
-pytest.importorskip("cvxpygen")
+from tests.codegen.conftest import importorskip_cvxpygen  # noqa: E402
+
+importorskip_cvxpygen()
 
 from fomtools.codegen.agent.stub import StubAgentDriver  # noqa: E402
-from fomtools.codegen.config import CodegenConfig, TerminationSpec  # noqa: E402
+from fomtools.codegen.config import Backend, CodegenConfig, TerminationSpec, Version  # noqa: E402
 from fomtools.cvxpygen import generate_solver  # noqa: E402
 
 GOLDEN = Path(__file__).parent / "golden" / "cvxpygen_qp" / "embedded_c" / "fom_solver.c"
@@ -66,6 +68,33 @@ def test_generated_solver_verifies_with_tol_termination(
                 tol=1e-9,
                 check_termination=check_termination,
             )
+        ),
+        driver=StubAgentDriver(GOLDEN),
+        wrapper=False,
+    )
+    assert result.success
+
+
+@pytest.mark.requires_compiler
+def test_large_scale_openmp_through_bridge(requires_compiler, tmp_path, monkeypatch):
+    """The large-scale OpenMP target generates and verifies through the bridge.
+
+    OpenMP reuses the embedded C sources (the data-parallel loops carry
+    ``#ifdef _OPENMP`` pragmas), so the embedded golden body is a valid solver
+    for this target and ``make verify`` builds + checks it serially. wrapper=False
+    skips the cvxpygen CMake/pybind build.
+    """
+    monkeypatch.chdir(tmp_path)
+    problem, q, x = _build_problem()
+    result = generate_solver(
+        problem,
+        "cpg_omp",
+        fom="admm",
+        param_bounds={q: (-1.0, 1.0)},
+        config=CodegenConfig(
+            version=Version.LARGE_SCALE,
+            backend=Backend.OPENMP,
+            termination=TerminationSpec(max_iters=2000),
         ),
         driver=StubAgentDriver(GOLDEN),
         wrapper=False,

@@ -8,8 +8,14 @@ touching the algorithm-specific intermediate representation, which lives in
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+#: Verify-tolerance default per dtype. Single precision (~1e-7 relative error)
+#: needs a looser equivalence gate than double; see ``CodegenConfig.tol_verify``.
+_TOL_VERIFY_DEFAULTS = {"float64": 1e-6, "float32": 1e-4}
 
 
 class Version(str, Enum):
@@ -44,6 +50,14 @@ class SolveMethod(str, Enum):
     products. It requires a symmetric positive-definite system and a few scalar
     divisions per iteration, so it is only available for the large-scale version
     (the embedded target is division-free).
+
+    On the large-scale **CUDA** backend, ``AUTO`` additionally *upgrades* to CG
+    for systems that are large (dimension ``>= cg_auto_min_dim``) and SPD,
+    because CG is matrix-free and fully data-parallel — the GPU-friendly choice
+    — whereas the direct triangular solves are sequential and run on the host.
+    Small SPD systems and all non-SPD systems (including quasidefinite KKT,
+    which is symmetric-indefinite) keep AUTO's direct factorization. Forcing
+    ``LDLT`` / ``LU`` / ``CG`` always bypasses this heuristic.
     """
 
     AUTO = "auto"
@@ -64,8 +78,7 @@ class TerminationKind(str, Enum):
     INF_NORM_CHANGE = "inf_norm_change"
 
 
-@dataclass(frozen=True)
-class TerminationSpec:
+class TerminationSpec(BaseModel):
     """Termination criterion for the generated solve loop.
 
     Parameters
@@ -90,22 +103,22 @@ class TerminationSpec:
         Ignored for ``MAX_ITERS``.
     """
 
-    kind: TerminationKind = TerminationKind.MAX_ITERS
-    max_iters: int = 1000
-    tol: float | None = None
-    check_termination: int = 1
+    model_config = ConfigDict(frozen=True)
 
-    def __post_init__(self) -> None:
-        if self.max_iters <= 0:
-            raise ValueError(f"max_iters must be positive, got {self.max_iters}")
-        if self.check_termination < 0:
-            raise ValueError(
-                f"check_termination must be >= 0 (0 disables checking), "
-                f"got {self.check_termination}"
-            )
-        if self.kind == TerminationKind.INF_NORM_CHANGE:
-            if self.tol is None or self.tol <= 0:
-                raise ValueError("tol must be a positive float for the inf_norm_change criterion")
+    kind: TerminationKind = TerminationKind.MAX_ITERS
+    max_iters: int = Field(ge=1, default=1000, description="Hard upper bound on iterations.")
+    tol: float | None = Field(
+        default=None, description="Tolerance for the ``INF_NORM_CHANGE`` criterion."
+    )
+    check_termination: int = Field(
+        ge=0, default=1, description="How often the ``INF_NORM_CHANGE`` criterion is evaluated."
+    )
+
+    @model_validator(mode="after")
+    def _check_tol(self) -> "TerminationSpec":
+        if self.kind == TerminationKind.INF_NORM_CHANGE and (self.tol is None or self.tol <= 0):
+            raise ValueError("tol must be a positive float for the inf_norm_change criterion")
+        return self
 
     @property
     def uses_tolerance(self) -> bool:
@@ -118,8 +131,7 @@ class TerminationSpec:
         return self.kind == TerminationKind.INF_NORM_CHANGE and self.check_termination > 0
 
 
-@dataclass(frozen=True)
-class CodegenConfig:
+class CodegenConfig(BaseModel):
     """Top-level knobs controlling a code-generation run.
 
     Parameters
@@ -136,7 +148,9 @@ class CodegenConfig:
         ``"float32"``). Large-scale GPU backends commonly prefer ``float32``.
     tol_verify:
         Tolerance used by the equivalence harness when comparing generated-code
-        output against the Python reference oracle.
+        output against the Python reference oracle. When left unset it defaults
+        by dtype (1e-6 for float64, 1e-4 for float32, since single precision
+        cannot meet a 1e-6 gate); set it explicitly to override.
     allow_unroll:
         When extraction cannot roll the recorded steps into a stationary loop
         body (e.g. iteration-dependent step sizes), emit a straight-line,
@@ -145,21 +159,62 @@ class CodegenConfig:
         Number of random parameter instances drawn for the golden verify data.
     seed:
         RNG seed for reproducible verify-sample generation.
+    cg_auto_min_dim:
+        Dimension threshold for the ``AUTO`` → CG upgrade on the large-scale
+        CUDA backend (see :class:`SolveMethod`). Raise it to keep more systems
+        on a direct factorization; lower it to prefer CG for smaller SPD
+        systems. Ignored for non-CUDA backends and explicit solve methods.
     """
 
     version: Version = Version.EMBEDDED
     backend: Backend = Backend.C
-    termination: TerminationSpec = field(default_factory=TerminationSpec)
+    termination: TerminationSpec = Field(default_factory=TerminationSpec)
     solve_method: SolveMethod = SolveMethod.AUTO
-    dtype: str = "float64"
-    tol_verify: float = 1e-6
+    dtype: Literal["float64", "float32"] = "float64"
+    tol_verify: float | None = Field(
+        default=None,
+        description=(
+            "Tolerance used by the equivalence harness when comparing generated "
+            "code against the reference oracle. Defaults by dtype when left unset: "
+            "1e-6 for float64, 1e-4 for float32 (single precision carries ~1e-7 "
+            "relative error, which 1e-6 is too tight to absorb — especially for "
+            "iterative CG). Set explicitly to override."
+        ),
+    )
     allow_unroll: bool = False
     num_verify_samples: int = 8
     seed: int = 0
+    cg_auto_min_dim: int = Field(
+        ge=1,
+        default=256,
+        description=(
+            "Minimum affine-system dimension at which solve_method=AUTO upgrades "
+            "a large-scale CUDA SPD solve to CG (matrix-free, data-parallel). "
+            "Smaller SPD systems and all non-SPD systems keep a direct "
+            "factorization. No effect for non-CUDA backends or an explicit "
+            "solve_method."
+        ),
+    )
 
-    def __post_init__(self) -> None:
-        if self.dtype not in ("float64", "float32"):
-            raise ValueError(f"dtype must be 'float64' or 'float32', got {self.dtype!r}")
+    model_config = ConfigDict(frozen=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_tol_verify(cls, data):
+        # Fill the dtype-dependent tol_verify default when the user left it unset.
+        if isinstance(data, dict) and data.get("tol_verify") is None:
+            dtype = data.get("dtype", "float64")
+            data["tol_verify"] = _TOL_VERIFY_DEFAULTS.get(dtype, 1e-6)
+        return data
+
+    @model_validator(mode="after")
+    def _check_tol_verify(self) -> "CodegenConfig":
+        if self.tol_verify is None or self.tol_verify <= 0:
+            raise ValueError("tol_verify must be a positive float")
+        return self
+
+    @model_validator(mode="after")
+    def _check_version_constraints(self) -> "CodegenConfig":
         if self.version == Version.EMBEDDED and self.backend != Backend.C:
             raise ValueError(
                 f"embedded version only supports the C backend; got backend={self.backend.value!r}"
@@ -170,8 +225,7 @@ class CodegenConfig:
                 "for the large-scale version; the embedded target is division-free. Use "
                 "solve_method=AUTO/LDLT/LU for the embedded version."
             )
-        if self.tol_verify <= 0:
-            raise ValueError("tol_verify must be positive")
+        return self
 
     @property
     def c_float(self) -> str:

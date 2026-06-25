@@ -1,0 +1,155 @@
+"""Unit tests for the cvxpygen C bridge and build wiring (no cvxpygen needed).
+
+These exercise the deterministic emission in :mod:`fomtools.cvxpygen.glue`
+directly — the OSQP-style primal/dual residual computation, the runtime
+``check_termination`` plumbing, and the per-backend CMake source list — without
+importing cvxpygen or running cvxpygen's canonicalizer. The full end-to-end path
+(which needs cvxpygen + a compiler) lives in ``test_cvxpygen_e2e.py``.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import scipy.sparse as spa
+
+from fomtools.codegen.config import Backend, CodegenConfig, Version
+from fomtools.codegen.targets import get_target
+from fomtools.cvxpygen.builders import FomSpec
+from fomtools.cvxpygen.glue import cmake_solver_sources, emit_bridge
+from fomtools.cvxpygen.qpdata import QPData
+
+
+def _qp(*, n=3, n_eq=2, n_ineq=3, with_p=True, seed=0):
+    m = n_eq + n_ineq
+    rng = np.random.default_rng(seed)
+    P = spa.eye(n, format="csc") if with_p else spa.csc_matrix((n, n))
+    A = spa.csc_matrix(rng.standard_normal((m, n))) if m else spa.csc_matrix((0, n))
+    return QPData(
+        P=P,
+        q=np.zeros(n),
+        A=A,
+        b=np.zeros(n_eq),
+        u_ineq=np.ones(n_ineq),
+        d=0.0,
+        n=n,
+        n_eq=n_eq,
+        n_ineq=n_ineq,
+        param_dependent=frozenset({"q"}),
+        bounds={"q": (-np.ones(n), np.ones(n))},
+    )
+
+
+def _spec(qp):
+    # emit_bridge only reads param_copy / primal_offset / dual_offset off the spec.
+    return FomSpec(
+        verifier=None,
+        next_state=None,
+        name="t",
+        primal_offset=0,
+        primal_dim=qp.n,
+        dual_offset=qp.n + qp.m,
+        dual_dim=qp.m,
+        param_copy=("q",),
+        state=(),
+        params=(),
+    )
+
+
+def _emit(tmp_path, qp, *, prefix="", has_quad_term=True):
+    emit_bridge(_spec(qp), qp, tmp_path, prefix, has_quad_term=has_quad_term)
+    return (tmp_path / "src" / "cpg_fom_bridge.c").read_text()
+
+
+def test_bridge_reports_osqp_primal_dual_residuals(tmp_path):
+    qp = _qp()
+    src = _emit(tmp_path, qp)
+
+    # Primal residual: ||Ax - clamp(Ax, l, u)||_inf via A x and the bounds.
+    assert "for (i = 0; i < 5; i++) bridge_Ax[i] = 0.0;" in src
+    assert "bridge_Ax[Canon_Params.A->i[j]] += Canon_Params.A->x[j] * sol_x[i];" in src
+    assert "double over = bridge_Ax[i] - Canon_Params.u[i];" in src
+    assert "double under = Canon_Params.l[i] - bridge_Ax[i];" in src
+
+    # Dual residual: ||P x + q + A^T y||_inf.
+    assert "bridge_g[i] = Canon_Params.q[i];" in src
+    assert "bridge_g[Canon_Params.P->i[j]] += Canon_Params.P->x[j] * sol_x[i];" in src
+    assert "bridge_g[i] += Canon_Params.A->x[j] * sol_y[Canon_Params.A->i[j]];" in src
+
+    # The old behaviour (both residuals = the FOM state-change metric) is gone.
+    assert "fom_pri_res = (double)fom_work.solution.residual;" not in src
+    assert "fom_dua_res = (double)fom_work.solution.residual;" not in src
+    assert src.count("fom_pri_res = 0.0;") == 1
+    assert src.count("fom_dua_res = 0.0;") == 1
+
+
+def test_bridge_copies_runtime_check_termination(tmp_path):
+    src = _emit(tmp_path, _qp())
+    assert "fom_work.settings.check_termination = (fom_int)Canon_Settings.check_termination;" in src
+    # max_iter / tol stay runtime-tunable too.
+    assert "fom_work.settings.max_iter = (fom_int)Canon_Settings.max_iter;" in src
+    assert "fom_work.settings.tol = (fom_float)Canon_Settings.tol;" in src
+
+
+def test_bridge_lp_has_no_quadratic_term(tmp_path):
+    qp = _qp(with_p=False)
+    src = _emit(tmp_path, qp, has_quad_term=False)
+    # No P contribution to the dual residual or the objective.
+    assert "Canon_Params.P" not in src
+    assert "no quadratic term" in src
+    # But the dual residual still has q + A^T y.
+    assert "bridge_g[i] = Canon_Params.q[i];" in src
+    assert "bridge_g[i] += Canon_Params.A->x[j] * sol_y[Canon_Params.A->i[j]];" in src
+
+
+def test_bridge_unconstrained_skips_primal(tmp_path):
+    qp = _qp(n_eq=0, n_ineq=0)
+    src = _emit(tmp_path, qp)
+    assert "fom_pri_res = 0.0;  /* no constraints */" in src
+    assert "bridge_Ax[i] = 0.0" not in src  # no A loops at all
+    assert "Canon_Params.A" not in src
+
+
+def test_bridge_applies_symbol_prefix(tmp_path):
+    src = _emit(tmp_path, _qp(), prefix="myp")
+    assert "void mypcpg_fom_solve(void)" in src
+    assert "mypCanon_Settings.check_termination" in src
+    assert "mypCanon_Params.A->x[j]" in src
+
+
+def test_cmake_solver_sources_embedded_is_all_c(tmp_path):
+    target = get_target(CodegenConfig(version=Version.EMBEDDED, backend=Backend.C))
+    srcs = cmake_solver_sources(target)
+    assert any(s.endswith("src/fom_solver.c") for s in srcs)
+    assert any(s.endswith("src/fom_ops.c") for s in srcs)
+    assert any(s.endswith("src/fom_linsolve.c") for s in srcs)
+    assert any(s.endswith("src/cpg_fom_bridge.c") for s in srcs)
+    assert not any(s.endswith(".cu") for s in srcs)
+
+
+def test_cmake_solver_sources_openmp_reuses_c():
+    target = get_target(CodegenConfig(version=Version.LARGE_SCALE, backend=Backend.OPENMP))
+    srcs = cmake_solver_sources(target)
+    assert any(s.endswith("src/fom_solver.c") for s in srcs)
+    assert not any(s.endswith(".cu") for s in srcs)
+
+
+def test_cmake_solver_sources_cuda_uses_cu():
+    target = get_target(CodegenConfig(version=Version.LARGE_SCALE, backend=Backend.CUDA))
+    srcs = cmake_solver_sources(target)
+    assert any(s.endswith("src/fom_solver.cu") for s in srcs)
+    assert any(s.endswith("src/fom_ops.cu") for s in srcs)
+    assert any(s.endswith("src/fom_linsolve.cu") for s in srcs)
+    # Numeric data and the bridge stay host C even on CUDA.
+    assert any(s.endswith("src/fom_data.c") for s in srcs)
+    assert any(s.endswith("src/cpg_fom_bridge.c") for s in srcs)
+
+
+def test_workspace_header_exposes_runtime_check_termination():
+    from fomtools.codegen.extract import extract_ir
+    from tests.codegen.conftest import build_ista
+
+    ex = build_ista()
+    ir = extract_ir(ex["verifier"], ex["next_state"], config=ex["config"])
+    header = get_target(ex["config"])._workspace_header(ir)
+    settings_block = header.split("} FomSettings;")[0]
+    assert "fom_int check_termination;" in settings_block

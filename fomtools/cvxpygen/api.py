@@ -52,8 +52,17 @@ def generate_solver(
         ``alpha`` for ADMM; ``step_scale`` for PDHG).
     config:
         fomtools :class:`~fomtools.codegen.config.CodegenConfig`; supplies the
-        termination criterion (``max_iters``/``tol``) among others. Only the
-        embedded C target with ``dtype='float64'`` is supported.
+        termination criterion (``max_iters``/``tol``/``check_termination``)
+        among others. Supported targets: the embedded C target and the
+        large-scale OpenMP / CUDA targets, all with ``dtype='float64'`` (the
+        canonical cvxpygen data is double precision). The OpenMP build reuses
+        the embedded C sources — the data-parallel loops carry ``#ifdef
+        _OPENMP`` pragmas, so it compiles and verifies serially out of the box
+        and threads once the CMake build adds ``-fopenmp``. The CUDA build
+        emits ``.cu`` translation units and needs a CUDA-enabled toolchain / GPU.
+        ``max_iter``, ``tol`` and ``check_termination`` are emitted as runtime
+        cvxpygen settings (tune them via ``cpg_set_solver_*`` without
+        regenerating).
     driver:
         fomtools coding-agent driver. ``None`` uses the default (the Claude
         agent when ``FOMTOOLS_CODEGEN_AGENT=1`` is set; otherwise an error

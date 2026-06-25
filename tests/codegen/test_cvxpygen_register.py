@@ -11,7 +11,9 @@ import inspect
 import pytest
 
 pytest.importorskip("cvxpy")
-pytest.importorskip("cvxpygen")
+from tests.codegen.conftest import importorskip_cvxpygen  # noqa: E402
+
+importorskip_cvxpygen()
 
 from fomtools.cvxpygen.interface import FomtoolsInterface, register  # noqa: E402
 

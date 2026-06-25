@@ -217,7 +217,9 @@ def _ldlt_backward_error(L: np.ndarray, d: np.ndarray, M: np.ndarray) -> float:
     return float(np.linalg.norm(recon - M) / max(1.0, np.linalg.norm(M)))
 
 
-def factorize(M, method: str = "auto", symmetry_tol: float = 1e-9) -> Factorization:
+def factorize(
+    M, method: str = "auto", symmetry_tol: float = 1e-9, cg_tol: float = 1e-12
+) -> Factorization:
     """Factorize a square matrix ``M`` for repeated solves — never inverted.
 
     Parameters
@@ -228,6 +230,11 @@ def factorize(M, method: str = "auto", symmetry_tol: float = 1e-9) -> Factorizat
         ``"auto"`` (LDL^T if symmetric else LU), ``"ldlt"``, ``"lu"``, or
         ``"cg"`` (preconditioned conjugate gradient; requires a symmetric
         positive-definite ``M``, intended for large-scale / GPU targets).
+    cg_tol:
+        Relative-residual stopping tolerance for the ``"cg"`` method (ignored by
+        the direct methods). The default ``1e-12`` suits float64; the caller
+        loosens it for float32, where ``1e-12`` is below single-precision reach
+        (see :func:`fomtools.codegen.extract.extract_ir`).
     """
     Md = np.asarray(M.todense(), dtype=float) if spa.issparse(M) else np.asarray(M, dtype=float)
     n = Md.shape[0]
@@ -240,7 +247,7 @@ def factorize(M, method: str = "auto", symmetry_tol: float = 1e-9) -> Factorizat
     is_sym = np.allclose(Md, Md.T, atol=symmetry_tol)
 
     if method == "cg":
-        return _cg_factorization(Md, n, is_sym)
+        return _cg_factorization(Md, n, is_sym, cg_tol=cg_tol)
 
     chosen = method
     if method == "auto":
@@ -296,7 +303,28 @@ def factorize(M, method: str = "auto", symmetry_tol: float = 1e-9) -> Factorizat
     )
 
 
-def _cg_factorization(Md: np.ndarray, n: int, is_sym: bool) -> Factorization:
+def is_spd(M, symmetry_tol: float = 1e-9) -> bool:
+    """True if ``M`` is symmetric positive-definite (cheap Cholesky certificate).
+
+    A non-throwing companion to the SPD check inside :func:`_cg_factorization`,
+    used by the ``auto`` solve-method heuristic to decide whether CG is
+    applicable (CG converges only on SPD systems). A quasidefinite ADMM/OSQP KKT
+    matrix is symmetric *indefinite*, so this returns ``False`` for it and
+    ``auto`` keeps such systems on a direct factorization.
+    """
+    Md = np.asarray(M.todense(), dtype=float) if spa.issparse(M) else np.asarray(M, dtype=float)
+    if Md.ndim != 2 or Md.shape[0] != Md.shape[1] or Md.shape[0] == 0:
+        return False
+    if not np.allclose(Md, Md.T, atol=symmetry_tol):
+        return False
+    try:
+        np.linalg.cholesky(Md)
+    except np.linalg.LinAlgError:
+        return False
+    return True
+
+
+def _cg_factorization(Md: np.ndarray, n: int, is_sym: bool, cg_tol: float = 1e-12) -> Factorization:
     """Build a CG (indirect) solver for a symmetric positive-definite matrix.
 
     Stores the matrix sparsely for repeated matrix-vector products and a
@@ -324,7 +352,7 @@ def _cg_factorization(Md: np.ndarray, n: int, is_sym: bool) -> Factorization:
         perm=np.arange(n),
         A=CSC.from_dense(Md),
         minv=1.0 / diag,  # diagonal Jacobi preconditioner (reciprocals)
-        cg_tol=1e-12,
+        cg_tol=cg_tol,
         # SPD CG converges in <= n steps in exact arithmetic; allow headroom for
         # finite precision while the relative-residual test stops it much earlier.
         cg_max_iter=2 * n + 50,

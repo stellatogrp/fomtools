@@ -4,7 +4,9 @@ import numpy as np
 import pytest
 
 cp = pytest.importorskip("cvxpy")
-pytest.importorskip("cvxpygen")
+from tests.codegen.conftest import importorskip_cvxpygen  # noqa: E402
+
+importorskip_cvxpygen()
 
 from fomtools.cvxpygen.qpdata import extract_qp_data  # noqa: E402
 

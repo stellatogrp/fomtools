@@ -2,8 +2,9 @@
 
 import numpy as np
 import pytest
+import scipy.sparse as spa
 
-from fomtools.codegen.factorize import CSC, factorize
+from fomtools.codegen.factorize import CSC, factorize, is_spd
 
 
 def _spd(n, seed):
@@ -18,6 +19,27 @@ def _kkt(n, m, seed):
     H = H @ H.T + np.eye(n)
     A = rng.normal(size=(m, n))
     return np.block([[H + 1e-6 * np.eye(n), A.T], [A, -0.1 * np.eye(m)]])
+
+
+def test_is_spd_true_for_spd():
+    assert is_spd(_spd(6, 1)) is True
+    assert is_spd(spa.csc_matrix(_spd(6, 2))) is True  # sparse input accepted
+
+
+def test_is_spd_false_for_quasidefinite_kkt():
+    # Quasidefinite KKT is symmetric but indefinite -> CG does not apply.
+    assert is_spd(_kkt(5, 3, 0)) is False
+
+
+def test_is_spd_false_for_nonsymmetric():
+    rng = np.random.default_rng(0)
+    M = rng.normal(size=(5, 5))  # generically nonsymmetric
+    assert is_spd(M) is False
+
+
+def test_is_spd_false_for_negative_definite_and_nonsquare():
+    assert is_spd(-_spd(4, 3)) is False
+    assert is_spd(np.ones((3, 4))) is False
 
 
 def test_symmetric_uses_ldlt_and_solves():

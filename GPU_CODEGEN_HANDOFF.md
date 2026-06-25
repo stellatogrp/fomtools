@@ -29,19 +29,33 @@ Everything described lives on git branch **`codegen`** (pushed to
 - Examples: `ista`, `dr`, `boxqp`, `mpc` (OSQP-ADMM), `cgqp` (CG), `pdhg_lp`
   (PDHG-for-LP, no restarts), `indef_kkt` (symmetric-indefinite → LU).
 
-**Left (your GPU job):**
-- The **CUDA target is compile-check-only** and the `.cu` solver body is written
-  ad-hoc by the LLM agent (dense matvecs, per-iteration H2D/D2H copies). There are
-  **no deterministically-emitted GPU kernels** for the matvecs or the CG solve,
-  unlike `fom_ops.c` / `fom_linsolve.c` on the CPU side.
-- Real on-GPU verification + benchmarking (CI has no GPU, so it never ran).
-- AUTO does not yet pick **CG** for large SPD systems on GPU (the right default).
-- No device-resident state across iterations; no cuSPARSE/cuBLAS; no float32 path
-  exercised on hardware.
+**Done since (work item A, implemented on `aa/codegen_refactor`, not yet GPU-run):**
+- **Deterministic CUDA kernels** are now emitted: `CudaTarget` overrides
+  `_ops_source`/`_linsolve_source` to write `src/fom_ops.cu` (per-matrix
+  CSR/dense matvec kernels, one thread per row, data in `__device__ const`
+  arrays) and `src/fom_linsolve.cu` (device-resident Jacobi-PCG mirroring
+  `factorize._pcg_solve`; direct LDLᵀ/LU stay host-side behind a device-pointer
+  staging wrapper). Hand kernels, no cuSPARSE/cuBLAS (no handles/link deps;
+  library backing is a possible later optimization). Fixed-grid block-reduction
+  dots. **ABI unchanged but all `fom_apply_*`/`fom_lin_solve_*` pointers are
+  DEVICE pointers on this target** (documented in the emitted headers and in
+  `CudaTarget.agent_notes()`, which is appended to the agent prompts).
+- `fom_data.h`/`fom_ops.h`/`fom_linsolve.h` now carry `extern "C"` guards
+  (the old CUDA link would have failed on C++ name mangling).
+- Goldens rewritten: `golden/ista/large_scale_cuda/fom_solver.cu` (device-resident
+  state, pointer swap, residual reduction on device) + new
+  `golden/cgqp/large_scale_cuda/fom_solver.cu` (device CG showcase).
+- CUDA Makefile compiles the `.cu` helpers with nvcc and has a `bench` target.
 
-The single most valuable thing to build first: **deterministic CUDA kernels for
-the CSR SpMV and the CG iteration**, mirroring what `fom_ops.c`/`fom_linsolve.c`
-do on CPU, so the agent only writes the orchestration in `fom_solver.cu`.
+**Left (your GPU job):**
+- Real on-GPU verification + benchmarking. The wiring is done (verify auto-runs
+  on a GPU box; see item D), but nothing has been compiled or run under `nvcc`
+  yet — no nvcc on the dev machine. Run `pytest tests/codegen -q` on the GPU box
+  first; the `test_cuda_*_compile_check` tests turn into real `VERIFY OK` runs there.
+- AUTO now upgrades large SPD systems to **CG** on CUDA (work item C, below) —
+  but the size threshold default (256) is a guess; re-tune with real GPU timings.
+- No cuSPARSE/cuBLAS. float32 path is implemented and CPU-verified (item E,
+  including f32 CG) but not yet exercised on GPU hardware.
 
 ---
 
@@ -240,17 +254,18 @@ reference that the emitted C mirrors **exactly**.
 `targets/__init__.py: get_target(config)` maps version+backend →
 {EmbeddedCTarget, OpenMpTarget, CudaTarget}.
 
-**Current CUDA reality** (see `tests/codegen/golden/ista/large_scale_cuda/fom_solver.cu`):
-the agent wrote naive `__global__` kernels doing **dense** `At[i*n+j]*state[j]`
-matvecs, copies state H2D/D2H **every iteration**, and computes the residual on
-the host. It compiles; it has never been run on a GPU here. This is the baseline
-to improve.
+**Current CUDA reality** (see `tests/codegen/golden/ista/large_scale_cuda/fom_solver.cu`
+and `.../cgqp/large_scale_cuda/fom_solver.cu`): the goldens now orchestrate the
+deterministic device helpers — device-resident state across the whole loop
+(pointer swap), `fom_apply_*` kernel launches, an activation kernel, and a
+max-|diff| residual reduction on device. Never compiled or run on a GPU yet
+(no nvcc here): compile-check + run-verify them on the cluster first.
 
 ---
 
 ## 8. GPU work list (prioritized)
 
-**(A) Deterministically emit CUDA kernels for the matvecs and CG.** Mirror
+**(A) [DONE — see §0] Deterministically emit CUDA kernels for the matvecs and CG.** Mirror
 `_ops_source` and `_cg_routine`. Two viable designs:
    1. *Library-backed*: emit CSR descriptors and call **cuSPARSE** SpMV +
       **cuBLAS** dot/axpy for CG. Cleanest, fastest to get right. The CSR arrays
@@ -262,35 +277,93 @@ to improve.
    body calls `fom_apply_*` / `fom_lin_solve_*` device wrappers — keeping the ABI
    identical so the agent's `.cu` orchestration stays simple and method-agnostic.
 
-**(B) Keep state on the device across iterations.** The golden copies every
-iteration — kill that. Allocate device buffers in `fom_setup`, copy params in
-`fom_update_params`, run the whole loop on-device, copy the solution out once in
-`fom_solve` end. Do the residual/termination reduction on device (or every K
-iters) to avoid per-iter D2H.
+**(B) [DONE in the goldens + agent prompt; verify on hardware] Keep state on the
+device across iterations.** The rewritten goldens allocate device buffers in
+`fom_setup`, upload state/params once per solve, swap device pointers instead of
+copying, reduce the residual on device, and copy the solution out once at the
+end; `CudaTarget.agent_notes()` instructs the live agent to do the same. Remaining:
+confirm on hardware, and consider reducing the residual only every
+`FOM_CHECK_TERMINATION` iters for large problems (goldens reduce every iter).
 
-**(C) Make AUTO choose CG for large SPD systems on CUDA.** CG is the GPU-friendly
-method (all data-parallel); direct triangular solves are sequential. The enum +
-factorize already support CG. The work is the selection heuristic + wiring:
-factorize is currently called as `factorize(step.lhs_mat,
-method=config.solve_method.value)` in `extract.py`. Consider: when
-`version==LARGE_SCALE and backend==CUDA and solve_method==AUTO` and the matrix is
-SPD and large, choose CG. (Keep it explicit/overridable.) Quasidefinite KKT
-(OSQP/MPC) is **indefinite** → CG does NOT apply there; you'd need MINRES or a
-reduced normal-equations form, or keep those on a direct/host solve. Document.
+**(C) [DONE] Make AUTO choose CG for large SPD systems on CUDA.** Implemented in
+`extract.py: _resolve_solve_method(lhs_mat, config)`: when
+`solve_method==AUTO and version==LARGE_SCALE and backend==CUDA` and the matrix is
+SPD (`factorize.is_spd`, a non-throwing Cholesky certificate) and large
+(`dim >= config.cg_auto_min_dim`, default 256), it upgrades to CG; otherwise it
+returns `config.solve_method.value` unchanged. Explicit `LDLT`/`LU`/`CG` always
+bypass the heuristic, and `cg_auto_min_dim` tunes/disables the size gate. A
+quasidefinite (symmetric-indefinite) KKT fails the SPD check, so OSQP/MPC systems
+stay on a direct factorization — they'd need MINRES or a normal-equations form
+for an indirect GPU solve, not done here. Documented on `SolveMethod` /
+`CodegenConfig`; tested in `test_factorize.py` (`is_spd`) and `test_large_scale.py`
+(upgrade / size-gate / indefinite-stays-direct / embedded-never-CG /
+explicit-bypass). Note: the *threshold default (256)* is an unvalidated guess —
+re-tune once (D) gives real GPU timings for the CG-vs-direct crossover.
 
-**(D) Real GPU verification + benchmarking.** Flip `CudaTarget.verify_command` to
-`["make","verify"]` on the cluster; confirm `VERIFY OK` against the oracle for
-ista/pdhg_lp/cgqp at GPU scale. Add a `make bench` path. Watch the FP-reduction
-tolerance note in §3.2.
+**(D) [PARTLY DONE — needs a GPU to finish] Real GPU verification + benchmarking.**
+Wired up so it "just works" on the cluster, but never run on hardware here:
+- `CudaTarget.verify_command()` now **auto-detects**: returns `["make","verify"]`
+  (build + run vs the oracle) when a GPU is usable — `nvcc` + `nvidia-smi`
+  reporting a device, or `FOMTOOLS_CUDA_RUN=1` to force it — else `["make",
+  "compile"]` (CI/dev compile-check). So on a GPU box the existing
+  `test_cuda_*_compile_check` tests auto-upgrade into real `VERIFY OK` runs;
+  no code edit needed. `FOMTOOLS_CUDA_RUN=0` forces compile-only.
+- `make bench` path added; the `compile` target now builds **both** verify_bin
+  and bench_bin so a compile-check also covers the benchmark harness.
+- CUDA goldens now exist for all three named examples: **ista**, **cgqp** (CG),
+  and **pdhg_lp** (new here — pure-matvec satlin+relu, uploads the clip bounds /
+  dual constant to the device in `fom_setup`).
+Remaining (GPU box only): actually run `pytest tests/codegen -q` with `nvcc`+GPU,
+confirm `VERIFY OK` for ista/pdhg_lp/cgqp, run `make bench`, and watch the
+FP-reduction tolerance note in §3.2 (esp. once float32 (E) lands — 1e-6 may be
+tight for f32 CG). Examples are still tiny (verification-sized); "GPU scale" is
+item (F).
 
-**(E) float32 path.** `CodegenConfig(dtype="float32")` sets `fom_float=float`.
-GPUs prefer it. Re-check `tol_verify` (1e-6 may be tight for f32 CG; loosen for
-f32 or tighten cg_tol). Large-scale GPU is the intended home for f32.
+**(E) [DONE] float32 path.** `CodegenConfig(dtype="float32")` sets
+`fom_float=float`. The dtype is target-independent, so the whole f32 pipeline —
+including the iterative CG solve — is verified **on the CPU** (embedded + OpenMP
+emit `typedef float fom_float` too); no GPU needed for this part. Two tolerances
+are now dtype-aware:
+- `tol_verify` defaults by dtype (1e-6 float64, **1e-4 float32**) via a config
+  before-validator; an explicit value still overrides. Single precision carries
+  ~1e-7 relative error, so 1e-6 is too tight a gate (measured worst-case f32
+  error: ISTA 3e-8, CG 1.2e-7 — comfortable under 1e-4, with margin for
+  larger/worse-conditioned problems).
+- CG `cg_tol` is raised to **1e-6 for float32** (`extract._cg_tol_for_dtype`,
+  threaded through `factorize(..., cg_tol=...)`): 1e-12 is below single-precision
+  reach, so the f32 CG would otherwise spin to its iteration cap while the
+  float64 oracle stops early. At 1e-6 both stop at the same residual level.
+  (This is the "tighten cg_tol" knob from the original note, resolved to the
+  reachable single-precision target rather than a smaller unreachable one.)
+Tested in `tests/codegen/test_float32.py` (config defaults, the float-typedef
+emission, and end-to-end ISTA-embedded + CG-OpenMP `VERIFY OK` runs).
+Remaining: exercise f32 *on GPU hardware* (item D) — it may behave slightly
+differently than the CPU f32 build, and re-confirm the 1e-4 gate there.
 
-**(F) Scale the examples.** The built-in examples are tiny (verification-sized).
-For GPU you want large instances (e.g. `mpc_osqp_example(nx, nu, N)` big, or a
-large SPD `cg_qp_example(n=...)`, or `pdhg_lp` with big A). PDHG-for-LP and CG-QP
-are the natural GPU showcases (pure matvec + projection / pure CG).
+**(F) [DONE for the two GPU showcases] Scale the examples.** The built-in
+examples defaulted to tiny *dense* problems that don't scale (cgqp's SPD matrix
+was 100% dense; pdhg's step size used an O(n^3) `eigvals`). The two natural GPU
+showcases now take an opt-in structure knob that produces **sparse** instances
+whose generated code runs CSR matvecs (the actual GPU path), with defaults
+byte-identical to before:
+- `cg_qp_example(n, bandwidth=b)` — sparse banded diagonally-dominant SPD
+  (`eig >= 2` by Gershgorin, no eigendecomposition). `bandwidth=None` keeps the
+  dense default. At n=3000, b=4 the CG matrix is 0.3% dense (~27k nnz) and
+  builds+extracts in ~0.25s.
+- `pdhg_lp_example(n, m, density=d)` — sparse `A` with a cheap O(nnz) spectral-
+  norm *upper* bound for the step size (keeps `tau*sigma*||A||^2 <= 0.81 < 1`,
+  stable). `density=None` keeps the dense+exact-norm default. n=3000/m=2000 at
+  density 0.005 builds in ~0.6s (vs minutes for dense `eigvals`).
+Both verify end-to-end **on the CPU** against the oracle at scaled sizes
+(reusing the cgqp-OpenMP and pdhg-embedded goldens, which are size-agnostic) —
+see `tests/codegen/test_examples_scale.py`. Helpers: `examples._banded_spd`,
+`_sparse_dense_matrix`, `_spectral_norm_bound`.
+Not done (deliberately): dr / mpc / indef_kkt stay dense — they're *direct*
+(sequential triangular) solves, not GPU showcases. And the builders still
+construct dense-with-zeros arrays (O(n^2) offline memory), so n >> ~5000 would
+need sparse support in the Verifier / `LinearExpression` bound propagation —
+a larger change left for later. Remaining: run these at true GPU scale and
+collect `make bench` numbers (item D) to feed the AUTO->CG threshold (item C).
 
 **(G) Optional: CuPy GPU oracle / wrapper.** `cupy-cuda12x` is in the `gpu`
 extra. Could provide a CuPy reference for cross-checking, or a CuPy-based Python

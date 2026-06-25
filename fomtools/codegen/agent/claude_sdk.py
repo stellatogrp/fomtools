@@ -2,115 +2,139 @@
 
 This driver is intentionally only used when explicitly enabled
 (``FOMTOOLS_CODEGEN_AGENT=1``): it is nondeterministic, needs authentication
-(``ANTHROPIC_API_KEY`` or a logged-in ``claude`` CLI), and therefore never runs
-in CI. The deterministic pipeline is tested via
-:class:`~fomtools.codegen.agent.stub.StubAgentDriver`.
+(``ANTHROPIC_API_KEY`` or a logged-in ``claude`` CLI).
 
 It prefers the in-process Python SDK (``claude_agent_sdk``) and falls back to
 shelling out to the ``claude`` CLI in headless mode. After each agent attempt it
 authoritatively runs the verify command itself to decide success, and re-prompts
 with the failure output until the command passes or the attempt budget is spent.
+
+Authentication works in two modes:
+
+* **Subscription / OAuth ("auth mode")** — a logged-in ``claude`` CLI. Nothing
+  extra is needed; the SDK and CLI pick up the on-disk credential.
+* **API key** — pass ``api_key=...`` or set ``ANTHROPIC_API_KEY``. Both the
+  Claude Agent SDK and the ``claude`` CLI resolve an explicit
+  ``ANTHROPIC_API_KEY`` *before* the on-disk subscription login, so we forward
+  the key into the spawned process environment (``ClaudeAgentOptions.env`` for
+  the in-process SDK, ``subprocess`` ``env`` for the CLI fallback) to force
+  API-key auth even when a subscription login is also present.
+
+The common SDK-backend machinery (retry loop wiring, child environment, CLI
+auth-error handling, SDK→CLI fallback) lives in
+:class:`~fomtools.codegen.agent.sdk_base.SdkAgentDriver`; this module supplies
+only the Claude-specific argv and in-process SDK invocation.
 """
 
 from __future__ import annotations
 
-import subprocess
-
-from fomtools.codegen.agent.driver import AgentDriver, AgentResult, AgentTask
-
-_ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
-
-_SYSTEM_PROMPT = (
-    "You are an expert in high-performance numerical C. You translate a "
-    "specified first-order optimization method into a correct, allocation-free, "
-    "division-free embedded C solver and iterate until it passes verification."
+from fomtools.codegen.agent.driver import AgentTask
+from fomtools.codegen.agent.sdk_base import (
+    _ALLOWED_TOOLS,
+    _SYSTEM_PROMPT,
+    SdkAgentDriver,
 )
 
 
-class ClaudeAgentDriver(AgentDriver):
-    """Drive code generation with the Claude Agent SDK (or the ``claude`` CLI)."""
+class ClaudeAgentDriver(SdkAgentDriver):
+    """Drive code generation with the Claude Agent SDK (or the ``claude`` CLI).
 
-    def __init__(
-        self,
-        config=None,
-        model: str | None = None,
-        max_attempts: int = 5,
-        max_turns: int = 16,
-        prefer_cli: bool = False,
-        cli_permission_mode: str = "bypassPermissions",
-    ):
-        self.config = config
-        self.model = model
-        self.max_attempts = max_attempts
-        self.max_turns = max_turns
-        self.prefer_cli = prefer_cli
-        # Permission mode for the CLI fallback. bypassPermissions lets the agent
-        # write files and run `make` non-interactively inside the isolated output
-        # directory.
-        self.cli_permission_mode = cli_permission_mode
+    A concrete :class:`~fomtools.codegen.agent.sdk_base.SdkAgentDriver` that runs
+    a real Claude coding agent through the authoritative retry loop. It prefers
+    the in-process Python SDK and falls back to the ``claude`` CLI in headless
+    mode. Claude has no filesystem sandbox of its own, so ``bypass_sandbox`` is
+    accepted for interface parity but unused.
 
-    # -- public API --------------------------------------------------------
-    def run(self, task: AgentTask) -> AgentResult:
-        log_parts: list[str] = []
-        prompt = task.instructions
+    Methods
+    -------
+    run
+        Generate/refine the solver source until the verify command passes.
+    """
 
-        # Larger turn budget for the open-ended optimization phase.
-        max_turns = task.max_turns if task.phase == "B_optimize" else max(self.max_turns, 20)
+    api_key_env = "ANTHROPIC_API_KEY"
+    cli_name = "claude"
+    label = "Claude"
 
-        for attempt in range(self.max_attempts):
-            log_parts.append(f"\n===== agent attempt {attempt + 1} =====\n")
-            # The agent hitting its turn cap (or any transient error) must not crash
-            # the run: we capture it and let the authoritative verify below decide,
-            # since the agent may already have produced passing code.
-            try:
-                agent_log = self._invoke_agent(task, prompt, max_turns)
-            except Exception as exc:  # noqa: BLE001 - surface as a failed attempt
-                agent_log = f"[agent invocation raised: {exc}]"
-            log_parts.append(agent_log)
+    def _build_argv(self, workdir: str, prompt: str) -> list[str]:
+        """Assemble the ``claude`` CLI argument vector for one headless attempt.
 
-            # Revert any agent edits to the immutable deterministic files before
-            # the authoritative verify (the agent may only change the solver body).
-            if task.restore_hook is not None:
-                task.restore_hook()
-            verify = subprocess.run(
-                task.verify_cmd, cwd=str(task.workdir), capture_output=True, text=True
-            )
-            log_parts.append(verify.stdout + verify.stderr)
-            if verify.returncode == 0:
-                return AgentResult(
-                    success=True,
-                    log="".join(log_parts),
-                    turns_used=attempt + 1,
-                    artifacts=[task.workdir / task.solver_rel_path],
-                )
-            # Re-prompt with the failure so the agent can fix it.
-            prompt = (
-                task.instructions
-                + "\n\nThe verify command FAILED with this output:\n"
-                + (verify.stdout + verify.stderr)[-4000:]
-                + "\nFix `"
-                + task.solver_rel_path
-                + "` and make it pass."
-            )
+        Builds a ``claude -p`` invocation that grants the file/build tools in
+        ``_ALLOWED_TOOLS``, scopes the agent to ``workdir`` via ``--add-dir``,
+        applies the configured permission mode, and appends ``_SYSTEM_PROMPT``
+        to the default Claude Code system prompt. The ``--model`` flag is added
+        only when a model is configured.
 
-        return AgentResult(success=False, log="".join(log_parts), turns_used=self.max_attempts)
+        Parameters
+        ----------
+        workdir : str
+            Absolute working directory exposed to the CLI via ``--add-dir``.
+        prompt : str
+            The task prompt for this attempt, passed to ``claude -p``.
 
-    # -- agent invocation --------------------------------------------------
-    def _invoke_agent(self, task: AgentTask, prompt: str, max_turns: int) -> str:
-        if not self.prefer_cli:
-            try:
-                return self._invoke_sdk(task, prompt, max_turns)
-            except ImportError:
-                pass  # fall back to CLI
-        return self._invoke_cli(task, prompt)
+        Returns
+        -------
+        list of str
+            The argument vector to pass to :func:`subprocess.run`.
+
+        Note
+        -----
+        The ``claude`` CLI (>=2.x) has no ``--max-turns`` flag; in ``--print``
+        mode it loops internally until the task is done. The argument vector
+        grants the file/build tools and appends (not replaces) the default
+        Claude Code system prompt so the agent retains its tool-use behavior.
+        The agent works inside an isolated output directory, so bypassing
+        permission prompts is safe and required for non-interactive runs.
+        """
+        argv = [
+            "claude",
+            "-p",
+            prompt,
+            "--add-dir",
+            workdir,
+            "--allowedTools",
+            *_ALLOWED_TOOLS,
+            "--permission-mode",
+            self.cli_permission_mode,
+            "--append-system-prompt",
+            _SYSTEM_PROMPT,
+            "--output-format",
+            "text",
+        ]
+        if self.model:
+            argv += ["--model", self.model]
+        return argv
 
     def _invoke_sdk(self, task: AgentTask, prompt: str, max_turns: int) -> str:
+        """Run one attempt in-process via the ``claude_agent_sdk`` Python SDK.
+
+        Parameters
+        ----------
+        task : AgentTask
+            The unit of work describing the workspace, the solver path to
+            write, the restore hook, and the verify command to run.
+        prompt : str
+            The prompt for this attempt.
+        max_turns : int
+            Turn budget passed to ``ClaudeAgentOptions``.
+
+        Returns
+        -------
+        str
+            The concatenated text and result blocks from the agent.
+
+        Raises
+        ------
+        ImportError
+            If ``claude_agent_sdk`` is not installed, so the caller can fall
+            back to the CLI.
+        """
         import asyncio
 
         from claude_agent_sdk import ClaudeAgentOptions, query  # may raise ImportError
 
         async def _run() -> str:
             chunks: list[str] = []
+            env = self._child_env()
             options = ClaudeAgentOptions(
                 cwd=str(task.workdir),
                 add_dirs=[str(task.workdir)],
@@ -120,6 +144,9 @@ class ClaudeAgentDriver(AgentDriver):
                 # Append to (rather than replace) the Claude Code system prompt so
                 # the agent keeps its tool-use behavior.
                 system_prompt={"type": "preset", "preset": "claude_code", "append": _SYSTEM_PROMPT},
+                # Forward ANTHROPIC_API_KEY into the spawned CLI so an explicit key
+                # is used; omitted entirely in auth mode (subscription/OAuth login).
+                **({"env": env} if env else {}),
                 **({"model": self.model} if self.model else {}),
             )
             async for message in query(prompt=prompt, options=options):
@@ -133,30 +160,3 @@ class ClaudeAgentDriver(AgentDriver):
             return "\n".join(chunks)
 
         return asyncio.run(_run())
-
-    def _invoke_cli(self, task: AgentTask, prompt: str) -> str:
-        # Note: the `claude` CLI (>=2.x) has no --max-turns flag; in --print mode
-        # it loops internally until the task is done. We grant the file/build
-        # tools and append (not replace) the default Claude Code system prompt so
-        # it retains its tool-use behavior. The agent works inside an isolated
-        # output directory, so bypassing permission prompts is safe and required
-        # for non-interactive runs.
-        cmd = [
-            "claude",
-            "-p",
-            prompt,
-            "--add-dir",
-            str(task.workdir),
-            "--allowedTools",
-            *_ALLOWED_TOOLS,
-            "--permission-mode",
-            self.cli_permission_mode,
-            "--append-system-prompt",
-            _SYSTEM_PROMPT,
-            "--output-format",
-            "text",
-        ]
-        if self.model:
-            cmd += ["--model", self.model]
-        proc = subprocess.run(cmd, cwd=str(task.workdir), capture_output=True, text=True)
-        return proc.stdout + proc.stderr

@@ -20,6 +20,7 @@
 void fom_set_default_settings(FomSettings *settings) {
     settings->max_iter = FOM_MAX_ITER;
     settings->tol = FOM_TOL;
+    settings->check_termination = FOM_CHECK_TERMINATION;
 }
 
 static void reset_state(FomWorkspace *work) {
@@ -42,6 +43,8 @@ void fom_update_params(FomWorkspace *work, const FomParams *params) {
 
 fom_int fom_solve(FomWorkspace *work) {
     int it, i;
+    /* Runtime-tunable check interval (defaults to FOM_CHECK_TERMINATION). */
+    fom_int check = work->settings.check_termination;
 
     for (it = 0; it < work->settings.max_iter; ++it) {
         /* affine KKT solve */
@@ -70,9 +73,10 @@ fom_int fom_solve(FomWorkspace *work) {
         fom_apply_su_t_t1(work->t1, work->new_state);
         FOM_PROF_END(state_update);
 
-        /* residual + termination check only every FOM_CHECK_TERMINATION
-           iterations (the residual is skipped entirely in between) */
-        if (FOM_USE_TOL && ((it + 1) % FOM_CHECK_TERMINATION == 0)) {
+        /* residual + termination check only every `check` iterations (the
+           residual is skipped entirely in between); `check` is read from the
+           runtime settings, so callers can tune it without regenerating */
+        if (FOM_USE_TOL && check > 0 && ((it + 1) % check == 0)) {
             fom_float res = 0.0;
             for (i = 0; i < FOM_STATE_DIM; ++i) {
                 fom_float d = work->new_state[i] - work->state[i];

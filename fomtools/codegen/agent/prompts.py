@@ -10,6 +10,10 @@ def phase_a_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     """Initial faithful-translation instructions."""
     verify = " ".join(target.verify_command())
     src = target.solver_source_path()
+    ops_src = target.ops_source_path()
+    linsolve_src = target.linsolve_source_path()
+    notes = target.agent_notes()
+    notes_block = f"\n{notes}\n" if notes else ""
     return f"""\
 You are generating a high-performance, embedded implementation of a verified
 first-order optimization method named `{ir.name}`.
@@ -25,18 +29,18 @@ generated and must not be changed:
   activation constants (matrices `FOM_MAT_*`, `FOM_STATE_INIT`, soft-threshold
   `FOM_*_LAMBDA`, clip-bound vectors `FOM_MAT_*_lo`/`_hi`). Do NOT hardcode
   numbers; read them from these symbols.
-- `include/fom_linsolve.h` / `src/fom_linsolve.c` provide the linear solve for
+- `include/fom_linsolve.h` / `{linsolve_src}` provide the linear solve for
   every affine operator: for a step that SPEC marks with a solve, assemble its
   right-hand side from `linear_op`, then call `fom_lin_solve_<name>(rhs, out)`.
   NEVER form, store, or use a matrix inverse — the solve is already implemented
   for you (a precomputed sparse factorization, or conjugate gradient).
-- `include/fom_ops.h` / `src/fom_ops.c` provide every matrix-vector product as an
+- `include/fom_ops.h` / `{ops_src}` provide every matrix-vector product as an
   accumulating helper `fom_apply_<matrix>(source, out)` (out += M @ source),
   implemented sparse (CSR) where the matrix is structured. Assemble each
   `linear_op` by zeroing the output and calling these — do NOT write your own
   dense matvec loops, and do not hardcode the matrices.
 - The algorithm is specified in `test/SPEC.md`.
-
+{notes_block}
 Hard constraints for the embedded target:
 - No dynamic memory: no malloc/calloc/realloc/free, no variable-length arrays.
 - Division-free: do not use the `/` operator anywhere in the code. The affine
@@ -57,10 +61,14 @@ def phase_b_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     """Iterative performance-optimization instructions (profile-guided)."""
     verify = " ".join(target.verify_command())
     src = target.solver_source_path()
+    ops_src = target.ops_source_path()
+    linsolve_src = target.linsolve_source_path()
+    notes = target.agent_notes()
+    notes_block = f"\n{notes}\n" if notes else ""
     return f"""\
 The solver `{src}` already passes `{verify}`. Now make it as FAST as possible
 WITHOUT ever breaking correctness. Edit ONLY `{src}`: the Makefile, build flags,
-headers, numeric data, `fom_linsolve.c`, and `fom_ops.c` are fixed and restored
+headers, numeric data, `{linsolve_src}`, and `{ops_src}` are fixed and restored
 automatically before every check, so changes to them are discarded (don't waste
 turns editing them). Work as a tight, profile-guided loop:
 
@@ -86,7 +94,9 @@ turns editing them). Work as a tight, profile-guided loop:
    (e.g. two rounds with < ~2% gain) or the code is clearly optimal.
 
 Keep the target constraints throughout (embedded: no dynamic allocation,
-division-free). In your FINAL version, KEEP `FOM_PROF_BEGIN/END` markers around
+division-free).
+{notes_block}
+In your FINAL version, KEEP `FOM_PROF_BEGIN/END` markers around
 the main computational regions (they are no-ops in production) so that
 `make profile` still reports a per-region breakdown after optimization.
 
