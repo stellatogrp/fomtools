@@ -163,12 +163,19 @@ def register_agent(spec: CliAgentSpec) -> None:
 
 
 def _config_paths() -> list[Path]:
-    """User config files to load specs from (later wins on name collisions).
+    """Config files to load specs from (later wins on name collisions).
 
-    ``$FOMTOOLS_CODEGEN_AGENTS`` (an explicit path) takes precedence over the
-    default ``~/.config/fomtools/agents.yaml``.
+    Loaded in order, each overriding the previous on a name clash:
+
+    1. the bundled ``agents.yaml`` shipped next to this module — editing it in
+       place makes an agent available with no further setup;
+    2. the per-user ``~/.config/fomtools/agents.yaml``;
+    3. ``$FOMTOOLS_CODEGEN_AGENTS`` (an explicit path), which wins over all.
     """
-    paths: list[Path] = [Path.home() / ".config" / "fomtools" / "agents.yaml"]
+    paths: list[Path] = [
+        Path(__file__).resolve().parent / "agents.yaml",
+        Path.home() / ".config" / "fomtools" / "agents.yaml",
+    ]
     env = os.environ.get("FOMTOOLS_CODEGEN_AGENTS")
     if env:
         paths.append(Path(env).expanduser())

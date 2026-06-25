@@ -30,6 +30,9 @@ fomtools-codegen = "fomtools.codegen.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 
+[tool.setuptools.package-data]
+"fomtools.codegen.agent" = ["agents.yaml"]
+
 [project.optional-dependencies]
 gpu = ["cupy-cuda12x"]
 

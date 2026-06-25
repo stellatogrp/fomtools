@@ -1,11 +1,15 @@
-# Example user agent config for fomtools codegen.
+# Agent config for fomtools codegen.
 #
-# Copy (the relevant part of) this file to one of:
-#   ~/.config/fomtools/agents.yaml          # default location
-#   $FOMTOOLS_CODEGEN_AGENTS                 # explicit path (takes precedence)
-#
+# This file is loaded automatically: just edit it in place to add or tweak an
+# agent and it is immediately available — no copying or env vars required.
 # Each entry under `agents:` registers a headless coding-agent CLI as a backend
 # you can select with `--agent <name>` or FOMTOOLS_CODEGEN_BACKEND=<name>.
+#
+# To override these per-user, or keep config outside the package, you can also
+# use (later wins on a name clash):
+#   ~/.config/fomtools/agents.yaml          # per-user config
+#   $FOMTOOLS_CODEGEN_AGENTS                 # explicit path (takes precedence)
+#
 # Valid keys map 1:1 onto fomtools.codegen.agent.specs.CliAgentSpec; an unknown
 # key raises so typos surface loudly. `bin` is the only required key.
 
@@ -24,6 +28,6 @@ agents:
     # API key is read from CURSOR_API_KEY and forwarded into the child process,
     # forcing API-key auth over any on-disk `cursor-agent login` session.
     api_key_env: CURSOR_API_KEY
-    display_name: ursor
+    display_name: Cursor
     auth_hint: Run `cursor-agent login` or set CURSOR_API_KEY.
     install_hint: Install the Cursor CLI (https://cursor.com/docs/cli) and ensure `cursor-agent` is on PATH.
