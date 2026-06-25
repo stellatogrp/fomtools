@@ -20,7 +20,6 @@ exercised via :class:`~fomtools.codegen.agent.stub.StubAgentDriver`.
 
 from __future__ import annotations
 
-
 from fomtools.codegen.agent.driver import AgentTask
 from fomtools.codegen.agent.sdk_base import _SYSTEM_PROMPT, SdkAgentDriver
 
