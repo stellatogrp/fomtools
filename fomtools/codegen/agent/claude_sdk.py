@@ -19,52 +19,31 @@ Authentication works in two modes:
   the key into the spawned process environment (``ClaudeAgentOptions.env`` for
   the in-process SDK, ``subprocess`` ``env`` for the CLI fallback) to force
   API-key auth even when a subscription login is also present.
+
+The common SDK-backend machinery (retry loop wiring, child environment, CLI
+auth-error handling, SDK→CLI fallback) lives in
+:class:`~fomtools.codegen.agent.sdk_base.SdkAgentDriver`; this module supplies
+only the Claude-specific argv and in-process SDK invocation.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
-from pathlib import Path
-from fomtools.codegen.agent.driver import (
-    AgentBackendError,
-    AgentDriver,
-    AgentResult,
-    AgentTask,
-    run_verify_loop,
-)
-
-_ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
-
-# Substrings (matched case-insensitively in the CLI's own error output) that mark
-# a non-recoverable authentication failure rather than a fixable task error.
-_AUTH_FAILURE_MARKERS = (
-    "invalid api key",
-    "incorrect api key",
-    "authentication_error",
-    "authentication error",
-    "invalid x-api-key",
-    "please run /login",
-    "please log in",
-    "not logged in",
-    "claude login",
-    "unauthorized",
-    "401",
-)
-
-_SYSTEM_PROMPT = (
-    "You are an expert in high-performance numerical C. You translate a "
-    "specified first-order optimization method into a correct, allocation-free, "
-    "division-free embedded C solver and iterate until it passes verification."
+from fomtools.codegen.agent.driver import AgentTask
+from fomtools.codegen.agent.sdk_base import (
+    _ALLOWED_TOOLS,
+    _SYSTEM_PROMPT,
+    SdkAgentDriver,
 )
 
 
-class ClaudeAgentDriver(AgentDriver):
+class ClaudeAgentDriver(SdkAgentDriver):
     """Drive code generation with the Claude Agent SDK (or the ``claude`` CLI).
 
-    A concrete :class:`~fomtools.codegen.agent.driver.AgentDriver` that runs a
-    real Claude coding agent through the authoritative retry loop. It prefers the
-    in-process Python SDK and falls back to the ``claude`` CLI in headless mode.
+    A concrete :class:`~fomtools.codegen.agent.sdk_base.SdkAgentDriver` that runs
+    a real Claude coding agent through the authoritative retry loop. It prefers
+    the in-process Python SDK and falls back to the ``claude`` CLI in headless
+    mode. Claude has no filesystem sandbox of its own, so ``bypass_sandbox`` is
+    accepted for interface parity but unused.
 
     Methods
     -------
@@ -72,94 +51,10 @@ class ClaudeAgentDriver(AgentDriver):
         Generate/refine the solver source until the verify command passes.
     """
 
-    def __init__(
-        self,
-        config=None,
-        model: str | None = None,
-        max_attempts: int = 5,
-        max_turns: int = 16,
-        prefer_cli: bool = False,
-        cli_permission_mode: str = "bypassPermissions",
-        api_key: str | None = None,
-    ):
-        """Configure the backend, model, retry budget, and authentication.
+    api_key_env = "ANTHROPIC_API_KEY"
+    cli_name = "claude"
+    label = "Claude"
 
-        Parameters
-        ----------
-        config : optional
-            Codegen configuration object, retained for backend use. Defaults to
-            ``None``.
-        model : str, optional
-            Explicit model identifier to pass to the SDK/CLI. When ``None`` the
-            backend's default model is used.
-        max_attempts : int, optional
-            Maximum number of prompt/verify rounds. Defaults to 5.
-        max_turns : int, optional
-            Per-attempt turn budget for the translation phase. Defaults to 16.
-        prefer_cli : bool, optional
-            When ``True``, skip the in-process SDK and use the ``claude`` CLI
-            directly. Defaults to ``False``.
-        cli_permission_mode : str, optional
-            Permission mode for the CLI fallback. Defaults to
-            ``"bypassPermissions"`` so the agent can write files and run ``make``
-            non-interactively inside the isolated output directory.
-        api_key : str, optional
-            Explicit Anthropic API key. When ``None`` it falls back to the
-            ``ANTHROPIC_API_KEY`` environment variable; when neither is set the
-            backend uses the on-disk subscription/OAuth login ("auth mode").
-        """
-        self.config = config
-        self.model = model
-        self.max_attempts = max_attempts
-        self.max_turns = max_turns
-        self.prefer_cli = prefer_cli
-        self.cli_permission_mode = cli_permission_mode
-        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-
-    def _child_env(self) -> dict[str, str] | None:
-        """Process environment for the SDK/CLI, forcing API-key auth if we have one.
-
-        Returns ``None`` when no key is configured so the backend keeps its
-        default behavior (subscription/OAuth auth). Otherwise returns the full
-        parent environment with ``ANTHROPIC_API_KEY`` injected, so PATH and the
-        rest of the environment are preserved while the key forces API-key auth.
-        """
-        if not self.api_key:
-            return None
-        return {**os.environ, "ANTHROPIC_API_KEY": self.api_key}
-
-
-    def run(self, task: AgentTask) -> AgentResult:
-        """Generate/refine the solver until the verify command passes.
-
-        Delegates to :func:`~fomtools.codegen.agent.driver.run_verify_loop`,
-        supplying a closure that invokes the Claude agent for one attempt. The
-        loop runs the verify command itself to decide success.
-
-        Parameters
-        ----------
-        task : AgentTask
-            The unit of work describing the workspace, the solver path to
-            write, the restore hook, and the verify command to run.
-
-        Returns
-        -------
-        AgentResult
-            The outcome, whose ``success`` reflects whether the verify command
-            passed.
-
-        Raises
-        ------
-        AgentBackendError
-            If the backend cannot authenticate or its CLI is unavailable;
-            propagated from the retry loop rather than retried.
-        """
-        return run_verify_loop(
-            task,
-            lambda prompt, max_turns: self._invoke_agent(task, prompt, max_turns),
-            max_attempts=self.max_attempts,
-            max_turns=self.max_turns,
-        )
     def _build_argv(self, workdir: str, prompt: str) -> list[str]:
         """Assemble the ``claude`` CLI argument vector for one headless attempt.
 
@@ -180,6 +75,15 @@ class ClaudeAgentDriver(AgentDriver):
         -------
         list of str
             The argument vector to pass to :func:`subprocess.run`.
+
+        Note
+        -----
+        The ``claude`` CLI (>=2.x) has no ``--max-turns`` flag; in ``--print``
+        mode it loops internally until the task is done. The argument vector
+        grants the file/build tools and appends (not replaces) the default
+        Claude Code system prompt so the agent retains its tool-use behavior.
+        The agent works inside an isolated output directory, so bypassing
+        permission prompts is safe and required for non-interactive runs.
         """
         argv = [
             "claude",
@@ -199,38 +103,6 @@ class ClaudeAgentDriver(AgentDriver):
         if self.model:
             argv += ["--model", self.model]
         return argv
-
-    def _invoke_agent(self, task: AgentTask, prompt: str, max_turns: int) -> str:
-        """Run one agent attempt, preferring the SDK and falling back to the CLI.
-
-        Tries the in-process Python SDK first (unless ``prefer_cli`` is set); on
-        :class:`ImportError` it shells out to the ``claude`` CLI instead, scoping
-        it to the task's resolved absolute workdir. Success is decided later by
-        the caller's verify command, not here.
-
-        Parameters
-        ----------
-        task : AgentTask
-            The unit of work describing the workspace, the solver path to
-            write, the restore hook, and the verify command to run.
-        prompt : str
-            The prompt for this attempt.
-        max_turns : int
-            Turn budget for this attempt (honored by the SDK path only; the CLI
-            loops internally in headless mode).
-
-        Returns
-        -------
-        str
-            The captured agent log text. Does not decide success.
-        """
-        if not self.prefer_cli:
-            try:
-                return self._invoke_sdk(task, prompt, max_turns)
-            except ImportError:
-                pass  # fall back to CLI
-        workdir = str(Path(task.workdir).resolve())
-        return self._invoke_cli(self._build_argv(workdir, prompt), workdir)
 
     def _invoke_sdk(self, task: AgentTask, prompt: str, max_turns: int) -> str:
         """Run one attempt in-process via the ``claude_agent_sdk`` Python SDK.
@@ -288,63 +160,3 @@ class ClaudeAgentDriver(AgentDriver):
             return "\n".join(chunks)
 
         return asyncio.run(_run())
-
-    def _invoke_cli(self, argv:list[str], workdir: str) -> str:
-        """Run one attempt by shelling out to the ``claude`` CLI in headless mode.
-
-        Executes ``argv`` in ``workdir`` with the child environment from
-        :meth:`_child_env` (``ANTHROPIC_API_KEY`` injected when configured,
-        otherwise the inherited subscription/OAuth environment), capturing
-        output. Success is left to the caller's verify command; this method only
-        returns the captured text or fails fast on an unrecoverable auth error.
-
-        Parameters
-        ----------
-        argv : list of str
-            The full ``claude`` CLI argument vector, as built by
-            :meth:`_build_argv`.
-        workdir : str
-            Absolute working directory to run the CLI in.
-
-        Returns
-        -------
-        str
-            The combined stdout/stderr from the CLI. Does not decide success.
-
-        Raises
-        ------
-        AgentBackendError
-            If the CLI exits non-zero with output matching a known
-            authentication-failure marker, since retrying cannot fix it.
-
-        Note
-        -----
-        The ``claude`` CLI (>=2.x) has no ``--max-turns`` flag; in ``--print``
-        mode it loops internally until the task is done. The argument vector
-        grants the file/build tools and appends (not replaces) the default
-        Claude Code system prompt so the agent retains its tool-use behavior.
-        The agent works inside an isolated output directory, so bypassing
-        permission prompts is safe and required for non-interactive runs.
-        """
-        # Forward ANTHROPIC_API_KEY into the CLI's environment when configured so
-        # an explicit key forces API-key auth; None keeps the inherited
-        # environment (subscription/OAuth auth).
-        proc = subprocess.run(
-            argv,
-            cwd=workdir,
-            capture_output=True,
-            text=True,
-            env=self._child_env(),
-        )
-        output = proc.stdout + proc.stderr
-        # An auth failure is not a fixable task error — retrying would just burn
-        # the attempt budget. Surface it immediately so run_verify_loop fails fast
-        # instead of masking it as a failed attempt.
-        if proc.returncode != 0:
-            if any(marker in output.lower() for marker in _AUTH_FAILURE_MARKERS):
-                raise AgentBackendError(
-                    "Claude CLI could not authenticate. Set ANTHROPIC_API_KEY (or "
-                    "pass api_key=...), or run `claude login`. Claude output:\n"
-                    + output[-1000:]
-                )
-        return output
