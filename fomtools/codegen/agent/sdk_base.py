@@ -76,6 +76,9 @@ class SdkAgentDriver(AgentDriver):
         without a sandbox concept (e.g. Claude).
     api_key : str or None
         Resolved API key, or ``None`` to use the on-disk vendor login.
+    cli_timeout: int
+        Maximum number of seconds to wait before invoking the fallback mechanism that starts
+        the agent using the CLI.
     """
 
     #: Name of the environment variable holding this backend's API key.
@@ -95,6 +98,8 @@ class SdkAgentDriver(AgentDriver):
         cli_permission_mode: str = "bypassPermissions",
         bypass_sandbox: bool = True,
         api_key: str | None = None,
+        cli_timeout: int = 60,
+
     ):
         """Configure the backend, model, retry budget, sandbox, and authentication.
 
@@ -127,6 +132,9 @@ class SdkAgentDriver(AgentDriver):
             Explicit API key. When ``None`` it falls back to the
             :attr:`api_key_env` environment variable; when neither is set the
             backend uses the on-disk vendor login.
+        cli_timeout: int
+            Maximum number of seconds to wait before invoking the fallback mechanism that starts
+            the agent using the CLI.
         """
         self.config = config
         self.model = model
@@ -136,6 +144,7 @@ class SdkAgentDriver(AgentDriver):
         self.cli_permission_mode = cli_permission_mode
         self.bypass_sandbox = bypass_sandbox
         self.api_key = api_key or os.environ.get(self.api_key_env)
+        self.cli_timeout = cli_timeout
 
     def _child_env(self) -> dict[str, str] | None:
         """Process environment for the SDK/CLI, forcing API-key auth if we have one.
@@ -253,6 +262,7 @@ class SdkAgentDriver(AgentDriver):
             capture_output=True,
             text=True,
             env=self._child_env(),
+            timeout=self.cli_timeout
         )
         output = proc.stdout + proc.stderr
         # An auth failure is not a fixable task error — retrying would just burn
