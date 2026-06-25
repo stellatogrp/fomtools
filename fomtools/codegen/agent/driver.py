@@ -193,7 +193,8 @@ def run_verify_loop(
         verify = subprocess.run(
             task.verify_cmd, cwd=str(task.workdir), capture_output=True, text=True
         )
-        log_parts.append(verify.stdout + verify.stderr)
+        output = verify.stdout + verify.stderr
+        log_parts.append(output)
         if verify.returncode == 0:
             return AgentResult(
                 success=True,
@@ -206,7 +207,9 @@ def run_verify_loop(
         prompt = (
             task.instructions
             + "\n\nThe verify command FAILED with this output:\n"
-            + (verify.stdout + verify.stderr)[-4000:]
+            + output[4000:]
+            +"..."
+            + output[-4000:]
             + "\nFix `"
             + task.solver_rel_path
             + "` and make it pass."
