@@ -46,6 +46,14 @@ class SDPStepDecomposer(StepDecomposer):
         relu_pos = Relu(arg=step.arg - lambd_vec)
         relu_neg = Relu(arg=-step.arg - lambd_vec)
 
+        # These ReLUs are internal pieces of the soft-threshold prox, not proxes
+        # in their own right. Tag them so the SDP canonicalizer does not register
+        # them for the subgradient-monotonicity cut; the composite soft-threshold
+        # prox is registered below instead. (They still participate in the cross
+        # cut, which operates at the ReLU-node level.)
+        relu_pos._skip_prox_registration = True
+        relu_neg._skip_prox_registration = True
+
         # Update bounds on ReLU inputs, then propagate to outputs
         relu_pos.update_bounds(x_lb - lambd, x_ub - lambd)
         relu_neg.update_bounds(-x_ub - lambd, -x_lb - lambd)
@@ -54,7 +62,17 @@ class SDPStepDecomposer(StepDecomposer):
         output_pos = self.process_step(relu_pos)
         output_neg = self.process_step(relu_neg)
 
-        return output_pos - output_neg
+        z = output_pos - output_neg
+
+        # Register the composite soft-threshold prox (ell-1, tau=lambda) for the
+        # subgradient-monotonicity cut. Both sub-ReLUs are now canonicalized and
+        # their leaves are in var_idx_map, so z is well-formed. Guard on the
+        # method's presence to keep non-SDP decomposers (if ever paired) safe.
+        register = getattr(self.canonicalizer, "register_prox_step", None)
+        if register is not None:
+            register(z=z, v=step.arg, tau=lambd)
+
+        return z
 
     def decompose_saturatedlinear(self, step: SaturatedLinear) -> LinearExpression:
         """
@@ -74,7 +92,26 @@ class SDPStepDecomposer(StepDecomposer):
             A composite expression representing the saturated linear
             output as relu(x - l) - relu(x - u) + l.
         """
-        return self._decompose_saturatedlinear_to_relus(step)
+        z = self._decompose_saturatedlinear_to_relus(step)
+
+        # Register the composite box-projection prox for the PEP box cuts (normal
+        # cone under cross_cut, monotonicity under subgrad_mono_cut).
+        #
+        # Unlike soft-threshold, the internal ReLUs are NOT tagged
+        # ``_skip_prox_registration``: they stay registered as tau=1 orthant proxes.
+        # That is correct here because satlin = relu(v - l) - relu(v - u) + l, and
+        # relu(v - l), relu(v - u) genuinely ARE orthant projections (tau = 1) of
+        # their shifted inputs — so the subgradient cut is valid for them as-is. By
+        # contrast soft-threshold's internal relu(v - lambda)/relu(-v - lambda) are
+        # NOT the ell-1 prox (whose subgradient needs the tau = lambda
+        # normalization), so those are skipped and only the composite is registered.
+        # Here the box-level cuts are simply added on top of the valid orthant ones.
+        # Guarded for non-SDP decomposers.
+        register = getattr(self.canonicalizer, "register_box_prox_step", None)
+        if register is not None:
+            register(z=z, v=step.arg, l=step.l, u=step.u)
+
+        return z
 
     _DECOMPOSERS = {
         "saturatedlinear": decompose_saturatedlinear,
