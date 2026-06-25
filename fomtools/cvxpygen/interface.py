@@ -69,6 +69,12 @@ _OPTIONS: contextvars.ContextVar[FomtoolsOptions | None] = contextvars.ContextVa
 _RESULT: contextvars.ContextVar[CodegenResult | None] = contextvars.ContextVar(
     "fomtools_cvxpygen_result", default=None
 )
+# Parameters that fell back to default bounds during this run. Stashed here so
+# ``generate_solver`` can warn from the user's call site instead of deep inside
+# cvxpygen's generate_code dispatch.
+_UNBOUNDED_PARAMS: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
+    "fomtools_cvxpygen_unbounded_params", default=()
+)
 
 
 @contextlib.contextmanager
@@ -76,16 +82,23 @@ def pending_options(options: FomtoolsOptions):
     """Make ``options`` visible to FomtoolsInterface during cpg.generate_code."""
     opt_token = _OPTIONS.set(options)
     res_token = _RESULT.set(None)
+    unbounded_token = _UNBOUNDED_PARAMS.set(())
     try:
         yield
     finally:
         _OPTIONS.reset(opt_token)
         _RESULT.reset(res_token)
+        _UNBOUNDED_PARAMS.reset(unbounded_token)
 
 
 def take_stashed_result() -> CodegenResult | None:
     """Return the CodegenResult produced inside the current pending_options block."""
     return _RESULT.get()
+
+
+def take_unbounded_params() -> tuple[str, ...]:
+    """CVXPY parameters that fell back to default bounds in the current run."""
+    return _UNBOUNDED_PARAMS.get()
 
 
 def _current_options() -> FomtoolsOptions:
@@ -185,6 +198,7 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
             )
 
         qp = extract_qp_data(canon, param_bounds=opts.param_bounds, bound_margin=opts.bound_margin)
+        _UNBOUNDED_PARAMS.set(qp.unbounded_params)
         spec = resolve_builder(opts.fom)(qp, **opts.fom_options)
         if not spec.param_copy:
             raise ValueError(

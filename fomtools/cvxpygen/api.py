@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import warnings
 from typing import Any, Callable
 
 from fomtools.codegen.agent.driver import AgentDriver
@@ -12,7 +14,13 @@ from fomtools.cvxpygen.interface import (
     pending_options,
     register,
     take_stashed_result,
+    take_unbounded_params,
 )
+
+# Frames inside the fomtools package are skipped when locating the warning's
+# call site, so the user sees their own generate_solver(...) line regardless of
+# how many internal wrappers (e.g. fomtools.cvxpygen.__init__) sit in between.
+_FOMTOOLS_PREFIX = os.path.dirname(os.path.dirname(__file__))
 
 
 def generate_solver(
@@ -101,6 +109,15 @@ def generate_solver(
             enable_settings=list(enable_settings),
         )
         result = take_stashed_result()
+        unbounded = take_unbounded_params()
     if result is None:  # pragma: no cover - cpg should have raised already
         raise RuntimeError("cvxpygen did not invoke the FOMTOOLS solver interface")
+    if unbounded:
+        names = ", ".join(repr(name) for name in unbounded)
+        warnings.warn(
+            f"no param_bounds supplied for CVXPY parameter(s) {names}; using each "
+            f"parameter's current value +/- {bound_margin} for verification sampling. "
+            "Pass param_bounds={parameter: (lb, ub)} to control the verified range.",
+            skip_file_prefixes=(_FOMTOOLS_PREFIX,),
+        )
     return result

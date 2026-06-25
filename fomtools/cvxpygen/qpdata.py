@@ -18,7 +18,6 @@ sampling), propagated exactly through the affine parameter maps.
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -51,6 +50,11 @@ class QPData:
     n_ineq: int
     param_dependent: frozenset[str]
     bounds: dict[str, tuple[np.ndarray, np.ndarray]] = field(default_factory=dict)
+    # Parametric pieces whose user parameters had no supplied ``param_bounds``
+    # and fell back to ``current value +/- bound_margin``. The user-facing
+    # warning about this is emitted at the ``generate_solver`` call site (so it
+    # points at the user's code, not these internals) rather than here.
+    unbounded_params: tuple[str, ...] = ()
 
     @property
     def m(self) -> int:
@@ -82,14 +86,15 @@ def interval_matvec(
 
 def user_bounds_vector(
     parameter_info, param_bounds: dict | None, margin: float
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """Build flat lower/upper bounds over cvxpygen's user-parameter vector.
 
     ``param_bounds`` maps CVXPY ``Parameter`` objects (or their names) to
     ``(lb, ub)`` pairs; entries broadcast against the parameter shape and are
     flattened in Fortran order, matching cvxpygen. Parameters without supplied
-    bounds fall back to their current value ``+/- margin`` with a warning. The
-    trailing homogenization entry is pinned to 1.
+    bounds fall back to their current value ``+/- margin``; their names are
+    returned as the third element so the caller can warn from a frame that
+    points at user code. The trailing homogenization entry is pinned to 1.
     """
     flat = np.asarray(parameter_info.flat_usp, dtype=float)
     lb = flat - margin
@@ -103,6 +108,7 @@ def user_bounds_vector(
     name_to_col = {
         parameter_info.col_to_name_usp[col]: col for col in parameter_info.col_to_name_usp
     }
+    unbounded: list[str] = []
     for name in parameter_info.names:
         size = parameter_info.name_to_size_usp[name]
         col = name_to_col[name]
@@ -120,18 +126,13 @@ def user_bounds_vector(
             lb[col : col + size] = lo
             ub[col : col + size] = hi
         else:
-            warnings.warn(
-                f"no bounds supplied for CVXPY parameter {name!r}; using its current "
-                f"value +/- {margin} (pass param_bounds={{{name!r}: (lb, ub)}} to "
-                "control the verified parameter range)",
-                stacklevel=2,
-            )
+            unbounded.append(name)
     if supplied:
         raise ValueError(f"param_bounds given for unknown parameter(s): {sorted(supplied)}")
 
     # Trailing homogenization entry is the constant 1.
     lb[-1] = ub[-1] = 1.0
-    return lb, ub
+    return lb, ub, unbounded
 
 
 def _parametric_rows(mapping: spa.spmatrix) -> np.ndarray:
@@ -193,8 +194,9 @@ def extract_qp_data(canon, param_bounds: dict | None = None, bound_margin: float
         param_dependent.add("u_ineq")
 
     bounds: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    unbounded: list[str] = []
     if param_dependent:
-        user_lb, user_ub = user_bounds_vector(pi, param_bounds, bound_margin)
+        user_lb, user_ub, unbounded = user_bounds_vector(pi, param_bounds, bound_margin)
         if "q" in param_dependent:
             bounds["q"] = interval_matvec(pc.p_id_to_mapping["q"], user_lb, user_ub)
         if "b" in param_dependent:
@@ -228,4 +230,5 @@ def extract_qp_data(canon, param_bounds: dict | None = None, bound_margin: float
         n_ineq=n_ineq,
         param_dependent=frozenset(param_dependent),
         bounds=bounds,
+        unbounded_params=tuple(unbounded),
     )

@@ -1,5 +1,7 @@
 """Tests for canonical QP data extraction from cvxpygen's Canon object."""
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -61,12 +63,17 @@ def test_extract_bounds_keyed_by_name_and_scalar_broadcast():
     np.testing.assert_allclose(hi, 2 * np.ones(3))
 
 
-def test_extract_missing_bounds_warns_and_falls_back():
+def test_extract_missing_bounds_records_fallback_silently():
+    # extract_qp_data records which params fell back to default bounds but does
+    # not warn itself; generate_solver emits the user-facing warning so it
+    # points at the user's call site rather than these internals.
     problem, q, beq, _ = _box_qp()
     q.value = 0.25 * np.ones(3)
     canon, _ = cvxpygen_canonicalize(problem)
-    with pytest.warns(UserWarning, match="no bounds supplied for CVXPY parameter 'q'"):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         qp = extract_qp_data(canon, param_bounds={beq: (-0.5, 0.5)}, bound_margin=0.5)
+    assert qp.unbounded_params == ("q",)
     lo, hi = qp.bounds["q"]
     np.testing.assert_allclose(lo, 0.25 - 0.5)
     np.testing.assert_allclose(hi, 0.25 + 0.5)
