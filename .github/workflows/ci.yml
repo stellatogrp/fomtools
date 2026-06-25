@@ -46,7 +46,7 @@ jobs:
           echo "$LICENSE" > $PWD/gurobi.lic
 
       - name: Install the project
-        run: uv sync --extra dev --extra docs --extra nn
+        run: uv sync --extra dev --extra docs --extra nn --extra cvxpygen
 
       - name: Check Gurobi License
         env:
