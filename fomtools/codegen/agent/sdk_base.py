@@ -46,6 +46,18 @@ class SdkAgentDriver(AgentDriver):
     After each attempt the shared loop runs the verify command itself to decide
     success, never the agent's self-report.
 
+    Warnings
+    --------
+    The defaults (``cli_permission_mode="bypassPermissions"``,
+    ``bypass_sandbox=True``) are intended for a fully automated, isolated
+    code-generation run: the agent must write files and run ``make``
+    non-interactively. They apply to **both** the in-process SDK path and the
+    CLI fallback, so ``prefer_cli=False`` is not a safer mode. Because the agent
+    runs with permission prompts bypassed and the vendor sandbox disabled,
+    ``AgentTask.workdir`` must be a dedicated output directory rather than a
+    subdirectory of a project repository; otherwise a misconfigured
+    ``--add-dir`` could expose the surrounding repository to the agent.
+
     Subclasses set the class attributes :attr:`api_key_env`, :attr:`cli_name`,
     and :attr:`label`, and implement :meth:`_build_argv` and :meth:`_invoke_sdk`.
 

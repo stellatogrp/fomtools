@@ -23,7 +23,12 @@ class AgentTask:
     Attributes
     ----------
     workdir:
-        The emitted-solver directory the agent edits.
+        The emitted-solver directory the agent edits. This **must be an
+        isolated output directory**, not a project subdirectory: the agent runs
+        with bypassed permissions / a disabled sandbox and is scoped to
+        ``workdir`` (as ``cwd`` and via ``--add-dir``). If ``workdir`` sits
+        inside a larger repository, anything reachable from it — and any path a
+        misconfigured ``--add-dir`` widens to — is exposed to the agent.
     solver_rel_path:
         Path (relative to ``workdir``) of the source file the agent must write
         (e.g. ``"src/fom_solver.c"``).
