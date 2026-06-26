@@ -69,6 +69,7 @@ docs = [
        "mkdocstrings-python",
        "mkdocs-marimo",
        "mkdocs-material",
+       "pydantic",
        "pymdown-extensions"
 ]
 
