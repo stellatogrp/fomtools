@@ -212,7 +212,7 @@ def run_verify_loop(
         prompt = (
             task.instructions
             + "\n\nThe verify command FAILED with this output:\n"
-            + output[4000:]
+            + output[:4000]
             +"..."
             + output[-4000:]
             + "\nFix `"

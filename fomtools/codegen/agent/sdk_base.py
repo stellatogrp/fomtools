@@ -110,7 +110,7 @@ class SdkAgentDriver(AgentDriver):
         cli_permission_mode: str = "bypassPermissions",
         bypass_sandbox: bool = True,
         api_key: str | None = None,
-        cli_timeout: int = 60,
+        cli_timeout: int = 600,
 
     ):
         """Configure the backend, model, retry budget, sandbox, and authentication.
