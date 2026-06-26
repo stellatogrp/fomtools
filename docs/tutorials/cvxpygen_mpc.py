@@ -6,13 +6,20 @@ app = marimo.App()
 
 @app.cell
 def _():
+    import os
+
     import cvxpy as cp
     import numpy as np
 
     import fomtools.cvxpygen as fcpg
     from fomtools.codegen import CodegenConfig, TerminationSpec
 
-    return CodegenConfig, TerminationSpec, cp, fcpg, np
+    # Generating a verified embedded solver needs a real coding-agent backend.
+    # When it isn't configured (e.g. a headless docs build), the codegen and
+    # solve cells below skip with a message instead of raising.
+    agent_available = os.environ.get("FOMTOOLS_CODEGEN_AGENT") == "1"
+
+    return CodegenConfig, TerminationSpec, agent_available, cp, fcpg, np
 
 
 @app.cell(hide_code=True)
@@ -88,16 +95,23 @@ def _(mo):
 
 
 @app.cell
-def _(CodegenConfig, TerminationSpec, fcpg, problem, x0):
-    result = fcpg.generate_solver(
-        problem,
-        "mpc_solver",  # relative path: cvxpygen imports <code_dir>.cpg_solver
-        fom="admm",
-        param_bounds={x0: (-1.0, 1.0)},
-        config=CodegenConfig(termination=TerminationSpec(max_iters=2000)),
-    )
-    print(f"generated verified solver in {result.out_dir}")
-    return
+def _(CodegenConfig, TerminationSpec, agent_available, fcpg, problem, x0):
+    if agent_available:
+        result = fcpg.generate_solver(
+            problem,
+            "mpc_solver",  # relative path: cvxpygen imports <code_dir>.cpg_solver
+            fom="admm",
+            param_bounds={x0: (-1.0, 1.0)},
+            config=CodegenConfig(termination=TerminationSpec(max_iters=2000)),
+        )
+        print(f"generated verified solver in {result.out_dir}")
+    else:
+        result = None
+        print(
+            "Skipping solver generation: set FOMTOOLS_CODEGEN_AGENT=1 (and configure a "
+            "coding-agent backend) to generate and verify the embedded solver."
+        )
+    return (result,)
 
 
 @app.cell(hide_code=True)
@@ -109,14 +123,16 @@ def _(mo):
 
 
 @app.cell
-def _(cp, nx, problem, rng, us, x0):
+def _(agent_available, cp, nx, problem, result, rng, us, x0):
+    if agent_available and result is not None:
+        x0.value = rng.uniform(-0.5, 0.5, size=nx)
+        problem.solve(method="CPG")
+        print("first input:", us.value[0])
 
-    x0.value = rng.uniform(-0.5, 0.5, size=nx)
-    problem.solve(method="CPG")
-    print("first input:", us.value[0])
-
-    problem.solve(solver=cp.OSQP, eps_abs=1e-8, eps_rel=1e-8)
-    print("OSQP check :", us.value[0])
+        problem.solve(solver=cp.OSQP, eps_abs=1e-8, eps_rel=1e-8)
+        print("OSQP check :", us.value[0])
+    else:
+        print("Skipping solve: no generated CPG solver (see the previous cell).")
     return
 
 
