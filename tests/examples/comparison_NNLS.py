@@ -20,7 +20,7 @@ PEPit is solved with ||z0 - z*|| <= R
 import matplotlib.pyplot as plt
 import numpy as np
 
-from docs.tutorials.pepit_runner import PEPitRunner
+from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 from fomtools.verifier import Verifier
 
 # ── Problem setup (identical to NNLS.py tutorial) ────────────────────────────

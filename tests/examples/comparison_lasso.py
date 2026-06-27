@@ -19,7 +19,7 @@ PEPit is solved with ||s0 - s*|| <= R
 import matplotlib.pyplot as plt
 import numpy as np
 
-from docs.tutorials.pepit_runner import PEPitRunner
+from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 from fomtools.verifier import Verifier
 
 # ── Problem setup (same as sparse_coding.py tutorial) ─────────────────────────

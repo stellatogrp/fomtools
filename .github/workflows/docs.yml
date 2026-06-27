@@ -55,14 +55,7 @@ jobs:
         env:
           GRB_LICENSE_FILE: ${{ github.workspace }}/gurobi.lic
         run: |
-          for file in \
-            docs/tutorials/NNLS.py \
-            docs/tutorials/network_optimization.py \
-            docs/tutorials/optimal_control.py \
-            docs/tutorials/sdp_examples.py \
-            docs/tutorials/sparse_coding.py
-          do
-            echo "Exporting $file"
+          for file in docs/tutorials/*.py; do
             marimo export html "$file" -o "${file%.py}.html"
           done
 

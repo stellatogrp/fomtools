@@ -16,7 +16,7 @@ def _():
     import cvxpy as cp
     import matplotlib.pyplot as plt
     import numpy as np
-    from pepit_runner import PEPitRunner
+    from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 
     from fomtools.proxable_functions import IndBox, IndNonNegative
     from fomtools.verifier import Verifier

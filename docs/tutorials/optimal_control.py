@@ -16,7 +16,7 @@ def _():
     import matplotlib.pyplot as plt
     import numpy as np
     import scipy.sparse as spa
-    from pepit_runner import PEPitRunner
+    from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
     from scipy.sparse import csr_matrix
 
     from fomtools.proxable_functions import IndBox

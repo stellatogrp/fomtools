@@ -22,7 +22,7 @@ import networkx as nx
 import numpy as np
 import scipy.sparse as spa
 
-from docs.tutorials.pepit_runner import PEPitRunner
+from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 from fomtools.proxable_functions import IndBox, IndNonNegative
 from fomtools.verifier import Verifier
 
