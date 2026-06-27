@@ -57,6 +57,12 @@ class Relu(Step):
             set(range(0, self.arg.ndim)) if proj_ranges is None else self._get_ranges(proj_ranges)
         )
         self.idx_with_binary_vars = set()
+        # When True, the SDP canonicalizer does not register this ReLU as an
+        # orthant prox for the subgradient-monotonicity cut. Set by decomposers
+        # that build a composite operator (e.g. soft-threshold) from internal
+        # ReLUs and register the composite prox instead. Declared here as a formal
+        # attribute (rather than a dynamic one) so it survives copying.
+        self._skip_prox_registration = False
 
         arg_lb, arg_ub = self.arg.bound_propagation()
 

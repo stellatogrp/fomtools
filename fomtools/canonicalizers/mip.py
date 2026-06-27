@@ -725,6 +725,16 @@ class MIP(Canonicalizer):
                                     w1 + w2 <= 1,
                                 ]
                             )
+                        else:
+                            # Lower-or-middle (lb < l, ub <= u): the upper face is
+                            # never active, so only w2 (lower-saturation vs interior)
+                            # matters. Pin the saturated branch: w2=1 => output <= l
+                            # (with the output-variable bound output >= l this forces
+                            # output = l); w2=0 => output <= ub (interior, slack).
+                            # Without this the lower-sat output was unpinned and the
+                            # MIP admitted off-graph points (mirror of the
+                            # soft-threshold left-or-middle bug).
+                            constraints.append(output <= l + (ub - l) * (1 - w2))
 
                     if ub > u:
                         constraints.extend(
@@ -886,6 +896,10 @@ class MIP(Canonicalizer):
                                 ]
                             )
 
+                        # Right-or-middle: the middle (zero) sub-region sits on the
+                        # LOWER side, so it is reachable iff lb is inside [-lambd,
+                        # lambd]. There w1=0 selects the middle and this pin forces
+                        # output <= 0; combined with output >= 0 (line 918) => 0.
                         if -step.lambd <= lb <= step.lambd:
                             constraints.append(output <= output_ub * w1)
 
@@ -899,7 +913,16 @@ class MIP(Canonicalizer):
                             ]
                         )
 
-                        if -step.lambd <= lb <= step.lambd:
+                        # Left-or-middle: the middle (zero) sub-region sits on the
+                        # UPPER side, so it is reachable iff ub is inside [-lambd,
+                        # lambd] (guard on ub, mirroring the lb guard above for the
+                        # right side). There w2=0 selects the middle and this pin
+                        # forces output >= 0; combined with output <= 0 (line 927)
+                        # => 0. Guarding on lb here was a bug: this block already
+                        # requires lb < -lambd, so an ``lb`` guard is never true and
+                        # the middle output was left unpinned, admitting off-graph
+                        # points (output in [arg-lambd, 0] when |arg| < lambd).
+                        if -step.lambd <= ub <= step.lambd:
                             constraints.append(output >= output_lb * w2)
 
                 if lb < -step.lambd and ub > step.lambd:
