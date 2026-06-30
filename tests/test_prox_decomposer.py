@@ -16,6 +16,7 @@ returning the right soft-threshold output) is the concern of
 
 import numpy as np
 import pytest
+import scipy.sparse as spa
 
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import (
@@ -1719,6 +1720,94 @@ def test_leastsquares_rejects_1d_A():
     """A must be 2-D."""
     with pytest.raises(ValueError, match="2-D"):
         LeastSquares(A=np.array([1.0, 2.0, 3.0]), b=np.array([0.0]))
+
+
+# --- sparse Q / A support (carried end-to-end across all backends) ----------
+
+
+def test_quadratic_sparse_Q_preserved_and_validated():
+    """A scipy.sparse Q is accepted, normalized to CSR, and PSD-validated."""
+    rng = np.random.default_rng(0)
+    diag = rng.uniform(0.5, 3.0, size=4)
+    f = Quadratic(Q=spa.diags(diag), q=rng.normal(size=4))
+    assert spa.issparse(f.Q) and f.Q.format == "csr"
+
+    # Symmetry / PSD validation matches QuadraticProgram (same messages).
+    with pytest.raises(ValueError, match="symmetric"):
+        Quadratic(Q=spa.csr_matrix(np.array([[1.0, 2.0], [0.0, 1.0]])), q=np.zeros(2))
+    with pytest.raises(ValueError, match="positive semidefinite"):
+        Quadratic(Q=spa.diags([1.0, -2.0]), q=np.zeros(2))
+
+
+def test_quadratic_sparse_numpy_reference_matches_dense():
+    """eval / grad / prox agree whether Q is built sparse or dense."""
+    rng = np.random.default_rng(1)
+    n, gamma = 5, 0.7
+    diag = rng.uniform(0.5, 3.0, size=n)
+    q = rng.normal(size=n)
+    x = rng.normal(size=n)
+    fs = Quadratic(Q=spa.diags(diag), q=q)
+    fd = Quadratic(Q=np.diag(diag), q=q)
+    assert np.isclose(fs.eval(x), fd.eval(x))
+    np.testing.assert_allclose(fs.grad(x), fd.grad(x), atol=1e-12)
+    np.testing.assert_allclose(fs.prox(x, gamma=gamma), fd.prox(x, gamma=gamma), atol=1e-10)
+
+
+def test_leastsquares_sparse_A_preserved_and_matches_dense():
+    """A sparse A yields a sparse Q = A^T A; prox / eval match the dense build."""
+    rng = np.random.default_rng(2)
+    n, m, gamma = 4, 6, 0.9
+    A = spa.csr_matrix(rng.normal(size=(m, n)))
+    b = rng.normal(size=m)
+    x = rng.normal(size=n)
+    ls = LeastSquares(A=A, b=b)
+    lsd = LeastSquares(A=A.toarray(), b=b)
+    assert spa.issparse(ls.Q)
+    np.testing.assert_allclose(ls.prox(x, gamma=gamma), lsd.prox(x, gamma=gamma), atol=1e-10)
+    assert np.isclose(ls.eval(x), lsd.eval(x))
+
+
+@pytest.mark.parametrize("method", ["mip", "sdp", "simulator"])
+def test_quadratic_sparse_Q_matches_dense_all_backends(method):
+    """A sparse-Q prox produces the same pinned solution as the dense build on
+    every backend (the prox is a single (I + gamma*Q) x = arg - gamma*q solve).
+
+    MIP/simulator extract the primal exactly; SDP has no primal extraction, so the
+    relaxation is checked via its (tight, at a fixed arg) 2-norm objective bound.
+    """
+    rng = np.random.default_rng(3)
+    n, gamma = 3, 0.5
+    diag = rng.uniform(0.5, 3.0, size=n)
+    q = rng.normal(size=n)
+    arg_value = rng.uniform(-1.0, 1.0, size=n)
+    expected = np.linalg.solve(np.eye(n) + gamma * np.diag(diag), arg_value - gamma * q)
+
+    obbt = "gurobi" if method == "mip" else None
+    v = _make_verifier(method, obbt=obbt)
+
+    if method == "simulator":
+        arg = v.add_param(ndim=n, samples=arg_value[None, :])
+        u = v.prox(Quadratic(Q=spa.diags(diag), q=q), arg, gamma=gamma)
+        ref = v.add_param(ndim=n, samples=expected[None, :])
+        v.set_infinity_norm_objective(u - ref)
+        assert v.solve()[:, -1].max() < 1e-5
+        return
+
+    if method == "sdp":
+        arg = v.add_param(n, lb=arg_value, ub=arg_value)
+        u = v.prox(Quadratic(Q=spa.diags(diag), q=q), arg, gamma=gamma)
+        v.set_objective_norm(u, 2)
+        np.testing.assert_allclose(v.solve(), float(expected @ expected), atol=1e-4)
+        return
+
+    arg = v.add_param(n, lb=arg_value, ub=arg_value)
+    u = v.prox(Quadratic(Q=spa.diags(diag), q=q), arg, gamma=gamma)
+    solver = v.canonicalizer.solver
+    for i in range(n):
+        solver.set_objective(u[i], "minimize")
+        solver.optimize()
+        assert solver.is_optimal()
+        np.testing.assert_allclose(solver["objVal"], expected[i], atol=1e-5)
 
 
 # --- SumPositive ---

@@ -1151,7 +1151,12 @@ class StepDecomposer:
         is available for an implicitly-defined iterate).
         """
         n = arg.ndim
-        M = np.eye(n) + gamma * prox.Q
+        if spa.issparse(prox.Q):
+            # Keep (I + gamma*Q) sparse — _qp_kkt's solve_linexpr/P@x are sparse-aware.
+            # A dense ``np.eye(n) + gamma*Q`` would silently yield a numpy.matrix.
+            M = spa.eye(n, format="csr") + gamma * prox.Q
+        else:
+            M = np.eye(n) + gamma * prox.Q
         # lin_term = q_qp = gamma*q - arg (negation of the known-good arg - gamma*q,
         # which keeps the arithmetic on LinearExpression operands).
         return self._qp_kkt(lin_term=-(arg - gamma * prox.q), P=M)

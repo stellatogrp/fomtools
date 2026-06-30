@@ -3,7 +3,7 @@ from typing import ClassVar
 import numpy as np
 import scipy.sparse as spa
 
-from fomtools.canonicalizers.simulator_subproblems import (
+from fomtools.canonicalizers.simulator import (
     l1_ball_activation,
     norm_inf_activation,
     polyhedral_activation,
@@ -16,23 +16,39 @@ from fomtools.stepdecomposers.step_decomposer import StepDecomposer
 from fomtools.steps import Affine
 from fomtools.steps.step import Step
 
+# A linear system this ill-conditioned yields solutions with no significant digits
+# (the relative error ~ cond * eps exceeds ~1e-4 in double precision), so reject it
+# as a developer-facing guard rather than silently returning garbage.
+_COND_THRESHOLD = 1e12
+
 
 def _assert_nonsingular(M: np.ndarray, context: str) -> None:
     """
-    Raise a clear error if the dense matrix ``M`` is (numerically) singular.
+    Raise a clear error if the dense matrix ``M`` is singular or near-singular.
 
     The Simulator solves the implicit-iterate linear system once per constant
     matrix and reuses the factorization across all samples; a singular matrix
     would otherwise surface as an opaque ``LinAlgError`` deep inside
-    ``solve_model``. Only dense matrices are checked here — sparse systems are
-    left to ``splu``, which raises on a singular factorization.
+    ``solve_model``, and a merely *near*-singular one would return inaccurate
+    solutions with no warning. We flag both: exact singularity via ``slogdet`` and
+    near-singularity via the 2-norm condition number (> ``_COND_THRESHOLD``). Only
+    dense matrices are checked here — sparse systems are left to ``splu``, which
+    raises on a singular factorization.
     """
-    sign, _ = np.linalg.slogdet(np.asarray(M, dtype=float))
+    M = np.asarray(M, dtype=float)
+    sign, _ = np.linalg.slogdet(M)
     if sign == 0:
         raise ValueError(
             f"{context}: the linear system matrix is singular and cannot be solved "
             "on the Simulator backend. Ensure the problem is well posed (e.g. the "
             "equality matrix has full row rank)."
+        )
+    cond = np.linalg.cond(M)
+    if cond > _COND_THRESHOLD:
+        raise ValueError(
+            f"{context}: the linear system matrix is near-singular (condition number "
+            f"{cond:.3e} > {_COND_THRESHOLD:g}); the Simulator solution would be "
+            "numerically unreliable. Ensure the problem is well conditioned."
         )
 
 
@@ -52,8 +68,8 @@ class SimulatorStepDecomposer(StepDecomposer):
       ℓ1-ball and ℓ∞-norm proxes use batched solver-free projections; the 1-D
       total-variation prox uses Condat's O(n) algorithm; polyhedral projection and
       inequality QP/LP loop a parametrized cvxpy solve per sample. All are wired
-      through :meth:`Simulator.register_subproblem_step` (see
-      :mod:`fomtools.canonicalizers.simulator_subproblems`).
+      through :meth:`Simulator.register_subproblem_step` (the activation factories
+      live alongside it in :mod:`fomtools.canonicalizers.simulator`).
     """
 
     def _process_primitive(self, step: Step) -> LinearExpression:
@@ -90,7 +106,14 @@ class SimulatorStepDecomposer(StepDecomposer):
     def _register_subproblem(
         self, arg_expr: LinearExpression, n: int, activation
     ) -> LinearExpression:
-        """Create a fresh output leaf, register it, and record the subproblem step."""
+        """Create a fresh output leaf, register it, and record the subproblem step.
+
+        Used by the **prox** lowerings (simplex, ℓ1-ball, ℓ∞-norm, TV, polyhedral),
+        which have no Step object and therefore no pre-allocated output leaf — so we
+        mint one here via ``LinearExpression.from_int(n)``. This differs from the
+        **step** path (:meth:`_qp_via_cvxpy`), where the ``QuadraticProgram`` step has
+        already allocated ``step.output`` and we reuse it rather than create another.
+        """
         out = LinearExpression.from_int(n)
         self.register_var(out, var_type="param")
         self.canonicalizer.register_subproblem_step(arg_expr, out, activation)
@@ -111,7 +134,12 @@ class SimulatorStepDecomposer(StepDecomposer):
         ``q = -Aᵀb``), so this one override covers both registry entries.
         """
         n = arg.ndim
-        M = np.eye(n) + gamma * prox.Q
+        if spa.issparse(prox.Q):
+            # Keep the system matrix sparse — Affine / canonicalize_affine factorize
+            # it with splu. Densifying here would defeat a sparse LeastSquares AᵀA.
+            M = spa.eye(n, format="csr") + gamma * prox.Q
+        else:
+            M = np.eye(n) + gamma * prox.Q
         return self.process_step(Affine(arg=arg - gamma * prox.q, output_mat=M))
 
     def prox_indaffine(self, prox, arg: LinearExpression, gamma: float = 1.0) -> LinearExpression:
@@ -240,6 +268,8 @@ class SimulatorStepDecomposer(StepDecomposer):
         arg_expr = stack(blocks) if len(blocks) > 1 else blocks[0]
         activation = qp_activation(step.P, step.A, step.C, n, p, m, getattr(step, "is_lp", False))
 
+        # Reuse the step's own pre-allocated output leaf (unlike the prox path in
+        # :meth:`_register_subproblem`, which must mint a fresh one — a prox has no Step).
         out = step.output  # the QP step's own fresh dim-n leaf
         self.register_var(out, var_type="param")
         self.canonicalizer.register_subproblem_step(arg_expr, out, activation)

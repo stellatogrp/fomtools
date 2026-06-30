@@ -12,7 +12,8 @@ inf-norm objective as an oracle: the recorded residual per sample is
 import numpy as np
 import pytest
 
-from fomtools.canonicalizers.simulator_subproblems import (
+from fomtools.canonicalizers.simulator import (
+    condat_tv_1d,
     project_l1_ball_batch,
     project_simplex_batch,
 )
@@ -53,6 +54,26 @@ def test_project_simplex_batch_matches_reference():
         active = out[i] > 1e-9
         thr = V[i][active] - out[i][active]
         assert thr.max() - thr.min() < 1e-6
+
+
+def test_condat_tv_1d_edge_cases():
+    """Degenerate signals hit the early-return / end-of-signal flush guards."""
+    # Length-1 signal: returns a copy unchanged (n < 2 early return).
+    out1 = condat_tv_1d(np.array([3.0]), 0.5)
+    np.testing.assert_array_equal(out1, np.array([3.0]))
+    assert out1 is not None
+
+    # All-equal signal: TV(x) is already 0, so the prox is the signal itself. This
+    # is the case most likely to drive kminus/kplus to n-1 in the end-of-signal flush.
+    for n in (2, 5, 9):
+        const = np.full(n, -1.3)
+        np.testing.assert_allclose(condat_tv_1d(const, 0.7), const, atol=1e-12)
+
+    # lam = 0: no penalty, exact passthrough (returns a copy, not the same object).
+    y = np.array([0.0, 5.0, -2.0, 5.0])
+    out0 = condat_tv_1d(y, 0.0)
+    np.testing.assert_array_equal(out0, y)
+    assert out0 is not y
 
 
 def test_project_l1_ball_batch_branches():
@@ -131,6 +152,23 @@ def test_polyhedral_prox_simulator():
     vp = Verifier(method="simulator", obbt_solver=None)
     v = vp.add_param(ndim=n, samples=v_samples)
     x = vp.prox(IndPolyhedral(A, b), v)
+    assert _residual_max(vp, x, x_ref, n) < TOL_SOLVER
+
+
+def test_polyhedral_prox_per_sample_b_simulator():
+    """A per-sample (parametric) b is stacked into the activation input (b_is_param)."""
+    rng = np.random.default_rng(11)
+    n, N = 3, 6
+    A = np.vstack([np.eye(n), -np.eye(n)])  # box {-b[n:] <= x <= b[:n]}
+    # Strictly positive half-widths so every per-sample box contains the origin.
+    b_samples = rng.uniform(0.3, 1.5, size=(N, 2 * n))
+    v_samples = rng.normal(size=(N, n)) * 2.0
+    x_ref = np.stack([IndPolyhedral(A, b_samples[i]).prox(v_samples[i]) for i in range(N)])
+
+    vp = Verifier(method="simulator", obbt_solver=None)
+    v = vp.add_param(ndim=n, samples=v_samples)
+    b_param = vp.add_param(ndim=2 * n, samples=b_samples)
+    x = vp.prox(IndPolyhedral(A, b_param), v)
     assert _residual_max(vp, x, x_ref, n) < TOL_SOLVER
 
 

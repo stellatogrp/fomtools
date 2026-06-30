@@ -1,7 +1,9 @@
 import numpy as np
+import scipy.sparse as spa
 
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import ProxableFunction
+from fomtools.utils.matrix_utils import _PSD_TOL, _min_eig, _sym_error
 
 
 class Quadratic(ProxableFunction):
@@ -39,10 +41,24 @@ class Quadratic(ProxableFunction):
         q: float | np.ndarray | LinearExpression,
     ):
         super().__init__()
-        Q = np.asarray(Q, dtype=float)
+        # ``Q`` may be dense or scipy.sparse; normalize sparse to CSR (supports T,
+        # arithmetic, and ``LinearExpression.__rmatmul__``), mirroring QuadraticProgram.
+        if spa.issparse(Q):
+            Q = Q.tocsr()
+        else:
+            Q = np.asarray(Q, dtype=float)
         if Q.ndim != 2 or Q.shape[0] != Q.shape[1]:
             raise ValueError(f"Q must be a square 2-D matrix; got shape {Q.shape}")
         n = Q.shape[0]
+        # The prox (I + gamma*Q) x = ... is well posed only for symmetric PSD Q.
+        sym_err = _sym_error(Q)
+        if sym_err > _PSD_TOL:
+            raise ValueError(f"Q must be symmetric; max|Q - Q^T| = {sym_err:.3e}")
+        min_eig = _min_eig(Q)
+        if min_eig < -_PSD_TOL:
+            raise ValueError(
+                f"Q must be positive semidefinite; smallest eigenvalue {min_eig:.3e} < -{_PSD_TOL:g}"
+            )
         if isinstance(q, np.ndarray) and q.shape != (n,):
             raise ValueError(f"q must have shape ({n},) to match Q; got shape {q.shape}")
         self.Q = Q
@@ -98,8 +114,14 @@ class Quadratic(ProxableFunction):
         np.ndarray
             The proximal point ``u``.
         """
+        rhs = arg - gamma * self.q
+        if spa.issparse(self.Q):
+            # Keep (I + gamma*Q) sparse and solve directly — a dense ``np.eye(n) +
+            # gamma*Q`` would silently produce a numpy.matrix of the wrong shape.
+            M = spa.eye(self.n, format="csr") + gamma * self.Q
+            return spa.linalg.spsolve(M.tocsc(), rhs)
         M = np.eye(self.n) + gamma * self.Q
-        return np.linalg.solve(M, arg - gamma * self.q)
+        return np.linalg.solve(M, rhs)
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""

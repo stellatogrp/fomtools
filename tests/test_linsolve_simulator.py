@@ -14,6 +14,7 @@ polyhedral projection, inequality QP/LP) are covered in
 """
 
 import numpy as np
+import scipy.sparse as spa
 
 from fomtools.proxable_functions import IndAffine, LeastSquares, Quadratic
 from fomtools.verifier import Verifier
@@ -37,6 +38,36 @@ def test_quadratic_prox_simulator():
     vp = Verifier(method="simulator", obbt_solver=None)
     v = vp.add_param(ndim=n, samples=v_samples)
     x = vp.prox(Quadratic(Q=Q, q=q), v, gamma=gamma)
+    xref = vp.add_param(ndim=n, samples=x_ref)
+    vp.set_infinity_norm_objective(x - xref)
+
+    residuals = vp.solve()
+    assert residuals[:, -1].max() < TOL
+
+
+def test_quadratic_prox_sparse_Q_simulator():
+    """A sparse Q is accepted by the constructor and kept sparse through to splu.
+
+    ``Quadratic(Q=spa.diags(...))`` preserves sparsity (CSR), so the simulator's
+    ``spa.issparse(prox.Q)`` branch builds ``spa.eye(n) + gamma*Q`` and factorizes it
+    — a dense ``np.eye(n) + gamma*Q`` would silently yield a numpy.matrix.
+    """
+    rng = np.random.default_rng(5)
+    n, N, gamma = 4, 6, 0.7
+
+    diag = rng.uniform(0.5, 3.0, size=n)
+    q = rng.normal(size=n)
+    v_samples = rng.uniform(-1.0, 1.0, size=(N, n))
+
+    M = np.eye(n) + gamma * np.diag(diag)
+    x_ref = np.linalg.solve(M, (v_samples - gamma * q).T).T
+
+    prox = Quadratic(Q=spa.diags(diag), q=q)
+    assert spa.issparse(prox.Q)
+
+    vp = Verifier(method="simulator", obbt_solver=None)
+    v = vp.add_param(ndim=n, samples=v_samples)
+    x = vp.prox(prox, v, gamma=gamma)
     xref = vp.add_param(ndim=n, samples=x_ref)
     vp.set_infinity_norm_objective(x - xref)
 

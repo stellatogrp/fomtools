@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.sparse as spa
 
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions.quadratic import Quadratic
@@ -38,7 +39,12 @@ class LeastSquares(Quadratic):
         A: np.ndarray,
         b: float | np.ndarray | LinearExpression,
     ):
-        A = np.asarray(A, dtype=float)
+        # ``A`` may be dense or scipy.sparse; normalize sparse to CSR so ``Q = A^T A``
+        # stays sparse and flows into the (sparse-aware) Quadratic base.
+        if spa.issparse(A):
+            A = A.tocsr()
+        else:
+            A = np.asarray(A, dtype=float)
         if A.ndim != 2:
             raise ValueError(f"A must be a 2-D matrix; got shape {A.shape}")
         m = A.shape[0]
@@ -46,8 +52,8 @@ class LeastSquares(Quadratic):
             raise ValueError(
                 f"b must have shape ({m},) to match A's row count; got shape {b.shape}"
             )
-        Q = A.T @ A
-        q = -A.T @ b
+        Q = A.T @ A  # symmetric PSD; sparse A -> sparse Q (Quadratic normalizes to CSR)
+        q = -A.T @ b  # numeric b -> 1-D ndarray; LinearExpression b -> __rmatmul__
         super().__init__(Q=Q, q=q)
         self.A = A
         self.b = b
