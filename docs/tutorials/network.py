@@ -7,376 +7,319 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
-
-    return (mo,)
-
-
-@app.cell(hide_code=True)
-def _():
+    import numpy as np
     import statistics
     import sys
+    import textwrap
     import time
-    from dataclasses import dataclass
     from pathlib import Path
-    from typing import Callable
-
-    def add_repo_root_to_path():
-        cwd = Path.cwd().resolve()
-        here = Path(__file__).resolve().parent if "__file__" in globals() else cwd
-        for candidate in (cwd, cwd.parent, cwd.parent.parent, here, here.parent, here.parent.parent):
-            if (candidate / "fomtools").is_dir():
-                if str(candidate) not in sys.path:
-                    sys.path.insert(0, str(candidate))
-                return here
-        return here
-
-    app_dir = add_repo_root_to_path()
-
-    import numpy as np
     from scipy.optimize import linprog
 
-    from fomtools.codegen import CodegenConfig, StubAgentDriver, TerminationSpec, generate_code
-    from fomtools.codegen.extract import extract_ir
-    from fomtools.codegen.harness import find_compiler, run_bench
-    from fomtools.codegen.ir import ActivationKind
+    start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
+    for candidate in (start, *start.parents):
+        if (candidate / "fomtools").is_dir():
+            repo_root = candidate
+            break
+    else:
+        repo_root = start
+
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    examples_dir = repo_root / "examples"
+
+    from fomtools.codegen import CodegenConfig, TerminationSpec
+    from fomtools.codegen.agent import make_agent_driver
+    from fomtools.codegen.harness import find_compiler
     from fomtools.verifier import Verifier
 
-    @dataclass
-    class SpeedupProblem:
-        name: str
-        title: str
-        max_iters: int
-        verifier: object
-        next_state: object
-        config: CodegenConfig
-        python_solve: Callable[[], object]
-        state: list[object] | None = None
-        params: list[object] | None = None
-        notes: str = ""
-
-    @dataclass
-    class SpeedupResult:
-        python_us: float
-        codegen_us: float
-        speedup: float
-        out_dir: Path
-        solver_path: Path
-
-    def make_verifier():
-        return Verifier(
-            method="mip",
-            solver="highs",
-            obbt_solver=None,
-            params={"output_flag": False},
-        )
-
-    def make_config(max_iters, num_verify_samples=4):
-        return CodegenConfig(
-            termination=TerminationSpec(max_iters=max_iters),
-            num_verify_samples=num_verify_samples,
-        )
-
-    def median_us(fn, repeats=40, warmups=3):
-        sink = None
-        for _ in range(warmups):
-            sink = fn()
-        times = []
-        for _ in range(repeats):
-            t0 = time.perf_counter()
-            sink = fn()
-            times.append((time.perf_counter() - t0) * 1.0e6)
-        return statistics.median(times)
-
-    def run_speedup(problem, repeats=40):
-        if find_compiler() is None:
-            raise RuntimeError("No C compiler found. Install cc/gcc/clang to run codegen timing.")
-
-        python_us = median_us(problem.python_solve, repeats=repeats)
-        out_dir = app_dir / "_codegen_speedups" / problem.name
-        ir = extract_ir(
-            problem.verifier,
-            problem.next_state,
-            state=problem.state,
-            params=problem.params,
-            config=problem.config,
-            name=problem.name,
-        )
-        solver_source = emit_generic_solver(ir)
-        result = generate_code(
-            problem.verifier,
-            problem.next_state,
-            out_dir,
-            config=problem.config,
-            driver=StubAgentDriver(solver_source),
-            state=problem.state,
-            params=problem.params,
-            name=problem.name,
-        )
-        if not result.translate.success:
-            raise RuntimeError(result.translate.log[-4000:])
-
-        bench = run_bench(out_dir)
-        return SpeedupResult(
-            python_us=python_us,
-            codegen_us=bench.mean_us,
-            speedup=python_us / bench.mean_us,
-            out_dir=out_dir,
-            solver_path=out_dir / result.target.solver_source_path(),
-        )
-
-    def result_markdown(problem, result):
-        notes = f"\n\n{problem.notes}" if problem.notes else ""
-        return f"""
-## {problem.title}
-
-One complete solve runs `{problem.max_iters}` iterations.
-
-| implementation | median / mean per solve |
-|---|---:|
-| direct NumPy Python | `{result.python_us:.3f} us` |
-| generated C codegen | `{result.codegen_us:.3f} us` |
-
-**Speedup:** `{result.speedup:.1f}x`
-
-Generated solver directory: `{result.out_dir}`{notes}
-"""
-
-    def emit_generic_solver(ir):
-        lines = [
-            '#include "fom_solver.h"',
-            '#include "fom_data.h"',
-            '#include "fom_linsolve.h"',
-            '#include "fom_ops.h"',
-            '#include "fom_profile.h"',
-            "",
-            "void fom_set_default_settings(FomSettings *settings) {",
-            "    settings->max_iter = FOM_MAX_ITER;",
-            "    settings->tol = FOM_TOL;",
-            "    settings->check_termination = FOM_CHECK_TERMINATION;",
-            "}",
-            "",
-            "static void reset_state(FomWorkspace *work) {",
-            "    fom_int i;",
-            "    for (i = 0; i < FOM_STATE_DIM; ++i) work->state[i] = FOM_STATE_INIT[i];",
-            "}",
-            "",
-            "void fom_setup(FomWorkspace *work, const FomSettings *settings) {",
-            "    work->settings = *settings;",
-            "    reset_state(work);",
-            "    work->solution.iter = 0;",
-            "    work->solution.residual = 0.0;",
-            "    work->solution.status = FOM_MAX_ITER_REACHED;",
-            "}",
-            "",
-            "void fom_update_params(FomWorkspace *work, const FomParams *params) {",
-            "    work->params = *params;",
-            "    reset_state(work);",
-            "}",
-            "",
-            "fom_int fom_solve(FomWorkspace *work) {",
-            "    fom_int it, i;",
-            "    for (it = 0; it < work->settings.max_iter; ++it) {",
-        ]
-
-        for step in ir.body:
-            dim = f"FOM_{step.name.upper()}_DIM"
-            lines += [
-                f"        FOM_PROF_BEGIN({step.name});",
-                *assign_linear_op(step.linear_op, "work->acc", dim, indent="        "),
-            ]
-            act = step.activation
-            if step.solve is not None:
-                lines.append(f"        fom_lin_solve_{step.solve}(work->acc, work->{step.name});")
-            elif act.kind == ActivationKind.IDENTITY:
-                lines.append(f"        for (i = 0; i < {dim}; ++i) work->{step.name}[i] = work->acc[i];")
-            elif act.kind == ActivationKind.SOFT_THRESHOLD:
-                lam = f"FOM_{step.name.upper()}_LAMBDA"
-                lines += [
-                    f"        for (i = 0; i < {dim}; ++i) {{",
-                    "            fom_float v = work->acc[i];",
-                    f"            if (v > {lam}) work->{step.name}[i] = v - {lam};",
-                    f"            else if (v < -{lam}) work->{step.name}[i] = v + {lam};",
-                    f"            else work->{step.name}[i] = 0.0;",
-                    "        }",
-                ]
-            elif act.kind == ActivationKind.RELU:
-                lines += [
-                    f"        for (i = 0; i < {dim}; ++i) {{",
-                    "            fom_float v = work->acc[i];",
-                    f"            work->{step.name}[i] = v > 0.0 ? v : 0.0;",
-                    "        }",
-                ]
-            elif act.kind == ActivationKind.SATURATED_LINEAR:
-                lo = f"FOM_MAT_{act.lower}"
-                hi = f"FOM_MAT_{act.upper}"
-                lines += [
-                    f"        for (i = 0; i < {dim}; ++i) {{",
-                    "            fom_float v = work->acc[i];",
-                    f"            if (v < {lo}[i]) v = {lo}[i];",
-                    f"            if (v > {hi}[i]) v = {hi}[i];",
-                    f"            work->{step.name}[i] = v;",
-                    "        }",
-                ]
-            else:
-                raise ValueError(f"unsupported activation {act.kind}")
-            lines.append(f"        FOM_PROF_END({step.name});")
-            lines.append("")
-
-        lines += [
-            "        FOM_PROF_BEGIN(state_update);",
-            *assign_linear_op(ir.state_update, "work->new_state", "FOM_STATE_DIM", indent="        "),
-            "        FOM_PROF_END(state_update);",
-            "",
-            "        fom_float res = 0.0;",
-            "        fom_int check = work->settings.check_termination;",
-            "        fom_int do_check = FOM_USE_TOL && check > 0 && ((it + 1) % check == 0);",
-            "        for (i = 0; i < FOM_STATE_DIM; ++i) {",
-            "            fom_float d = work->new_state[i] - work->state[i];",
-            "            if (d < 0.0) d = -d;",
-            "            if (d > res) res = d;",
-            "            work->state[i] = work->new_state[i];",
-            "        }",
-            "        work->solution.iter = it + 1;",
-            "        work->solution.residual = res;",
-            "        if (do_check && res <= work->settings.tol) {",
-            "            for (i = 0; i < FOM_STATE_DIM; ++i) work->solution.x[i] = work->state[i];",
-            "            work->solution.status = FOM_SOLVED;",
-            "            return FOM_SOLVED;",
-            "        }",
-            "    }",
-            "    for (i = 0; i < FOM_STATE_DIM; ++i) work->solution.x[i] = work->state[i];",
-            "    work->solution.status = FOM_MAX_ITER_REACHED;",
-            "    return work->solution.status;",
-            "}",
-            "",
-            "void fom_cleanup(FomWorkspace *work) {",
-            "    (void)work;",
-            "}",
-            "",
-        ]
-        return "\n".join(lines)
-
-    def assign_linear_op(lin, dest, dim_macro, indent):
-        lines = []
-        if lin.const is None:
-            lines.append(f"{indent}for (i = 0; i < {dim_macro}; ++i) {dest}[i] = 0.0;")
-        else:
-            lines.append(f"{indent}for (i = 0; i < {dim_macro}; ++i) {dest}[i] = FOM_MAT_{lin.const}[i];")
-        for term in lin.terms:
-            lines.append(f"{indent}fom_apply_{term.matrix}({source_ptr(term.source)}, {dest});")
-        return lines
-
-    def source_ptr(source):
-        if source == "state":
-            return "work->state"
-        if source.startswith("param:"):
-            return f"work->params.{source.split(':', 1)[1]}"
-        if source.startswith("tmp:"):
-            return f"work->{source.split(':', 1)[1]}"
-        raise ValueError(f"unknown source {source!r}")
-
-    def build_network_problem(max_iters=200):
-        rng = np.random.RandomState(2)
-        n_s, n_d = 3, 2
-        edges = [(i, j) for i in range(n_s) for j in range(n_d)]
-        n_e = len(edges)
-        a_s = np.zeros((n_s, n_e))
-        a_d = np.zeros((n_d, n_e))
-        for e, (i, j) in enumerate(edges):
-            a_s[i, e] = 1.0
-            a_d[j, e] = -1.0
-        b_s = 10.0 * np.ones(n_s)
-        c_vec = 5.0 * np.ones(n_e)
-        mu = rng.uniform(5.0, 10.0, size=n_e)
-        x_lb = -7.0 * np.ones(n_d)
-        x_ub = -6.0 * np.ones(n_d)
-        lp = linprog(
-            c=mu,
-            A_ub=a_s,
-            b_ub=b_s,
-            A_eq=a_d,
-            b_eq=x_lb,
-            bounds=[(0.0, float(c)) for c in c_vec],
-            method="highs",
-        )
-        if not lp.success:
-            raise RuntimeError(lp.message)
-        z0 = lp.x
-        v0 = np.zeros(n_s)
-        w0 = np.zeros(n_d)
-        l_const = float(np.linalg.norm(np.hstack([a_s.T, a_d.T]), 2))
-        eta = 0.5 / l_const
-        x_value = 0.5 * (x_lb + x_ub)
-
-        verifier = make_verifier()
-        x = verifier.add_param(n_d, lb=x_lb, ub=x_ub)
-        z = verifier.add_iterate(n_e, lb=z0, ub=z0)
-        v = verifier.add_iterate(n_s, lb=v0, ub=v0)
-        w = verifier.add_iterate(n_d, lb=w0, ub=w0)
-        z_new = verifier.step.satlin(
-            z - eta * (mu + a_s.T @ v - a_d.T @ w),
-            l=np.zeros(n_e),
-            u=c_vec,
-        )
-        v_new = verifier.step.relu(v + eta * (-b_s + a_s @ (2 * z_new - z)))
-        w_new = w + eta * (x - a_d @ (2 * z_new - z))
-
-        def python_solve():
-            z_py = z0.copy()
-            v_py = v0.copy()
-            w_py = w0.copy()
-            for _ in range(max_iters):
-                z_next = np.minimum(
-                    np.maximum(z_py - eta * (mu + a_s.T @ v_py - a_d.T @ w_py), 0.0),
-                    c_vec,
-                )
-                v_next = np.maximum(v_py + eta * (-b_s + a_s @ (2 * z_next - z_py)), 0.0)
-                w_next = w_py + eta * (x_value - a_d @ (2 * z_next - z_py))
-                z_py, v_py, w_py = z_next, v_next, w_next
-            return np.concatenate([z_py, v_py, w_py])
-
-        return SpeedupProblem(
-            name="network_codegen_speedup",
-            title="Network Flow PDHG",
-            max_iters=max_iters,
-            verifier=verifier,
-            next_state=[z_new, v_new, w_new],
-            state=[z, v, w],
-            params=[x],
-            config=make_config(max_iters),
-            python_solve=python_solve,
-            notes="The initial flow is computed with SciPy HiGHS for the max-demand LP.",
-        )
-
-    return build_network_problem, result_markdown, run_speedup
+    np.set_printoptions(precision=5)
+    np.set_printoptions(suppress=True)
+    return (
+        CodegenConfig,
+        TerminationSpec,
+        Verifier,
+        examples_dir,
+        find_compiler,
+        linprog,
+        make_agent_driver,
+        mo,
+        np,
+        statistics,
+        textwrap,
+        time,
+    )
 
 
 @app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    # Network Flow PDHG: Python vs Codegen
+def _(mo, textwrap):
+    mo.md(textwrap.dedent(r"""
+# Network Flow: Python vs Codegen
 
-    This benchmarks the direct NumPy PDHG loop from `comparison_network.py`
-    against a verified generated C solver for the same iteration map.
-    """)
+In this tutorial we benchmark a small capacitated network-flow problem.
+There are supply nodes, demand nodes, edge capacities, and linear edge costs.
+
+The solver uses a primal-dual projected update: each iteration clips the flow to the capacity box, projects one dual variable to be nonnegative, and updates the demand-side dual variable.
+We compare a direct NumPy implementation with the verified generated C solver.
+""")
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo, textwrap):
+    mo.md(textwrap.dedent(r"""
+We generate a complete bipartite graph from supply nodes to demand nodes.
+The starting flow is computed once by solving the linear program at the lower-demand endpoint.
+Both implementations then run the same fixed iteration map.
+""")
+    )
     return
 
 
 @app.cell
-def _(build_network_problem):
-    problem = build_network_problem(max_iters=200)
-    return (problem,)
+def _(examples_dir, linprog, np):
+    rng = np.random.RandomState(2)
+    n_supply, n_demand = 3, 2
+    edges = [(i, j) for i in range(n_supply) for j in range(n_demand)]
+    n_edges = len(edges)
+
+    A_supply = np.zeros((n_supply, n_edges))
+    A_demand = np.zeros((n_demand, n_edges))
+    for edge_index, (i, j) in enumerate(edges):
+        A_supply[i, edge_index] = 1.0
+        A_demand[j, edge_index] = -1.0
+
+    supply_capacity = 10.0 * np.ones(n_supply)
+    edge_capacity = 5.0 * np.ones(n_edges)
+    edge_cost = rng.uniform(5.0, 10.0, size=n_edges)
+    x_lb = -7.0 * np.ones(n_demand)
+    x_ub = -6.0 * np.ones(n_demand)
+    x_mid = 0.5 * (x_lb + x_ub)
+
+    initial_flow = linprog(
+        c=edge_cost,
+        A_ub=A_supply,
+        b_ub=supply_capacity,
+        A_eq=A_demand,
+        b_eq=x_lb,
+        bounds=[(0.0, float(capacity)) for capacity in edge_capacity],
+        method="highs",
+    )
+    if not initial_flow.success:
+        raise RuntimeError(initial_flow.message)
+
+    z0 = initial_flow.x
+    v0 = np.zeros(n_supply)
+    w0 = np.zeros(n_demand)
+    L = float(np.linalg.norm(np.hstack([A_supply.T, A_demand.T]), 2))
+    eta = 0.5 / L
+    K = 200
+    out_dir = examples_dir / "_codegen_speedups" / "network_codegen_speedup"
+    return (
+        A_demand,
+        A_supply,
+        K,
+        edge_capacity,
+        edge_cost,
+        eta,
+        n_demand,
+        n_edges,
+        n_supply,
+        out_dir,
+        supply_capacity,
+        v0,
+        w0,
+        x_lb,
+        x_mid,
+        x_ub,
+        z0,
+    )
 
 
 @app.cell
-def _(problem, run_speedup):
-    result = run_speedup(problem, repeats=40)
-    return (result,)
+def _(
+    A_demand,
+    A_supply,
+    CodegenConfig,
+    K,
+    TerminationSpec,
+    Verifier,
+    edge_capacity,
+    edge_cost,
+    eta,
+    n_demand,
+    n_edges,
+    n_supply,
+    np,
+    supply_capacity,
+    v0,
+    w0,
+    x_lb,
+    x_ub,
+    z0,
+):
+    verifier = Verifier(
+        method="mip",
+        solver="highs",
+        obbt_solver=None,
+        params={"output_flag": False},
+    )
+
+    x_param = verifier.add_param(n_demand, lb=x_lb, ub=x_ub)
+    z = verifier.add_iterate(n_edges, lb=z0, ub=z0)
+    v = verifier.add_iterate(n_supply, lb=v0, ub=v0)
+    w = verifier.add_iterate(n_demand, lb=w0, ub=w0)
+    z_next = verifier.step.satlin(
+        z - eta * (edge_cost + A_supply.T @ v - A_demand.T @ w),
+        l=np.zeros(n_edges),
+        u=edge_capacity,
+    )
+    v_next = verifier.step.relu(v + eta * (-supply_capacity + A_supply @ (2 * z_next - z)))
+    w_next = w + eta * (x_param - A_demand @ (2 * z_next - z))
+
+    config = CodegenConfig(
+        termination=TerminationSpec(max_iters=K),
+        num_verify_samples=4,
+    )
+    next_state = [z_next, v_next, w_next]
+    s_state = [z, v, w]
+    params = [x_param]
+    return config, next_state, params, s_state, verifier
 
 
 @app.cell
-def _(mo, problem, result, result_markdown):
-    mo.md(result_markdown(problem, result))
+def _(
+    A_demand,
+    A_supply,
+    K,
+    edge_capacity,
+    edge_cost,
+    eta,
+    np,
+    statistics,
+    supply_capacity,
+    time,
+    v0,
+    w0,
+    x_mid,
+    z0,
+):
+    def network_solve():
+        z_py = z0.copy()
+        v_py = v0.copy()
+        w_py = w0.copy()
+        for _ in range(K):
+            z_next_py = np.minimum(
+                np.maximum(z_py - eta * (edge_cost + A_supply.T @ v_py - A_demand.T @ w_py), 0.0),
+                edge_capacity,
+            )
+            v_next_py = np.maximum(v_py + eta * (-supply_capacity + A_supply @ (2 * z_next_py - z_py)), 0.0)
+            w_next_py = w_py + eta * (x_mid - A_demand @ (2 * z_next_py - z_py))
+            z_py, v_py, w_py = z_next_py, v_next_py, w_next_py
+        return np.concatenate([z_py, v_py, w_py])
+
+    for _ in range(3):
+        network_solve()
+
+    python_times = []
+    for _ in range(40):
+        t0 = time.perf_counter()
+        network_solve()
+        python_times.append((time.perf_counter() - t0) * 1.0e6)
+
+    python_us = statistics.median(python_times)
+    return (python_us,)
+
+
+@app.cell
+def _(
+    config,
+    find_compiler,
+    make_agent_driver,
+    next_state,
+    out_dir,
+    params,
+    python_us,
+    s_state,
+    verifier,
+):
+    if find_compiler() is None:
+        raise RuntimeError("No C compiler found. Install cc/gcc/clang to run codegen timing.")
+
+    result = verifier.codegen(
+        out_dir,
+        next_state=next_state,
+        config=config,
+        driver=make_agent_driver(config=config),
+        state=s_state,
+        params=params,
+        name="network_codegen_speedup",
+        run_phase_b=True,
+        profile=True,
+    )
+    if not result.translate.success:
+        raise RuntimeError(result.translate.log[-4000:])
+
+    if (
+        result.timing is None
+        or result.timing.c_initial_us is None
+        or result.timing.c_final_us is None
+    ):
+        raise RuntimeError("Code generation finished without the requested timing report.")
+
+    codegen_us = result.timing.c_initial_us
+    iteration_us = result.timing.c_final_us
+    codegen_speedup = python_us / codegen_us
+    iteration_speedup = codegen_us / iteration_us
+    total_speedup = python_us / iteration_us
+    optimization_status = "kept" if result.optimization_kept else "not kept"
+    solver_path = out_dir / result.target.solver_source_path()
+    return (
+        codegen_speedup,
+        codegen_us,
+        iteration_speedup,
+        iteration_us,
+        optimization_status,
+        solver_path,
+        total_speedup,
+    )
+
+
+@app.cell(hide_code=True)
+def _(
+    K,
+    codegen_speedup,
+    codegen_us,
+    iteration_speedup,
+    iteration_us,
+    mo,
+    optimization_status,
+    out_dir,
+    python_us,
+    solver_path,
+    total_speedup,
+):
+    mo.md(f"""
+## Timing summary
+
+One complete solve runs `{K}` iterations.
+
+| implementation | median / mean per solve |
+|---|---:|
+| direct NumPy Python | `{python_us:.3f} us` |
+| generated C after code generation | `{codegen_us:.3f} us` |
+| generated C after optimization iteration | `{iteration_us:.3f} us` |
+
+The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
+
+The optimization iteration uses a live coding agent to edit `src/fom_solver.c`; the edited solver was `{optimization_status}` after verification and timing.
+
+Generated solver directory: `{out_dir}`
+
+Generated solver source: `{solver_path}`
+"""
+    )
     return
 
 
