@@ -22,7 +22,7 @@ from fomtools.steps.step import Step
 _COND_THRESHOLD = 1e12
 
 
-def _assert_nonsingular(M: np.ndarray, context: str) -> None:
+def _assert_nonsingular(M: np.ndarray, context: str, check_conditioning: bool = True) -> None:
     """
     Raise a clear error if the dense matrix ``M`` is singular or near-singular.
 
@@ -34,6 +34,14 @@ def _assert_nonsingular(M: np.ndarray, context: str) -> None:
     near-singularity via the 2-norm condition number (> ``_COND_THRESHOLD``). Only
     dense matrices are checked here — sparse systems are left to ``splu``, which
     raises on a singular factorization.
+
+    ``check_conditioning`` gates *only* the condition-number test. Saddle-point KKT
+    blocks ``[[P, Aᵀ], [A, 0]]`` have a condition number that scales as
+    ``O(cond(P)·cond(A)²)``, so a legitimately well-posed equality-constrained QP
+    (e.g. ``cond(A) ~ 1e4``) would trip ``_COND_THRESHOLD`` even though the solve is
+    accurate. Callers pass ``check_conditioning=False`` for such block systems and
+    rely on the exact-singularity check plus ``splu``/``solve`` raising on a genuinely
+    singular factorization.
     """
     M = np.asarray(M, dtype=float)
     sign, _ = np.linalg.slogdet(M)
@@ -43,13 +51,14 @@ def _assert_nonsingular(M: np.ndarray, context: str) -> None:
             "on the Simulator backend. Ensure the problem is well posed (e.g. the "
             "equality matrix has full row rank)."
         )
-    cond = np.linalg.cond(M)
-    if cond > _COND_THRESHOLD:
-        raise ValueError(
-            f"{context}: the linear system matrix is near-singular (condition number "
-            f"{cond:.3e} > {_COND_THRESHOLD:g}); the Simulator solution would be "
-            "numerically unreliable. Ensure the problem is well conditioned."
-        )
+    if check_conditioning:
+        cond = np.linalg.cond(M)
+        if cond > _COND_THRESHOLD:
+            raise ValueError(
+                f"{context}: the linear system matrix is near-singular (condition number "
+                f"{cond:.3e} > {_COND_THRESHOLD:g}); the Simulator solution would be "
+                "numerically unreliable. Ensure the problem is well conditioned."
+            )
 
 
 class SimulatorStepDecomposer(StepDecomposer):
@@ -160,7 +169,9 @@ class SimulatorStepDecomposer(StepDecomposer):
         A, m, n = prox.A, prox.m, prox.n
         b_le = self._lift_to_le(prox.b, m)
         M_block = np.block([[np.eye(n), A.T], [A, np.zeros((m, m))]])
-        _assert_nonsingular(M_block, "IndAffine prox")
+        # Saddle-point block: skip the condition-number test (it scales as cond(A)^2
+        # and false-positives on well-posed constraints); exact-singularity + solve suffice.
+        _assert_nonsingular(M_block, "IndAffine prox", check_conditioning=False)
         out = self.process_step(Affine(arg=stack([arg, b_le]), output_mat=M_block))
         return out[:n]
 
@@ -247,7 +258,10 @@ class SimulatorStepDecomposer(StepDecomposer):
         P_dense = step.P.toarray() if spa.issparse(step.P) else np.asarray(step.P, dtype=float)
         A_dense = A.toarray() if spa.issparse(A) else np.asarray(A, dtype=float)
         M_block = np.block([[P_dense, A_dense.T], [A_dense, np.zeros((p, p))]])
-        _assert_nonsingular(M_block, "QuadraticProgram (equality-constrained)")
+        # Saddle-point block: skip the condition-number test (see prox_indaffine).
+        _assert_nonsingular(
+            M_block, "QuadraticProgram (equality-constrained)", check_conditioning=False
+        )
         out = self.process_step(Affine(arg=stack([-q_le, b_le]), output_mat=M_block))
         return out[:n]
 

@@ -232,6 +232,15 @@ def condat_tv_1d(y: np.ndarray, lam: float) -> np.ndarray:
     while True:
         if k0 == n - 1:
             # Reached the end of the signal: flush the remaining segment.
+            #
+            # Each flush branch below resets the tracker/envelope of its OWN side but
+            # leaves the opposite one (kplus/vmax after a umin flush, kminus/vmin after
+            # a umax flush) stale. This is safe: the flush sets its own slack to +/-lam,
+            # so on re-entry the same-side test fails and — by the algorithm's envelope
+            # invariant — the opposite flush is never taken with a stale tracker (an
+            # empty x[k:kplus+1] write with kplus < k cannot occur). Verified by
+            # exhaustive search over short integer signals; matches Condat's reference,
+            # which likewise does not reset the opposite side here.
             if umin < 0.0:
                 x[k : kminus + 1] = vmin
                 k = kminus = kminus + 1
