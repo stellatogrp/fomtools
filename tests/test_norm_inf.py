@@ -151,8 +151,10 @@ def test_dual_ub_stored_and_forwarded():
     np.testing.assert_allclose(v.get_solution_value(out), NormInf(1.0).prox(x0), atol=PROX_ATOL)
 
 
-def test_simulator_not_supported():
+def test_simulator_supported():
+    """Simulator now evaluates the ℓ∞-norm prox via the batched Moreau / ℓ1-ball
+    projection, returning a LinearExpression of the input dimension."""
     v = _make_verifier("simulator")
     arg = v.add_param(3, lb=-1.0, ub=1.0)
-    with pytest.raises(NotImplementedError):
-        v.prox(NormInf(1.0), arg)
+    out = v.prox(NormInf(1.0), arg)
+    assert out.ndim == 3

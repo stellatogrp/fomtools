@@ -67,18 +67,18 @@ _CASES = [
         "polyhedron",
         lambda: Polyhedron(_BOX_A, _BOX_B, dual_ub=10.0),
         np.array([2.0, -3.0, 0.5]),
-        False,
+        True,  # per-sample cvxpy projection on the simulator
         "IndPolyhedral",
     ),
     (
         "affinesubspace",
         lambda: AffineSubspace(np.array([[1.0, 1.0, 1.0]]), np.array([1.0])),
         np.array([0.0, 0.0, 0.0]),
-        False,
+        True,  # IndAffine lowers to a batched Affine block-KKT solve on the simulator
         "IndAffine",
     ),
-    ("simplex", lambda: Simplex(1.0), np.array([0.5, 0.2, 0.9]), False, "IndSimplex"),
-    ("l1ball", lambda: L1Ball(1.0), np.array([0.8, 0.7, -0.6]), False, "IndBallL1"),
+    ("simplex", lambda: Simplex(1.0), np.array([0.5, 0.2, 0.9]), True, "IndSimplex"),
+    ("l1ball", lambda: L1Ball(1.0), np.array([0.8, 0.7, -0.6]), True, "IndBallL1"),
 ]
 _IDS = [c[0] for c in _CASES]
 
@@ -285,7 +285,10 @@ def test_sdp_projection_tight_at_fixed_point(make, x0):
 
 @pytest.mark.parametrize("name, make, x0, sim_supported, _ind", _CASES, ids=_IDS)
 def test_simulator_support_matches_prox(name, make, x0, sim_supported, _ind):
-    """Clip/step-based projections run on the simulator; KKT/lifted ones defer."""
+    """Every Set projection now runs on the simulator: clip/step-based ones as
+    primitives, the affine KKT solve as a batched linear solve, and the
+    simplex/ℓ1-ball/polyhedral projections via batched / per-sample evaluators. The
+    ``sim_supported`` flag is retained (all True) so a future deferral is caught."""
     v = _make_verifier("simulator")
     arg = v.add_param(len(x0), lb=x0, ub=x0)
     if sim_supported:
