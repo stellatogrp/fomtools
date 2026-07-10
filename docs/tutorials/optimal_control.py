@@ -43,7 +43,9 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Optimal control problem:
+    # Problem setup: Constrained optimal control
+
+    In this tutorial, we verify an OSQP-style ADMM method for a finite-horizon constrained optimal control problem. The system has state $s_t \in \mathbf{R}^{n_s}$, input $u_t \in \mathbf{R}^{n_u}$, and initial state parameter $x$.
 
     \begin{array}{lll}
         \text{minimize} & s_T^T Q_T s_T + \sum_{t=1}^{T-1} s_t^T Q s_t + u_t^T R u_t \\
@@ -54,6 +56,7 @@ def _(mo):
     \end{array}
 
     with optimization variable $z = (u_1, \dots, u_{T-1}) \in \R^{(T-1) n_u}$ and parameter $x \in \R^{n_s}$.
+    The verification problem searches over a bounded set of initial ADMM iterates and, depending on the experiment, either fixes $x$ or lets it vary over the prescribed box.
     """)
     return
 
@@ -126,6 +129,30 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## First-order method: OSQP-style ADMM
+
+    We solve the boxed quadratic program with the splitting used by OSQP:
+
+    \begin{array}{rcl}
+        w^{k+1} &=& \Pi_{[l(x), u(x)]}(v^k), \\
+        z^{k+1} &=& (P + \sigma I + \rho M^T M)^{-1}
+            \left(\sigma z^k - q + \rho M^T(2w^{k+1} - v^k)\right), \\
+        v^{k+1} &=& v^k + Mz^{k+1} - w^{k+1}.
+    \end{array}
+
+    We measure convergence with the infinity norm of the scaled fixed-point residual
+    \[
+        \left(-\sigma(z^{k+1}-z^k) - \rho M^T(v^{k+1}-v^k),\; v^{k+1}-v^k\right).
+    \]
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Quadratic program form
+
     Now, consider the equivalent problem of the form:
 
     \begin{array}{ll}
@@ -138,6 +165,7 @@ def _(mo):
     $$ s_{t+1} = A s_t + B u_t = A^t x + \sum_{m=1}^{t} A^{t-m} B u_m = A^t x + \begin{bmatrix} A^{t-1} B & \dots & B & 0 & \dots & 0 \end{bmatrix} z. $$
 
     In verification problem (VP) implementation, we use the optimization variable `xz_stack` defined as $(x, u_1, \dots, u_{T-1}) \in \mathbf{R}^{n_s + (T-1) n_u}$.
+    This makes the initial state constraints and input box constraints part of one stacked box constraint.
     """)
     return
 
@@ -179,8 +207,11 @@ def _(A_dym, B_dym, Q, R, T, n_s, n_u, np, spa):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## Simulator class
+
     We first simulate the ADMM algorithm on given problem instances by randomly sampling the fixed initial state parameter $x_\text{init}$ around its nominal value and the initial iterates $(z^0, v^0)$ over their prescribed boxes.
     The output will be residuals computed for each iteration $k=1,\ldots,K$.
+    The residual is the scaled fixed-point residual associated with the OSQP ADMM updates.
     """)
     return
 
@@ -350,7 +381,10 @@ def _(P, T, n_u, np, q, u_max, u_min, x_init):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We now obtain worst-case guarantee by solving the corresponding verification problem using MIP solver.
+    ## Algorithm verification through verification problem (VP)
+
+    ### MIP-VP
+    We now obtain a worst-case guarantee by solving the corresponding verification problem with a MIP formulation. The MIP maximizes the ADMM residual at each horizon over the bounded initial iterates and the chosen initial-state parameter set.
     """)
     return
 
@@ -440,18 +474,30 @@ def _(
     )
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    We can use simulator mode to replay the horizon-specific worst-case instances extracted from the MIP. This checks the explicit ADMM trajectory at the optimizer returned by each verification problem.
+    """)
+    return
+
+
 @app.cell
 def _(
+    IndBox,
     K,
     M,
     P,
+    T,
+    Verifier,
     csr_matrix,
+    n_s,
+    n_u,
     n_xz,
     np,
     q,
     rho,
     sigma,
-    spa,
     u_stack_max,
     u_stack_min,
     worst_case_v_admm,
@@ -460,32 +506,44 @@ def _(
 ):
     # Simulate each horizon with the corresponding worst-case initial state.
     _lhs_mat = csr_matrix(P + sigma*np.eye(n_xz) + rho*(M.T@M))
-    _lhs_mat_lu = spa.linalg.splu(_lhs_mat.tocsc())
+    _lhs_mat_sim = _lhs_mat.toarray()
 
     worst_case_residuals_admm = []
     for _k in range(1, K + 1):
-        _x_k = np.array(worst_case_x_param_admm[_k-1], dtype=float)
-        _z = np.array(worst_case_z_admm[_k-1], dtype=float)
-        _v = np.array(worst_case_v_admm[_k-1], dtype=float)
-        _last_residual = 0.0
+        _VP = Verifier(method='simulator', obbt_solver=None)
+        _x_k = np.asarray(worst_case_x_param_admm[_k - 1])
+        _x_param = _VP.add_param(ndim=n_s, samples=[_x_k])
+        _x_param.lb = _x_param.ub = _x_k
+
+        _l_param = _VP.add_param((T-1)*n_u, lb=u_stack_min, ub=u_stack_min)
+        _u_param = _VP.add_param((T-1)*n_u, lb=u_stack_max, ub=u_stack_max)
+        _l_x = _VP.add_param_stack([_x_param, _l_param])
+        _u_x = _VP.add_param_stack([_x_param, _u_param])
+
+        _z = [None] * (_k + 1)
+        _v = [None] * (_k + 1)
+        _w = [None] * (_k + 1)
+        _z0_k = np.asarray(worst_case_z_admm[_k - 1])
+        _v0_k = np.asarray(worst_case_v_admm[_k - 1])
+        _z[0] = _VP.add_iterate(ndim=n_xz, init=_z0_k)
+        _v[0] = _VP.add_iterate(ndim=n_xz, init=_v0_k)
+        _z[0].lb = _z[0].ub = _z0_k
+        _v[0].lb = _v[0].ub = _v0_k
+        _w[0] = np.zeros(n_xz)
+
+        _indbox = IndBox(l=_l_x, u=_u_x)
 
         for _j in range(_k):
-            _l_x = np.hstack([_x_k, u_stack_min])
-            _u_x = np.hstack([_x_k, u_stack_max])
-            _w = np.clip(_v, _l_x, _u_x)
+            _w[_j+1] = _VP.prox(_indbox, _v[_j])
+            _rhs = sigma * _z[_j] - q + rho * M.T @ (2*_w[_j+1] - _v[_j])
+            _z[_j+1] = _VP.step.implicit_linear(_rhs, output_mat=_lhs_mat_sim)
+            _v[_j+1] = _v[_j] + (M @ _z[_j+1] - _w[_j+1])
+            _VP.set_objective_norm([
+                -sigma*(_z[_j+1]-_z[_j]) - rho*M.T@(_v[_j+1]-_v[_j]),
+                _v[_j+1]-_v[_j],
+            ], np.inf)
 
-            _rhs = sigma * _z - q + rho * (2 * _w - _v) @ M
-            _z_new = _lhs_mat_lu.solve(_rhs)
-            _v_new = _v + _z_new @ M - _w
-
-            _residual_1 = -sigma * (_z_new - _z) - rho * (_v_new - _v) @ M
-            _residual_2 = _v_new - _v
-            _last_residual = np.max(np.abs(np.hstack([_residual_1, _residual_2])))
-
-            _z = _z_new
-            _v = _v_new
-
-        worst_case_residuals_admm.append(_last_residual)
+        worst_case_residuals_admm.append(_VP.solve()[0][-1])
 
     worst_case_residuals_admm = np.array(worst_case_residuals_admm)
     return (worst_case_residuals_admm,)
@@ -494,6 +552,8 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ### PEP-obtained worst-case convergence rate
+
     We compare our results to the worst-case performance of the algorithm returned
     by the performance estimation problem (PEP), using the shared `PEPitRunner`.
     Specifically, we measure the performance of ADMM solving
@@ -514,13 +574,16 @@ def _(K, P, PEPitRunner, np, pepit_radius, spa):
     _mu = float(np.min(_positive_eigs)) if len(_positive_eigs) else 0.0
     _L = float(np.max(_P_eigs))
     all_residuals_PEP, _ = PEPitRunner().admm_residuals(
-        K=K, mu=_mu, L=_L, R=pepit_radius)
+        K=K, mu=_mu, L=_L, R=pepit_radius
+    )
     return (all_residuals_PEP,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## Numerical Result
+
     Now we plot the verification results against the PEPit bound and the
     horizon-specific worst-case instances extracted from MIP.
     """)

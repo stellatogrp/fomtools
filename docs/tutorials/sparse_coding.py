@@ -32,7 +32,9 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    In this tutorial, we illustrate the sparse coding example in the Section 4.1 of the paper: [Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330).
+    # Problem setup: Sparse coding
+
+    In this tutorial, we verify first-order methods for the sparse coding example from Section 4.1 of [Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330).
 
     Consider the following problem of recovering the signal $z^\star$: from its noisy measurement $x = D z^\star + \varepsilon \in {\bf R}^p$:
 
@@ -41,6 +43,8 @@ def _(mo):
     \end{array}
 
     where $D \in {\bf R}^{p \times n}$ is the dictionary matrix, $\varepsilon \in {\bf R}^p$, $\lambda > 0$ is a sparsity-inducing regularization parameter, $z \in {\bf R}^n$ is the decision variable, and $x \in {\bf R}^p$ is the problem parameter.
+
+    ## First-order method: ISTA and FISTA
 
     This problem can be solved with ISTA and its accelerated variant FISTA.
     We provide the definition of ISTA iteration below:
@@ -51,6 +55,16 @@ def _(mo):
 
     where ${\cal T}_{\lambda}$ is a soft-thresholding operator applied element-wisely.
     We choose $\eta = 1/L$, where $L$ is the maximum eigenvalue of $D^T D$.
+    The FISTA iteration can be written as
+
+    \begin{array}{rcl}
+        y^{k} &=& {\cal T}_{\lambda \eta}\left(z^{k-1} - \eta D^T(Dz^{k-1} - x)\right), \\
+        z^{k} &=& y^{k} + \frac{t_{k-1}-1}{t_k}(y^{k} - y^{k-1}),
+    \end{array}
+
+    where $t_0 = 1$ and $t_k = (1 + \sqrt{1 + 4t_{k-1}^2})/2$.
+
+    The performance metric is the infinity norm of the fixed-point residual between consecutive iterates.
     """)
     return
 
@@ -58,6 +72,8 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## Problem parameters
+
     For the strongly convex example, we choose $p=20$ and $n=15$, and for the nonstrongly convex example, we choose $p = 15$, $n = 20$, and $\lambda = 10^{-1}$.
     To construct $D$, we randomly sample from i.i.d. Gaussian ${\cal N}(0, 1/p)$ the $20$% nonzeros of $D$ and normalize its columns.
     The true signal $z^\star$ is constructed by sampling each entry from i.i.d. Gaussian ${\cal N}(0, 1)$ with probability $0.1$ and setting $0$ otherwise. We sample $m = 100$ of those random sparse signals $z^\star$.
@@ -100,7 +116,9 @@ def _(np):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    In this experiment, we verify the performance of first-order methods solving sparse coding problem given the iteration budget $K>0$.
+    # Verification Problem
+
+    In this experiment, we verify the performance of ISTA and FISTA for sparse coding given the iteration budget $K>0$. We compare simulator statistics, exact MIP verification, SDP verification, PEPit bounds, and explicit replays of MIP worst-case instances.
     """)
     return
 
@@ -114,6 +132,8 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## Simulator class
+
     We first simulate ISTA on given problem instances, which are parameterized by the parameter $x$.
     Each problem instance is generated from randomly sampling $x$ from uniform distribution over $[\texttt{x\_lb}, \texttt{x\_ub}]$ and $s^0$ from uniform distribution over $[\texttt{s0\_lb}, \texttt{s0\_ub}]$.
     The output of `VP.solve(K=K)` will be an array of size `(n_samples, K)` whose $n$-th row is a list of infinity norm of residuals $s[k] - s[k-1]$ for $k=1,\ldots,K$ of $n$-th problem instance.
@@ -184,15 +204,7 @@ def _(D, K, Verifier, eta, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We also consider FISTA, the accelerated variant of ISTA. The method is
-    written as
-
-    \begin{array}{rcl}
-        y^{k} &=& {\cal T}_{\lambda \eta}\left(z^{k-1} - \eta D^T(Dz^{k-1} - x)\right), \\
-        z^{k} &=& y^{k} + \frac{t_{k-1}-1}{t_k}(y^{k} - y^{k-1}),
-    \end{array}
-
-    where $t_0 = 1$ and $t_k = (1 + \sqrt{1 + 4t_{k-1}^2})/2$.
+    We further simulate FISTA.
     """)
     return
 
@@ -245,7 +257,10 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We now solve verification problem with MIP solver.
+    ## Algorithm verification through verification problem (VP)
+
+    ### MIP-VP
+    We now solve the verification problem with a MIP formulation. The MIP searches over the measurement parameter $x$ and initial iterate $s^0$, and maximizes the fixed-point residual at each horizon.
     """)
     return
 
@@ -293,6 +308,14 @@ def _(
     )
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    We replay each horizon-specific MIP optimizer in simulator mode. This gives an explicit residual value for the worst-case measurement and initialization returned by verification.
+    """)
+    return
+
+
 @app.cell
 def _(
     D,
@@ -323,6 +346,14 @@ def _(
 
     worst_case_residuals_ista = np.array(worst_case_residuals_ista)
     return (worst_case_residuals_ista,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    We repeat the same MIP verification and worst-case replay procedure for FISTA, using the accelerated recurrence and its soft-thresholding prox step.
+    """)
+    return
 
 
 @app.cell
@@ -412,6 +443,8 @@ def _(D, K, eta, lambd, np, worst_case_s0_fista, worst_case_x_param_fista):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ### PEP-obtained worst-case convergence rate
+
     We compare our results to the worst-case performance of ISTA and FISTA
     returned by the performance estimation problem (PEP), using the shared
     `PEPitRunner`.
@@ -422,21 +455,20 @@ def _(mo):
 @app.cell
 def _(K, L, PEPitRunner, eta, pepit_radius):
     all_residuals_PEP, _ = PEPitRunner().proximal_gradient_residuals(
-        K=K, L=float(L), eta=float(eta), R=pepit_radius, nonsmooth="convex")
-    return (all_residuals_PEP,)
-
-
-@app.cell
-def _(K, L, PEPitRunner, eta, pepit_radius):
+        K=K, L=float(L), eta=float(eta), R=pepit_radius, nonsmooth="convex"
+    )
     all_residuals_PEP_fista, _ = PEPitRunner().accelerated_proximal_gradient_residuals(
-        K=K, L=float(L), eta=float(eta), R=pepit_radius, nonsmooth="convex")
-    return (all_residuals_PEP_fista,)
+        K=K, L=float(L), eta=float(eta), R=pepit_radius, nonsmooth="convex"
+    )
+    return all_residuals_PEP, all_residuals_PEP_fista
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Here, we compare the result obtained from solving SDP-relaxed verification problem.
+    ### SDP-VP
+
+    Here, we compare against valid upper bounds obtained from the SDP-relaxed verification problem.
     """)
     return
 
@@ -488,8 +520,9 @@ def _(D, K, Verifier, eta, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Now we plot the verification results against the PEPit bound and the
-    horizon-specific worst-case instances extracted from MIP.
+    ## Numerical Result
+
+    Now we plot the verification results against the PEPit bound and the horizon-specific worst-case instances extracted from MIP.
     """)
     return
 
@@ -555,11 +588,6 @@ def _(
     plt.ylabel('Worst-case fixed-point residual')
     plt.ylim([1e-3, 5e1])
     plt.legend()
-    return
-
-
-@app.cell
-def _():
     return
 
 

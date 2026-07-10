@@ -45,7 +45,9 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    In this tutorial, we illustrate the network optimization example in the Section 4.2 of the paper: [Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330).
+    # Problem setup: Network flow optimization
+
+    In this tutorial, we verify first-order methods for the minimum-cost network flow example from Section 4.2 of [Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330).
 
     Suppose that we are given a set of $n_s$ supply nodes and $n_d$ demand nodes, which constructs a bipartite graph with capacitated directed edges from supply nodes to demand nodes.
     Let $A_s$ and $A_d$ be submatrices corresponding to supply nodes and demand nodes, respectively.
@@ -61,6 +63,8 @@ def _(mo):
         & A_d f = x \\
         & 0 \le f \le c.
     \end{array}
+
+    The demand vector $x$ is treated as the problem parameter. The verification problem will search over $x \in \mathcal{X}$ and over bounded initial primal-dual iterates.
     """)
     return
 
@@ -68,6 +72,8 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## First-order method: PDHG
+
     We solve this problem using the standard Chambolle-Pock method, or Primal-dual Hybrid Gradient (PDHG):
 
     \begin{array}{rcl}
@@ -78,6 +84,8 @@ def _(mo):
 
     Here $\mathbf{prox}_{\mathbb{I}_{[0, c]}}$ is projection onto the flow-capacity box and $\mathbf{prox}_{\mathbb{I}_{\mathbb{R}_+}}$ is projection onto the nonnegative orthant.
     We choose $\eta = 0.5 / \| \begin{bmatrix} - A_s^T & A_d^T \end{bmatrix} \|_2$.
+
+    The performance metric is the infinity norm of the scaled KKT fixed-point residual induced by the PDHG update.
     """)
     return
 
@@ -175,7 +183,9 @@ def _(A_d, A_s, b_s, c, cp, mu, n_e, x_ub):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We verify the performance of first-order method solving the network optimization example, up to given iteration budget $K>0$.
+    # Verification Problem
+
+    We verify the performance of PDHG and its momentum variant up to a fixed iteration budget $K>0$. As in the NNLS tutorial, we compare randomly sampled simulations with exact MIP verification and with the trajectory obtained by replaying the MIP worst-case instances.
     """)
     return
 
@@ -189,7 +199,10 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## Simulator class
+
     We first simulate the PDHG algorithm on given problem instances by randomly sampling the parameter $x$ (demand vector) over the parameter set $\mathcal{X}$ and the initial iterates $(z^0, v^0, w^0)$ over their prescribed boxes.
+    Running `_VP.solve()` returns one residual history per sampled instance, which we summarize by averages and empirical quantiles.
     """)
     return
 
@@ -320,6 +333,8 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## Momentum PDHG simulation
+
     We also consider a momentum variant of PDHG. After the primal update,
     the method extrapolates the flow iterate as
 
@@ -402,7 +417,10 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We now obtain worst-case guarantee by solving the corresponding verification problem using MIP solver.
+    ## Algorithm verification through verification problem (VP)
+
+    ### MIP-VP
+    We now obtain worst-case guarantees by solving the corresponding verification problem with a MIP formulation. The demand vector, capacities, costs, supplies, and initial iterates are represented with bounded parameters or iterates, and the objective maximizes the PDHG residual after each horizon.
     """)
     return
 
@@ -484,6 +502,14 @@ def _(
     )
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    We can use simulator mode to replay the horizon-specific worst-case instances extracted from the MIP. This checks the explicit algorithm trajectory at the optimizer returned by the verification problem.
+    """)
+    return
+
+
 @app.cell
 def _(
     A_d,
@@ -491,9 +517,13 @@ def _(
     IndBox,
     IndNonNegative,
     K,
+    Verifier,
     b_s,
     c,
     eta,
+    n_d,
+    n_e,
+    n_s,
     mu,
     np,
     worst_case_v0_pdhg,
@@ -503,38 +533,50 @@ def _(
 ):
     # Simulate each horizon with its own worst-case demand vector.
     worst_case_residuals_pdhg = []
-    _flow_box = IndBox(l=0.0, u=c)
-    _dual_nonnegative = IndNonNegative()
     for _k in range(1, K+1):
-        _x_k = np.array(worst_case_x_param_pdhg[_k-1], dtype=float)
+        _VP = Verifier(method='simulator', obbt_solver=None)
+        _x_k = np.asarray(worst_case_x_param_pdhg[_k - 1])
+        _x_param = _VP.add_param(ndim=n_d, samples=[_x_k])
+        _x_param.lb = _x_param.ub = _x_k
 
-        _z = np.array(worst_case_z0_pdhg[_k-1], dtype=float)
-        _v = np.array(worst_case_v0_pdhg[_k-1], dtype=float)
-        _w = np.array(worst_case_w0_pdhg[_k-1], dtype=float)
-        _last_residual = 0.0
+        _z = [None] * (_k + 1)
+        _v = [None] * (_k + 1)
+        _w = [None] * (_k + 1)
+        _z0_k = np.asarray(worst_case_z0_pdhg[_k - 1])
+        _v0_k = np.asarray(worst_case_v0_pdhg[_k - 1])
+        _w0_k = np.asarray(worst_case_w0_pdhg[_k - 1])
+        _z[0] = _VP.add_iterate(ndim=n_e, init=_z0_k)
+        _v[0] = _VP.add_iterate(ndim=n_s, init=_v0_k)
+        _w[0] = _VP.add_iterate(ndim=n_d, init=_w0_k)
+        _z[0].lb = _z[0].ub = _z0_k
+        _v[0].lb = _v[0].ub = _v0_k
+        _w[0].lb = _w[0].ub = _w0_k
+
+        _flow_box = IndBox(l=0.0, u=c)
+        _dual_nonnegative = IndNonNegative()
 
         for _j in range(1, _k + 1):
-            _z_rhs = _z - eta * (mu + A_s.T @ _v - A_d.T @ _w)
-            _z_new = _flow_box.prox(_z_rhs)
+            _z[_j] = _VP.prox(_flow_box, _z[_j - 1] - eta * (mu + A_s.T @ _v[_j - 1] - A_d.T @ _w[_j - 1]))
+            _v[_j] = _VP.prox(_dual_nonnegative, _v[_j - 1] + eta * (-b_s + A_s @ (2*_z[_j] - _z[_j - 1])))
+            _w[_j] = _w[_j - 1] + eta * (_x_param - A_d @ (2*_z[_j] - _z[_j - 1]))
+            _VP.set_objective_norm([
+                (1/eta) * (_z[_j] - _z[_j - 1]) - A_s.T@(_v[_j] - _v[_j - 1]) + A_d.T@(_w[_j] - _w[_j - 1]),
+                - A_s@(_z[_j] - _z[_j - 1]) + (1/eta) * (_v[_j] - _v[_j - 1]),
+                A_d@(_z[_j] - _z[_j - 1]) + (1/eta) * (_w[_j] - _w[_j - 1]),
+            ], ord=np.inf)
 
-            _v_rhs = _v + eta * (-b_s + A_s @ (2 * _z_new - _z))
-            _v_new = _dual_nonnegative.prox(_v_rhs)
-
-            _w_new = _w + eta * (_x_k - A_d @ (2 * _z_new - _z))
-
-            _residual_1 = (1 / eta) * (_z_new - _z) - A_s.T @ (_v_new - _v) + A_d.T @ (_w_new - _w)
-            _residual_2 = -A_s @ (_z_new - _z) + (1 / eta) * (_v_new - _v)
-            _residual_3 = A_d @ (_z_new - _z) + (1 / eta) * (_w_new - _w)
-            _last_residual = np.max(np.abs(np.hstack([_residual_1, _residual_2, _residual_3])))
-
-            _z = _z_new
-            _v = _v_new
-            _w = _w_new
-
-        worst_case_residuals_pdhg.append(_last_residual)
+        worst_case_residuals_pdhg.append(_VP.solve()[0][-1])
 
     worst_case_residuals_pdhg = np.array(worst_case_residuals_pdhg)
     return (worst_case_residuals_pdhg,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    The same MIP verification procedure is then applied to the momentum PDHG recurrence, using the residual expression induced by the extrapolated primal iterate.
+    """)
+    return
 
 
 @app.cell
@@ -623,9 +665,13 @@ def _(
     IndBox,
     IndNonNegative,
     K,
+    Verifier,
     b_s,
     c,
     eta,
+    n_d,
+    n_e,
+    n_s,
     mu,
     np,
     worst_case_v0_pdhg_mom,
@@ -635,37 +681,42 @@ def _(
 ):
     # Simulate each horizon with its own worst-case demand vector for momentum PDHG.
     worst_case_residuals_pdhg_mom = []
-    _flow_box = IndBox(l=0.0, u=c)
-    _dual_nonnegative = IndNonNegative()
     for _k in range(1, K + 1):
-        _x_k = np.array(worst_case_x_param_pdhg_mom[_k - 1], dtype=float)
+        _VP = Verifier(method='simulator', obbt_solver=None)
+        _x_k = np.asarray(worst_case_x_param_pdhg_mom[_k - 1])
+        _x_param = _VP.add_param(ndim=n_d, samples=[_x_k])
+        _x_param.lb = _x_param.ub = _x_k
 
-        _z = np.array(worst_case_z0_pdhg_mom[_k - 1], dtype=float)
-        _v = np.array(worst_case_v0_pdhg_mom[_k - 1], dtype=float)
-        _w = np.array(worst_case_w0_pdhg_mom[_k - 1], dtype=float)
-        _last_residual = 0.0
+        _z = [None] * (_k + 1)
+        _ztilde = [None] * (_k + 1)
+        _v = [None] * (_k + 1)
+        _w = [None] * (_k + 1)
+        _z0_k = np.asarray(worst_case_z0_pdhg_mom[_k - 1])
+        _v0_k = np.asarray(worst_case_v0_pdhg_mom[_k - 1])
+        _w0_k = np.asarray(worst_case_w0_pdhg_mom[_k - 1])
+        _z[0] = _VP.add_iterate(ndim=n_e, init=_z0_k)
+        _v[0] = _VP.add_iterate(ndim=n_s, init=_v0_k)
+        _w[0] = _VP.add_iterate(ndim=n_d, init=_w0_k)
+        _z[0].lb = _z[0].ub = _z0_k
+        _v[0].lb = _v[0].ub = _v0_k
+        _w[0].lb = _w[0].ub = _w0_k
+
+        _flow_box = IndBox(l=0.0, u=c)
+        _dual_nonnegative = IndNonNegative()
 
         for _j in range(1, _k + 1):
-            _z_rhs = _z - eta * (mu + A_s.T @ _v - A_d.T @ _w)
-            _z_new = _flow_box.prox(_z_rhs)
+            _beta_j = (_j - 1) / (_j + 2)
+            _z[_j] = _VP.prox(_flow_box, _z[_j - 1] - eta * (mu + A_s.T @ _v[_j - 1] - A_d.T @ _w[_j - 1]))
+            _ztilde[_j] = _z[_j] + _beta_j * (_z[_j] - _z[_j - 1])
+            _v[_j] = _VP.prox(_dual_nonnegative, _v[_j - 1] + eta * (-b_s + A_s @ (2*_ztilde[_j] - _z[_j - 1])))
+            _w[_j] = _w[_j - 1] + eta * (_x_param - A_d @ (2*_ztilde[_j] - _z[_j - 1]))
+            _VP.set_objective_norm([
+                (1/eta) * (_z[_j] - _z[_j - 1]) - A_s.T@(_v[_j] - _v[_j - 1]) + A_d.T@(_w[_j] - _w[_j - 1]),
+                - (1 + 2*_beta_j) * A_s@(_z[_j] - _z[_j - 1]) + (1/eta) * (_v[_j] - _v[_j - 1]),
+                (1 + 2*_beta_j) * A_d@(_z[_j] - _z[_j - 1]) + (1/eta) * (_w[_j] - _w[_j - 1]),
+            ], ord=np.inf)
 
-            _z_tilde = _z_new + (_j - 1) / (_j + 2) * (_z_new - _z)
-            _v_rhs = _v + eta * (-b_s + A_s @ (2 * _z_tilde - _z))
-            _v_new = _dual_nonnegative.prox(_v_rhs)
-
-            _w_new = _w + eta * (_x_k - A_d @ (2 * _z_tilde - _z))
-
-            _gamma_j = 1 + 2 * (_j - 1) / (_j + 2)
-            _residual_1 = (1 / eta) * (_z_new - _z) - A_s.T @ (_v_new - _v) + A_d.T @ (_w_new - _w)
-            _residual_2 = -_gamma_j * A_s @ (_z_new - _z) + (1 / eta) * (_v_new - _v)
-            _residual_3 = _gamma_j * A_d @ (_z_new - _z) + (1 / eta) * (_w_new - _w)
-            _last_residual = np.max(np.abs(np.hstack([_residual_1, _residual_2, _residual_3])))
-
-            _z = _z_new
-            _v = _v_new
-            _w = _w_new
-
-        worst_case_residuals_pdhg_mom.append(_last_residual)
+        worst_case_residuals_pdhg_mom.append(_VP.solve()[0][-1])
 
     worst_case_residuals_pdhg_mom = np.array(worst_case_residuals_pdhg_mom)
     return (worst_case_residuals_pdhg_mom,)
@@ -674,6 +725,8 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ### PEP-obtained worst-case convergence rate
+
     We compare our results to the worst-case performance of the algorithm returned
     by the performance estimation problem (PEP), using the shared `PEPitRunner`.
     Specifically, we measure the performance of PDHG applied on
@@ -695,7 +748,8 @@ def _(mo):
 @app.cell
 def _(K, L, PEPitRunner, eta, pepit_radius):
     all_residuals_PEP, _ = PEPitRunner().pdhg_residuals(
-        K=K, L=float(L), eta=float(eta), R=pepit_radius)
+        K=K, L=float(L), eta=float(eta), R=pepit_radius
+    )
     return (all_residuals_PEP,)
 
 
