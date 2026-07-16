@@ -150,8 +150,10 @@ def test_lam_ub_per_component():
     assert np.all(expected <= hi - lo + 1e-9)  # tighter than (or equal to) the old global bound
 
 
-def test_simulator_not_supported():
+def test_simulator_supported():
+    """Simulator now evaluates the simplex projection with a batched solver-free
+    algorithm, returning a LinearExpression of the input dimension."""
     v = _make_verifier("simulator")
     arg = v.add_param(3, lb=-1.0, ub=1.0)
-    with pytest.raises(NotImplementedError):
-        v.prox(IndSimplex(1.0), arg)
+    out = v.prox(IndSimplex(1.0), arg)
+    assert out.ndim == 3

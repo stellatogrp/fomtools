@@ -48,5 +48,9 @@ class IndSimplex(ProxableFunction):
         arg = np.asarray(arg, dtype=float)
         a = float(self.a.const[0]) if hasattr(self.a, "decomposition_dict") else float(self.a)
         u = cp.Variable(arg.shape[0])
-        cp.Problem(cp.Minimize(cp.sum_squares(u - arg)), [u >= 0, cp.sum(u) == a]).solve()
+        # Pin CLARABEL: deterministic and accurate (~1e-7) across platforms, unlike
+        # cvxpy's auto-selected default (OSQP/SCS) which can return ~1e-3 solutions.
+        cp.Problem(cp.Minimize(cp.sum_squares(u - arg)), [u >= 0, cp.sum(u) == a]).solve(
+            solver=cp.CLARABEL
+        )
         return np.asarray(u.value, dtype=float)

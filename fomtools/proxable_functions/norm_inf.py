@@ -74,5 +74,7 @@ class NormInf(ProxableFunction):
         arg = np.asarray(arg, dtype=float)
         u = cp.Variable(arg.shape[0])
         obj = 0.5 * cp.sum_squares(u - arg) + gamma * self._lambd_value() * cp.norm_inf(u)
-        cp.Problem(cp.Minimize(obj)).solve()
+        # Pin CLARABEL: deterministic and accurate (~1e-7) across platforms, unlike
+        # cvxpy's auto-selected default (OSQP/SCS) which can return ~1e-3 solutions.
+        cp.Problem(cp.Minimize(obj)).solve(solver=cp.CLARABEL)
         return np.asarray(u.value, dtype=float)

@@ -109,12 +109,13 @@ def test_without_dual_ub_raises(method):
         v.prox(IndPolyhedral(A, b), x)  # dual_ub=None
 
 
-def test_simulator_not_supported():
-    """IndPolyhedral is an implicit-iterate prox; the simulator defers it."""
+def test_simulator_supported():
+    """Simulator now evaluates the polyhedral projection with a per-sample cvxpy
+    solve, returning a LinearExpression of the input dimension."""
     v = _make_verifier("simulator")
     arg = v.add_param(2, lb=-1.0, ub=1.0)
-    with pytest.raises(NotImplementedError):
-        v.prox(IndPolyhedral(np.array([[1.0, 1.0]]), np.array([0.5]), dual_ub=10.0), arg)
+    out = v.prox(IndPolyhedral(np.array([[1.0, 1.0]]), np.array([0.5]), dual_ub=10.0), arg)
+    assert out.ndim == 2
 
 
 # --- SDP backend (complementarity encoding) --------------------------------

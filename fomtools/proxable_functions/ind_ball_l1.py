@@ -59,5 +59,9 @@ class IndBallL1(ProxableFunction):
         # Numeric reference: a parameter ``r`` uses its stored constant value (cf. IndAffine).
         r = float(self.r.const[0]) if hasattr(self.r, "decomposition_dict") else float(self.r)
         u = cp.Variable(arg.shape[0])
-        cp.Problem(cp.Minimize(cp.sum_squares(u - arg)), [cp.norm1(u) <= r]).solve()
+        # Pin CLARABEL: deterministic and accurate (~1e-7) across platforms, unlike
+        # cvxpy's auto-selected default (OSQP/SCS) which can return ~1e-3 solutions.
+        cp.Problem(cp.Minimize(cp.sum_squares(u - arg)), [cp.norm1(u) <= r]).solve(
+            solver=cp.CLARABEL
+        )
         return np.asarray(u.value, dtype=float)

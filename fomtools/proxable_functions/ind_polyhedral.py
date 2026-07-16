@@ -78,5 +78,9 @@ class IndPolyhedral(ProxableFunction):
         arg = np.asarray(arg, dtype=float)
         b = self.b if isinstance(self.b, np.ndarray) else np.asarray(self.b.const, dtype=float)
         u = cp.Variable(self.n)
-        cp.Problem(cp.Minimize(cp.sum_squares(u - arg)), [self.A @ u <= b]).solve()
+        # Pin CLARABEL: deterministic and accurate (~1e-7) across platforms, unlike
+        # cvxpy's auto-selected default (OSQP/SCS) which can return ~1e-3 solutions.
+        cp.Problem(cp.Minimize(cp.sum_squares(u - arg)), [self.A @ u <= b]).solve(
+            solver=cp.CLARABEL
+        )
         return np.asarray(u.value, dtype=float)

@@ -135,8 +135,10 @@ def test_sdp_bound_vs_mip_over_box():
     assert mip_inf <= sdp_two + TEST_EPS, f"MIP inf {mip_inf} should be <= SDP two {sdp_two}"
 
 
-def test_simulator_not_supported():
+def test_simulator_supported():
+    """Simulator now evaluates the ℓ1-ball projection with a batched solver-free
+    algorithm, returning a LinearExpression of the input dimension."""
     v = _make_verifier("simulator")
     arg = v.add_param(3, lb=-1.0, ub=1.0)
-    with pytest.raises(NotImplementedError):
-        v.prox(IndBallL1(1.0), arg)
+    out = v.prox(IndBallL1(1.0), arg)
+    assert out.ndim == 3

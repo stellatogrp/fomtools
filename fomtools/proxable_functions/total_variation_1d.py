@@ -87,5 +87,7 @@ class TotalVariation1D(ProxableFunction):
         x = cp.Variable(n)
         tau = gamma * self._lambd_value()
         obj = 0.5 * cp.sum_squares(x - arg) + tau * cp.norm1(diff_matrix(n) @ x)
-        cp.Problem(cp.Minimize(obj)).solve()
+        # Pin CLARABEL: deterministic and accurate (~1e-7) across platforms, unlike
+        # cvxpy's auto-selected default (OSQP/SCS) which can return ~1e-3 solutions.
+        cp.Problem(cp.Minimize(obj)).solve(solver=cp.CLARABEL)
         return np.asarray(x.value, dtype=float)
