@@ -8,6 +8,7 @@ app = marimo.App(width="medium")
 def _():
     import marimo as mo
     import numpy as np
+    import os
     import statistics
     import sys
     import textwrap
@@ -33,12 +34,18 @@ def _():
     from fomtools.codegen.harness import find_compiler
     from fomtools.verifier import Verifier
 
+    # Generating a verified solver needs a real coding-agent backend. When it
+    # isn't configured (e.g. a headless docs build), the codegen and timing
+    # cells below skip with a message instead of raising.
+    agent_available = os.environ.get("FOMTOOLS_CODEGEN_AGENT") == "1"
+
     np.set_printoptions(precision=5)
     np.set_printoptions(suppress=True)
     return (
         CodegenConfig,
         TerminationSpec,
         Verifier,
+        agent_available,
         examples_dir,
         find_compiler,
         linprog,
@@ -234,6 +241,7 @@ def _(
 
 @app.cell
 def _(
+    agent_available,
     config,
     find_compiler,
     make_agent_driver,
@@ -244,37 +252,45 @@ def _(
     s_state,
     verifier,
 ):
-    if find_compiler() is None:
+    if not agent_available:
+        codegen_us = iteration_us = None
+        codegen_speedup = iteration_speedup = total_speedup = None
+        optimization_status = solver_path = None
+        print(
+            "Skipping code generation: set FOMTOOLS_CODEGEN_AGENT=1 (and configure a "
+            "coding-agent backend) to generate, verify and time the embedded solver."
+        )
+    elif find_compiler() is None:
         raise RuntimeError("No C compiler found. Install cc/gcc/clang to run codegen timing.")
+    else:
+        result = verifier.codegen(
+            out_dir,
+            next_state=next_state,
+            config=config,
+            driver=make_agent_driver(config=config),
+            state=s_state,
+            params=params,
+            name="network_codegen_speedup",
+            run_phase_b=True,
+            profile=True,
+        )
+        if not result.translate.success:
+            raise RuntimeError(result.translate.log[-4000:])
 
-    result = verifier.codegen(
-        out_dir,
-        next_state=next_state,
-        config=config,
-        driver=make_agent_driver(config=config),
-        state=s_state,
-        params=params,
-        name="network_codegen_speedup",
-        run_phase_b=True,
-        profile=True,
-    )
-    if not result.translate.success:
-        raise RuntimeError(result.translate.log[-4000:])
+        if (
+            result.timing is None
+            or result.timing.c_initial_us is None
+            or result.timing.c_final_us is None
+        ):
+            raise RuntimeError("Code generation finished without the requested timing report.")
 
-    if (
-        result.timing is None
-        or result.timing.c_initial_us is None
-        or result.timing.c_final_us is None
-    ):
-        raise RuntimeError("Code generation finished without the requested timing report.")
-
-    codegen_us = result.timing.c_initial_us
-    iteration_us = result.timing.c_final_us
-    codegen_speedup = python_us / codegen_us
-    iteration_speedup = codegen_us / iteration_us
-    total_speedup = python_us / iteration_us
-    optimization_status = "kept" if result.optimization_kept else "not kept"
-    solver_path = out_dir / result.target.solver_source_path()
+        codegen_us = result.timing.c_initial_us
+        iteration_us = result.timing.c_final_us
+        codegen_speedup = python_us / codegen_us
+        iteration_speedup = codegen_us / iteration_us
+        total_speedup = python_us / iteration_us
+        optimization_status = "kept" if result.optimization_kept else "not kept"
+        solver_path = out_dir / result.target.solver_source_path()
     return (
         codegen_speedup,
         codegen_us,
@@ -300,7 +316,20 @@ def _(
     solver_path,
     total_speedup,
 ):
-    mo.md(f"""
+    if codegen_speedup is None:
+        summary = mo.md(f"""
+## Timing summary
+
+One complete solve runs `{K}` iterations, taking `{python_us:.3f} us` in direct NumPy Python.
+
+Code generation was skipped, so the generated C timings are unavailable in this build. Set
+`FOMTOOLS_CODEGEN_AGENT=1` (with a coding-agent backend configured) and re-run to generate,
+verify and time the embedded solver. Previously recorded numbers for every example are
+collected in the [code generation speedup results](codegen_speedup_results.md).
+"""
+        )
+    else:
+        summary = mo.md(f"""
 ## Timing summary
 
 One complete solve runs `{K}` iterations.
@@ -319,7 +348,8 @@ Generated solver directory: `{out_dir}`
 
 Generated solver source: `{solver_path}`
 """
-    )
+        )
+    summary
     return
 
 

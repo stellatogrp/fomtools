@@ -265,17 +265,26 @@ class SdkAgentDriver(AgentDriver):
         Raises
         ------
         AgentBackendError
-            If the CLI exits non-zero with output matching a known
-            authentication-failure marker, since retrying cannot fix it.
+            If the CLI is not installed, or it exits non-zero with output
+            matching a known authentication-failure marker. Neither condition is
+            recoverable by retrying.
         """
-        proc = subprocess.run(
-            argv,
-            cwd=workdir,
-            capture_output=True,
-            text=True,
-            env=self._child_env(),
-            timeout=self.cli_timeout
-        )
+        try:
+            proc = subprocess.run(
+                argv,
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                env=self._child_env(),
+                timeout=self.cli_timeout
+            )
+        except FileNotFoundError as exc:
+            raise AgentBackendError(
+                f"{self.label} CLI {self.cli_name!r} not found on PATH, and the "
+                f"in-process SDK was unavailable. Install the {self.label} CLI, set "
+                f"{self.api_key_env}, or select a different backend via "
+                "FOMTOOLS_CODEGEN_BACKEND."
+            ) from exc
         output = proc.stdout + proc.stderr
         # An auth failure is not a fixable task error — retrying would just burn
         # the attempt budget. Surface it immediately so run_verify_loop fails fast
