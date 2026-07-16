@@ -16,9 +16,9 @@ def _():
     import matplotlib.pyplot as plt
     import numpy as np
     import scipy.sparse as spa
-    from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
     from scipy.sparse import csr_matrix
 
+    from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
     from fomtools.proxable_functions import IndBox
     from fomtools.verifier import Verifier
 
@@ -27,6 +27,7 @@ def _():
 
     solver_params = {
         'OutputFlag': 0,
+        'LogToConsole': 0,
     }
     return (
         IndBox,
@@ -109,12 +110,27 @@ def _(np, spa):
     # input constraint
     u_min = -0.99*np.ones(n_u)
     u_max =  2.41*np.ones(n_u)
+    u_stack_min = np.tile(u_min, T - 1)
+    u_stack_max = np.tile(u_max, T - 1)
 
     # # input constraint
     # u_0 = 10.5916
     # u_min = 9.6*np.ones(n_u) - u_0
     # u_max = 13.*np.ones(n_u) - u_0
-    return A_dym, B_dym, Q, R, T, n_s, n_u, u_max, u_min, x_init, x_lb, x_ub
+    return (
+        A_dym,
+        B_dym,
+        Q,
+        R,
+        T,
+        n_s,
+        n_u,
+        u_stack_max,
+        u_stack_min,
+        x_init,
+        x_lb,
+        x_ub,
+    )
 
 
 @app.cell
@@ -123,29 +139,8 @@ def _():
     sigma = 1e-4
     rho = 1.  # 0.1, 1, 10
     K = 5
-    return K, rho, sigma
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## First-order method: OSQP-style ADMM
-
-    We solve the boxed quadratic program with the splitting used by OSQP:
-
-    \begin{array}{rcl}
-        w^{k+1} &=& \Pi_{[l(x), u(x)]}(v^k), \\
-        z^{k+1} &=& (P + \sigma I + \rho M^T M)^{-1}
-            \left(\sigma z^k - q + \rho M^T(2w^{k+1} - v^k)\right), \\
-        v^{k+1} &=& v^k + Mz^{k+1} - w^{k+1}.
-    \end{array}
-
-    We measure convergence with the infinity norm of the scaled fixed-point residual
-    \[
-        \left(-\sigma(z^{k+1}-z^k) - \rho M^T(v^{k+1}-v^k),\; v^{k+1}-v^k\right).
-    \]
-    """)
-    return
+    fix_initial_x = True  # False lets x vary over [x_lb, x_ub].
+    return K, fix_initial_x, rho, sigma
 
 
 @app.cell(hide_code=True)
@@ -209,35 +204,54 @@ def _(mo):
     mo.md(r"""
     ## Simulator class
 
-    We first simulate the ADMM algorithm on given problem instances by randomly sampling the fixed initial state parameter $x_\text{init}$ around its nominal value and the initial iterates $(z^0, v^0)$ over their prescribed boxes.
-    The output will be residuals computed for each iteration $k=1,\ldots,K$.
-    The residual is the scaled fixed-point residual associated with the OSQP ADMM updates.
+    We first simulate the ADMM algorithm by sampling the initial iterates
+    $(z^0,v^0)$ over their prescribed boxes. The parameter $x$ is either fixed
+    at $x_\text{init}$ or sampled from $[x_\mathrm{lb},x_\mathrm{ub}]$,
+    according to `fix_initial_x`; the MIP and radius computation use the same
+    choice.
+
+    ### First-order method: OSQP-style ADMM
+
+    We solve the boxed quadratic program with the splitting used by OSQP:
+
+    \begin{array}{rcl}
+        w^{k+1} &=& \Pi_{[l(x), u(x)]}(v^k), \\
+        z^{k+1} &=& (P + \sigma I + \rho M^T M)^{-1}
+            \left(\sigma z^k - q + \rho M^T(2w^{k+1} - v^k)\right), \\
+        v^{k+1} &=& v^k + Mz^{k+1} - w^{k+1}.
+    \end{array}
+
+    To compare all verification methods in the same units, we measure the
+    squared Euclidean fixed-point residual of the OSQP state:
+
+    $$
+        \left\| z^{k+1} - z^k \right\|_2^2 + \left\| v^{k+1} - v^k \right\|_2^2.
+    $$
     """)
     return
 
 
 @app.cell
 def _(
-    IndBox,
     K,
     M,
     P,
-    T,
     Verifier,
     csr_matrix,
+    fix_initial_x,
     n_s,
-    n_u,
     n_xz,
     np,
     q,
     rho,
     sigma,
-    spa,
     u_stack_max,
     u_stack_min,
     v0_lb,
     v0_ub,
     x_init,
+    x_lb,
+    x_ub,
     z0_lb,
     z0_ub,
 ):
@@ -246,43 +260,42 @@ def _(
     _VP = Verifier(method='simulator', obbt_solver=None)
     _rng = np.random.default_rng(0)
 
-    _offset_range = 0.1
-    _x_samples = _rng.uniform(
-        low=x_init - _offset_range,
-        high=x_init + _offset_range,
-        size=(n_samples, n_s),
-    )
-    _z0_samples = _rng.uniform(low=z0_lb, high=z0_ub, size=(n_samples, n_xz))
-    _v0_samples = _rng.uniform(low=v0_lb, high=v0_ub, size=(n_samples, n_xz))
+    if fix_initial_x:
+        x_samples = np.repeat(x_init[np.newaxis, :], n_samples, axis=0)
+    else:
+        x_samples = _rng.uniform(
+            low=x_lb,
+            high=x_ub,
+            size=(n_samples, n_s),
+        )
+    z0_samples = _rng.uniform(low=z0_lb, high=z0_ub, size=(n_samples, n_xz))
+    v0_samples = _rng.uniform(low=v0_lb, high=v0_ub, size=(n_samples, n_xz))
 
-    _x_param = _VP.add_param(ndim=n_s, samples=_x_samples)
-    _x_param.lb, _x_param.ub = x_init - _offset_range, x_init + _offset_range
-    _l_param = _VP.add_param((T-1)*n_u, lb=u_stack_min, ub=u_stack_min)
-    _u_param = _VP.add_param((T-1)*n_u, lb=u_stack_max, ub=u_stack_max)
-    _l_x = _VP.add_param_stack([_x_param, _l_param])
-    _u_x = _VP.add_param_stack([_x_param, _u_param])
+    _x_param = _VP.add_param(ndim=n_s, samples=x_samples)
 
     _z = [None] * (K + 1)
     _v = [None] * (K + 1)
     _w = [None] * (K + 1)
-    _z[0] = _VP.add_param(n_xz, samples=_z0_samples)
-    _z[0].lb, _z[0].ub = z0_lb, z0_ub
-    _v[0] = _VP.add_param(n_xz, samples=_v0_samples)
-    _v[0].lb, _v[0].ub = v0_lb, v0_ub
+    _z[0] = _VP.add_param(n_xz, samples=z0_samples)
+    _v[0] = _VP.add_param(n_xz, samples=v0_samples)
     _w[0] = np.zeros(n_xz)
 
-    _indbox = IndBox(l=_l_x, u=_u_x)
-    _lhs_mat_sparse = csr_matrix(P + sigma*np.eye(n_xz) + rho*(M.T@M))
-    _lhs_mat_sim = _lhs_mat_sparse.toarray()
+    lhs_mat_sparse = csr_matrix(P + sigma*np.eye(n_xz) + rho*(M.T@M))
+    _lhs_mat_sim = lhs_mat_sparse.toarray()
     for _k in range(K):
-        _w[_k+1] = _VP.prox(_indbox, _v[_k])
+        _w_control = _VP.step.satlin(
+            _v[_k][n_s:],
+            l=u_stack_min,
+            u=u_stack_max,
+        )
+        _w[_k+1] = _VP.add_param_stack([_x_param, _w_control])
         _rhs = sigma * _z[_k] - q + rho * M.T @ (2*_w[_k+1] - _v[_k])
         _z[_k+1] = _VP.step.implicit_linear(_rhs, output_mat=_lhs_mat_sim)
         _v[_k+1] = _v[_k] + (M @ _z[_k+1] - _w[_k+1])
-        _VP.set_objective_norm([
-            -sigma*(_z[_k+1]-_z[_k]) - rho*M.T@(_v[_k+1]-_v[_k]),
-            _v[_k+1]-_v[_k],
-        ], np.inf)
+        _VP.set_objective_norm(
+            [_z[_k+1] - _z[_k], _v[_k+1] - _v[_k]],
+            ord=2,
+        )
 
     _residuals = _VP.solve()
 
@@ -305,16 +318,58 @@ def _(
 
     simulation_residuals_admm = np.mean(_residuals, axis=0)
     simulation_residual_quantiles_admm = np.quantile(_residuals, [0.90, 0.50, 0.10], axis=0)
+    return (
+        lhs_mat_sparse,
+        n_samples,
+        simulation_residual_quantiles_admm,
+        simulation_residuals_admm,
+        v0_samples,
+        x_samples,
+        z0_samples,
+    )
 
-    _lhs_mat_lu = spa.linalg.splu(_lhs_mat_sparse.tocsc())
-    _z_star_samples = _z0_samples.copy()
-    _v_star_samples = _v0_samples.copy()
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    For the radius-conditioned PEP comparison, we estimate the OSQP-state
+    initial radius
+    \[
+        \|z^0-z^\star\|_2^2+\|v^0-v^\star\|_2^2 \le R^2
+    \]
+    from the same initial-state parameter set used by the MIP. Because the
+    maximum below is taken over random initial iterates, it is an empirical
+    radius rather than a certificate for every point in the initialization
+    boxes.
+    """)
+    return
+
+
+@app.cell
+def _(
+    M,
+    lhs_mat_sparse,
+    n_samples,
+    np,
+    q,
+    rho,
+    sigma,
+    spa,
+    u_stack_max,
+    u_stack_min,
+    v0_samples,
+    x_samples,
+    z0_samples,
+):
+    _lhs_mat_lu = spa.linalg.splu(lhs_mat_sparse.tocsc())
+    _z_star_samples = z0_samples.copy()
+    _v_star_samples = v0_samples.copy()
     _l_x_samples = np.hstack([
-        _x_samples,
+        x_samples,
         u_stack_min[np.newaxis, :].repeat(n_samples, axis=0),
     ])
     _u_x_samples = np.hstack([
-        _x_samples,
+        x_samples,
         u_stack_max[np.newaxis, :].repeat(n_samples, axis=0),
     ])
     for _ in range(2000):
@@ -335,47 +390,15 @@ def _(
         _v_star_samples = _v_next_samples
         if _step_norm <= 1e-10:
             break
-    pepit_radius = np.max(np.linalg.norm(
+
+    pepit_radius_empirical = np.max(np.linalg.norm(
         np.hstack([
-            _z0_samples - _z_star_samples,
-            _v0_samples - _v_star_samples,
+            z0_samples - _z_star_samples,
+            v0_samples - _v_star_samples,
         ]),
         axis=1,
     ))
-    return (
-        pepit_radius,
-        simulation_residual_quantiles_admm,
-        simulation_residuals_admm,
-    )
-
-
-@app.cell
-def _(P, T, n_u, np, q, u_max, u_min, x_init):
-    # Define and solve this problem with CVXPY
-    import cvxpy as cp
-
-    # state s = SX@x_param + SZ@z where z = u_stack = (u_1, ..., u_{T-1})
-    u_stack = cp.Variable((T-1)*n_u)
-    u_stack_min = np.kron(np.ones(T-1).T, u_min)
-    u_stack_max = np.kron(np.ones(T-1).T, u_max)
-
-    # parameter x is fixed as x_init
-    x = x_init
-
-    # define constraints
-    constraints = [
-        u_stack_min <= u_stack,
-        u_stack <= u_stack_max,
-    ]
-
-    x_u_stack = cp.hstack([x, u_stack])
-
-    # define objective and solve problem
-    problem = cp.Problem(cp.Minimize((1/2)*cp.quad_form(x_u_stack, P) + q.T@x_u_stack), constraints=constraints)
-    problem.solve(solver=cp.SCS, verbose=True)
-
-    print(problem.status, problem.value)
-    return u_stack_max, u_stack_min
+    return (pepit_radius_empirical,)
 
 
 @app.cell(hide_code=True)
@@ -384,7 +407,18 @@ def _(mo):
     ## Algorithm verification through verification problem (VP)
 
     ### MIP-VP
-    We now obtain a worst-case guarantee by solving the corresponding verification problem with a MIP formulation. The MIP maximizes the ADMM residual at each horizon over the bounded initial iterates and the chosen initial-state parameter set.
+    Maximizing a squared Euclidean norm would make the verification problem a
+    nonconvex MIQP. Instead, the MIP maximizes the infinity norm of the same
+    OSQP-state residual
+    \[
+        r^k=(z^{k+1}-z^k,\;v^{k+1}-v^k).
+    \]
+    Since $r^k\in\mathbf{R}^{2n_{xz}}$, the norm inequality
+    \[
+        \|r^k\|_2^2 \le 2n_{xz}\|r^k\|_\infty^2
+    \]
+    converts the exact MIP value into a valid upper bound in the squared
+    Euclidean units used by PEP and the simulations.
     """)
     return
 
@@ -398,6 +432,7 @@ def _(
     T,
     Verifier,
     csr_matrix,
+    fix_initial_x,
     n_s,
     n_u,
     n_xz,
@@ -416,8 +451,6 @@ def _(
     z0_lb,
     z0_ub,
 ):
-    fix_initial_x = True # True if x is fixed, False if x is in set X
-
     # Solve VP for optimal control example
     _VP = Verifier(method='mip', solver='gurobi', params=solver_params)
 
@@ -445,7 +478,7 @@ def _(
     indbox = IndBox(l=_l_x, u=_u_x)
     _lhs_mat = csr_matrix(P + sigma*np.eye(n_xz) + rho*(M.T@M))
 
-    all_residuals = []
+    all_residuals_inf = []
     worst_case_x_param_admm = []
     worst_case_z_admm = []
     worst_case_v_admm = []
@@ -456,16 +489,22 @@ def _(
         _z[_k+1] = _VP.step.implicit_linear(_rhs, output_mat=_lhs_mat)
         _v[_k+1] = _v[_k] + (M @ _z[_k+1] - _w[_k+1])
 
-        # optimize over scaled fixed-point residual (KKT residual)
-        _VP.set_objective_norm([-sigma*(_z[_k+1]-_z[_k]) - rho*M.T@(_v[_k+1]-_v[_k]), _v[_k+1]-_v[_k]], np.inf)
+        # Keep the exact verification problem linear.
+        _VP.set_objective_norm(
+            [_z[_k+1] - _z[_k], _v[_k+1] - _v[_k]],
+            ord=np.inf,
+        )
         _res = _VP.solve()
-        all_residuals.append(_res)
+        all_residuals_inf.append(_res)
         # Store the horizon-specific worst-case initial state for this k.
         worst_case_x_param_admm.append(_VP.get_solution_value(_x_param))
         worst_case_z_admm.append(_VP.get_solution_value(_z[0]))
         worst_case_v_admm.append(_VP.get_solution_value(_v[0]))
 
-    print(all_residuals)
+    # Convert the infinity-norm guarantee to squared Euclidean units.
+    all_residuals = 2 * n_xz * np.square(all_residuals_inf)
+    print(f"infinity-norm MIP bounds: {all_residuals_inf}")
+    print(f"squared-Euclidean upper bounds: {all_residuals}")
     return (
         all_residuals,
         worst_case_v_admm,
@@ -477,22 +516,24 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We can use simulator mode to replay the horizon-specific worst-case instances extracted from the MIP. This checks the explicit ADMM trajectory at the optimizer returned by each verification problem.
+    We replay the horizon-specific infinity-norm worst-case instances in
+    simulator mode and evaluate their actual squared Euclidean residual. These
+    points need not maximize the Euclidean residual, but they provide explicit
+    feasible trajectories below the norm-converted MIP upper bound. After
+    calling `solve()`, the replay's final residual is available through the
+    `final_residuals` summary statistic.
     """)
     return
 
 
 @app.cell
 def _(
-    IndBox,
     K,
     M,
     P,
-    T,
     Verifier,
     csr_matrix,
     n_s,
-    n_u,
     n_xz,
     np,
     q,
@@ -513,12 +554,6 @@ def _(
         _VP = Verifier(method='simulator', obbt_solver=None)
         _x_k = np.asarray(worst_case_x_param_admm[_k - 1])
         _x_param = _VP.add_param(ndim=n_s, samples=[_x_k])
-        _x_param.lb = _x_param.ub = _x_k
-
-        _l_param = _VP.add_param((T-1)*n_u, lb=u_stack_min, ub=u_stack_min)
-        _u_param = _VP.add_param((T-1)*n_u, lb=u_stack_max, ub=u_stack_max)
-        _l_x = _VP.add_param_stack([_x_param, _l_param])
-        _u_x = _VP.add_param_stack([_x_param, _u_param])
 
         _z = [None] * (_k + 1)
         _v = [None] * (_k + 1)
@@ -527,23 +562,27 @@ def _(
         _v0_k = np.asarray(worst_case_v_admm[_k - 1])
         _z[0] = _VP.add_iterate(ndim=n_xz, init=_z0_k)
         _v[0] = _VP.add_iterate(ndim=n_xz, init=_v0_k)
-        _z[0].lb = _z[0].ub = _z0_k
-        _v[0].lb = _v[0].ub = _v0_k
         _w[0] = np.zeros(n_xz)
 
-        _indbox = IndBox(l=_l_x, u=_u_x)
-
         for _j in range(_k):
-            _w[_j+1] = _VP.prox(_indbox, _v[_j])
+            _w_control = _VP.step.satlin(
+                _v[_j][n_s:],
+                l=u_stack_min,
+                u=u_stack_max,
+            )
+            _w[_j+1] = _VP.add_param_stack([_x_param, _w_control])
             _rhs = sigma * _z[_j] - q + rho * M.T @ (2*_w[_j+1] - _v[_j])
             _z[_j+1] = _VP.step.implicit_linear(_rhs, output_mat=_lhs_mat_sim)
             _v[_j+1] = _v[_j] + (M @ _z[_j+1] - _w[_j+1])
-            _VP.set_objective_norm([
-                -sigma*(_z[_j+1]-_z[_j]) - rho*M.T@(_v[_j+1]-_v[_j]),
-                _v[_j+1]-_v[_j],
-            ], np.inf)
+            _VP.set_objective_norm(
+                [_z[_j+1] - _z[_j], _v[_j+1] - _v[_j]],
+                ord=2,
+            )
 
-        worst_case_residuals_admm.append(_VP.solve()[0][-1])
+        _VP.solve()
+        # Each replay contains one sampled instance.
+        _final_residual = float(_VP['final_residuals'][0])
+        worst_case_residuals_admm.append(_final_residual)
 
     worst_case_residuals_admm = np.array(worst_case_residuals_admm)
     return (worst_case_residuals_admm,)
@@ -554,29 +593,65 @@ def _(mo):
     mo.md(r"""
     ### PEP-obtained worst-case convergence rate
 
-    We compare our results to the worst-case performance of the algorithm returned
-    by the performance estimation problem (PEP), using the shared `PEPitRunner`.
-    Specifically, we measure the performance of ADMM solving
+    We compare the MIP result with a PEP that uses the same OSQP recurrence,
+    including the projection-first ordering and the parameters $\sigma$ and
+    $\rho$. For $M=I$, the linear solve is the proximal step
+    \[
+        z^{k+1}
+        = \operatorname{prox}_{f/(\sigma+\rho)}
+        \left(
+            \frac{\sigma z^k+\rho(2w^{k+1}-v^k)}
+                 {\sigma+\rho}
+        \right).
+    \]
+
+    PEP still considers the larger class of all $L$-smooth,
+    $\mu$-strongly-convex functions and all convex indicator sets:
 
     \begin{array}{ll}
         \textnormal{minimize} & f(x) + g(x),
     \end{array}
 
-    where $f$ is a smooth strongly-convex function and $g$ is an indicator function to a convex set.
+    so it does not retain the exact matrix $P$, dimension, or box geometry. We
+    show both the bound conditioned on the empirical radius above and a
+    rate-shape curve calibrated to match the norm-converted MIP upper bound at
+    $K=1$. The calibrated curve is not an independent absolute guarantee.
     """)
     return
 
 
 @app.cell
-def _(K, P, PEPitRunner, np, pepit_radius, spa):
-    _P_eigs = np.real(spa.linalg.eigs(P)[0])
-    _positive_eigs = _P_eigs[_P_eigs > 1e-10]
-    _mu = float(np.min(_positive_eigs)) if len(_positive_eigs) else 0.0
-    _L = float(np.max(_P_eigs))
-    all_residuals_PEP, _ = PEPitRunner().admm_residuals(
-        K=K, mu=_mu, L=_L, R=pepit_radius
+def _(
+    K,
+    P,
+    PEPitRunner,
+    all_residuals,
+    np,
+    pepit_radius_empirical,
+    rho,
+    sigma,
+):
+    _P_eigs = np.linalg.eigvalsh(P.toarray())
+    _mu = float(_P_eigs.min())
+    _L = float(_P_eigs.max())
+    _runner = PEPitRunner()
+    all_residuals_PEP_radius, _ = _runner.osqp_admm_residuals(
+        K=K,
+        mu=_mu,
+        L=_L,
+        sigma=sigma,
+        rho=rho,
+        R=pepit_radius_empirical,
     )
-    return (all_residuals_PEP,)
+    all_residuals_PEP, pepit_radius_calibrated = _runner.osqp_admm_residuals(
+        K=K,
+        mu=_mu,
+        L=_L,
+        sigma=sigma,
+        rho=rho,
+        calibrate_to=all_residuals[0],
+    )
+    return all_residuals_PEP, all_residuals_PEP_radius
 
 
 @app.cell(hide_code=True)
@@ -584,8 +659,9 @@ def _(mo):
     mo.md(r"""
     ## Numerical Result
 
-    Now we plot the verification results against the PEPit bound and the
-    horizon-specific worst-case instances extracted from MIP.
+    We plot every curve in squared Euclidean units. The MIP curve uses the
+    dimension-dependent norm conversion above; simulation, replay, and PEP use
+    the squared Euclidean residual directly.
     """)
     return
 
@@ -595,6 +671,7 @@ def _(
     K,
     all_residuals,
     all_residuals_PEP,
+    all_residuals_PEP_radius,
     plt,
     simulation_residual_quantiles_admm,
     simulation_residuals_admm,
@@ -602,15 +679,32 @@ def _(
 ):
     plt.figure()
     _ks = range(1, K+1)
-    plt.plot(_ks, all_residuals_PEP, label='ADMM (PEPit)')
-    plt.plot(_ks, all_residuals, label='ADMM (MIP worst-case)')
+    plt.plot(_ks, all_residuals_PEP, label='ADMM (PEPit, matched at K=1)')
+    plt.plot(
+        _ks,
+        all_residuals_PEP_radius,
+        ':',
+        label='ADMM (PEPit, empirical-radius conditioned)',
+    )
+    plt.plot(
+        _ks,
+        all_residuals,
+        label=r'ADMM (MIP upper bound via $2n_{xz}\|\cdot\|_\infty^2$)',
+    )
     plt.plot(_ks, simulation_residuals_admm, '--', label='ADMM (in-sample avg)')
     plt.fill_between(_ks, simulation_residual_quantiles_admm[2], simulation_residual_quantiles_admm[0], alpha=.18, label='ADMM simulation 10%-90% band')
-    plt.plot(_ks, worst_case_residuals_admm, '-.', color='k', linewidth=.7, label='worst-case ADMM instance')
+    plt.plot(
+        _ks,
+        worst_case_residuals_admm,
+        '-.',
+        color='k',
+        linewidth=.7,
+        label=r'$\ell_\infty$ worst-case instance (actual squared $\ell_2$)',
+    )
     plt.suptitle('optimal control example')
     plt.yscale('log')
     plt.xlabel(r'$K$')
-    plt.ylabel('Worst-case fixed-point residual')
+    plt.ylabel(r'Worst-case squared Euclidean fixed-point residual')
     plt.legend()
     return
 

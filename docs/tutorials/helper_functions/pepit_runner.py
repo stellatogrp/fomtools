@@ -88,6 +88,51 @@ class PEPitRunner:
         ]
         return residuals, R
 
+    def osqp_admm_residuals(
+        self,
+        *,
+        K: int,
+        mu: float,
+        L: float,
+        sigma: float,
+        rho: float,
+        R: float | None = None,
+        calibrate_to: float | None = None,
+    ) -> tuple[list[float], float]:
+        """Return PEPit bounds for the OSQP-style ADMM recurrence with ``M = I``.
+
+        The performance metric is the squared Euclidean fixed-point residual
+        ``||z^k-z^{k-1}||^2 + ||v^k-v^{k-1}||^2``. The initial condition uses
+        the corresponding OSQP state:
+        ``||z^0-z^*||^2 + ||v^0-v^*||^2 <= R^2``.
+        """
+        if sigma < 0:
+            raise ValueError("sigma must be nonnegative.")
+        if rho <= 0:
+            raise ValueError("rho must be positive.")
+
+        if calibrate_to is None and R is None:
+            raise ValueError("Either R or calibrate_to must be provided.")
+
+        # The PEP is homogeneous in the initial radius. Solving at unit radius
+        # and scaling by R^2 is both cheaper and substantially better
+        # conditioned when the OSQP dual state makes R large.
+        unit_residuals = [
+            self._osqp_admm_residual(
+                k=k,
+                mu=mu,
+                L=L,
+                sigma=sigma,
+                rho=rho,
+                R=1.0,
+            )
+            for k in range(1, K + 1)
+        ]
+        if calibrate_to is not None:
+            R = math.sqrt(calibrate_to / unit_residuals[0])
+        residuals = [value * R ** 2 for value in unit_residuals]
+        return residuals, R
+
     def pdhg_residuals(
         self,
         *,
@@ -209,6 +254,64 @@ class PEPitRunner:
 
         problem.set_performance_metric(
             (x[k] - x[k - 1]) ** 2 + (u[k] - u[k - 1]) ** 2)
+        return problem.solve(solver=self.solver, verbose=self.verbose)
+
+    def _osqp_admm_residual(
+        self,
+        *,
+        k: int,
+        mu: float,
+        L: float,
+        sigma: float,
+        rho: float,
+        R: float,
+    ) -> float:
+        from PEPit import PEP, Point
+        from PEPit.expression import Expression
+        from PEPit.functions import ConvexIndicatorFunction, SmoothStronglyConvexFunction
+        from PEPit.primitive_steps import proximal_step
+
+        problem = PEP()
+        f = problem.declare_function(SmoothStronglyConvexFunction, mu=mu, L=L)
+        g = problem.declare_function(ConvexIndicatorFunction)
+
+        # Construct an OSQP fixed point. Stationarity gives
+        # grad f(z*) + grad g(z*) = 0, and the scaled dual state is
+        # v* = z* - grad f(z*) / rho.
+        zs = Point()
+        grad_fs, _ = f.oracle(zs)
+        g.add_point((zs, -grad_fs, Expression()))
+        g.add_point((zs, -grad_fs / rho, Expression()))
+        vs = zs - grad_fs / rho
+
+        z0 = problem.set_initial_point()
+        v0 = problem.set_initial_point()
+        problem.set_initial_condition(
+            (z0 - zs) ** 2 + (v0 - vs) ** 2 <= R ** 2
+        )
+
+        z = [z0]
+        v = [v0]
+        gamma = 1.0 / (sigma + rho)
+        for j in range(k):
+            # Projection is prox_g; for an indicator its step size is immaterial.
+            w_next, _, _ = proximal_step(v[j], g, 1.0)
+
+            # This proximal step is exactly
+            # (H + (sigma+rho)I) z^{k+1}
+            #   = sigma z^k + rho(2w^{k+1}-v^k) - q
+            # for a quadratic f(z) = 0.5 z^T H z + q^T z.
+            prox_center = gamma * (
+                sigma * z[j] + rho * (2 * w_next - v[j])
+            )
+            z_next, _, _ = proximal_step(prox_center, f, gamma)
+            v_next = v[j] + z_next - w_next
+            z.append(z_next)
+            v.append(v_next)
+
+        problem.set_performance_metric(
+            (z[k] - z[k - 1]) ** 2 + (v[k] - v[k - 1]) ** 2
+        )
         return problem.solve(solver=self.solver, verbose=self.verbose)
 
     def _pdhg_residual(self, *, k: int, L: float, eta: float, R: float) -> float:

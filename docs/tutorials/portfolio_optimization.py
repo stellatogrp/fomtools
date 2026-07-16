@@ -65,7 +65,7 @@ def _(np):
     x0_val = np.zeros(n)
     v0_lb = np.zeros(n + 1)
     v0_ub = np.ones(n + 1)
-    return A_mat, Sigma, l_val, mu, n, u_max, u_val, v0_lb, v0_ub, x0_val
+    return A_mat, Sigma, l_val, mu, n, u_val, v0_lb, v0_ub, x0_val
 
 
 @app.cell(hide_code=True)
@@ -76,8 +76,8 @@ def _(mo):
     We write the constraints as $l \le Ax \le u$, with
     \[
         A = \begin{bmatrix} I \\ \mathbf{1}^T \end{bmatrix},\quad
-        l = (0,\ldots,0,1),\quad
-        u = (u_{\max},1).
+        l = \begin{bmatrix} 0 \\ 1 \end{bmatrix},\quad
+        u = \begin{bmatrix} u_{\max} \\1 \end{bmatrix}.
     \]
 
     The ADMM recurrence is
@@ -86,10 +86,12 @@ def _(mo):
         w^{k+1} &=& \Pi_{[l,u]}(v^k), \\
         x^{k+1} &=& (\Sigma + \sigma I + \rho A^TA)^{-1}
             \left(\sigma x^k + \mu + \rho A^T(2w^{k+1}-v^k)\right), \\
-        v^{k+1} &=& v^k + Ax^{k+1} - w^{k+1}.
+        v^{k+1} &=& v^k + Ax^{k+1} - w^{k+1},
     \end{array}
 
-    We measure performance by the Euclidean norm of the combined fixed-point residual $(x^{k+1}-x^k,\; v^{k+1}-v^k)$.
+    which is a fixed-point iteration in terms of $z^k = (x^k, v^k)$ at iteration $k$.
+
+    We measure performance by Euclidean norm of combined fixed-point residual $z^{k+1} - z^k = (x^{k+1}-x^k,\; v^{k+1}-v^k)$.
     """)
     return
 
@@ -128,8 +130,8 @@ def _(
     A_mat,
     K,
     Verifier,
-    lhs_mat,
     l_val,
+    lhs_mat,
     mu,
     n,
     np,
@@ -147,7 +149,6 @@ def _(
     _VP = Verifier(method="simulator", obbt_solver=None)
     _x = [x0_val]
     _v = [_VP.add_param(n + 1, samples=_v0_samples)]
-    _v[0].lb, _v[0].ub = v0_lb, v0_ub
     _w = [None]
     _lhs_mat_sim = lhs_mat.toarray()
 
@@ -179,7 +180,7 @@ def _(
 
     simulation_residuals_admm = np.mean(_residuals, axis=0)
     simulation_residual_quantiles_admm = np.quantile(_residuals, [0.90, 0.50, 0.10], axis=0)
-    return n_samples, simulation_residual_quantiles_admm, simulation_residuals_admm
+    return simulation_residual_quantiles_admm, simulation_residuals_admm
 
 
 @app.cell(hide_code=True)
@@ -197,8 +198,8 @@ def _(
     A_mat,
     K,
     Verifier,
-    lhs_mat,
     l_val,
+    lhs_mat,
     mu,
     n,
     rho,
@@ -231,7 +232,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We replay the horizon-specific worst-case initial dual iterates in simulator mode to check the explicit residual trajectory produced by the MIP optimizer.
+    We replay the horizon-specific worst-case initial dual iterates in simulator mode to check the explicit residual trajectory produced by the MIP optimizer. After calling `solve()`, the replay's final residual is available through the `final_residuals` summary statistic.
     """)
     return
 
@@ -241,8 +242,8 @@ def _(
     A_mat,
     K,
     Verifier,
-    lhs_mat,
     l_val,
+    lhs_mat,
     mu,
     n,
     np,
@@ -260,7 +261,6 @@ def _(
 
         _x = [x0_val]
         _v = [_VP.add_param(ndim=n + 1, samples=[_v0_k])]
-        _v[0].lb = _v[0].ub = _v0_k
         _w = [None]
 
         for _j in range(_k):
@@ -270,7 +270,10 @@ def _(
             _v.append(_v[_j] + A_mat @ _x[_j + 1] - _w[_j + 1])
             _VP.set_objective_norm([_x[_j + 1] - _x[_j], _v[_j + 1] - _v[_j]], ord=2)
 
-        worst_case_residuals_admm.append(_VP.solve()[0][-1])
+        _VP.solve()
+        # Each replay contains one sampled instance.
+        _final_residual = float(_VP['final_residuals'][0])
+        worst_case_residuals_admm.append(_final_residual)
 
     worst_case_residuals_admm = np.array(worst_case_residuals_admm)
     return (worst_case_residuals_admm,)
@@ -298,7 +301,7 @@ def _(K, PEPitRunner, Sigma, all_residuals, np):
         R=None,
         calibrate_to=all_residuals[0],
     )
-    return all_residuals_PEP, pepit_radius
+    return (all_residuals_PEP,)
 
 
 @app.cell(hide_code=True)
@@ -312,7 +315,21 @@ def _(mo):
 
 
 @app.cell
-def _(A_mat, K, Verifier, lhs_mat, l_val, mu, n, rho, sigma, u_val, v0_lb, v0_ub, x0_val):
+def _(
+    A_mat,
+    K,
+    Verifier,
+    l_val,
+    lhs_mat,
+    mu,
+    n,
+    rho,
+    sigma,
+    u_val,
+    v0_lb,
+    v0_ub,
+    x0_val,
+):
     _VP = Verifier(method="sdp", solver="clarabel", obbt_solver="highs")
 
     _x = [x0_val]

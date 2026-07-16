@@ -25,6 +25,7 @@ def _():
 
     solver_params = {
         'OutputFlag': 0,
+        'LogToConsole': 0,
     }
     return NormL1, PEPitRunner, Verifier, np, plt, solver_params
 
@@ -150,11 +151,9 @@ def _(D, K, Verifier, eta, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
     _x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, p))
     _s0_samples = _rng.uniform(low=s0_lb, high=s0_ub, size=(n_samples, n))
     _x_param = _VP.add_param(ndim=p, samples=_x_samples)
-    _x_param.lb, _x_param.ub = x_lb, x_ub
 
     _s = [None] * (K + 1)
     _s[0] = _VP.add_param(n, samples=_s0_samples)
-    _s[0].lb, _s[0].ub = np.full(n, s0_lb), np.full(n, s0_ub)
 
     for _k in range(1, K + 1):
         _s[_k] = _VP.step.soft_threshold(_s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), lambd=lambd*eta)
@@ -230,12 +229,10 @@ def _(
     _x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, p))
     _s0_samples = _rng.uniform(low=s0_lb, high=s0_ub, size=(n_samples, n))
     _x_param = _VP.add_param(ndim=p, samples=_x_samples)
-    _x_param.lb, _x_param.ub = x_lb, x_ub
 
     _y = [None] * (K + 1)
     _z = [None] * (K + 1)
     _y[0] = _VP.add_param(n, samples=_s0_samples)
-    _y[0].lb, _y[0].ub = np.full(n, s0_lb), np.full(n, s0_ub)
     _z[0] = _y[0]
     _t = [1.0]
     for _k in range(1, K+1):
@@ -311,7 +308,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We replay each horizon-specific MIP optimizer in simulator mode. This gives an explicit residual value for the worst-case measurement and initialization returned by verification.
+    We replay each horizon-specific MIP optimizer in simulator mode. After calling `solve()`, the replay's final residual is available through the `final_residuals` summary statistic.
     """)
     return
 
@@ -328,21 +325,22 @@ def _(
     regularizer,
     worst_case_s0_ista,
     worst_case_x_param_ista,
-    x_lb,
-    x_ub,
 ):
     # Simulate each horizon with its own worst-case x from ISTA verification.
     worst_case_residuals_ista = []
     for _k in range(1, K + 1):
-        _VP = Verifier(method='simulator')
-        _x_param = _VP.add_param(ndim=p, lb=x_lb, ub=x_ub, samples=[worst_case_x_param_ista[_k - 1]])
+        _VP = Verifier(method='simulator', obbt_solver=None)
+        _x_param = _VP.add_param(ndim=p, samples=[worst_case_x_param_ista[_k - 1]])
         _s = [None] * (_k + 1)
         _s0_k = np.asarray(worst_case_s0_ista[_k - 1])
         _s[0] = _VP.add_iterate(ndim=n, init=_s0_k)
-        _s[0].lb = _s[0].ub = _s0_k
         for _j in range(1, _k + 1):
             _s[_j] = _VP.prox(regularizer, _s[_j-1] - eta * D.T @ (D @ _s[_j-1] - _x_param), gamma=eta)
-        worst_case_residuals_ista.append(_VP.solve()[0][-1])
+            _VP.set_objective_norm(_s[_j] - _s[_j-1], ord=np.inf)
+        _VP.solve()
+        # Each replay contains one sampled instance.
+        _final_residual = float(_VP['final_residuals'][0])
+        worst_case_residuals_ista.append(_final_residual)
 
     worst_case_residuals_ista = np.array(worst_case_residuals_ista)
     return (worst_case_residuals_ista,)

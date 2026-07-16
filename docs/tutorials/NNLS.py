@@ -172,19 +172,15 @@ def _(
     n,
     nnls,
     np,
-    x_lb,
     x_samples,
-    x_ub,
-    z0_lb,
     z0_samples,
-    z0_ub,
 ):
     # Define Verifier instance with simulator mode on
     _VP = Verifier(method='simulator', obbt_solver=None)
 
     # Register the samples as the parameter of _VP instance
-    _x_param = _VP.add_param(ndim=m, lb=x_lb, ub=x_ub, samples=x_samples)
-    _z0 = _VP.add_param(ndim=n, lb=z0_lb, ub=z0_ub, samples=z0_samples)
+    _x_param = _VP.add_param(ndim=m, samples=x_samples)
+    _z0 = _VP.add_param(ndim=n, samples=z0_samples)
 
     # Define the algorithm iterates
     _z = [None] * (K + 1)
@@ -238,17 +234,13 @@ def _(
     m,
     n,
     np,
-    x_lb,
     x_samples,
-    x_ub,
-    z0_lb,
     z0_samples,
-    z0_ub,
 ):
     _VP = Verifier(method='simulator', obbt_solver=None)
 
-    _x_param = _VP.add_param(ndim=m, lb=x_lb, ub=x_ub, samples=x_samples)
-    _z0 = _VP.add_param(ndim=n, lb=z0_lb, ub=z0_ub, samples=z0_samples)
+    _x_param = _VP.add_param(ndim=m, samples=x_samples)
+    _z0 = _VP.add_param(ndim=n, samples=z0_samples)
 
     _z = [None] * (K + 1)
     _w = [None] * (K + 1)
@@ -328,7 +320,7 @@ def _(A, K, Verifier, eta, m, n, np, solver_params, x_lb, x_ub, z0_lb, z0_ub):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We can use simulator mode to further observe the algorithmic performance of obtained worst-case instance from verification problem. Adding the worst-case parameters and initial point as parameters, we can run the same algorithm and check if the obtained worst-case instance gives explicitly matching MIP bound.
+    We can use simulator mode to replay each worst-case instance obtained from the verification problem. After calling `solve()`, the replay's final residual is available through the `final_residuals` summary statistic.
     """)
     return
 
@@ -340,14 +332,16 @@ def _(A, K, Verifier, eta, m, n, np, worst_case_x_param, worst_case_z0):
     for _k in range(1, K + 1):
         _VP = Verifier(method='simulator', obbt_solver=None)
         _x_param = _VP.add_param(ndim=m, samples=[worst_case_x_param[_k - 1]])
-        _x_param.lb = _x_param.ub = np.asarray(worst_case_x_param[_k - 1])
         _z = [None] * (_k + 1)
         _z0_k = np.asarray(worst_case_z0[_k - 1])
         _z[0] = _VP.add_iterate(ndim=n, init=_z0_k)
-        _z[0].lb = _z[0].ub = _z0_k
         for k in range(1, _k + 1):
             _z[k] = _VP.step.relu(_z[k-1] - eta * A.T @ (A @ _z[k-1] - _x_param))
-        worst_case_residuals.append(_VP.solve()[0][-1])
+            _VP.set_objective_norm(_z[k] - _z[k-1], ord=np.inf)
+        _VP.solve()
+        # Each replay contains one sampled instance.
+        _final_residual = float(_VP['final_residuals'][0])
+        worst_case_residuals.append(_final_residual)
 
     worst_case_residuals = np.array(worst_case_residuals)
     return (worst_case_residuals,)
@@ -411,22 +405,23 @@ def _(
     for _k in range(1, K + 1):
         _VP = Verifier(method='simulator', obbt_solver=None)
         _x_param = _VP.add_param(ndim=m, samples=[worst_case_x_param_momentum[_k - 1]])
-        _x_k = np.asarray(worst_case_x_param_momentum[_k - 1])
-        _x_param.lb = _x_param.ub = _x_k
 
         _z = [None] * (_k + 1)
         _w = [None] * (_k + 1)
         _z0_k = np.asarray(worst_case_z0_momentum[_k - 1])
         _z[0] = _VP.add_iterate(ndim=n, init=_z0_k)
-        _z[0].lb = _z[0].ub = _z0_k
         _w[0] = _z[0]
 
         for _j in range(1, _k + 1):
             _beta_j = (_j - 1) / (_j + 2)
             _w[_j] = _VP.step.relu(_z[_j - 1] - eta * A.T @ (A @ _z[_j - 1] - _x_param))
             _z[_j] = _w[_j] + _beta_j * (_w[_j] - _w[_j - 1])
+            _VP.set_objective_norm(_z[_j] - _z[_j - 1], ord=np.inf)
 
-        worst_case_residuals_momentum.append(_VP.solve()[0][-1])
+        _VP.solve()
+        # Each replay contains one sampled instance.
+        _final_residual = float(_VP['final_residuals'][0])
+        worst_case_residuals_momentum.append(_final_residual)
 
     worst_case_residuals_momentum = np.array(worst_case_residuals_momentum)
     return (worst_case_residuals_momentum,)
