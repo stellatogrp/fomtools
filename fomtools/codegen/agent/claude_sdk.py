@@ -127,10 +127,26 @@ class ClaudeAgentDriver(SdkAgentDriver):
         ImportError
             If ``claude_agent_sdk`` is not installed, so the caller can fall
             back to the CLI.
+        NotImplementedError
+            If called from a thread with a running event loop, where the
+            in-process path cannot work, so the caller can fall back to the CLI.
         """
         import asyncio
 
         from claude_agent_sdk import ClaudeAgentOptions, query  # may raise ImportError
+
+        # ``asyncio.run`` refuses to nest inside an existing loop, which is the
+        # normal state for callers that already drive one (marimo, Jupyter). Treat
+        # that as "SDK unavailable here" so the CLI fallback runs, rather than
+        # letting the RuntimeError be masked as a failed agent attempt.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise NotImplementedError(
+                "claude_agent_sdk cannot run in-process inside a running event loop"
+            )
 
         async def _run() -> str:
             chunks: list[str] = []
