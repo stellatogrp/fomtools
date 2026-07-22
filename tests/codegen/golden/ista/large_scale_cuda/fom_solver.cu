@@ -1,0 +1,142 @@
+/*
+ * Golden large-scale CUDA solver for ISTA-style first-order methods.
+ *
+ * The deterministic device helpers own every matrix-vector product
+ * (fom_ops.cu, device pointers, accumulating); this file only orchestrates:
+ * device-resident state across the whole iteration loop (pointer swap, no
+ * copies), a soft-threshold kernel, and a max-|diff| residual reduction. The
+ * only per-iteration device->host traffic is the residual partials.
+ */
+#include <cuda_runtime.h>
+
+#include "fom_solver.h"
+#include "fom_data.h"
+#include "fom_ops.h"
+
+#define THREADS 256
+#define RED_BLOCKS 64
+
+static fom_float *d_state = 0, *d_new_state = 0, *d_acc = 0, *d_t0 = 0;
+static fom_float *d_p0 = 0, *d_red = 0;
+static fom_float h_red[RED_BLOCKS];
+
+__global__ void soft_threshold_kern(const fom_float *acc, fom_float *t0,
+                                    fom_float lam, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    fom_float v = acc[i];
+    if (v > lam) t0[i] = v - lam;
+    else if (v < -lam) t0[i] = v + lam;
+    else t0[i] = 0.0;
+}
+
+/* per-block partial max of |a - b| */
+__global__ void maxdiff_kern(const fom_float *a, const fom_float *b, int n,
+                             fom_float *partials) {
+    __shared__ fom_float sh[THREADS];
+    fom_float m = 0.0;
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n;
+         i += gridDim.x * blockDim.x) {
+        fom_float d = a[i] - b[i];
+        if (d < 0.0) d = -d;
+        if (d > m) m = d;
+    }
+    sh[threadIdx.x] = m;
+    __syncthreads();
+    for (int w = blockDim.x >> 1; w > 0; w >>= 1) {
+        if (threadIdx.x < w && sh[threadIdx.x + w] > sh[threadIdx.x])
+            sh[threadIdx.x] = sh[threadIdx.x + w];
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) partials[blockIdx.x] = sh[0];
+}
+
+static fom_float device_max_diff(const fom_float *a, const fom_float *b, int n) {
+    fom_float m = 0.0;
+    int i;
+    maxdiff_kern<<<RED_BLOCKS, THREADS>>>(a, b, n, d_red);
+    cudaMemcpy(h_red, d_red, sizeof(fom_float) * RED_BLOCKS, cudaMemcpyDeviceToHost);
+    for (i = 0; i < RED_BLOCKS; ++i)
+        if (h_red[i] > m) m = h_red[i];
+    return m;
+}
+
+static void reset_state(FomWorkspace *work) {
+    int i;
+    for (i = 0; i < FOM_STATE_DIM; ++i) work->state[i] = FOM_STATE_INIT[i];
+}
+
+extern "C" void fom_set_default_settings(FomSettings *settings) {
+    settings->max_iter = FOM_MAX_ITER;
+    settings->tol = FOM_TOL;
+}
+
+extern "C" void fom_setup(FomWorkspace *work, const FomSettings *settings) {
+    work->settings = *settings;
+    cudaMalloc((void **)&d_state, sizeof(fom_float) * FOM_STATE_DIM);
+    cudaMalloc((void **)&d_new_state, sizeof(fom_float) * FOM_STATE_DIM);
+    cudaMalloc((void **)&d_acc, sizeof(fom_float) * FOM_MAX_VEC_DIM);
+    cudaMalloc((void **)&d_t0, sizeof(fom_float) * FOM_T0_DIM);
+    cudaMalloc((void **)&d_p0, sizeof(fom_float) * FOM_PARAM_P0_DIM);
+    cudaMalloc((void **)&d_red, sizeof(fom_float) * RED_BLOCKS);
+    reset_state(work);
+    work->solution.iter = 0;
+    work->solution.residual = 0.0;
+    work->solution.status = FOM_MAX_ITER_REACHED;
+}
+
+extern "C" void fom_update_params(FomWorkspace *work, const FomParams *params) {
+    work->params = *params;
+    reset_state(work);
+}
+
+extern "C" fom_int fom_solve(FomWorkspace *work) {
+    const int n = FOM_STATE_DIM;
+    const int blocks_t0 = (FOM_T0_DIM + THREADS - 1) / THREADS;
+    int it, i, solved = 0;
+    fom_float lam = FOM_T0_LAMBDA;
+    fom_float *tmp;
+
+    /* upload the start state and parameters once; the loop is device-resident */
+    cudaMemcpy(d_state, work->state, sizeof(fom_float) * n, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_p0, work->params.p0, sizeof(fom_float) * FOM_PARAM_P0_DIM,
+               cudaMemcpyHostToDevice);
+
+    for (it = 0; it < work->settings.max_iter; ++it) {
+        /* t0 = soft_threshold(t0_state @ state + t0_p_p0 @ p0) */
+        cudaMemset(d_acc, 0, sizeof(fom_float) * FOM_T0_DIM);
+        fom_apply_t0_state(d_state, d_acc);
+        fom_apply_t0_p_p0(d_p0, d_acc);
+        soft_threshold_kern<<<blocks_t0, THREADS>>>(d_acc, d_t0, lam, FOM_T0_DIM);
+
+        /* new_state = su_t_t0 @ t0 */
+        cudaMemset(d_new_state, 0, sizeof(fom_float) * n);
+        fom_apply_su_t_t0(d_t0, d_new_state);
+
+        fom_float res = device_max_diff(d_new_state, d_state, n);
+
+        /* state <- new_state by pointer swap (no copy) */
+        tmp = d_state;
+        d_state = d_new_state;
+        d_new_state = tmp;
+
+        work->solution.iter = it + 1;
+        work->solution.residual = res;
+        if (FOM_USE_TOL && res <= work->settings.tol) {
+            solved = 1;
+            break;
+        }
+    }
+
+    cudaMemcpy(work->state, d_state, sizeof(fom_float) * n, cudaMemcpyDeviceToHost);
+    for (i = 0; i < n; ++i) work->solution.x[i] = work->state[i];
+    work->solution.status = solved ? FOM_SOLVED : FOM_MAX_ITER_REACHED;
+    return work->solution.status;
+}
+
+extern "C" void fom_cleanup(FomWorkspace *work) {
+    (void)work;
+    cudaFree(d_state); cudaFree(d_new_state); cudaFree(d_acc);
+    cudaFree(d_t0); cudaFree(d_p0); cudaFree(d_red);
+    d_state = d_new_state = d_acc = d_t0 = d_p0 = d_red = 0;
+}

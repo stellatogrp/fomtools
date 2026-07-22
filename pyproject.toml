@@ -23,11 +23,28 @@ dependencies = [
        "scipy",
 ]
 
+[project.scripts]
+fomtools-codegen = "fomtools.codegen.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 
+[tool.setuptools.package-data]
+"fomtools.codegen.agent" = ["agents.yaml"]
+
 [project.optional-dependencies]
 gpu = ["cupy-cuda12x"]
+
+# Code generation. The Claude Agent SDK is only needed to *run* the LLM coding
+# agent; extracting the IR, scaffolding, building, and the ctypes wrapper need
+# none of this (the wrapper uses the stdlib ``ctypes``). The Pi backend is a CLI
+# (https://pi.dev), installed separately, so it needs no Python dependency here.
+codegen = ["claude-agent-sdk", "openai-codex", "pydantic", "pyyaml"]
+
+# CVXPYgen integration (fomtools.cvxpygen): model in CVXPY, canonicalize with
+# CVXPYgen's generated C code, solve with a fomtools-generated embedded FOM.
+# Pinned to the cvxpygen 1.x internal API (solver-interface seam).
+cvxpygen = ["cvxpy", "cvxpygen>=1.0,<2", "osqp"]
 
 dev = [
        "cvxpy",
@@ -38,6 +55,7 @@ dev = [
        "ipdb",
        "hydra-core",
        "pandas",
+       "pydantic",
        "networkx",
        "pepit",
 ]
@@ -52,6 +70,7 @@ docs = [
        "mkdocstrings-python",
        "mkdocs-marimo",
        "mkdocs-material",
+       "pydantic",
        "pymdown-extensions",
        "networkx",
        "pepit",
@@ -63,6 +82,12 @@ ignore_missing_imports = true
 exclude = ["test"]
 
 [tool.setuptools_scm]
+
+[tool.pytest.ini_options]
+markers = [
+    "agent: requires the real Claude coding agent (FOMTOOLS_CODEGEN_AGENT=1); skipped in CI",
+    "requires_compiler: requires a C compiler to build generated solvers",
+]
 
 [tool.ruff]
 target-version = "py312"
