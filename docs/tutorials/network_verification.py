@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.14"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
@@ -696,50 +696,6 @@ def _(
     plt.gca().add_artist(_leg)
     plt.legend(handles=_style_handles, loc='lower left')
     plt.suptitle('network optimization: PDHG vs. momentum PDHG')
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Computational considerations (raise as issue?)
-
-    The update of the free dual variable $w$ is affine. It can therefore be
-    represented either as a symbolic expression or as a fresh affine-step
-    variable. We use the latter representation throughout this notebook (see
-    `pdhg_step` above):
-
-    ```python
-    # Mathematically equivalent, but slower for the lifted VP formulations:
-    # _w[_k] = _w[_k-1] + eta * (
-    #     _x_param - A_d @ (2*_z[_k] - _z[_k-1])
-    # )
-
-    _w[_k] = _VP.register(_w[_k-1] + eta * (
-        _x_param - A_d @ (2*_z[_k] - _z[_k-1])
-    )
-    )
-
-    _w[_k] = _VP.step.implicit_linear(
-        _w[_k-1] + eta * (
-            _x_param - A_d @ (2*_z[_k] - _z[_k-1])
-        ),
-        output_mat=np.eye(n_d),
-    )
-    ```
-
-    Both versions generate the same exact PDHG trajectory. The
-    `implicit_linear` version introduces a fresh variable together with its
-    affine equality, preventing later activation steps from expanding $w^k$
-    into the complete history $(z^0,\ldots,z^k)$. This keeps the SDP cone
-    structure more local and substantially reduces verification time at larger
-    horizons. Because the lifted relaxation is formulated differently, its
-    bound can change slightly even though the underlying algorithm does not.
-
-    An intermediate `_rhs` variable may be used for readability before calling
-    `implicit_linear`; it is only a Python name and has no numerical or
-    modeling effect.
-    """)
     return
 
 

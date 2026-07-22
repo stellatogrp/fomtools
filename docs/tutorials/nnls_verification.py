@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.14"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
@@ -9,6 +9,21 @@ def _():
     import marimo as mo
     import matplotlib.pyplot as plt
     import numpy as np
+    import sys
+    from pathlib import Path
+
+    start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
+    for candidate in (start, *start.parents):
+        if (candidate / "fomtools").is_dir():
+            repo_root = candidate
+            break
+    else:
+        repo_root = start
+
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    from docs.tutorials.helper_functions.nnls import make_nnls_matrix, pgd_step
     from scipy.optimize import nnls
 
     np.set_printoptions(precision=5)  # Print few decimal places
@@ -18,7 +33,7 @@ def _():
         'OutputFlag': 0,
         'LogToConsole': 0,
     }
-    return mo, nnls, np, plt, solver_params
+    return make_nnls_matrix, mo, nnls, np, pgd_step, plt, solver_params
 
 
 @app.cell(hide_code=True)
@@ -42,10 +57,9 @@ def _(mo):
 
 
 @app.cell
-def _(np):
-    np.random.seed(0)
+def _(make_nnls_matrix):
     m, n = 5, 3
-    A = np.random.normal(size=(m, n))
+    A = make_nnls_matrix(m=m, n=n)
     return A, m, n
 
 
@@ -100,6 +114,25 @@ def _(mo):
     \end{array}
 
     with $w^0 = z^0$ and $\beta_k = (k-1)/(k+2)$.
+
+    The shared implementation used throughout this tutorial is:
+
+    ```python
+    def pgd_step(VP, A, eta, z_prev, w_prev, x_param, k, momentum=False):
+        w_next = VP.step.relu(
+            z_prev - eta * A.T @ (A @ z_prev - x_param)
+        )
+        if momentum:
+            beta_k = (k - 1) / (k + 2)
+            z_next = w_next + beta_k * (w_next - w_prev)
+        else:
+            z_next = w_next
+        residual = z_next - z_prev
+        return z_next, w_next, residual
+    ```
+
+    Thus, `momentum=False` gives ordinary projected gradient descent, while
+    `momentum=True` applies the FISTA extrapolation before the next iteration.
     """)
     return
 
@@ -108,27 +141,8 @@ def _(mo):
 def _(A, np):
     L = np.max(np.linalg.eigvalsh(A.T @ A))  # symmetric routine → real eigenvalues
     eta = 0.5 / L
-    K = 10
+    K = 15
     return K, L, eta
-
-
-@app.cell
-def _(A, eta):
-    def pgd_step(VP, z_prev, w_prev, x_param, k, momentum):
-        """One projected-gradient step (FISTA when ``momentum=True``).
-
-        Applies the ReLU projected-gradient update to ``z_prev`` and, when
-        ``momentum`` is set, extrapolates with $\\beta_k = (k-1)/(k+2)$ using
-        the previous projected iterate ``w_prev``. Returns the next iterate,
-        the next projected iterate, and the fixed-point residual
-        ``z_next - z_prev`` shared by every verification mode below.
-        """
-        beta_k = (k - 1) / (k + 2) if momentum else 0.0
-        w_next = VP.step.relu(z_prev - eta * A.T @ (A @ z_prev - x_param))
-        z_next = w_next + beta_k * (w_next - w_prev)
-        return z_next, w_next, z_next - z_prev
-
-    return (pgd_step,)
 
 
 @app.cell(hide_code=True)
@@ -203,7 +217,9 @@ def _(A, eta, m, n, np, pgd_step):
 
         z, w = z0, z0
         for k in range(1, K + 1):
-            z, w, residual = pgd_step(VP, z, w, x_param, k=k, momentum=momentum)
+            z, w, residual = pgd_step(
+                VP, A, eta, z, w, x_param, k=k, momentum=momentum,
+            )
             VP.set_objective_norm(residual, ord)
 
         residuals = VP.solve()
@@ -307,7 +323,9 @@ def _(A, Verifier, eta, m, n, np, pgd_step, x_lb, x_ub, z0_lb, z0_ub):
         z, w = z0, z0
         residuals = []
         for k in range(1, K + 1):
-            z, w, residual = pgd_step(VP, z, w, x_param, k=k, momentum=momentum)
+            z, w, residual = pgd_step(
+                VP, A, eta, z, w, x_param, k=k, momentum=momentum,
+            )
             VP.set_objective_norm(residual, ord)
             residuals.append(VP.solve())
         return VP, residuals
@@ -467,21 +485,13 @@ def _(mo):
     return
 
 
-@app.cell
-def _(
-    K,
-    all_residuals_PEP_momentum,
-    all_residuals_momentum,
-    all_residuals_sdp_momentum,
-    plt,
-    simulation_residual_quantiles_momentum,
-    simulation_residuals_momentum,
-):
+app._unparsable_cell(
+    r"""
     plt.figure()
     _ks = range(1, K+1)
     plt.plot(_ks, all_residuals_PEP_momentum, label='PEPit')
     plt.plot(_ks, all_residuals_momentum, label='MIP-VP')
-    plt.plot(_ks, all_residuals_sdp_momentum, label='SDP-VP')
+    plt.plot(_ks, all_residuals_sdp_momentum, label='SDP-VP')K
     _avg_line, = plt.plot(_ks, simulation_residuals_momentum, '--', label='sample average')
     plt.fill_between(_ks, simulation_residual_quantiles_momentum[2], simulation_residual_quantiles_momentum[0], alpha=.18, label='simulation 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_momentum[3], ':', color=_avg_line.get_color(), label='sample worst-case')
@@ -490,7 +500,9 @@ def _(
     plt.xlabel(r'$K$')
     plt.suptitle('nonnegative least-squares momentum PGD example')
     plt.legend()
-    return
+    """,
+    name="_"
+)
 
 
 @app.cell(hide_code=True)

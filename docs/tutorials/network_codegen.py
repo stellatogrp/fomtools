@@ -15,6 +15,7 @@ def _():
     import textwrap
     import time
     from pathlib import Path
+    from scipy.optimize import linprog
 
     start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
     for candidate in (start, *start.parents):
@@ -49,6 +50,7 @@ def _():
         agent_available,
         examples_dir,
         find_compiler,
+        linprog,
         make_agent_driver,
         mo,
         np,
@@ -62,12 +64,12 @@ def _():
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-# Portfolio: Python vs Codegen
+# Network Flow: Python vs Codegen
 
-In this tutorial we benchmark a small mean-variance portfolio problem.
-The portfolio weights must satisfy lower bounds, upper bounds, and a budget equality.
+In this tutorial we benchmark a small capacitated network-flow problem.
+There are supply nodes, demand nodes, edge capacities, and linear edge costs.
 
-The solver uses the alternating direction method of multipliers: each iteration clips an auxiliary variable to the constraint box, solves a small linear system, and updates the auxiliary variable.
+The solver uses a primal-dual projected update: each iteration clips the flow to the capacity box, projects one dual variable to be nonnegative, and updates the demand-side dual variable.
 We compare a direct NumPy implementation with the verified generated C solver.
 """)
     )
@@ -77,38 +79,96 @@ We compare a direct NumPy implementation with the verified generated C solver.
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-We generate a positive definite covariance matrix and a vector of expected returns.
-Both implementations start from the same fixed vectors and run the same update rule for the same number of iterations.
+We generate a complete bipartite graph from supply nodes to demand nodes.
+The starting flow is computed once by solving the linear program at the lower-demand endpoint.
+Both implementations then run the same fixed iteration map.
 """)
     )
     return
 
 
 @app.cell
-def _(examples_dir, np):
-    rng = np.random.RandomState(0)
-    n = 4
-    F = rng.normal(size=(n, n))
-    covariance = (F @ F.T) / n + 0.1 * np.eye(n)
-    expected_return = rng.uniform(0.05, 0.15, size=n)
+def _(examples_dir, linprog, np):
+    rng = np.random.RandomState(2)
+    n_supply, n_demand = 3, 2
+    edges = [(i, j) for i in range(n_supply) for j in range(n_demand)]
+    n_edges = len(edges)
 
-    upper_weight = 0.6 * np.ones(n)
-    A = np.vstack([np.eye(n), np.ones((1, n))])
-    lower = np.hstack([np.zeros(n), [1.0]])
-    upper = np.hstack([upper_weight, [1.0]])
+    A_supply = np.zeros((n_supply, n_edges))
+    A_demand = np.zeros((n_demand, n_edges))
+    for edge_index, (i, j) in enumerate(edges):
+        A_supply[i, edge_index] = 1.0
+        A_demand[j, edge_index] = -1.0
 
-    sigma = 1e-4
-    rho = 1.0
-    lhs = covariance + sigma * np.eye(n) + rho * A.T @ A
-    x0 = np.zeros(n)
-    v0 = 0.5 * np.ones(n + 1)
+    supply_capacity = 10.0 * np.ones(n_supply)
+    edge_capacity = 5.0 * np.ones(n_edges)
+    edge_cost = rng.uniform(5.0, 10.0, size=n_edges)
+    x_lb = -7.0 * np.ones(n_demand)
+    x_ub = -6.0 * np.ones(n_demand)
+    x_mid = 0.5 * (x_lb + x_ub)
+
+    initial_flow = linprog(
+        c=edge_cost,
+        A_ub=A_supply,
+        b_ub=supply_capacity,
+        A_eq=A_demand,
+        b_eq=x_lb,
+        bounds=[(0.0, float(capacity)) for capacity in edge_capacity],
+        method="highs",
+    )
+    if not initial_flow.success:
+        raise RuntimeError(initial_flow.message)
+
+    z0 = initial_flow.x
+    v0 = np.zeros(n_supply)
+    w0 = np.zeros(n_demand)
+    L = float(np.linalg.norm(np.hstack([A_supply.T, A_demand.T]), 2))
+    eta = 0.5 / L
     K = 200
-    out_dir = examples_dir / "_codegen_speedups" / "portfolio_codegen_speedup"
-    return A, K, expected_return, lhs, lower, n, out_dir, rho, sigma, upper, v0, x0
+    out_dir = examples_dir / "_codegen_speedups" / "network_codegen_speedup"
+    return (
+        A_demand,
+        A_supply,
+        K,
+        edge_capacity,
+        edge_cost,
+        eta,
+        n_demand,
+        n_edges,
+        n_supply,
+        out_dir,
+        supply_capacity,
+        v0,
+        w0,
+        x_lb,
+        x_mid,
+        x_ub,
+        z0,
+    )
 
 
 @app.cell
-def _(A, CodegenConfig, K, TerminationSpec, Verifier, expected_return, lhs, lower, n, rho, sigma, upper, v0, x0):
+def _(
+    A_demand,
+    A_supply,
+    CodegenConfig,
+    K,
+    TerminationSpec,
+    Verifier,
+    edge_capacity,
+    edge_cost,
+    eta,
+    n_demand,
+    n_edges,
+    n_supply,
+    np,
+    supply_capacity,
+    v0,
+    w0,
+    x_lb,
+    x_ub,
+    z0,
+):
     verifier = Verifier(
         method="mip",
         solver="highs",
@@ -116,41 +176,66 @@ def _(A, CodegenConfig, K, TerminationSpec, Verifier, expected_return, lhs, lowe
         params={"output_flag": False},
     )
 
-    x = verifier.add_iterate(n, lb=x0, ub=x0)
-    v = verifier.add_iterate(n + 1, lb=v0, ub=v0)
-    w = verifier.step.satlin(v, l=lower, u=upper)
-    rhs = sigma * x + expected_return + rho * A.T @ (2 * w - v)
-    x_next = verifier.step.implicit_linear(rhs, output_mat=lhs)
-    v_next = v + A @ x_next - w
+    x_param = verifier.add_param(n_demand, lb=x_lb, ub=x_ub)
+    z = verifier.add_iterate(n_edges, lb=z0, ub=z0)
+    v = verifier.add_iterate(n_supply, lb=v0, ub=v0)
+    w = verifier.add_iterate(n_demand, lb=w0, ub=w0)
+    z_next = verifier.step.satlin(
+        z - eta * (edge_cost + A_supply.T @ v - A_demand.T @ w),
+        l=np.zeros(n_edges),
+        u=edge_capacity,
+    )
+    v_next = verifier.step.relu(v + eta * (-supply_capacity + A_supply @ (2 * z_next - z)))
+    w_next = w + eta * (x_param - A_demand @ (2 * z_next - z))
 
     config = CodegenConfig(
         termination=TerminationSpec(max_iters=K),
         num_verify_samples=4,
     )
-    next_state = [x_next, v_next]
-    s_state = [x, v]
-    return config, next_state, s_state, verifier
+    next_state = [z_next, v_next, w_next]
+    s_state = [z, v, w]
+    params = [x_param]
+    return config, next_state, params, s_state, verifier
 
 
 @app.cell
-def _(A, K, expected_return, lhs, lower, np, rho, sigma, statistics, time, upper, v0, x0):
-    def portfolio_solve():
-        x_py = x0.copy()
+def _(
+    A_demand,
+    A_supply,
+    K,
+    edge_capacity,
+    edge_cost,
+    eta,
+    np,
+    statistics,
+    supply_capacity,
+    time,
+    v0,
+    w0,
+    x_mid,
+    z0,
+):
+    def network_solve():
+        z_py = z0.copy()
         v_py = v0.copy()
+        w_py = w0.copy()
         for _ in range(K):
-            w_py = np.minimum(np.maximum(v_py, lower), upper)
-            rhs_py = sigma * x_py + expected_return + rho * A.T @ (2 * w_py - v_py)
-            x_py = np.linalg.solve(lhs, rhs_py)
-            v_py = v_py + A @ x_py - w_py
-        return np.concatenate([x_py, v_py])
+            z_next_py = np.minimum(
+                np.maximum(z_py - eta * (edge_cost + A_supply.T @ v_py - A_demand.T @ w_py), 0.0),
+                edge_capacity,
+            )
+            v_next_py = np.maximum(v_py + eta * (-supply_capacity + A_supply @ (2 * z_next_py - z_py)), 0.0)
+            w_next_py = w_py + eta * (x_mid - A_demand @ (2 * z_next_py - z_py))
+            z_py, v_py, w_py = z_next_py, v_next_py, w_next_py
+        return np.concatenate([z_py, v_py, w_py])
 
     for _ in range(3):
-        portfolio_solve()
+        network_solve()
 
     python_times = []
     for _ in range(40):
         t0 = time.perf_counter()
-        portfolio_solve()
+        network_solve()
         python_times.append((time.perf_counter() - t0) * 1.0e6)
 
     python_us = statistics.median(python_times)
@@ -165,6 +250,7 @@ def _(
     make_agent_driver,
     next_state,
     out_dir,
+    params,
     python_us,
     recorded_timings,
     s_state,
@@ -174,7 +260,7 @@ def _(
         # Show the recorded row as published. The live python_us measured just
         # above is deliberately NOT reused here: pairing this machine's Python
         # time with another machine's C time would invent a cross-machine ratio.
-        _rec = recorded_timings["examples"]["portfolio"]
+        _rec = recorded_timings["examples"]["network"]
         table_python_us = _rec["python_us"]
         codegen_us = _rec["c_initial_us"]
         iteration_us = _rec["c_final_us"]
@@ -198,7 +284,8 @@ def _(
             config=config,
             driver=make_agent_driver(config=config),
             state=s_state,
-            name="portfolio_codegen_speedup",
+            params=params,
+            name="network_codegen_speedup",
             run_phase_b=True,
             profile=True,
         )
@@ -273,9 +360,9 @@ One complete solve runs `{K}` iterations.
 
 | implementation | median / mean per solve |
 |---|---:|
-| direct NumPy Python | `{table_python_us:.3f} us` |
-| generated C after code generation | `{codegen_us:.3f} us` |
-| generated C after optimization iteration | `{iteration_us:.3f} us` |
+| direct NumPy Python | `{table_python_us:.3f} µs` |
+| generated C after code generation | `{codegen_us:.3f} µs` |
+| generated C after optimization iteration | `{iteration_us:.3f} µs` |
 
 The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
 
