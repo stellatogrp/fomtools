@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 
 class PEPitRunner:
     """Run the PEPit bounds used by the comparison examples."""
@@ -154,6 +156,84 @@ class PEPitRunner:
             for k in range(1, K + 1)
         ]
         return residuals, R
+
+    def pdhg_momentum_residuals(
+        self,
+        *,
+        K: int,
+        L: float,
+        eta: float,
+        R: float | None = None,
+        calibrate_to: float | None = None,
+    ) -> tuple[list[float], float]:
+        """Return PEPit residual bounds for the momentum PDHG template."""
+        if calibrate_to is not None:
+            unit_k1 = self._pdhg_momentum_residual(k=1, L=L, eta=eta, R=1.0)
+            R = math.sqrt(calibrate_to / unit_k1)
+        elif R is None:
+            raise ValueError("Either R or calibrate_to must be provided.")
+
+        residuals = [
+            self._pdhg_momentum_residual(k=k, L=L, eta=eta, R=R)
+            for k in range(1, K + 1)
+        ]
+        return residuals, R
+
+    def pdhg_radius(
+        self,
+        *,
+        A_s: np.ndarray,
+        A_d: np.ndarray,
+        b_s: np.ndarray,
+        mu: np.ndarray,
+        c: np.ndarray,
+        eta: float,
+        z0_samples: np.ndarray,
+        v0_samples: np.ndarray,
+        w0_samples: np.ndarray,
+        x_samples: np.ndarray,
+        max_iter: int = 2000,
+        tol: float = 1e-10,
+    ) -> float:
+        """Estimate the PEPit initial-condition radius ``R`` for network PDHG.
+
+        Runs the exact (NumPy) PDHG recursion from each sampled initial point
+        to its own fixed point, then returns the largest distance between an
+        initial sample and its fixed point. This gives an empirical ``R`` for
+        calibrating :meth:`pdhg_residuals`, sized to the actual sampled
+        initial-iterate and demand distributions rather than a generic bound.
+        """
+        z_star = z0_samples.copy()
+        v_star = v0_samples.copy()
+        w_star = w0_samples.copy()
+        for _ in range(max_iter):
+            z_rhs = z_star - eta * (
+                mu[np.newaxis, :] + v_star @ A_s - w_star @ A_d
+            )
+            z_next = np.clip(z_rhs, 0.0, c)
+            v_rhs = v_star + eta * (
+                -b_s[np.newaxis, :] + (2 * z_next - z_star) @ A_s.T
+            )
+            v_next = np.maximum(v_rhs, 0.0)
+            w_next = w_star + eta * (
+                x_samples - (2 * z_next - z_star) @ A_d.T
+            )
+            step_norm = np.max(np.linalg.norm(
+                np.hstack([z_next - z_star, v_next - v_star, w_next - w_star]),
+                axis=1,
+            ))
+            z_star, v_star, w_star = z_next, v_next, w_next
+            if step_norm <= tol:
+                break
+
+        return np.max(np.linalg.norm(
+            np.hstack([
+                z0_samples - z_star,
+                v0_samples - v_star,
+                w0_samples - w_star,
+            ]),
+            axis=1,
+        ))
 
     def _proximal_gradient_residual(
         self, *, k: int, L: float, eta: float, R: float, nonsmooth: str
@@ -312,6 +392,42 @@ class PEPitRunner:
         problem.set_performance_metric(
             (z[k] - z[k - 1]) ** 2 + (v[k] - v[k - 1]) ** 2
         )
+        return problem.solve(solver=self.solver, verbose=self.verbose)
+
+    def _pdhg_momentum_residual(self, *, k: int, L: float, eta: float, R: float) -> float:
+        from PEPit import PEP, Point
+        from PEPit.functions import ConvexFunction
+        from PEPit.operators import LinearOperator
+        from PEPit.primitive_steps import proximal_step
+
+        problem = PEP()
+        f = problem.declare_function(ConvexFunction)
+        g = problem.declare_function(ConvexFunction)
+        linear = problem.declare_function(LinearOperator, L=L)
+
+        xs = Point()
+        us = Point()
+        f.add_point((xs, -linear.T.gradient(us), f(xs)))
+        g.add_point((us, linear.gradient(xs), g(us)))
+
+        x0 = problem.set_initial_point()
+        u0 = problem.set_initial_point()
+        problem.set_initial_condition((x0 - xs) ** 2 + (u0 - us) ** 2 <= R ** 2)
+
+        x = [x0]
+        u = [u0]
+        for j in range(1, k + 1):
+            x_next, _, _ = proximal_step(
+                x[-1] - eta * linear.T.gradient(u[-1]), f, eta)
+            beta = (j - 1) / (j + 2)
+            x_bar = x_next + beta * (x_next - x[-1])
+            u_next, _, _ = proximal_step(
+                u[-1] + eta * linear.gradient(2 * x_bar - x[-1]), g, eta)
+            x.append(x_next)
+            u.append(u_next)
+
+        problem.set_performance_metric(
+            (x[k] - x[k - 1]) ** 2 + (u[k] - u[k - 1]) ** 2)
         return problem.solve(solver=self.solver, verbose=self.verbose)
 
     def _pdhg_residual(self, *, k: int, L: float, eta: float, R: float) -> float:
