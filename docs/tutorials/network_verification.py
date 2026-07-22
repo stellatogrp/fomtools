@@ -6,10 +6,26 @@ app = marimo.App(width="medium")
 
 @app.cell(hide_code=True)
 def _():
-    import marimo as mo
+    import sys
+    from pathlib import Path
+
     import cvxpy as cp
+    import marimo as mo
     import matplotlib.pyplot as plt
     import numpy as np
+
+    start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
+    for candidate in (start, *start.parents):
+        if (candidate / "fomtools").is_dir():
+            repo_root = candidate
+            break
+    else:
+        repo_root = start
+
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    from docs.tutorials.helper_functions.network import make_network_data, pdhg_step
 
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
@@ -18,9 +34,7 @@ def _():
         'OutputFlag': 0,
         'LogToConsole': 0,
     }
-
-    np.random.seed(2)
-    return cp, mo, np, plt, solver_params
+    return cp, make_network_data, mo, np, pdhg_step, plt, solver_params
 
 
 @app.cell(hide_code=True)
@@ -51,36 +65,22 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(np):
+def _(make_network_data, np):
     # Generate bipartite graph with n_s supply nodes and n_d demand nodes,
     # whose edges are added with probability p = 0.5.
     n_s = 6
     n_d = 3
     p = 0.5
 
-    # Generate bipartite graph G and its incidence matrix A
-    import networkx as nx
-    G = nx.bipartite.random_graph(n_s, n_d, p, seed=1, directed=False)
-    A = nx.linalg.graphmatrix.incidence_matrix(G, oriented=False)
-    A = A.todense()
-    A[n_s:, :] *= -1
+    A_s, A_d, b_s, c, mu = make_network_data(
+        n_supply=n_s,
+        n_demand=n_d,
+        edge_probability=p,
+        graph_seed=1,
+        data_seed=2,
+    )
+    n_e = A_s.shape[1]
 
-    with open('incidence_matrix.npy', 'wb') as write_file:
-        np.save(write_file, A)
-    A = np.load('incidence_matrix.npy', allow_pickle=True)
-
-    A_s = A[:n_s, :]
-    A_d = A[n_s:, :]
-    n_e = A.shape[1]
-
-    # Supply and demand amounts
-    b_s = 10. * np.ones(n_s)
-    c   = 5. * np.ones(n_e)
-
-    # Cost
-    mu = np.random.uniform(5, 10, size=n_e)
-
-    s_lb, s_ub = 10., 10.  # supply
     d_lb, d_ub = -7., -6.  # demand
     c_lb, c_ub =  5.,  5.  # capacity
 
@@ -160,37 +160,11 @@ def _(mo):
 
 
 @app.cell
-def _(A_d, A_s, n_d, np):
-    from fomtools.proxable_functions import IndBox, IndNonNegative
-
+def _(A_d, A_s, np):
     # Step size choice
     L = np.linalg.norm(np.hstack([- A_s.T, A_d.T]), 2)
     eta = 0.5 / L
-
-    def pdhg_step(VP, z_prev, v_prev, w_prev, x_param, capacity, cost, supply, k, momentum):
-        flow_box = IndBox(l=0.0, u=capacity)
-        dual_nonnegative = IndNonNegative()
-
-        # define the momentum parameter beta_k
-        beta_k = (k - 1) / (k + 2) if momentum else 0.0
-
-        # PDHG updates
-        z_next = VP.prox(flow_box, z_prev - eta * (cost + A_s.T @ v_prev - A_d.T @ w_prev))
-        z_bar = z_next + beta_k * (z_next - z_prev)
-        v_next = VP.prox(dual_nonnegative, v_prev + eta * (-supply + A_s @ (2 * z_bar - z_prev)))
-        w_next = VP.step.implicit_linear(
-            w_prev + eta * (x_param - A_d @ (2 * z_bar - z_prev)),
-            output_mat=np.eye(n_d),
-        )
-
-        residual = [
-            (1 / eta) * (z_next - z_prev) - A_s.T @ (v_next - v_prev) + A_d.T @ (w_next - w_prev),
-            - (1 + 2 * beta_k) * A_s @ (z_next - z_prev) + (1 / eta) * (v_next - v_prev),
-            (1 + 2 * beta_k) * A_d @ (z_next - z_prev) + (1 / eta) * (w_next - w_prev),
-        ]
-        return z_next, v_next, w_next, residual
-
-    return L, eta, pdhg_step
+    return L, eta
 
 
 @app.cell(hide_code=True)
@@ -216,7 +190,7 @@ def _(mo):
 
 @app.cell
 def _():
-    K = 4
+    K = 4  # Maximum iteration number
     return (K,)
 
 
@@ -250,23 +224,23 @@ def _(mo):
 
 
 @app.cell
-def _(b_s, c, mu, n_d, n_e, n_s, np, pdhg_step):
+def _(A_d, A_s, b_s, c, eta, mu, n_d, n_e, n_s, np, pdhg_step):
     from fomtools.verifier import Verifier
 
     def pdhg_simulation(
         x_samples, z0_samples, v0_samples, w0_samples, K,
         momentum=False, ord=np.inf,
     ):
-        """Simulate PDHG on sampled instances and return ``(VP, residuals)``.
+        """Simulate PDHG on sampled instances.
 
         Builds a simulator-mode :class:`Verifier`, registers the demand
         parameter and the initial iterates ``(z0, v0, w0)`` as sampled
         parameters, rolls out the PDHG recurrence with ``pdhg_step``,
-        and solves. Each of the four ``*_samples`` arrays has shape
+        and simulates via ``VP.solve()``. Each of the four ``*_samples`` arrays has shape
         ``(n_samples, dim)`` (a single-row array replays one instance), and the
         returned ``residuals`` has shape ``(n_samples, K)``. Summary statistics
         (``mean``, ``min``, ``max``, ``final_residuals``, ...) are available on
-        the returned ``VP`` via ``VP[...]``.
+        the returned instance ``VP`` via ``VP[...]``.
         """
         VP = Verifier(method='simulator', obbt_solver=None)
         x_param = VP.add_param(ndim=n_d, samples=x_samples)
@@ -277,7 +251,8 @@ def _(b_s, c, mu, n_d, n_e, n_s, np, pdhg_step):
         z, v, w = z0, v0, w0
         for k in range(1, K + 1):
             z, v, w, residual = pdhg_step(
-                VP, z, v, w, x_param, c, mu, b_s, k=k, momentum=momentum,
+                VP, A_s, A_d, eta, z, v, w, x_param, c, mu, b_s,
+                k=k, momentum=momentum,
             )
             VP.set_objective_norm(residual, ord)
 
@@ -307,6 +282,7 @@ def _(K, np, pdhg_simulation, v0_samples, w0_samples, x_samples, z0_samples):
         f"mean: {_VP['mean']:.6e}\n"
         f"min: {_VP['min']:.6e}\n"
         f"max: {_VP['max']:.6e}\n"
+        f"median: {_VP['median']:.6e}\n"
     )
 
     simulation_residuals_pdhg = np.mean(_residuals, axis=0)
@@ -371,7 +347,7 @@ def _(
     plt.plot(_ks, simulation_residuals_pdhg, label='PDHG (in-sample avg)')
     plt.fill_between(
         _ks, simulation_residual_quantiles_pdhg[2], simulation_residual_quantiles_pdhg[0],
-        alpha=.18, label='PDHG 10%-90% band',
+        alpha=.18, label='PDHG sample 10%-90% band',
     )
     plt.plot(
         _ks, simulation_residual_quantiles_pdhg[3], ':', color='C0', linewidth=.7,
@@ -381,7 +357,7 @@ def _(
     plt.plot(_ks, simulation_residuals_pdhg_mom, label='momentum PDHG (in-sample avg)')
     plt.fill_between(
         _ks, simulation_residual_quantiles_pdhg_mom[2], simulation_residual_quantiles_pdhg_mom[0],
-        alpha=.18, label='momentum PDHG 10%-90% band',
+        alpha=.18, label='momentum PDHG sample 10%-90% band',
     )
     plt.plot(
         _ks, simulation_residual_quantiles_pdhg_mom[3], ':', color='C1', linewidth=.7,
@@ -410,10 +386,13 @@ def _(mo):
 @app.cell
 def _(
     Verifier,
+    A_d,
+    A_s,
     b_s,
     c,
     c_lb,
     c_ub,
+    eta,
     mu,
     n_d,
     n_e,
@@ -434,10 +413,10 @@ def _(
     ):
         """Solve the PDHG verification problem for one backend.
 
-        Mirrors :func:`pdhg_simulation`: builds a ``Verifier`` in ``method``
-        mode, registers the demand parameter and the ``(z0, v0, w0)`` iterate
-        boxes, rolls out ``pdhg_step`` over the horizon ``K``, and returns
-        ``(VP, residuals)`` with one worst-case residual per iteration.
+        Builds a ``Verifier`` in ``method`` mode, registers the demand parameter
+        and the ``(z0, v0, w0)`` iterate boxes, rolls out ``pdhg_step`` over the
+        horizon ``K``, and returns ``(VP, residuals)`` with one worst-case
+        residual per iteration.
 
         The MIP backend searches over the problem data (capacity, cost,
         supply) while the SDP backend fixes it to the nominal values; pass
@@ -468,7 +447,8 @@ def _(
         residuals = []
         for k in range(1, K + 1):
             z, v, w, residual = pdhg_step(
-                VP, z, v, w, x_param, capacity, cost, supply, k=k, momentum=momentum,
+                VP, A_s, A_d, eta, z, v, w, x_param, capacity, cost, supply,
+                k=k, momentum=momentum,
             )
             VP.set_objective_norm(residual, ord)
             val = VP.solve()
@@ -577,7 +557,7 @@ def _(
     plt.plot(_ks, all_residuals, label='MIP-VP')
     plt.plot(_ks, all_residuals_sdp, label='SDP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals_pdhg, '--', label='sample average')
-    plt.fill_between(_ks, simulation_residual_quantiles_pdhg[2], simulation_residual_quantiles_pdhg[0], alpha=.18, label='simulation 10%-90% band')
+    plt.fill_between(_ks, simulation_residual_quantiles_pdhg[2], simulation_residual_quantiles_pdhg[0], alpha=.18, label='sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_pdhg[3], ':', color=_avg_line.get_color(), label='sample worst-case')
     plt.yscale('log')
     plt.xlabel(r'$K$')
@@ -630,7 +610,7 @@ def _(
     plt.plot(_ks, all_residuals_momentum, label='MIP-VP')
     plt.plot(_ks, all_residuals_sdp_momentum, label='SDP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals_pdhg_mom, '--', label='sample average')
-    plt.fill_between(_ks, simulation_residual_quantiles_pdhg_mom[2], simulation_residual_quantiles_pdhg_mom[0], alpha=.18, label='simulation 10%-90% band')
+    plt.fill_between(_ks, simulation_residual_quantiles_pdhg_mom[2], simulation_residual_quantiles_pdhg_mom[0], alpha=.18, label='sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_pdhg_mom[3], ':', color=_avg_line.get_color(), label='sample worst-case')
     plt.yscale('log')
     plt.xlabel(r'$K$')

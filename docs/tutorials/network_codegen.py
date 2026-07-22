@@ -7,14 +7,15 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import json
-    import marimo as mo
-    import numpy as np
     import os
     import statistics
     import sys
     import textwrap
     import time
     from pathlib import Path
+
+    import marimo as mo
+    import numpy as np
     from scipy.optimize import linprog
 
     start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
@@ -30,6 +31,11 @@ def _():
 
     examples_dir = repo_root / "examples"
 
+    from docs.tutorials.helper_functions.network import (
+        make_network_data,
+        pdhg_step,
+        solve_pdhg_numpy,
+    )
     from fomtools.codegen import CodegenConfig, TerminationSpec
     from fomtools.codegen.agent import make_agent_driver
     from fomtools.codegen.harness import find_compiler
@@ -52,10 +58,13 @@ def _():
         find_compiler,
         linprog,
         make_agent_driver,
+        make_network_data,
         mo,
         np,
+        pdhg_step,
         recorded_timings,
         statistics,
+        solve_pdhg_numpy,
         textwrap,
         time,
     )
@@ -71,6 +80,7 @@ There are supply nodes, demand nodes, edge capacities, and linear edge costs.
 
 The solver uses a primal-dual projected update: each iteration clips the flow to the capacity box, projects one dual variable to be nonnegative, and updates the demand-side dual variable.
 We compare a direct NumPy implementation with the verified generated C solver.
+The problem construction, PDHG step, and NumPy reference solver are shared with the [network verification tutorial](network_verification.html).
 """)
     )
     return
@@ -88,21 +98,12 @@ Both implementations then run the same fixed iteration map.
 
 
 @app.cell
-def _(examples_dir, linprog, np):
-    rng = np.random.RandomState(2)
+def _(examples_dir, linprog, make_network_data, np):
     n_supply, n_demand = 3, 2
-    edges = [(i, j) for i in range(n_supply) for j in range(n_demand)]
-    n_edges = len(edges)
-
-    A_supply = np.zeros((n_supply, n_edges))
-    A_demand = np.zeros((n_demand, n_edges))
-    for edge_index, (i, j) in enumerate(edges):
-        A_supply[i, edge_index] = 1.0
-        A_demand[j, edge_index] = -1.0
-
-    supply_capacity = 10.0 * np.ones(n_supply)
-    edge_capacity = 5.0 * np.ones(n_edges)
-    edge_cost = rng.uniform(5.0, 10.0, size=n_edges)
+    A_supply, A_demand, supply_capacity, edge_capacity, edge_cost = make_network_data(
+        n_supply=n_supply, n_demand=n_demand, data_seed=2, complete=True
+    )
+    n_edges = A_supply.shape[1]
     x_lb = -7.0 * np.ones(n_demand)
     x_ub = -6.0 * np.ones(n_demand)
     x_mid = 0.5 * (x_lb + x_ub)
@@ -161,7 +162,7 @@ def _(
     n_demand,
     n_edges,
     n_supply,
-    np,
+    pdhg_step,
     supply_capacity,
     v0,
     w0,
@@ -180,13 +181,21 @@ def _(
     z = verifier.add_iterate(n_edges, lb=z0, ub=z0)
     v = verifier.add_iterate(n_supply, lb=v0, ub=v0)
     w = verifier.add_iterate(n_demand, lb=w0, ub=w0)
-    z_next = verifier.step.satlin(
-        z - eta * (edge_cost + A_supply.T @ v - A_demand.T @ w),
-        l=np.zeros(n_edges),
-        u=edge_capacity,
+    z_next, v_next, w_next, _ = pdhg_step(
+        verifier,
+        A_supply,
+        A_demand,
+        eta,
+        z,
+        v,
+        w,
+        x_param,
+        edge_capacity,
+        edge_cost,
+        supply_capacity,
+        k=1,
+        momentum=False,
     )
-    v_next = verifier.step.relu(v + eta * (-supply_capacity + A_supply @ (2 * z_next - z)))
-    w_next = w + eta * (x_param - A_demand @ (2 * z_next - z))
 
     config = CodegenConfig(
         termination=TerminationSpec(max_iters=K),
@@ -206,7 +215,7 @@ def _(
     edge_capacity,
     edge_cost,
     eta,
-    np,
+    solve_pdhg_numpy,
     statistics,
     supply_capacity,
     time,
@@ -216,18 +225,19 @@ def _(
     z0,
 ):
     def network_solve():
-        z_py = z0.copy()
-        v_py = v0.copy()
-        w_py = w0.copy()
-        for _ in range(K):
-            z_next_py = np.minimum(
-                np.maximum(z_py - eta * (edge_cost + A_supply.T @ v_py - A_demand.T @ w_py), 0.0),
-                edge_capacity,
-            )
-            v_next_py = np.maximum(v_py + eta * (-supply_capacity + A_supply @ (2 * z_next_py - z_py)), 0.0)
-            w_next_py = w_py + eta * (x_mid - A_demand @ (2 * z_next_py - z_py))
-            z_py, v_py, w_py = z_next_py, v_next_py, w_next_py
-        return np.concatenate([z_py, v_py, w_py])
+        return solve_pdhg_numpy(
+            A_supply,
+            A_demand,
+            eta,
+            edge_capacity,
+            edge_cost,
+            supply_capacity,
+            z0,
+            v0,
+            w0,
+            x_mid,
+            max_iters=K,
+        )
 
     for _ in range(3):
         network_solve()

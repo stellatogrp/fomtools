@@ -7,14 +7,15 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import json
-    import marimo as mo
-    import numpy as np
     import os
     import statistics
     import sys
     import textwrap
     import time
     from pathlib import Path
+
+    import marimo as mo
+    import numpy as np
 
     start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
     for candidate in (start, *start.parents):
@@ -29,6 +30,11 @@ def _():
 
     examples_dir = repo_root / "examples"
 
+    from docs.tutorials.helper_functions.portfolio import (
+        admm_step,
+        make_portfolio_data,
+        solve_admm_numpy,
+    )
     from fomtools.codegen import CodegenConfig, TerminationSpec
     from fomtools.codegen.agent import make_agent_driver
     from fomtools.codegen.harness import find_compiler
@@ -46,14 +52,17 @@ def _():
         CodegenConfig,
         TerminationSpec,
         Verifier,
+        admm_step,
         agent_available,
         examples_dir,
         find_compiler,
         make_agent_driver,
+        make_portfolio_data,
         mo,
         np,
         recorded_timings,
         statistics,
+        solve_admm_numpy,
         textwrap,
         time,
     )
@@ -69,6 +78,7 @@ The portfolio weights must satisfy lower bounds, upper bounds, and a budget equa
 
 The solver uses the alternating direction method of multipliers: each iteration clips an auxiliary variable to the constraint box, solves a small linear system, and updates the auxiliary variable.
 We compare a direct NumPy implementation with the verified generated C solver.
+The problem construction, ADMM step, and NumPy reference solver are shared with the [portfolio verification tutorial](portfolio_verification.html).
 """)
     )
     return
@@ -85,17 +95,11 @@ Both implementations start from the same fixed vectors and run the same update r
 
 
 @app.cell
-def _(examples_dir, np):
-    rng = np.random.RandomState(0)
+def _(examples_dir, make_portfolio_data, np):
     n = 4
-    F = rng.normal(size=(n, n))
-    covariance = (F @ F.T) / n + 0.1 * np.eye(n)
-    expected_return = rng.uniform(0.05, 0.15, size=n)
-
-    upper_weight = 0.6 * np.ones(n)
-    A = np.vstack([np.eye(n), np.ones((1, n))])
-    lower = np.hstack([np.zeros(n), [1.0]])
-    upper = np.hstack([upper_weight, [1.0]])
+    covariance, expected_return, A, lower, upper = make_portfolio_data(
+        n=n, seed=0, position_limit=0.6
+    )
 
     sigma = 1e-4
     rho = 1.0
@@ -108,7 +112,7 @@ def _(examples_dir, np):
 
 
 @app.cell
-def _(A, CodegenConfig, K, TerminationSpec, Verifier, expected_return, lhs, lower, n, rho, sigma, upper, v0, x0):
+def _(A, CodegenConfig, K, TerminationSpec, Verifier, admm_step, expected_return, lhs, lower, n, rho, sigma, upper, v0, x0):
     verifier = Verifier(
         method="mip",
         solver="highs",
@@ -118,10 +122,9 @@ def _(A, CodegenConfig, K, TerminationSpec, Verifier, expected_return, lhs, lowe
 
     x = verifier.add_iterate(n, lb=x0, ub=x0)
     v = verifier.add_iterate(n + 1, lb=v0, ub=v0)
-    w = verifier.step.satlin(v, l=lower, u=upper)
-    rhs = sigma * x + expected_return + rho * A.T @ (2 * w - v)
-    x_next = verifier.step.implicit_linear(rhs, output_mat=lhs)
-    v_next = v + A @ x_next - w
+    x_next, v_next, _ = admm_step(
+        verifier, A, lower, upper, expected_return, rho, sigma, x, v, lhs
+    )
 
     config = CodegenConfig(
         termination=TerminationSpec(max_iters=K),
@@ -133,16 +136,20 @@ def _(A, CodegenConfig, K, TerminationSpec, Verifier, expected_return, lhs, lowe
 
 
 @app.cell
-def _(A, K, expected_return, lhs, lower, np, rho, sigma, statistics, time, upper, v0, x0):
+def _(A, K, expected_return, lhs, lower, rho, sigma, solve_admm_numpy, statistics, time, upper, v0, x0):
     def portfolio_solve():
-        x_py = x0.copy()
-        v_py = v0.copy()
-        for _ in range(K):
-            w_py = np.minimum(np.maximum(v_py, lower), upper)
-            rhs_py = sigma * x_py + expected_return + rho * A.T @ (2 * w_py - v_py)
-            x_py = np.linalg.solve(lhs, rhs_py)
-            v_py = v_py + A @ x_py - w_py
-        return np.concatenate([x_py, v_py])
+        return solve_admm_numpy(
+            A,
+            lower,
+            upper,
+            expected_return,
+            rho,
+            sigma,
+            lhs,
+            x0,
+            v0,
+            max_iters=K,
+        )
 
     for _ in range(3):
         portfolio_solve()

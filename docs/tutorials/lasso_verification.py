@@ -1,16 +1,30 @@
 import marimo
 
-__generated_with = "0.23.14"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
 @app.cell(hide_code=True)
 def _():
+    import sys
+    from pathlib import Path
+
     import marimo as mo
     import matplotlib.pyplot as plt
     import numpy as np
 
-    from fomtools.proxable_functions import NormL1
+    start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
+    for candidate in (start, *start.parents):
+        if (candidate / "fomtools").is_dir():
+            repo_root = candidate
+            break
+    else:
+        repo_root = start
+
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    from docs.tutorials.helper_functions.lasso import ista_step, make_lasso_data
 
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
@@ -19,7 +33,7 @@ def _():
         'OutputFlag': 0,
         'LogToConsole': 0,
     }
-    return NormL1, mo, np, plt, solver_params
+    return ista_step, make_lasso_data, mo, np, plt, solver_params
 
 
 @app.cell(hide_code=True)
@@ -76,61 +90,16 @@ def _(mo):
 
 
 @app.cell
-def _(np):
-    np.random.seed(0)
+def _(make_lasso_data):
     # p, n, lambd = 15, 20, 1e-1
     p, n, lambd = 3, 4, 1e-1
-    D_value = np.random.normal(size=(p, n))
-    D_mask = np.random.binomial(n=1, p=0.2, size=(p, n))
-    D = np.multiply(D_value, D_mask)
-
-    # signal z_star
     # num_star = 100
     num_star = 20
-    z_star_value = np.random.normal(size=(n, num_star))
-    z_star_mask = np.random.binomial(n=1, p=0.1, size=(n, num_star))
-    z_star = np.multiply(z_star_value, z_star_mask)
-
-    # noise err
-    err = np.random.normal(scale=1e-2, size=(p, num_star))
-
-    # parameter x = D z_star + err
-    x = D @ z_star + err
-
-    # parameter set X = [x_lb, x_ub]
-    x_lb, x_ub = np.min(x, axis=1), np.max(x, axis=1)
-
-    L = np.real(np.max(np.linalg.eigvals(D.T @ D)))
-    eta = 1 / L
+    D, x_lb, x_ub, L, eta, lambd = make_lasso_data(
+        p=p, n=n, lambd=lambd, num_signals=num_star, seed=0
+    )
     s0_lb, s0_ub = -1.0, 1.0
     return D, L, eta, lambd, n, p, s0_lb, s0_ub, x_lb, x_ub
-
-
-@app.cell
-def _(D, NormL1, eta, lambd, np):
-    regularizer = NormL1(lambd=lambd)
-
-    def ista_step(VP, z_prev, y_prev, x_param, t_prev, k, momentum):
-        """One ISTA step (FISTA when ``momentum=True``).
-
-        Applies the soft-thresholding proximal-gradient update to ``z_prev``
-        (equal to ``VP.step.soft_threshold`` at threshold ``lambd*eta``). When
-        ``momentum`` is set, extrapolates using the FISTA sequence
-        $t_k = (1+\\sqrt{1+4t_{k-1}^2})/2$ from ``t_prev`` and the previous prox
-        output ``y_prev``. Returns the next iterate, the next prox output, the
-        next ``t``, and the residual (``y^k - y^{k-1}`` for FISTA,
-        ``s^k - s^{k-1}`` for ISTA) shared by every verification mode below.
-        """
-        y_next = VP.prox(regularizer, z_prev - eta * D.T @ (D @ z_prev - x_param), gamma=eta)
-        if momentum:
-            t_next = (1.0 + np.sqrt(1.0 + 4.0 * t_prev**2)) / 2.0
-            z_next = y_next + ((t_prev - 1.0) / t_next) * (y_next - y_prev)
-            residual = y_next - y_prev
-        else:
-            t_next, z_next, residual = t_prev, y_next, y_next - z_prev
-        return z_next, y_next, t_next, residual
-
-    return (ista_step,)
 
 
 @app.cell(hide_code=True)
@@ -156,7 +125,7 @@ def _(mo):
 
 @app.cell
 def _():
-    K = 7
+    K = 15  # Maximum iteration number
     return (K,)
 
 
@@ -192,19 +161,19 @@ def _(mo):
 
 
 @app.cell
-def _(ista_step, n, np, p):
+def _(D, eta, ista_step, lambd, n, np, p):
     from fomtools.verifier import Verifier
 
     def ista_simulation(x_samples, s0_samples, K, momentum=False, ord=np.inf):
-        """Simulate ISTA on sampled instances and return ``(VP, residuals)``.
+        """Simulate ISTA on sampled instances.
 
         Builds a simulator-mode :class:`Verifier`, registers the parameter
         ``x`` and initial iterate ``s0`` as sampled parameters, rolls out the
-        recurrence with ``ista_step``, and solves. Each ``*_samples`` array has
-        shape ``(n_samples, dim)`` (a single-row array replays one instance),
-        and the returned ``residuals`` has shape ``(n_samples, K)``. Summary
-        statistics (``mean``, ``min``, ``max``, ...) are available on the
-        returned ``VP`` via ``VP[...]``.
+        recurrence with ``ista_step``, and simulates via ``VP.solve()``. Each
+        ``*_samples`` array has shape ``(n_samples, dim)`` (a single-row array
+        replays one instance), and the returned ``residuals`` has shape
+        ``(n_samples, K)``. Summary statistics (``mean``, ``min``, ``max``, ...)
+        are available on the returned instance ``VP`` via ``VP[...]``.
         """
         VP = Verifier(method='simulator', obbt_solver=None)
         x_param = VP.add_param(ndim=p, samples=x_samples)
@@ -212,7 +181,9 @@ def _(ista_step, n, np, p):
 
         z, y, t = s0, s0, 1.0
         for k in range(1, K + 1):
-            z, y, t, residual = ista_step(VP, z, y, x_param, t, k=k, momentum=momentum)
+            z, y, t, residual = ista_step(
+                VP, D, eta, lambd, z, y, x_param, t, k=k, momentum=momentum
+            )
             VP.set_objective_norm(residual, ord)
 
         residuals = VP.solve()
@@ -228,12 +199,9 @@ def _(D, K, eta, ista_simulation, lambd, np, s0_samples, x_samples):
     print(
         f"Summary statistics:\n"
         f"mean: {_VP['mean']:.6e}\n"
-        f"std: {_VP['std']:.6e}\n"
         f"min: {_VP['min']:.6e}\n"
         f"max: {_VP['max']:.6e}\n"
         f"median: {_VP['median']:.6e}\n"
-        f"n_samples: {_VP['n_samples']}\n"
-        f"n_iteration: {_VP['n_iterations']}\n"
     )
 
     simulation_residuals_ista = np.mean(_residuals, axis=0)
@@ -292,16 +260,16 @@ def _(mo):
 
 
 @app.cell
-def _(D, Verifier, eta, ista_step, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
+def _(D, Verifier, eta, ista_step, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
     def ista_verification(K, method, momentum=False, ord=np.inf, **verifier_kwargs):
         """Solve the ISTA/FISTA verification problem for one backend.
 
-        Mirrors :func:`ista_simulation`: builds a ``Verifier`` in ``method``
-        mode, registers the parameter box ``[x_lb, x_ub]`` and the initial
-        iterate box ``[s0_lb, s0_ub]``, rolls out ``ista_step`` over the
-        horizon ``K``, and returns ``(VP, residuals)`` with one worst-case
-        residual per iteration. Extra ``verifier_kwargs`` (``solver``,
-        ``params``, ...) are forwarded to the ``Verifier`` constructor.
+        Builds a ``Verifier`` in ``method`` mode, registers the parameter box
+        ``[x_lb, x_ub]`` and the initial iterate box ``[s0_lb, s0_ub]``, rolls
+        out ``ista_step`` over the horizon ``K``, and returns ``(VP, residuals)``
+        with one worst-case residual per iteration. Extra ``verifier_kwargs``
+        (``solver``, ``params``, ...) are forwarded to the ``Verifier``
+        constructor.
         """
         VP = Verifier(method=method, **verifier_kwargs)
         x_param = VP.add_param(p, lb=x_lb, ub=x_ub)
@@ -310,7 +278,9 @@ def _(D, Verifier, eta, ista_step, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
         z, y, t = s0, s0, 1.0
         residuals = []
         for k in range(1, K + 1):
-            z, y, t, residual = ista_step(VP, z, y, x_param, t, k=k, momentum=momentum)
+            z, y, t, residual = ista_step(
+                VP, D, eta, lambd, z, y, x_param, t, k=k, momentum=momentum
+            )
             VP.set_objective_norm(residual, ord)
             residuals.append(VP.solve())
         return VP, residuals
@@ -353,8 +323,12 @@ def _(mo):
 
 @app.cell
 def _(K, ista_verification):
-    _, all_residuals_sdp = ista_verification(K, 'sdp', momentum=False, solver='clarabel')
-    _, all_residuals_sdp_fista = ista_verification(K, 'sdp', momentum=True, solver='clarabel')
+    _, all_residuals_sdp = ista_verification(
+        K, 'sdp', momentum=False, solver='clarabel'
+    )
+    _, all_residuals_sdp_fista = ista_verification(
+        K, 'sdp', momentum=True, solver='clarabel'
+    )
     return all_residuals_sdp, all_residuals_sdp_fista
 
 
@@ -411,13 +385,13 @@ def _(
     plt.plot(_ks, all_residuals, label='ISTA (MIP worst-case)')
     plt.plot(_ks, all_residuals_sdp, label='ISTA (SDP bound)')
     _avg_line, = plt.plot(_ks, simulation_residuals_ista, '--', label='ISTA (in-sample avg)')
-    plt.fill_between(_ks, simulation_residual_quantiles_ista[2], simulation_residual_quantiles_ista[0], alpha=.18, label='ISTA simulation 10%-90% band')
+    plt.fill_between(_ks, simulation_residual_quantiles_ista[2], simulation_residual_quantiles_ista[0], alpha=.18, label='ISTA sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_ista[3], ':', color=_avg_line.get_color(), label='ISTA sample worst-case')
     plt.suptitle('sparse coding example')
     plt.yscale('log')
     plt.xlabel(r'$K$')
     plt.ylabel('Worst-case fixed-point residual')
-    plt.ylim([1e-2, 1e2])
+    plt.ylim([1e-3, 1e2])
     plt.legend()
     return
 
@@ -446,7 +420,7 @@ def _(
     plt.plot(_ks, all_residuals_fista, label='FISTA (MIP worst-case)')
     plt.plot(_ks, all_residuals_sdp_fista, label='FISTA (SDP bound)')
     _avg_line, = plt.plot(_ks, simulation_residuals_fista, '--', label='FISTA (in-sample avg)')
-    plt.fill_between(_ks, simulation_residual_quantiles_fista[2], simulation_residual_quantiles_fista[0], alpha=.18, label='FISTA simulation 10%-90% band')
+    plt.fill_between(_ks, simulation_residual_quantiles_fista[2], simulation_residual_quantiles_fista[0], alpha=.18, label='FISTA sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_fista[3], ':', color=_avg_line.get_color(), label='FISTA sample worst-case')
     plt.suptitle('sparse coding FISTA example')
     plt.yscale('log')

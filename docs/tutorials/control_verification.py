@@ -6,12 +6,31 @@ app = marimo.App(width="medium")
 
 @app.cell(hide_code=True)
 def _():
+    import sys
+    from pathlib import Path
+
     import marimo as mo
     import matplotlib.pyplot as plt
     import numpy as np
     import scipy.sparse as spa
-    from scipy.sparse import csr_matrix
 
+    start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
+    for candidate in (start, *start.parents):
+        if (candidate / "fomtools").is_dir():
+            repo_root = candidate
+            break
+    else:
+        repo_root = start
+
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    from docs.tutorials.helper_functions.control import (
+        admm_step,
+        build_admm_lhs,
+        build_control_qp,
+        make_control_dynamics,
+    )
     from fomtools.proxable_functions import IndBox
 
     np.set_printoptions(precision=5)  # Print few decimal places
@@ -21,7 +40,18 @@ def _():
         'OutputFlag': 0,
         'LogToConsole': 0,
     }
-    return IndBox, csr_matrix, mo, np, plt, solver_params, spa
+    return (
+        IndBox,
+        admm_step,
+        build_admm_lhs,
+        build_control_qp,
+        make_control_dynamics,
+        mo,
+        np,
+        plt,
+        solver_params,
+        spa,
+    )
 
 
 @app.cell(hide_code=True)
@@ -46,36 +76,9 @@ def _(mo):
 
 
 @app.cell
-def _(np, spa):
-    # problem data: state dimension n_s = 12, input dimension n_u = 10
-    A_dym = np.array([
-                [1.,      0.,     0., 0., 0., 0., 0.1,     0.,     0.,  0.,     0.,     0.    ],
-                [0.,      1.,     0., 0., 0., 0., 0.,      0.1,    0.,  0.,     0.,     0.    ],
-                [0.,      0.,     1., 0., 0., 0., 0.,      0.,     0.1, 0.,     0.,     0.    ],
-                [0.0488,  0.,     0., 1., 0., 0., 0.0016,  0.,     0.,  0.0992, 0.,     0.    ],
-                [0.,     -0.0488, 0., 0., 1., 0., 0.,     -0.0016, 0.,  0.,     0.0992, 0.    ],
-                [0.,      0.,     0., 0., 0., 1., 0.,      0.,     0.,  0.,     0.,     0.0992],
-                [0.,      0.,     0., 0., 0., 0., 1.,      0.,     0.,  0.,     0.,     0.    ],
-                [0.,      0.,     0., 0., 0., 0., 0.,      1.,     0.,  0.,     0.,     0.    ],
-                [0.,      0.,     0., 0., 0., 0., 0.,      0.,     1.,  0.,     0.,     0.    ],
-                [0.9734,  0.,     0., 0., 0., 0., 0.0488,  0.,     0.,  0.9846, 0.,     0.    ],
-                [0.,     -0.9734, 0., 0., 0., 0., 0.,     -0.0488, 0.,  0.,     0.9846, 0.    ],
-                [0.,      0.,     0., 0., 0., 0., 0.,      0.,     0.,  0.,     0.,     0.9846]
-            ]) # A_dym.shape = (n_s, n_s)
-    B_dym = np.array([
-                [0.,      -0.0726,  0.,     0.0726],
-                [-0.0726,  0.,      0.0726, 0.    ],
-                [-0.0152,  0.0152, -0.0152, 0.0152],
-                [-0.,     -0.0006, -0.,     0.0006],
-                [0.0006,   0.,     -0.0006, 0.0000],
-                [0.0106,   0.0106,  0.0106, 0.0106],
-                [0,       -1.4512,  0.,     1.4512],
-                [-1.4512,  0.,      1.4512, 0.    ],
-                [-0.3049,  0.3049, -0.3049, 0.3049],
-                [-0.,     -0.0236,  0.,     0.0236],
-                [0.0236,   0.,     -0.0236, 0.    ],
-                [0.2107,   0.2107,  0.2107, 0.2107]
-            ]) # B_dym.shape = (n_s, n_u)
+def _(make_control_dynamics, np, spa):
+    # problem data: state dimension n_s = 12, input dimension n_u = 4
+    A_dym, B_dym = make_control_dynamics()
     (n_s, n_u) = B_dym.shape
 
     T = 3        # finite horizon t=1,2,...,T
@@ -116,9 +119,7 @@ def _():
     # ADMM parameters
     sigma = 1e-4
     rho = 1.  # 0.1, 1, 10
-    K = 5
-    fix_initial_x = True  # False lets x vary over [x_lb, x_ub].
-    return K, fix_initial_x, rho, sigma
+    return rho, sigma
 
 
 @app.cell(hide_code=True)
@@ -144,44 +145,18 @@ def _(mo):
 
 
 @app.cell
-def _(A_dym, B_dym, Q, R, T, n_s, n_u, np, spa):
-    # Define state s = (s_1, ..., s_T) in terms of z = (u_1, ..., u_{T-1}): s = SX@x_param + SZ@z
-    n_z = (T-1)*n_u # z dimension
-    n_xz = n_s + n_z # xz_stack dimension
-
-    SX = [] # linear part of x in state s
-    for i in range(T):
-        SX.append(spa.linalg.matrix_power(A_dym, i))
-    SX = spa.vstack(SX)
-
-    SZ = spa.csc_matrix(((T-1)*n_s, (T-1)*n_u)) # linear part of z in state s
-    for i in range(T-1):
-        AiB = spa.linalg.matrix_power(A_dym, i) @ B_dym
-        SZ += spa.kron(spa.eye(T-1, k=-i), AiB)
-    SZ = spa.vstack([spa.csc_matrix((n_s, n_z)), SZ])
-
-    P_block = spa.kron(spa.eye(T), Q)
-    R_block = spa.kron(spa.eye(T-1), R)
-
-    # Define P and q in objective: minimize (1/2)z.T@P@z + q.T@z
-    P = spa.bmat([
-            [SX.T @ P_block @ SX, SX.T @ P_block @ SZ],
-            [SZ.T @ P_block @ SX, SZ.T @ P_block @ SZ + R_block]
-        ])
-    q = np.zeros(n_xz)
-
-    # Define M
-    M = spa.eye(n_xz)
+def _(A_dym, B_dym, Q, R, T, build_control_qp, np):
+    M, P, q, n_xz = build_control_qp(A_dym, B_dym, Q, R, T)
     z0_lb, z0_ub = -np.ones(n_xz), np.ones(n_xz)
     v0_lb, v0_ub = np.zeros(n_xz), np.ones(n_xz)
     return M, P, n_xz, q, v0_lb, v0_ub, z0_lb, z0_ub
 
 
 @app.cell
-def _(M, csr_matrix, n_xz, np, rho, sigma):
+def _(M, build_admm_lhs, rho, sigma):
     def build_lhs(P):
         """OSQP linear-solve matrix ``P + sigma I + rho M^T M`` (sparse)."""
-        return csr_matrix(P + sigma*np.eye(n_xz) + rho*(M.T@M))
+        return build_admm_lhs(M, P, rho, sigma)
 
     return (build_lhs,)
 
@@ -217,24 +192,21 @@ def _(mo):
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # Verification Problem
+
+    We now describe how to use `fomtools` to verify the worst-case convergence rate of the OSQP-style ADMM method for constrained optimal control. We compare randomly sampled simulations, exact MIP verification, and a PEPit bound, up to $K$ iterations. The initial state parameter $x$ can either be fixed at $x_\text{init}$ or allowed to vary over its prescribed box.
+    """)
+    return
+
+
 @app.cell
-def _(M, q, rho, sigma):
-    def admm_step(VP, z_prev, v_prev, project, lhs_mat):
-        """One OSQP-style ADMM step, shared by every verification mode below.
-
-        ``project(VP, v_prev)`` returns the box projection $w^{k+1}$ (mode
-        dependent, see the note above). ``lhs_mat`` is the OSQP linear-solve
-        matrix (dense for the simulator, sparse for the MIP). Returns the next
-        primal iterate, the next dual iterate, and the combined fixed-point
-        residual ``[z_next - z_prev, v_next - v_prev]``.
-        """
-        w_next = project(VP, v_prev)
-        rhs = sigma * z_prev - q + rho * M.T @ (2 * w_next - v_prev)
-        z_next = VP.step.implicit_linear(rhs, output_mat=lhs_mat)
-        v_next = v_prev + (M @ z_next - w_next)
-        return z_next, v_next, [z_next - z_prev, v_next - v_prev]
-
-    return (admm_step,)
+def _():
+    K = 5  # Maximum iteration number
+    fix_initial_x = True  # False lets x vary over [x_lb, x_ub].
+    return K, fix_initial_x
 
 
 @app.cell(hide_code=True)
@@ -287,19 +259,22 @@ def _(mo):
 
 
 @app.cell
-def _(admm_step, build_lhs, n_s, n_xz, u_stack_max, u_stack_min):
+def _(M, admm_step, build_lhs, n_s, n_xz, q, rho, sigma, u_stack_max, u_stack_min):
     from fomtools.verifier import Verifier
 
     def admm_simulation(x_samples, z0_samples, v0_samples, P, K, ord=2):
-        """Simulate ADMM on sampled instances and return ``(VP, residuals)``.
+        """Simulate ADMM on sampled instances.
 
         Builds a simulator-mode :class:`Verifier`, registers the initial-state
         parameter ``x`` and the initial iterates ``(z0, v0)`` as sampled
-        parameters, rolls out the recurrence with ``admm_step``, and solves.
+        parameters, rolls out the recurrence with ``admm_step``, and simulates
+        via ``VP.solve()``.
         The projection clips the input block with ``satlin`` and stacks ``x``
         on top. Each ``*_samples`` array has shape ``(n_samples, dim)`` (a
         single-row array replays one instance), and the returned ``residuals``
-        has shape ``(n_samples, K)``.
+        has shape ``(n_samples, K)``. Summary statistics (``mean``, ``min``,
+        ``max``, ...) are available on the returned instance ``VP`` via
+        ``VP[...]``.
         """
         VP = Verifier(method='simulator', obbt_solver=None)
         x_param = VP.add_param(ndim=n_s, samples=x_samples)
@@ -312,7 +287,9 @@ def _(admm_step, build_lhs, n_s, n_xz, u_stack_max, u_stack_min):
 
         lhs_mat = build_lhs(P).toarray()
         for _ in range(K):
-            z, v, residual = admm_step(VP, z, v, project, lhs_mat)
+            z, v, residual = admm_step(
+                VP, M, q, rho, sigma, z, v, project, lhs_mat
+            )
             VP.set_objective_norm(residual, ord)
 
         residuals = VP.solve()
@@ -328,12 +305,9 @@ def _(K, P, admm_simulation, np, v0_samples, x_samples, z0_samples):
     print(
         f"Summary statistics:\n"
         f"mean: {_VP['mean']:.6e}\n"
-        f"std: {_VP['std']:.6e}\n"
         f"min: {_VP['min']:.6e}\n"
         f"max: {_VP['max']:.6e}\n"
         f"median: {_VP['median']:.6e}\n"
-        f"n_samples: {_VP['n_samples']}\n"
-        f"n_iteration: {_VP['n_iterations']}\n"
     )
 
     simulation_residuals_admm = np.mean(_residuals, axis=0)
@@ -451,6 +425,10 @@ def _(
     n_u,
     n_xz,
     np,
+    M,
+    q,
+    rho,
+    sigma,
     u_stack_max,
     u_stack_min,
     v0_lb,
@@ -464,13 +442,13 @@ def _(
     def admm_verification(K, method, P, ord=np.inf, **verifier_kwargs):
         """Solve the optimal-control ADMM verification problem for one backend.
 
-        Mirrors :func:`admm_simulation`: builds a ``Verifier`` in ``method``
-        mode, registers the initial-state parameter (fixed at ``x_init`` or
-        searched over ``[x_lb, x_ub]`` per ``fix_initial_x``) and the initial
-        iterate boxes, and rolls out ``admm_step`` projecting onto the
-        stacked ``IndBox``. Returns ``(VP, residuals)`` with one worst-case
-        residual per iteration; the MIP uses the infinity-norm objective, so
-        the caller converts it to squared Euclidean units.
+        Builds a ``Verifier`` in ``method`` mode, registers the initial-state
+        parameter (fixed at ``x_init`` or searched over ``[x_lb, x_ub]`` per
+        ``fix_initial_x``) and the initial iterate boxes, and rolls out
+        ``admm_step`` projecting onto the stacked ``IndBox``. Returns
+        ``(VP, residuals)`` with one worst-case residual per iteration; the MIP
+        uses the infinity-norm objective, so the caller converts it to squared
+        Euclidean units.
         """
         VP = Verifier(method=method, **verifier_kwargs)
 
@@ -495,7 +473,9 @@ def _(
 
         residuals = []
         for _ in range(K):
-            z, v, residual = admm_step(VP, z, v, project, lhs_mat)
+            z, v, residual = admm_step(
+                VP, M, q, rho, sigma, z, v, project, lhs_mat
+            )
             VP.set_objective_norm(residual, ord)
             residuals.append(VP.solve())
         return VP, residuals
@@ -614,7 +594,7 @@ def _(
         label=r'ADMM (MIP upper bound via $2n_{xz}\|\cdot\|_\infty^2$)',
     )
     _avg_line, = plt.plot(_ks, simulation_residuals_admm, '--', label='ADMM (in-sample avg)')
-    plt.fill_between(_ks, simulation_residual_quantiles_admm[2], simulation_residual_quantiles_admm[0], alpha=.18, label='ADMM simulation 10%-90% band')
+    plt.fill_between(_ks, simulation_residual_quantiles_admm[2], simulation_residual_quantiles_admm[0], alpha=.18, label='ADMM sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_admm[3], ':', color=_avg_line.get_color(), label='ADMM sample worst-case')
     plt.suptitle('optimal control example')
     plt.yscale('log')

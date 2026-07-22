@@ -6,10 +6,26 @@ app = marimo.App(width="medium")
 
 @app.cell(hide_code=True)
 def _():
+    import sys
+    from pathlib import Path
+
     import marimo as mo
     import matplotlib.pyplot as plt
     import numpy as np
     from scipy.sparse import csr_matrix
+
+    start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
+    for candidate in (start, *start.parents):
+        if (candidate / "fomtools").is_dir():
+            repo_root = candidate
+            break
+    else:
+        repo_root = start
+
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    from docs.tutorials.helper_functions.portfolio import admm_step, make_portfolio_data
 
     np.set_printoptions(precision=5)
     np.set_printoptions(suppress=True)
@@ -18,7 +34,7 @@ def _():
         "OutputFlag": 0,
         "LogToConsole": 0,
     }
-    return csr_matrix, mo, np, plt, solver_params
+    return admm_step, csr_matrix, make_portfolio_data, mo, np, plt, solver_params
 
 
 @app.cell(hide_code=True)
@@ -40,18 +56,11 @@ def _(mo):
 
 
 @app.cell
-def _(np):
-    np.random.seed(0)
+def _(make_portfolio_data, np):
     n = 4
-
-    _F = np.random.normal(size=(n, n))
-    Sigma = (_F @ _F.T) / n + 0.1 * np.eye(n)
-    mu = np.random.uniform(0.05, 0.15, size=n)
-    u_max = 0.6 * np.ones(n)
-
-    A_mat = np.vstack([np.eye(n), np.ones((1, n))])
-    l_val = np.hstack([np.zeros(n), [1.0]])
-    u_val = np.hstack([u_max, [1.0]])
+    Sigma, mu, A_mat, l_val, u_val = make_portfolio_data(
+        n=n, seed=0, position_limit=0.6
+    )
 
     x0_val = np.zeros(n)
     v0_lb = np.zeros(n + 1)
@@ -91,30 +100,8 @@ def _(mo):
 def _(A_mat, Sigma, csr_matrix, n, np):
     sigma = 1e-4
     rho = 1.0
-    K = 3
     lhs_mat = csr_matrix(Sigma + sigma * np.eye(n) + rho * A_mat.T @ A_mat)
-    return K, lhs_mat, rho, sigma
-
-
-@app.cell
-def _(A_mat, l_val, mu, rho, sigma, u_val):
-    def admm_step(VP, x_prev, v_prev, lhs_mat):
-        """One OSQP-style ADMM step, shared by every verification mode below.
-
-        Projects ``v_prev`` onto the box $[l, u]$ (``VP.step.satlin``), solves
-        the linear system implicitly through ``lhs_mat``, and updates the dual
-        iterate. Returns the next primal iterate, the next dual iterate, and
-        the combined fixed-point residual ``[x_next - x_prev, v_next -
-        v_prev]``. ``lhs_mat`` is passed in so the simulator can use a dense
-        factorization while the MIP/SDP backends use the sparse matrix.
-        """
-        w_next = VP.step.satlin(v_prev, l=l_val, u=u_val)
-        rhs = sigma * x_prev + mu + rho * A_mat.T @ (2 * w_next - v_prev)
-        x_next = VP.step.implicit_linear(rhs, output_mat=lhs_mat)
-        v_next = v_prev + A_mat @ x_next - w_next
-        return x_next, v_next, [x_next - x_prev, v_next - v_prev]
-
-    return (admm_step,)
+    return lhs_mat, rho, sigma
 
 
 @app.cell(hide_code=True)
@@ -133,9 +120,15 @@ def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    We compare simulator statistics, exact MIP verification, SDP-relaxed verification, and a PEPit bound for the portfolio ADMM recurrence.
+    We compare simulator statistics, exact MIP verification, SDP-relaxed verification, and a PEPit bound for the portfolio ADMM recurrence, up to $K$ iterations.
     """)
     return
+
+
+@app.cell
+def _():
+    K = 3  # Maximum iteration number
+    return (K,)
 
 
 @app.cell(hide_code=True)
@@ -165,19 +158,19 @@ def _(mo):
 
 
 @app.cell
-def _(admm_step, lhs_mat, n, x0_val):
+def _(A_mat, admm_step, l_val, lhs_mat, mu, n, rho, sigma, u_val, x0_val):
     from fomtools.verifier import Verifier
 
     def admm_simulation(v0_samples, K, ord=2):
-        """Simulate ADMM on sampled dual iterates and return ``(VP, residuals)``.
+        """Simulate ADMM on sampled dual iterates.
 
         Builds a simulator-mode :class:`Verifier`, registers the initial dual
         iterate ``v0`` as a sampled parameter (fixing $x^0 = 0$), rolls out the
-        recurrence with ``admm_step``, and solves. ``v0_samples`` has shape
-        ``(n_samples, n+1)`` (a single-row array replays one instance), and the
-        returned ``residuals`` has shape ``(n_samples, K)``. Summary statistics
-        (``mean``, ``min``, ``max``, ...) are available on the returned ``VP``
-        via ``VP[...]``.
+        recurrence with ``admm_step``, and simulates via ``VP.solve()``.
+        ``v0_samples`` has shape ``(n_samples, n+1)`` (a single-row array
+        replays one instance), and the returned ``residuals`` has shape
+        ``(n_samples, K)``. Summary statistics (``mean``, ``min``, ``max``, ...)
+        are available on the returned instance ``VP`` via ``VP[...]``.
         """
         VP = Verifier(method="simulator", obbt_solver=None)
         x = x0_val
@@ -185,7 +178,9 @@ def _(admm_step, lhs_mat, n, x0_val):
 
         lhs_mat_dense = lhs_mat.toarray()
         for _ in range(K):
-            x, v, residual = admm_step(VP, x, v, lhs_mat_dense)
+            x, v, residual = admm_step(
+                VP, A_mat, l_val, u_val, mu, rho, sigma, x, v, lhs_mat_dense
+            )
             VP.set_objective_norm(residual, ord)
 
         residuals = VP.solve()
@@ -201,12 +196,9 @@ def _(K, admm_simulation, np, v0_samples):
     print(
         f"Summary statistics:\n"
         f"mean: {_VP['mean']:.6e}\n"
-        f"std: {_VP['std']:.6e}\n"
         f"min: {_VP['min']:.6e}\n"
         f"max: {_VP['max']:.6e}\n"
         f"median: {_VP['median']:.6e}\n"
-        f"n_samples: {_VP['n_samples']}\n"
-        f"n_iteration: {_VP['n_iterations']}\n"
     )
 
     simulation_residuals_admm = np.mean(_residuals, axis=0)
@@ -230,16 +222,16 @@ def _(mo):
 
 
 @app.cell
-def _(Verifier, admm_step, lhs_mat, n, v0_lb, v0_ub, x0_val):
+def _(A_mat, Verifier, admm_step, l_val, lhs_mat, mu, n, rho, sigma, u_val, v0_lb, v0_ub, x0_val):
     def admm_verification(K, method, ord=2, **verifier_kwargs):
         """Solve the portfolio ADMM verification problem for one backend.
 
-        Mirrors :func:`admm_simulation`: builds a ``Verifier`` in ``method``
-        mode, registers the initial dual iterate box ``[v0_lb, v0_ub]`` (fixing
-        $x^0 = 0$), rolls out ``admm_step`` over the horizon ``K``, and returns
-        ``(VP, residuals)`` with one worst-case residual per iteration. Extra
-        ``verifier_kwargs`` (``solver``, ``obbt_solver``, ``params``, ...) are
-        forwarded to the ``Verifier`` constructor.
+        Builds a ``Verifier`` in ``method`` mode, registers the initial dual
+        iterate box ``[v0_lb, v0_ub]`` (fixing $x^0 = 0$), rolls out
+        ``admm_step`` over the horizon ``K``, and returns ``(VP, residuals)``
+        with one worst-case residual per iteration. Extra ``verifier_kwargs``
+        (``solver``, ``obbt_solver``, ``params``, ...) are forwarded to the
+        ``Verifier`` constructor.
         """
         VP = Verifier(method=method, **verifier_kwargs)
         x = x0_val
@@ -247,7 +239,9 @@ def _(Verifier, admm_step, lhs_mat, n, v0_lb, v0_ub, x0_val):
 
         residuals = []
         for _ in range(K):
-            x, v, residual = admm_step(VP, x, v, lhs_mat)
+            x, v, residual = admm_step(
+                VP, A_mat, l_val, u_val, mu, rho, sigma, x, v, lhs_mat
+            )
             VP.set_objective_norm(residual, ord)
             residuals.append(VP.solve())
         return VP, residuals
@@ -351,7 +345,7 @@ def _(
         simulation_residual_quantiles_admm[2],
         simulation_residual_quantiles_admm[0],
         alpha=.18,
-        label="ADMM simulation 10%-90% band",
+        label="ADMM sample 10%-90% band",
     )
     plt.plot(_ks, simulation_residual_quantiles_admm[3], ":", color=_avg_line.get_color(), label="ADMM sample worst-case")
     plt.yscale("log")

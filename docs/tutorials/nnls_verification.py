@@ -60,7 +60,8 @@ def _(mo):
 def _(make_nnls_matrix):
     m, n = 5, 3
     A = make_nnls_matrix(m=m, n=n)
-    return A, m, n
+    x_lb, x_ub = 10.0, 11.0    # parameter set
+    return A, m, n, x_lb, x_ub
 
 
 @app.cell(hide_code=True)
@@ -88,8 +89,7 @@ def _(mo):
 @app.cell
 def _():
     z0_lb, z0_ub = 4.0, 6.0    # initial condition
-    x_lb, x_ub = 10.0, 11.0    # parameter set
-    return x_lb, x_ub, z0_lb, z0_ub
+    return z0_lb, z0_ub
 
 
 @app.cell(hide_code=True)
@@ -141,8 +141,7 @@ def _(mo):
 def _(A, np):
     L = np.max(np.linalg.eigvalsh(A.T @ A))  # symmetric routine → real eigenvalues
     eta = 0.5 / L
-    K = 15
-    return K, L, eta
+    return L, eta
 
 
 @app.cell(hide_code=True)
@@ -161,9 +160,15 @@ def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    We now describe how we can use our package `fomtools` to verify the worst-case convergence rate of projected gradient descent and its accelerated variant, applied on nonnegative least-squares problem. We compare the simulated results obtained from randomly generated problem instances to the obtained worst-case bound from PEPit and our approach.
+    We now describe how we can use our package `fomtools` to verify the worst-case convergence rate of projected gradient descent and its accelerated variant, applied on nonnegative least-squares problem. We compare the simulated results obtained from randomly generated problem instances to the obtained worst-case bound from PEPit and our approach, up to $K$ iterations.
     """)
     return
+
+
+@app.cell
+def _():
+    K = 10  # Maximum iteration number
+    return (K,)
 
 
 @app.cell(hide_code=True)
@@ -201,15 +206,15 @@ def _(A, eta, m, n, np, pgd_step):
     from fomtools.verifier import Verifier
 
     def pgd_simulation(x_samples, z0_samples, K, momentum=False, ord=np.inf):
-        """Simulate projected gradient descent and return ``(VP, residuals)``.
+        """Simulate projected gradient descent``.
 
-        Builds a simulator-mode :class:`Verifier`, registers the parameter
-        ``x`` and initial iterate ``z0`` as sampled parameters, rolls out the
-        recurrence with ``pgd_step``, and solves. Each ``*_samples`` array has
-        shape ``(n_samples, dim)`` (a single-row array replays one instance),
-        and the returned ``residuals`` has shape ``(n_samples, K)``. Summary
-        statistics (``mean``, ``min``, ``max``, ...) are available on the
-        returned ``VP`` via ``VP[...]``.
+        Builds a simulator-mode :class:`Verifier`, registers the parameter ``x`` and
+        initial iterate ``z0`` as sampled parameters, rolls out the recurrence with
+        ``pgd_step``, and simulates via ``VP.solve()``. Each ``*_samples`` array
+        has shape ``(n_samples, dim)`` (a single-row array replays one instance),
+        and the returned ``residuals`` has shape ``(n_samples, K)``. Summary statistics
+        (``mean``, ``min``, ``max``, ...) are available on the returned instance
+        ``VP`` via ``VP[...]``.
         """
         VP = Verifier(method='simulator', obbt_solver=None)
         x_param = VP.add_param(ndim=m, samples=x_samples)
@@ -244,12 +249,9 @@ def _(K, np, pgd_simulation, x_samples, z0_samples):
     print(
         f"Summary statistics:\n"
         f"mean: {_VP['mean']:.6e}\n"
-        f"std: {_VP['std']:.6e}\n"
         f"min: {_VP['min']:.6e}\n"
         f"max: {_VP['max']:.6e}\n"
         f"median: {_VP['median']:.6e}\n"
-        f"n_samples: {_VP['n_samples']}\n"
-        f"n_iteration: {_VP['n_iterations']}\n"
     )
 
     # Take average of residuals for iterate K=1 to K=K
@@ -272,9 +274,7 @@ def _(K, np, pgd_simulation, x_samples, z0_samples):
     _, _residuals = pgd_simulation(x_samples, z0_samples, K, momentum=True, ord=np.inf)
     simulation_residuals_momentum = np.mean(_residuals, axis=0)
     # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
-    simulation_residual_quantiles_momentum = np.quantile(
-        _residuals, [0.90, 0.50, 0.10, 1.0], axis=0
-    )
+    simulation_residual_quantiles_momentum = np.quantile(_residuals, [0.90, 0.50, 0.10, 1.0], axis=0)
     return (
         simulation_residual_quantiles_momentum,
         simulation_residuals_momentum,
@@ -306,13 +306,12 @@ def _(A, Verifier, eta, m, n, np, pgd_step, x_lb, x_ub, z0_lb, z0_ub):
     def pgd_verification(K, method, momentum=False, ord=None, **verifier_kwargs):
         """Solve the projected-gradient verification problem for one backend.
 
-        Mirrors :func:`pgd_simulation`: builds a ``Verifier`` in ``method``
-        mode, registers the parameter box ``[x_lb, x_ub]`` and the initial
-        iterate box ``[z0_lb, z0_ub]``, rolls out ``pgd_step`` over the horizon
-        ``K``, and returns ``(VP, residuals)`` with one worst-case residual per
-        iteration. ``ord`` defaults to ``inf`` for MIP and ``2`` for SDP. Extra
-        ``verifier_kwargs`` (``solver``, ``params``, ...) are forwarded to the
-        ``Verifier`` constructor.
+        Builds a ``Verifier`` in ``method`` mode, registers the parameter box
+        ``[x_lb, x_ub]`` and the initial iterate box ``[z0_lb, z0_ub]``,
+        rolls out ``pgd_step`` over the horizon ``K``, and returns ``(VP, residuals)``
+        with one worst-case residual per iteration. ``ord`` defaults to ``inf``
+        for MIP and ``2`` for SDP. Extra ``verifier_kwargs`` (``solver``, ``params``, ...)
+        are forwarded to the ``Verifier`` constructor.
         """
         VP = Verifier(method=method, **verifier_kwargs)
         x_param = VP.add_param(m, lb=x_lb, ub=x_ub)
@@ -366,7 +365,9 @@ def _(mo):
 
 @app.cell
 def _(K, pgd_verification):
-    _, all_residuals_sdp = pgd_verification(K, 'sdp', momentum=False, solver='clarabel')
+    _, all_residuals_sdp = pgd_verification(
+        K, 'sdp', momentum=False, solver='clarabel'
+    )
     _, all_residuals_sdp_momentum = pgd_verification(
         K, 'sdp', momentum=True, solver='clarabel',
     )
@@ -382,31 +383,22 @@ def _(mo):
 
     #### Certified initial-condition radius
 
-    PEP bounds the worst case over *all* $L$-smooth convex $f$ and convex
-    indicators $g$ whose initial iterate lies in a Euclidean ball of radius
-    $R$ about the fixed point, $\|z^0 - z^\star\|_2 \le R$. For this PEP bound
-    to be a valid upper bound on our VP -- whose initial set is the *box*
-    $z^0 \in \mathcal{Z}$, $x \in \mathcal{X}$ -- the ball must cover the box:
+    PEP bounds the worst case over every $L$-smooth convex $f$ and convex indicators $g$ whose initial iterate lies in a Euclidean ball of radius $R$ about the fixed point: $\|z^0 - z^\star\|_2 \le R$.
+    For this PEP bound to be a valid upper bound on our VP with $z^0 \in \mathcal{Z}$, $x \in \mathcal{X}$, the ball must cover the box:
 
     $$R \;\ge\; \sup_{z^0 \in \mathcal{Z},\, x \in \mathcal{X}} \|z^0 - z^\star(x)\|_2 .$$
 
-    A maximum over random samples *under-covers* this supremum (random draws
-    miss the box extremes), so instead we bound it in closed form. The NNLS
-    solution map $x \mapsto z^\star(x)$ is piecewise linear: on each active set
-    $\mathcal{I}$ its Jacobian is $(A_{\mathcal{I}}^\top A_{\mathcal{I}})^{-1}
-    A_{\mathcal{I}}^\top$, so by Cauchy interlacing
-    $\sigma_{\min}(A_{\mathcal{I}}) \ge \sigma_{\min}(A)$ and the map is globally
-    $\gamma$-Lipschitz with $\gamma = 1/\sigma_{\min}(A)$. Splitting the two box
-    contributions with the triangle inequality gives the certified radius
+    We find $R$ via solving optimization problem which gives maximum value of $\|z^0 - z^\star(x)\|$ for all $z^0 \in \mathcal{Z}$ and $x \in \mathcal{X}$.
+    Note that the NNLS solution map $x \mapsto z^\star(x)$ is piecewise linear; on each active set $\mathcal{I}$, its Jacobian is $(A_{\mathcal{I}}^\top A_{\mathcal{I}})^{-1} A_{\mathcal{I}}^\top$, so $\sigma_{\min}(A_{\mathcal{I}}) \ge \sigma_{\min}(A)$.
+    This mapping is globally $\gamma$-Lipschitz with $\gamma = 1/\sigma_{\min}(A)$.
+    Splitting the two box contributions with the triangle inequality gives the certified radius
 
     $$R = \max_{z^0 \in \mathcal{Z}} \|z^0 - z^\star(\bar{x})\|_2
         \;+\; \gamma \cdot \operatorname{rad}(\mathcal{X}),$$
 
-    where $\bar{x}$ is the center of the $x$-box and
-    $\operatorname{rad}(\mathcal{X}) = \tfrac12\sqrt{\sum_j (\texttt{x\_ub}-\texttt{x\_lb})^2}$
-    is its circumradius. The first term is the distance from $z^\star(\bar{x})$
-    to the farthest box vertex, evaluated coordinatewise. This requires a
-    single NNLS solve (at $\bar{x}$) and no sampling.
+    where $\bar{x}$ is the center of the $x$-box and $\operatorname{rad}(\mathcal{X}) = \tfrac12\sqrt{\sum_j (\texttt{x\_ub}-\texttt{x\_lb})^2}$ is its circumradius.
+    The first term is the distance from $z^\star(\bar{x})$ to the farthest box vertex, evaluated coordinatewise.
+    This requires a single NNLS solve (at $\bar{x}$) and no sampling.
     """)
     return
 
@@ -467,7 +459,7 @@ def _(
     plt.plot(_ks, all_residuals, label='MIP-VP')
     plt.plot(_ks, all_residuals_sdp, label='SDP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals, '--', label='sample average')
-    plt.fill_between(_ks, simulation_residual_quantiles[2], simulation_residual_quantiles[0], alpha=.18, label='simulation 10%-90% band')
+    plt.fill_between(_ks, simulation_residual_quantiles[2], simulation_residual_quantiles[0], alpha=.18, label='sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles[3], ':', color=_avg_line.get_color(), label='sample worst-case')
     plt.yscale('log')
     plt.ylabel('Worst-case fixed-point residual')
@@ -501,7 +493,7 @@ def _(
     plt.plot(_ks, all_residuals_momentum, label='MIP-VP')
     plt.plot(_ks, all_residuals_sdp_momentum, label='SDP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals_momentum, '--', label='sample average')
-    plt.fill_between(_ks, simulation_residual_quantiles_momentum[2], simulation_residual_quantiles_momentum[0], alpha=.18, label='simulation 10%-90% band')
+    plt.fill_between(_ks, simulation_residual_quantiles_momentum[2], simulation_residual_quantiles_momentum[0], alpha=.18, label='sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_momentum[3], ':', color=_avg_line.get_color(), label='sample worst-case')
     plt.yscale('log')
     plt.ylabel('Worst-case fixed-point residual')
@@ -549,7 +541,7 @@ def _(
          simulation_residual_quantiles_momentum),
     ]
     for _, _color, _pep, _mip, _sdp, _avg, _quant in _methods:
-        plt.plot(_ks, _pep, '-', color=_color)
+        # plt.plot(_ks, _pep, '-', color=_color)
         plt.plot(_ks, _mip, '--', color=_color)
         plt.plot(_ks, _sdp, '-.', color=_color)
         plt.plot(_ks, _avg, ':', color=_color)
@@ -560,7 +552,7 @@ def _(
         for _name, _color, *_ in _methods
     ]
     _style_handles = [
-        Line2D([], [], color='gray', linestyle='-', label='PEPit'),
+        # Line2D([], [], color='gray', linestyle='-', label='PEPit'),
         Line2D([], [], color='gray', linestyle='--', label='MIP-VP'),
         Line2D([], [], color='gray', linestyle='-.', label='SDP-VP'),
         Line2D([], [], color='gray', linestyle=':', label='sample average'),

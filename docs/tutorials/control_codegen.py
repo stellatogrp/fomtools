@@ -7,14 +7,15 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import json
-    import marimo as mo
-    import numpy as np
     import os
     import statistics
     import sys
     import textwrap
     import time
     from pathlib import Path
+
+    import marimo as mo
+    import numpy as np
 
     start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
     for candidate in (start, *start.parents):
@@ -29,6 +30,7 @@ def _():
 
     examples_dir = repo_root / "examples"
 
+    from docs.tutorials.helper_functions.control import admm_step, solve_admm_numpy
     from fomtools.codegen import CodegenConfig, TerminationSpec
     from fomtools.codegen.agent import make_agent_driver
     from fomtools.codegen.harness import find_compiler
@@ -46,6 +48,7 @@ def _():
         CodegenConfig,
         TerminationSpec,
         Verifier,
+        admm_step,
         agent_available,
         examples_dir,
         find_compiler,
@@ -54,6 +57,7 @@ def _():
         np,
         recorded_timings,
         statistics,
+        solve_admm_numpy,
         textwrap,
         time,
     )
@@ -68,6 +72,7 @@ In this tutorial we benchmark a small finite-horizon control problem for a linea
 The solver uses the alternating direction method of multipliers: each iteration solves a small linear system, projects onto box constraints, and updates the auxiliary variables.
 
 We compare a direct NumPy implementation with the verified generated C solver.
+The ADMM step and NumPy reference solver are shared with the [control verification tutorial](control_verification.html).
 The generated C is timed after code generation, then timed again after the C-editing optimization pass.
 """)
     )
@@ -161,7 +166,7 @@ def _(examples_dir, np):
 
 
 @app.cell
-def _(CodegenConfig, K, M, TerminationSpec, Verifier, lower, lhs, n_total, q, rho, sigma, upper, v0, z0):
+def _(CodegenConfig, K, M, TerminationSpec, Verifier, admm_step, lower, lhs, n_total, q, rho, sigma, upper, v0, z0):
     verifier = Verifier(
         method="mip",
         solver="highs",
@@ -171,10 +176,12 @@ def _(CodegenConfig, K, M, TerminationSpec, Verifier, lower, lhs, n_total, q, rh
 
     z = verifier.add_iterate(n_total, lb=z0, ub=z0)
     v = verifier.add_iterate(n_total, lb=v0, ub=v0)
-    w = verifier.step.satlin(v, l=lower, u=upper)
-    rhs = sigma * z - q + rho * M.T @ (2 * w - v)
-    z_next = verifier.step.implicit_linear(rhs, output_mat=lhs)
-    v_next = v + M @ z_next - w
+    def project(VP, v_prev):
+        return VP.step.satlin(v_prev, l=lower, u=upper)
+
+    z_next, v_next, _ = admm_step(
+        verifier, M, q, rho, sigma, z, v, project, lhs
+    )
 
     config = CodegenConfig(
         termination=TerminationSpec(max_iters=K),
@@ -186,16 +193,11 @@ def _(CodegenConfig, K, M, TerminationSpec, Verifier, lower, lhs, n_total, q, rh
 
 
 @app.cell
-def _(K, M, lhs, lower, np, q, rho, sigma, statistics, time, upper, v0, z0):
+def _(K, M, lhs, lower, q, rho, sigma, solve_admm_numpy, statistics, time, upper, v0, z0):
     def control_solve():
-        z_py = z0.copy()
-        v_py = v0.copy()
-        for _ in range(K):
-            w_py = np.minimum(np.maximum(v_py, lower), upper)
-            rhs_py = sigma * z_py - q + rho * M.T @ (2 * w_py - v_py)
-            z_py = np.linalg.solve(lhs, rhs_py)
-            v_py = v_py + M @ z_py - w_py
-        return np.concatenate([z_py, v_py])
+        return solve_admm_numpy(
+            M, q, rho, sigma, lhs, lower, upper, z0, v0, max_iters=K
+        )
 
     for _ in range(3):
         control_solve()

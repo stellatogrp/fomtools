@@ -7,14 +7,15 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import json
-    import marimo as mo
-    import numpy as np
     import os
     import statistics
     import sys
     import textwrap
     import time
     from pathlib import Path
+
+    import marimo as mo
+    import numpy as np
 
     start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
     for candidate in (start, *start.parents):
@@ -29,6 +30,11 @@ def _():
 
     examples_dir = repo_root / "examples"
 
+    from docs.tutorials.helper_functions.lasso import (
+        ista_step,
+        make_lasso_data,
+        solve_ista_numpy,
+    )
     from fomtools.codegen import CodegenConfig, TerminationSpec
     from fomtools.codegen.agent import make_agent_driver
     from fomtools.codegen.harness import find_compiler
@@ -49,11 +55,14 @@ def _():
         agent_available,
         examples_dir,
         find_compiler,
+        ista_step,
         make_agent_driver,
+        make_lasso_data,
         mo,
         np,
         recorded_timings,
         statistics,
+        solve_ista_numpy,
         textwrap,
         time,
     )
@@ -81,6 +90,7 @@ s^{k+1} =
 \]
 
 We compare a direct NumPy implementation with the verified generated C solver.
+The problem construction, ISTA step, and NumPy reference solver are shared with the [Lasso verification tutorial](lasso_verification.html).
 The generated C is timed after code generation, then timed again after the C-editing optimization pass.
 """)
     )
@@ -98,22 +108,14 @@ Both implementations run the same update rule for the same number of iterations.
 
 
 @app.cell
-def _(examples_dir, np):
-    rng = np.random.RandomState(0)
+def _(examples_dir, make_lasso_data, np):
     p, n, lambd = 3, 4, 1e-1
-
-    D_value = rng.normal(size=(p, n))
-    D_mask = rng.binomial(n=1, p=0.2, size=(p, n))
-    D = D_value * D_mask
-
     num_star = 200
-    z_star = rng.normal(size=(n, num_star)) * rng.binomial(n=1, p=0.1, size=(n, num_star))
-    x_samples = D @ z_star + rng.normal(scale=1e-2, size=(p, num_star))
-    x_lb, x_ub = np.min(x_samples, axis=1), np.max(x_samples, axis=1)
+    D, x_lb, x_ub, _, eta, lambd = make_lasso_data(
+        p=p, n=n, lambd=lambd, num_signals=num_star, seed=0
+    )
     x_mid = 0.5 * (x_lb + x_ub)
 
-    L = float(np.linalg.eigvalsh(D.T @ D)[-1])
-    eta = 1.0 / L
     K = 200
     s0 = np.zeros(n)
 
@@ -122,7 +124,7 @@ def _(examples_dir, np):
 
 
 @app.cell
-def _(CodegenConfig, D, K, TerminationSpec, Verifier, eta, lambd, n, p, s0, x_lb, x_ub):
+def _(CodegenConfig, D, K, TerminationSpec, Verifier, eta, ista_step, lambd, n, p, s0, x_lb, x_ub):
     verifier = Verifier(
         method="mip",
         solver="highs",
@@ -132,9 +134,8 @@ def _(CodegenConfig, D, K, TerminationSpec, Verifier, eta, lambd, n, p, s0, x_lb
 
     x_param = verifier.add_param(p, lb=x_lb, ub=x_ub)
     s = verifier.add_iterate(n, lb=s0, ub=s0)
-    next_s = verifier.step.soft_threshold(
-        s - eta * D.T @ (D @ s - x_param),
-        lambd=lambd * eta,
+    next_s, _, _, _ = ista_step(
+        verifier, D, eta, lambd, s, s, x_param, 1.0, k=1, momentum=False
     )
 
     config = CodegenConfig(
@@ -145,15 +146,9 @@ def _(CodegenConfig, D, K, TerminationSpec, Verifier, eta, lambd, n, p, s0, x_lb
 
 
 @app.cell
-def _(D, K, eta, lambd, np, s0, statistics, time, x_mid):
-    def soft_threshold(v, threshold):
-        return np.sign(v) * np.maximum(np.abs(v) - threshold, 0.0)
-
+def _(D, K, eta, lambd, s0, solve_ista_numpy, statistics, time, x_mid):
     def python_lasso_solve():
-        s_py = s0.copy()
-        for _ in range(K):
-            s_py = soft_threshold(s_py - eta * D.T @ (D @ s_py - x_mid), lambd * eta)
-        return s_py
+        return solve_ista_numpy(D, eta, lambd, s0, x_mid, max_iters=K)
 
     for _ in range(3):
         python_lasso_solve()
