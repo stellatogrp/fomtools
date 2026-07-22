@@ -485,13 +485,21 @@ def _(mo):
     return
 
 
-app._unparsable_cell(
-    r"""
+@app.cell
+def _(
+    K,
+    all_residuals_PEP_momentum,
+    all_residuals_momentum,
+    all_residuals_sdp_momentum,
+    plt,
+    simulation_residual_quantiles_momentum,
+    simulation_residuals_momentum,
+):
     plt.figure()
     _ks = range(1, K+1)
     plt.plot(_ks, all_residuals_PEP_momentum, label='PEPit')
     plt.plot(_ks, all_residuals_momentum, label='MIP-VP')
-    plt.plot(_ks, all_residuals_sdp_momentum, label='SDP-VP')K
+    plt.plot(_ks, all_residuals_sdp_momentum, label='SDP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals_momentum, '--', label='sample average')
     plt.fill_between(_ks, simulation_residual_quantiles_momentum[2], simulation_residual_quantiles_momentum[0], alpha=.18, label='simulation 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_momentum[3], ':', color=_avg_line.get_color(), label='sample worst-case')
@@ -500,9 +508,7 @@ app._unparsable_cell(
     plt.xlabel(r'$K$')
     plt.suptitle('nonnegative least-squares momentum PGD example')
     plt.legend()
-    """,
-    name="_"
-)
+    return
 
 
 @app.cell(hide_code=True)
