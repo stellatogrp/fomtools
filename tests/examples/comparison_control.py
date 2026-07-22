@@ -24,7 +24,7 @@ from scipy.sparse import csr_matrix
 from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 from fomtools.verifier import Verifier
 
-# ── Problem setup (same as optimal_control.py tutorial) ───────────────────────
+# Problem setup (same as control_verification.py tutorial)
 A_dym = np.array([
     [1.,      0.,     0., 0., 0., 0., 0.1,     0.,     0.,  0.,     0.,     0.    ],
     [0.,      1.,     0., 0., 0., 0., 0.,      0.1,    0.,  0.,     0.,     0.    ],

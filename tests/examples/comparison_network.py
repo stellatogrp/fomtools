@@ -26,7 +26,7 @@ from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 from fomtools.proxable_functions import IndBox, IndNonNegative
 from fomtools.verifier import Verifier
 
-# ── Problem setup (same as network_optimization.py tutorial) ──────────────────
+# Problem setup (same as network_verification.py tutorial)
 np.random.seed(2)
 n_s, n_d = 3, 2
 

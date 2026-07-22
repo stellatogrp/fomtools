@@ -22,7 +22,7 @@ import numpy as np
 from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 from fomtools.verifier import Verifier
 
-# ── Problem setup (same as sparse_coding.py tutorial) ─────────────────────────
+# Problem setup (same as lasso_verification.py tutorial)
 np.random.seed(0)
 p, n, lambd = 3, 4, 1e-1
 
