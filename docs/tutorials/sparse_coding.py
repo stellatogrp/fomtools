@@ -1,24 +1,16 @@
 import marimo
 
-__generated_with = "0.22.5"
+__generated_with = "0.23.14"
 app = marimo.App(width="medium")
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     import marimo as mo
-
-    return (mo,)
-
-
-@app.cell
-def _():
     import matplotlib.pyplot as plt
     import numpy as np
-    from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 
     from fomtools.proxable_functions import NormL1
-    from fomtools.verifier import Verifier
 
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
@@ -27,7 +19,7 @@ def _():
         'OutputFlag': 0,
         'LogToConsole': 0,
     }
-    return NormL1, PEPitRunner, Verifier, np, plt, solver_params
+    return NormL1, mo, np, plt, solver_params
 
 
 @app.cell(hide_code=True)
@@ -114,12 +106,50 @@ def _(np):
     return D, L, eta, lambd, n, p, s0_lb, s0_ub, x_lb, x_ub
 
 
+@app.cell
+def _(D, NormL1, eta, lambd, np):
+    regularizer = NormL1(lambd=lambd)
+
+    def ista_step(VP, z_prev, y_prev, x_param, t_prev, k, momentum):
+        """One ISTA step (FISTA when ``momentum=True``).
+
+        Applies the soft-thresholding proximal-gradient update to ``z_prev``
+        (equal to ``VP.step.soft_threshold`` at threshold ``lambd*eta``). When
+        ``momentum`` is set, extrapolates using the FISTA sequence
+        $t_k = (1+\\sqrt{1+4t_{k-1}^2})/2$ from ``t_prev`` and the previous prox
+        output ``y_prev``. Returns the next iterate, the next prox output, the
+        next ``t``, and the residual (``y^k - y^{k-1}`` for FISTA,
+        ``s^k - s^{k-1}`` for ISTA) shared by every verification mode below.
+        """
+        y_next = VP.prox(regularizer, z_prev - eta * D.T @ (D @ z_prev - x_param), gamma=eta)
+        if momentum:
+            t_next = (1.0 + np.sqrt(1.0 + 4.0 * t_prev**2)) / 2.0
+            z_next = y_next + ((t_prev - 1.0) / t_next) * (y_next - y_prev)
+            residual = y_next - y_prev
+        else:
+            t_next, z_next, residual = t_prev, y_next, y_next - z_prev
+        return z_next, y_next, t_next, residual
+
+    return (ista_step,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    Every verification mode below (simulator, MIP-VP, and SDP-VP) drives this
+    *same* `ista_step` recurrence and residual; only the `Verifier` backend and
+    whether $(x, s^0)$ are sampled instances or bounded search variables change.
+    Setting `momentum=True` selects the FISTA variant.
+    """)
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    In this experiment, we verify the performance of ISTA and FISTA for sparse coding given the iteration budget $K>0$. We compare simulator statistics, exact MIP verification, SDP verification, PEPit bounds, and explicit replays of MIP worst-case instances.
+    In this experiment, we verify the performance of ISTA and FISTA for sparse coding given the iteration budget $K>0$. We compare simulator statistics, exact MIP verification, SDP verification, PEPit bounds, and the in-sample worst-case instances.
     """)
     return
 
@@ -136,29 +166,64 @@ def _(mo):
     ## Simulator class
 
     We first simulate ISTA on given problem instances, which are parameterized by the parameter $x$.
-    Each problem instance is generated from randomly sampling $x$ from uniform distribution over $[\texttt{x\_lb}, \texttt{x\_ub}]$ and $s^0$ from uniform distribution over $[\texttt{s0\_lb}, \texttt{s0\_ub}]$.
-    The output of `VP.solve(K=K)` will be an array of size `(n_samples, K)` whose $n$-th row is a list of infinity norm of residuals $s[k] - s[k-1]$ for $k=1,\ldots,K$ of $n$-th problem instance.
+    Each problem instance is generated from randomly sampling $x$ from uniform distribution over $[\texttt{x\_lb}, \texttt{x\_ub}]$ and $s^0$ from uniform distribution over $[\texttt{s0\_lb}, \texttt{s0\_ub}]$. The samples are drawn once below and reused by every simulation cell so that all comparisons share the same instances.
     """)
     return
 
 
 @app.cell
-def _(D, K, Verifier, eta, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
+def _(n, np, p, s0_lb, s0_ub, x_lb, x_ub):
     n_samples = 10000
-
     _rng = np.random.default_rng(0)
-    _VP = Verifier(method='simulator', obbt_solver=None)
-    _x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, p))
-    _s0_samples = _rng.uniform(low=s0_lb, high=s0_ub, size=(n_samples, n))
-    _x_param = _VP.add_param(ndim=p, samples=_x_samples)
+    x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, p))
+    s0_samples = _rng.uniform(low=s0_lb, high=s0_ub, size=(n_samples, n))
+    return s0_samples, x_samples
 
-    _s = [None] * (K + 1)
-    _s[0] = _VP.add_param(n, samples=_s0_samples)
 
-    for _k in range(1, K + 1):
-        _s[_k] = _VP.step.soft_threshold(_s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), lambd=lambd*eta)
-        _VP.set_objective_norm(_s[_k] - _s[_k-1], ord=np.inf)
-    _residuals = _VP.solve()
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    The simulation is run through the following function. The output of
+    `_VP.solve()` is an array of size `(n_samples, K)` whose $i$-th row lists
+    the infinity norm of residuals for $k=1,\ldots,K$ of the $i$-th problem
+    instance.
+    """)
+    return
+
+
+@app.cell
+def _(ista_step, n, np, p):
+    from fomtools.verifier import Verifier
+
+    def ista_simulation(x_samples, s0_samples, K, momentum=False, ord=np.inf):
+        """Simulate ISTA on sampled instances and return ``(VP, residuals)``.
+
+        Builds a simulator-mode :class:`Verifier`, registers the parameter
+        ``x`` and initial iterate ``s0`` as sampled parameters, rolls out the
+        recurrence with ``ista_step``, and solves. Each ``*_samples`` array has
+        shape ``(n_samples, dim)`` (a single-row array replays one instance),
+        and the returned ``residuals`` has shape ``(n_samples, K)``. Summary
+        statistics (``mean``, ``min``, ``max``, ...) are available on the
+        returned ``VP`` via ``VP[...]``.
+        """
+        VP = Verifier(method='simulator', obbt_solver=None)
+        x_param = VP.add_param(ndim=p, samples=x_samples)
+        s0 = VP.add_param(n, samples=s0_samples)
+
+        z, y, t = s0, s0, 1.0
+        for k in range(1, K + 1):
+            z, y, t, residual = ista_step(VP, z, y, x_param, t, k=k, momentum=momentum)
+            VP.set_objective_norm(residual, ord)
+
+        residuals = VP.solve()
+        return VP, residuals
+
+    return Verifier, ista_simulation
+
+
+@app.cell
+def _(D, K, eta, ista_simulation, lambd, np, s0_samples, x_samples):
+    _VP, _residuals = ista_simulation(x_samples, s0_samples, K, momentum=False, ord=np.inf)
 
     print(
         f"Summary statistics:\n"
@@ -167,22 +232,18 @@ def _(D, K, Verifier, eta, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
         f"min: {_VP['min']:.6e}\n"
         f"max: {_VP['max']:.6e}\n"
         f"median: {_VP['median']:.6e}\n"
-        f"empirical_risk: {_VP['empirical_risk']:.4f}\n"
-        f"risk_bound: {_VP['risk_bound']:.4f}\n"
         f"n_samples: {_VP['n_samples']}\n"
         f"n_iteration: {_VP['n_iterations']}\n"
-        f"runtime: {_VP['runtime']:.4f}\n"
-        f"time_per_sample: {_VP['time_per_sample']:.4f}\n"
-        f"throughput: {_VP['throughput']:.4f}\n"
-        f"residuals: {_residuals}"
     )
 
     simulation_residuals_ista = np.mean(_residuals, axis=0)
-    simulation_residual_quantiles_ista = np.quantile(_residuals, [0.90, 0.50, 0.10], axis=0)
+    # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
+    simulation_residual_quantiles_ista = np.quantile(_residuals, [0.90, 0.50, 0.10, 1.0], axis=0)
 
-    _s_star_samples = np.zeros((n_samples, n), dtype=float)
+    # Empirical initial-condition radius for the PEPit comparison.
+    _s_star_samples = np.zeros((x_samples.shape[0], D.shape[1]), dtype=float)
     for _ in range(2000):
-        _grad = (_s_star_samples @ D.T - _x_samples) @ D
+        _grad = (_s_star_samples @ D.T - x_samples) @ D
         _s_next_samples = np.sign(_s_star_samples - eta * _grad) * np.maximum(
             np.abs(_s_star_samples - eta * _grad) - lambd * eta,
             0.0,
@@ -191,9 +252,8 @@ def _(D, K, Verifier, eta, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
             _s_star_samples = _s_next_samples
             break
         _s_star_samples = _s_next_samples
-    pepit_radius = np.max(np.linalg.norm(_s0_samples - _s_star_samples, axis=1))
+    pepit_radius = np.max(np.linalg.norm(s0_samples - _s_star_samples, axis=1))
     return (
-        n_samples,
         pepit_radius,
         simulation_residual_quantiles_ista,
         simulation_residuals_ista,
@@ -203,51 +263,17 @@ def _(D, K, Verifier, eta, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We further simulate FISTA.
+    We further simulate FISTA, reusing the same `ista_simulation` helper and samples with `momentum=True`.
     """)
     return
 
 
 @app.cell
-def _(
-    D,
-    K,
-    Verifier,
-    eta,
-    lambd,
-    n,
-    n_samples,
-    np,
-    p,
-    s0_lb,
-    s0_ub,
-    x_lb,
-    x_ub,
-):
-    _VP = Verifier(method='simulator', obbt_solver=None)
-    _rng = np.random.default_rng(0)
-    _x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, p))
-    _s0_samples = _rng.uniform(low=s0_lb, high=s0_ub, size=(n_samples, n))
-    _x_param = _VP.add_param(ndim=p, samples=_x_samples)
-
-    _y = [None] * (K + 1)
-    _z = [None] * (K + 1)
-    _y[0] = _VP.add_param(n, samples=_s0_samples)
-    _z[0] = _y[0]
-    _t = [1.0]
-    for _k in range(1, K+1):
-        _y[_k] = _VP.step.soft_threshold(
-            _z[_k-1] - eta * D.T @ (D @ _z[_k-1] - _x_param),
-            lambd=lambd*eta,
-        )
-        _t_new = (1.0 + np.sqrt(1.0 + 4.0 * _t[-1]**2)) / 2.0
-        _t.append(_t_new)
-        _z[_k] = _y[_k] + ((_t[_k-1] - 1.0) / _t[_k]) * (_y[_k] - _y[_k-1])
-        _VP.set_objective_norm(_y[_k] - _y[_k-1], ord=np.inf)
-
-    _residuals = _VP.solve()
+def _(K, ista_simulation, np, s0_samples, x_samples):
+    _, _residuals = ista_simulation(x_samples, s0_samples, K, momentum=True, ord=np.inf)
     simulation_residuals_fista = np.mean(_residuals, axis=0)
-    simulation_residual_quantiles_fista = np.quantile(_residuals, [0.90, 0.50, 0.10], axis=0)
+    # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
+    simulation_residual_quantiles_fista = np.quantile(_residuals, [0.90, 0.50, 0.10, 1.0], axis=0)
     return simulation_residual_quantiles_fista, simulation_residuals_fista
 
 
@@ -256,186 +282,80 @@ def _(mo):
     mo.md(r"""
     ## Algorithm verification through verification problem (VP)
 
+    We now obtain worst-case guarantees by solving the verification problem
+    with a MIP formulation (exact) and an SDP relaxation (valid upper bound).
+    Both formulations use the following function, which rolls out the same
+    `ista_step` recurrence over the horizon $K$ and maximizes the fixed-point
+    residual at each iteration.
+    """)
+    return
+
+
+@app.cell
+def _(D, Verifier, eta, ista_step, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
+    def ista_verification(K, method, momentum=False, ord=np.inf, **verifier_kwargs):
+        """Solve the ISTA/FISTA verification problem for one backend.
+
+        Mirrors :func:`ista_simulation`: builds a ``Verifier`` in ``method``
+        mode, registers the parameter box ``[x_lb, x_ub]`` and the initial
+        iterate box ``[s0_lb, s0_ub]``, rolls out ``ista_step`` over the
+        horizon ``K``, and returns ``(VP, residuals)`` with one worst-case
+        residual per iteration. Extra ``verifier_kwargs`` (``solver``,
+        ``params``, ...) are forwarded to the ``Verifier`` constructor.
+        """
+        VP = Verifier(method=method, **verifier_kwargs)
+        x_param = VP.add_param(p, lb=x_lb, ub=x_ub)
+        s0 = VP.add_iterate(n, lb=s0_lb, ub=s0_ub)
+
+        z, y, t = s0, s0, 1.0
+        residuals = []
+        for k in range(1, K + 1):
+            z, y, t, residual = ista_step(VP, z, y, x_param, t, k=k, momentum=momentum)
+            VP.set_objective_norm(residual, ord)
+            residuals.append(VP.solve())
+        return VP, residuals
+
+    return (ista_verification,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ### MIP-VP
-    We now solve the verification problem with a MIP formulation. The MIP searches over the measurement parameter $x$ and initial iterate $s^0$, and maximizes the fixed-point residual at each horizon.
+    We solve the exact MIP verification problem for both ISTA and its
+    accelerated variant FISTA. The MIP searches over the measurement parameter
+    $x$ and initial iterate $s^0$, and maximizes the fixed-point residual at
+    each horizon.
     """)
     return
 
 
 @app.cell
-def _(
-    D,
-    K,
-    NormL1,
-    Verifier,
-    eta,
-    lambd,
-    n,
-    np,
-    p,
-    s0_lb,
-    s0_ub,
-    solver_params,
-    x_lb,
-    x_ub,
-):
-    regularizer = NormL1(lambd=lambd)
-
-    _VP = Verifier(method='mip', solver='gurobi', params=solver_params)
-    _x_param = _VP.add_param(p, lb=x_lb, ub=x_ub)
-
-    _s = [None for _ in range(K+1)]
-    _s[0] = _VP.add_iterate(n, lb=s0_lb, ub=s0_ub)
-
-    all_residuals = []
-    worst_case_s0_ista = []
-    worst_case_x_param_ista = []
-    for _k in range(1, K+1):
-        _s[_k] = _VP.prox(regularizer, _s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param), gamma=eta)
-        _VP.set_objective_norm([_s[_k] - _s[_k-1]], np.inf)
-        _res = _VP.solve()
-        all_residuals.append(_res)
-        worst_case_s0_ista.append(_VP.get_solution_value(_s[0]))
-        worst_case_x_param_ista.append(_VP.get_solution_value(_x_param))
-    return (
-        all_residuals,
-        regularizer,
-        worst_case_s0_ista,
-        worst_case_x_param_ista,
+def _(K, ista_verification, solver_params):
+    _, all_residuals = ista_verification(
+        K, 'mip', momentum=False, solver='gurobi', params=solver_params,
     )
+    _, all_residuals_fista = ista_verification(
+        K, 'mip', momentum=True, solver='gurobi', params=solver_params,
+    )
+    return all_residuals, all_residuals_fista
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We replay each horizon-specific MIP optimizer in simulator mode. After calling `solve()`, the replay's final residual is available through the `final_residuals` summary statistic.
+    ### SDP-VP
+
+    Here, we compare against valid upper bounds obtained from the SDP-relaxed verification problem, for both ISTA and FISTA.
     """)
     return
 
 
 @app.cell
-def _(
-    D,
-    K,
-    Verifier,
-    eta,
-    n,
-    np,
-    p,
-    regularizer,
-    worst_case_s0_ista,
-    worst_case_x_param_ista,
-):
-    # Simulate each horizon with its own worst-case x from ISTA verification.
-    worst_case_residuals_ista = []
-    for _k in range(1, K + 1):
-        _VP = Verifier(method='simulator', obbt_solver=None)
-        _x_param = _VP.add_param(ndim=p, samples=[worst_case_x_param_ista[_k - 1]])
-        _s = [None] * (_k + 1)
-        _s0_k = np.asarray(worst_case_s0_ista[_k - 1])
-        _s[0] = _VP.add_iterate(ndim=n, init=_s0_k)
-        for _j in range(1, _k + 1):
-            _s[_j] = _VP.prox(regularizer, _s[_j-1] - eta * D.T @ (D @ _s[_j-1] - _x_param), gamma=eta)
-            _VP.set_objective_norm(_s[_j] - _s[_j-1], ord=np.inf)
-        _VP.solve()
-        # Each replay contains one sampled instance.
-        _final_residual = float(_VP['final_residuals'][0])
-        worst_case_residuals_ista.append(_final_residual)
-
-    worst_case_residuals_ista = np.array(worst_case_residuals_ista)
-    return (worst_case_residuals_ista,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    We repeat the same MIP verification and worst-case replay procedure for FISTA, using the accelerated recurrence and its soft-thresholding prox step.
-    """)
-    return
-
-
-@app.cell
-def _(
-    D,
-    K,
-    Verifier,
-    eta,
-    n,
-    np,
-    p,
-    regularizer,
-    s0_lb,
-    s0_ub,
-    solver_params,
-    x_lb,
-    x_ub,
-):
-    # FISTA MIP verification
-    _VP_fista = Verifier(method='mip', solver='gurobi', params=solver_params)
-    _x_param_fista = _VP_fista.add_param(p, lb=x_lb, ub=x_ub)
-
-    _y = [None for _ in range(K+1)]
-    _z = [None for _ in range(K+1)]
-    _y[0] = _VP_fista.add_iterate(n, lb=s0_lb, ub=s0_ub)
-    _z[0] = _y[0]
-
-    _t = [1.0]  # momentum parameter sequence
-    all_residuals_fista = []
-    worst_case_s0_fista = []
-    worst_case_x_param_fista = []
-
-    for _k in range(1, K+1):
-        _y[_k] = _VP_fista.prox(regularizer, _z[_k-1] - eta * D.T @ (D @ _z[_k-1] - _x_param_fista), gamma=eta)
-
-
-        # Update momentum parameter
-        _t_new = (1.0 + np.sqrt(1.0 + 4.0 * _t[-1]**2)) / 2.0
-        _t.append(_t_new)
-
-        # Momentum update: z := y + ((t - 1) / t_new) * (y - y_prev)
-        _z[_k] = _y[_k] + ((_t[_k-1] - 1.0) / _t[_k]) * (_y[_k] - _y[_k-1])
-
-        _VP_fista.set_objective_norm([_y[_k] - _y[_k-1]], np.inf)
-        _res = _VP_fista.solve()
-        all_residuals_fista.append(_res)
-        worst_case_s0_fista.append(_VP_fista.get_solution_value(_y[0]))
-        worst_case_x_param_fista.append(_VP_fista.get_solution_value(_x_param_fista))
-    return all_residuals_fista, worst_case_s0_fista, worst_case_x_param_fista
-
-
-@app.cell
-def _(D, K, eta, lambd, np, worst_case_s0_fista, worst_case_x_param_fista):
-    # Simulate each horizon with its own worst-case x from FISTA verification.
-    worst_case_residuals_fista = []
-
-    def _soft_threshold(_v, _threshold):
-        return np.sign(_v) * np.maximum(np.abs(_v) - _threshold, 0.0)
-
-    for _k in range(1, K+1):
-        _x_k = np.array(worst_case_x_param_fista[_k-1], dtype=float)
-        _s0_k = np.array(worst_case_s0_fista[_k-1], dtype=float)
-
-        _y = _s0_k.copy()
-        _z = _s0_k.copy()
-        _y_prev = _y.copy()
-        _t = 1.0
-        _last_residual = 0.0
-
-        for _j in range(1, _k + 1):
-            _y_new = _soft_threshold(_z - eta * (D @ _z - _x_k) @ D, lambd * eta)
-            _t_new = (1.0 + np.sqrt(1.0 + 4.0 * _t**2)) / 2.0
-            _z_new = _y_new + ((_t - 1.0) / _t_new) * (_y_new - _y_prev)
-
-            _last_residual = np.max(np.abs(_y_new - _y))
-            _y_prev = _y_new.copy()
-            _y = _y_new
-            _z = _z_new
-            _t = _t_new
-
-        worst_case_residuals_fista.append(_last_residual)
-
-    worst_case_residuals_fista = np.array(worst_case_residuals_fista)
-    return (worst_case_residuals_fista,)
+def _(K, ista_verification):
+    _, all_residuals_sdp = ista_verification(K, 'sdp', momentum=False, solver='clarabel')
+    _, all_residuals_sdp_fista = ista_verification(K, 'sdp', momentum=True, solver='clarabel')
+    return all_residuals_sdp, all_residuals_sdp_fista
 
 
 @app.cell(hide_code=True)
@@ -451,7 +371,9 @@ def _(mo):
 
 
 @app.cell
-def _(K, L, PEPitRunner, eta, pepit_radius):
+def _(K, L, eta, pepit_radius):
+    from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
+
     all_residuals_PEP, _ = PEPitRunner().proximal_gradient_residuals(
         K=K, L=float(L), eta=float(eta), R=pepit_radius, nonsmooth="convex"
     )
@@ -464,63 +386,11 @@ def _(K, L, PEPitRunner, eta, pepit_radius):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### SDP-VP
-
-    Here, we compare against valid upper bounds obtained from the SDP-relaxed verification problem.
-    """)
-    return
-
-
-@app.cell
-def _(D, K, Verifier, eta, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
-    _VP = Verifier(method='sdp', solver='clarabel')
-    _x_param = _VP.add_param(p, lb=x_lb, ub=x_ub)
-
-    _s = [None for _ in range(K+1)]
-    _s[0] = _VP.add_iterate(n, lb=s0_lb, ub=s0_ub)
-
-    all_residuals_sdp = []
-    for _k in range(1, K+1):
-        _s[_k] = _VP.step.soft_threshold(
-            _s[_k-1] - eta * D.T @ (D @ _s[_k-1] - _x_param),
-            lambd=lambd * eta,
-        )
-        _VP.set_objective_norm([_s[_k] - _s[_k-1]], np.inf)
-        all_residuals_sdp.append(_VP.solve())
-    return (all_residuals_sdp,)
-
-
-@app.cell
-def _(D, K, Verifier, eta, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
-    _VP = Verifier(method='sdp', solver='clarabel')
-    _x_param = _VP.add_param(p, lb=x_lb, ub=x_ub)
-
-    _y = [None for _ in range(K+1)]
-    _z = [None for _ in range(K+1)]
-    _y[0] = _VP.add_iterate(n, lb=s0_lb, ub=s0_ub)
-    _z[0] = _y[0]
-    _t = [1.0]
-
-    all_residuals_sdp_fista = []
-    for _k in range(1, K+1):
-        _y[_k] = _VP.step.soft_threshold(
-            _z[_k-1] - eta * D.T @ (D @ _z[_k-1] - _x_param),
-            lambd=lambd * eta,
-        )
-        _t_new = (1.0 + np.sqrt(1.0 + 4.0 * _t[-1]**2)) / 2.0
-        _t.append(_t_new)
-        _z[_k] = _y[_k] + ((_t[_k-1] - 1.0) / _t[_k]) * (_y[_k] - _y[_k-1])
-        _VP.set_objective_norm([_y[_k] - _y[_k-1]], np.inf)
-        all_residuals_sdp_fista.append(_VP.solve())
-    return (all_residuals_sdp_fista,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
     ## Numerical Result
 
-    Now we plot the verification results against the PEPit bound and the horizon-specific worst-case instances extracted from MIP.
+    Now we plot the verification results against the PEPit bound, the SDP
+    bound, and the in-sample simulation statistics, including the sample
+    worst-case instance.
     """)
     return
 
@@ -534,16 +404,15 @@ def _(
     plt,
     simulation_residual_quantiles_ista,
     simulation_residuals_ista,
-    worst_case_residuals_ista,
 ):
     plt.figure()
     _ks = range(1, K+1)
     plt.plot(_ks, all_residuals_PEP, label='ISTA (PEPit)')
     plt.plot(_ks, all_residuals, label='ISTA (MIP worst-case)')
     plt.plot(_ks, all_residuals_sdp, label='ISTA (SDP bound)')
-    plt.plot(_ks, simulation_residuals_ista, '--', label='ISTA (in-sample avg)')
+    _avg_line, = plt.plot(_ks, simulation_residuals_ista, '--', label='ISTA (in-sample avg)')
     plt.fill_between(_ks, simulation_residual_quantiles_ista[2], simulation_residual_quantiles_ista[0], alpha=.18, label='ISTA simulation 10%-90% band')
-    plt.plot(_ks, worst_case_residuals_ista, '-.', color='k', linewidth=.7, label='worst-case ISTA instance')
+    plt.plot(_ks, simulation_residual_quantiles_ista[3], ':', color=_avg_line.get_color(), label='ISTA sample worst-case')
     plt.suptitle('sparse coding example')
     plt.yscale('log')
     plt.xlabel(r'$K$')
@@ -570,16 +439,15 @@ def _(
     plt,
     simulation_residual_quantiles_fista,
     simulation_residuals_fista,
-    worst_case_residuals_fista,
 ):
     plt.figure()
     _ks = range(1, K+1)
     plt.plot(_ks, all_residuals_PEP_fista, label='FISTA (PEPit)')
     plt.plot(_ks, all_residuals_fista, label='FISTA (MIP worst-case)')
     plt.plot(_ks, all_residuals_sdp_fista, label='FISTA (SDP bound)')
-    plt.plot(_ks, simulation_residuals_fista, '--', label='FISTA (in-sample avg)')
+    _avg_line, = plt.plot(_ks, simulation_residuals_fista, '--', label='FISTA (in-sample avg)')
     plt.fill_between(_ks, simulation_residual_quantiles_fista[2], simulation_residual_quantiles_fista[0], alpha=.18, label='FISTA simulation 10%-90% band')
-    plt.plot(_ks, worst_case_residuals_fista, '-.', color='k', linewidth=.7, label='worst-case FISTA instance')
+    plt.plot(_ks, simulation_residual_quantiles_fista[3], ':', color=_avg_line.get_color(), label='FISTA sample worst-case')
     plt.suptitle('sparse coding FISTA example')
     plt.yscale('log')
     plt.xlabel(r'$K$')

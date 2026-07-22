@@ -310,8 +310,8 @@ def _(K, np, pdhg_simulation, v0_samples, w0_samples, x_samples, z0_samples):
     )
 
     simulation_residuals_pdhg = np.mean(_residuals, axis=0)
-    # Quantile 1.0 gives the in-sample worst case; indices are [75%, 50%, 25%, max].
-    simulation_residual_quantiles_pdhg = np.quantile(_residuals, [0.75, 0.50, 0.25, 1.0], axis=0)
+    # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
+    simulation_residual_quantiles_pdhg = np.quantile(_residuals, [0.90, 0.50, 0.10, 1.0], axis=0)
     return simulation_residual_quantiles_pdhg, simulation_residuals_pdhg
 
 
@@ -340,8 +340,8 @@ def _(K, np, pdhg_simulation, v0_samples, w0_samples, x_samples, z0_samples):
         momentum=True, ord=np.inf,
     )
     simulation_residuals_pdhg_mom = np.mean(_residuals, axis=0)
-    # Quantile 1.0 gives the in-sample worst case; indices are [75%, 50%, 25%, max].
-    simulation_residual_quantiles_pdhg_mom = np.quantile(_residuals, [0.75, 0.50, 0.25, 1.0], axis=0)
+    # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
+    simulation_residual_quantiles_pdhg_mom = np.quantile(_residuals, [0.90, 0.50, 0.10, 1.0], axis=0)
     return (
         simulation_residual_quantiles_pdhg_mom,
         simulation_residuals_pdhg_mom,
@@ -351,7 +351,7 @@ def _(K, np, pdhg_simulation, v0_samples, w0_samples, x_samples, z0_samples):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We plot the in-sample mean and 25%-75% empirical quantile band of the residual against the horizon $K$, together with the sample worst-case instance, for PDHG and its momentum variant together.
+    We plot the in-sample mean and 10%-90% empirical quantile band of the residual against the horizon $K$, together with the sample worst-case instance, for PDHG and its momentum variant together.
     """)
     return
 
@@ -371,7 +371,7 @@ def _(
     plt.plot(_ks, simulation_residuals_pdhg, label='PDHG (in-sample avg)')
     plt.fill_between(
         _ks, simulation_residual_quantiles_pdhg[2], simulation_residual_quantiles_pdhg[0],
-        alpha=.18, label='PDHG 25%-75% band',
+        alpha=.18, label='PDHG 10%-90% band',
     )
     plt.plot(
         _ks, simulation_residual_quantiles_pdhg[3], ':', color='C0', linewidth=.7,
@@ -381,7 +381,7 @@ def _(
     plt.plot(_ks, simulation_residuals_pdhg_mom, label='momentum PDHG (in-sample avg)')
     plt.fill_between(
         _ks, simulation_residual_quantiles_pdhg_mom[2], simulation_residual_quantiles_pdhg_mom[0],
-        alpha=.18, label='momentum PDHG 25%-75% band',
+        alpha=.18, label='momentum PDHG 10%-90% band',
     )
     plt.plot(
         _ks, simulation_residual_quantiles_pdhg_mom[3], ':', color='C1', linewidth=.7,
@@ -577,7 +577,7 @@ def _(
     plt.plot(_ks, all_residuals, label='MIP-VP')
     plt.plot(_ks, all_residuals_sdp, label='SDP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals_pdhg, '--', label='sample average')
-    plt.fill_between(_ks, simulation_residual_quantiles_pdhg[2], simulation_residual_quantiles_pdhg[0], alpha=.18, label='simulation 25%-75% band')
+    plt.fill_between(_ks, simulation_residual_quantiles_pdhg[2], simulation_residual_quantiles_pdhg[0], alpha=.18, label='simulation 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_pdhg[3], ':', color=_avg_line.get_color(), label='sample worst-case')
     plt.yscale('log')
     plt.xlabel(r'$K$')
@@ -630,7 +630,7 @@ def _(
     plt.plot(_ks, all_residuals_momentum, label='MIP-VP')
     plt.plot(_ks, all_residuals_sdp_momentum, label='SDP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals_pdhg_mom, '--', label='sample average')
-    plt.fill_between(_ks, simulation_residual_quantiles_pdhg_mom[2], simulation_residual_quantiles_pdhg_mom[0], alpha=.18, label='simulation 25%-75% band')
+    plt.fill_between(_ks, simulation_residual_quantiles_pdhg_mom[2], simulation_residual_quantiles_pdhg_mom[0], alpha=.18, label='simulation 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_pdhg_mom[3], ':', color=_avg_line.get_color(), label='sample worst-case')
     plt.yscale('log')
     plt.xlabel(r'$K$')

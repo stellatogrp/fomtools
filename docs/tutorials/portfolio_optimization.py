@@ -1,24 +1,15 @@
 import marimo
 
-__generated_with = "0.22.5"
+__generated_with = "0.23.14"
 app = marimo.App(width="medium")
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     import marimo as mo
-
-    return (mo,)
-
-
-@app.cell
-def _():
     import matplotlib.pyplot as plt
     import numpy as np
-    from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
     from scipy.sparse import csr_matrix
-
-    from fomtools.verifier import Verifier
 
     np.set_printoptions(precision=5)
     np.set_printoptions(suppress=True)
@@ -27,7 +18,7 @@ def _():
         "OutputFlag": 0,
         "LogToConsole": 0,
     }
-    return PEPitRunner, Verifier, csr_matrix, np, plt, solver_params
+    return csr_matrix, mo, np, plt, solver_params
 
 
 @app.cell(hide_code=True)
@@ -105,6 +96,38 @@ def _(A_mat, Sigma, csr_matrix, n, np):
     return K, lhs_mat, rho, sigma
 
 
+@app.cell
+def _(A_mat, l_val, mu, rho, sigma, u_val):
+    def admm_step(VP, x_prev, v_prev, lhs_mat):
+        """One OSQP-style ADMM step, shared by every verification mode below.
+
+        Projects ``v_prev`` onto the box $[l, u]$ (``VP.step.satlin``), solves
+        the linear system implicitly through ``lhs_mat``, and updates the dual
+        iterate. Returns the next primal iterate, the next dual iterate, and
+        the combined fixed-point residual ``[x_next - x_prev, v_next -
+        v_prev]``. ``lhs_mat`` is passed in so the simulator can use a dense
+        factorization while the MIP/SDP backends use the sparse matrix.
+        """
+        w_next = VP.step.satlin(v_prev, l=l_val, u=u_val)
+        rhs = sigma * x_prev + mu + rho * A_mat.T @ (2 * w_next - v_prev)
+        x_next = VP.step.implicit_linear(rhs, output_mat=lhs_mat)
+        v_next = v_prev + A_mat @ x_next - w_next
+        return x_next, v_next, [x_next - x_prev, v_next - v_prev]
+
+    return (admm_step,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    Every verification mode below (simulator, MIP-VP, and SDP-VP) drives this
+    *same* `admm_step` recurrence and squared Euclidean residual; only the
+    `Verifier` backend and whether $v^0$ is a sampled instance or a bounded
+    search variable change.
+    """)
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -120,46 +143,60 @@ def _(mo):
     mo.md(r"""
     ## Simulator class
 
-    We first simulate ADMM from randomly sampled initial dual iterates $v^0 \in [0,1]^{n+1}$. Running `_VP.solve()` returns a residual history for each sampled initialization.
+    We first simulate ADMM from randomly sampled initial dual iterates $v^0 \in [0,1]^{n+1}$. The samples are drawn once below and reused by every simulation cell. Running `_VP.solve()` returns a residual history for each sampled initialization.
     """)
     return
 
 
 @app.cell
-def _(
-    A_mat,
-    K,
-    Verifier,
-    l_val,
-    lhs_mat,
-    mu,
-    n,
-    np,
-    rho,
-    sigma,
-    u_val,
-    v0_lb,
-    v0_ub,
-    x0_val,
-):
+def _(n, np, v0_lb, v0_ub):
     n_samples = 10000
     _rng = np.random.default_rng(0)
-    _v0_samples = _rng.uniform(low=v0_lb, high=v0_ub, size=(n_samples, n + 1))
+    v0_samples = _rng.uniform(low=v0_lb, high=v0_ub, size=(n_samples, n + 1))
+    return (v0_samples,)
 
-    _VP = Verifier(method="simulator", obbt_solver=None)
-    _x = [x0_val]
-    _v = [_VP.add_param(n + 1, samples=_v0_samples)]
-    _w = [None]
-    _lhs_mat_sim = lhs_mat.toarray()
 
-    for _k in range(K):
-        _w.append(_VP.step.satlin(_v[_k], l=l_val, u=u_val))
-        _rhs = sigma * _x[_k] + mu + rho * A_mat.T @ (2 * _w[_k + 1] - _v[_k])
-        _x.append(_VP.step.implicit_linear(_rhs, output_mat=_lhs_mat_sim))
-        _v.append(_v[_k] + A_mat @ _x[_k + 1] - _w[_k + 1])
-        _VP.set_objective_norm([_x[_k + 1] - _x[_k], _v[_k + 1] - _v[_k]], ord=2)
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    The simulation is run through the following function.
+    """)
+    return
 
-    _residuals = _VP.solve()
+
+@app.cell
+def _(admm_step, lhs_mat, n, x0_val):
+    from fomtools.verifier import Verifier
+
+    def admm_simulation(v0_samples, K, ord=2):
+        """Simulate ADMM on sampled dual iterates and return ``(VP, residuals)``.
+
+        Builds a simulator-mode :class:`Verifier`, registers the initial dual
+        iterate ``v0`` as a sampled parameter (fixing $x^0 = 0$), rolls out the
+        recurrence with ``admm_step``, and solves. ``v0_samples`` has shape
+        ``(n_samples, n+1)`` (a single-row array replays one instance), and the
+        returned ``residuals`` has shape ``(n_samples, K)``. Summary statistics
+        (``mean``, ``min``, ``max``, ...) are available on the returned ``VP``
+        via ``VP[...]``.
+        """
+        VP = Verifier(method="simulator", obbt_solver=None)
+        x = x0_val
+        v = VP.add_param(n + 1, samples=v0_samples)
+
+        lhs_mat_dense = lhs_mat.toarray()
+        for _ in range(K):
+            x, v, residual = admm_step(VP, x, v, lhs_mat_dense)
+            VP.set_objective_norm(residual, ord)
+
+        residuals = VP.solve()
+        return VP, residuals
+
+    return Verifier, admm_simulation
+
+
+@app.cell
+def _(K, admm_simulation, np, v0_samples):
+    _VP, _residuals = admm_simulation(v0_samples, K, ord=2)
 
     print(
         f"Summary statistics:\n"
@@ -168,19 +205,54 @@ def _(
         f"min: {_VP['min']:.6e}\n"
         f"max: {_VP['max']:.6e}\n"
         f"median: {_VP['median']:.6e}\n"
-        f"empirical_risk: {_VP['empirical_risk']:.4f}\n"
-        f"risk_bound: {_VP['risk_bound']:.4f}\n"
         f"n_samples: {_VP['n_samples']}\n"
         f"n_iteration: {_VP['n_iterations']}\n"
-        f"runtime: {_VP['runtime']:.4f}\n"
-        f"time_per_sample: {_VP['time_per_sample']:.4f}\n"
-        f"throughput: {_VP['throughput']:.4f}\n"
-        f"residuals: {_residuals}"
     )
 
     simulation_residuals_admm = np.mean(_residuals, axis=0)
-    simulation_residual_quantiles_admm = np.quantile(_residuals, [0.90, 0.50, 0.10], axis=0)
+    # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
+    simulation_residual_quantiles_admm = np.quantile(_residuals, [0.90, 0.50, 0.10, 1.0], axis=0)
     return simulation_residual_quantiles_admm, simulation_residuals_admm
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Algorithm verification through verification problem (VP)
+
+    We now obtain worst-case guarantees by solving the verification problem
+    with a MIP formulation (exact) and an SDP relaxation (valid upper bound).
+    Both formulations use the following function, which rolls out the same
+    `admm_step` recurrence over the horizon $K$ and maximizes the residual over
+    the bounded initial dual iterate $v^0$ at each iteration.
+    """)
+    return
+
+
+@app.cell
+def _(Verifier, admm_step, lhs_mat, n, v0_lb, v0_ub, x0_val):
+    def admm_verification(K, method, ord=2, **verifier_kwargs):
+        """Solve the portfolio ADMM verification problem for one backend.
+
+        Mirrors :func:`admm_simulation`: builds a ``Verifier`` in ``method``
+        mode, registers the initial dual iterate box ``[v0_lb, v0_ub]`` (fixing
+        $x^0 = 0$), rolls out ``admm_step`` over the horizon ``K``, and returns
+        ``(VP, residuals)`` with one worst-case residual per iteration. Extra
+        ``verifier_kwargs`` (``solver``, ``obbt_solver``, ``params``, ...) are
+        forwarded to the ``Verifier`` constructor.
+        """
+        VP = Verifier(method=method, **verifier_kwargs)
+        x = x0_val
+        v = VP.add_iterate(n + 1, lb=v0_lb, ub=v0_ub)
+
+        residuals = []
+        for _ in range(K):
+            x, v, residual = admm_step(VP, x, v, lhs_mat)
+            VP.set_objective_norm(residual, ord)
+            residuals.append(VP.solve())
+        return VP, residuals
+
+    return (admm_verification,)
 
 
 @app.cell(hide_code=True)
@@ -188,120 +260,17 @@ def _(mo):
     mo.md(r"""
     ## MIP-VP
 
-    We now solve the exact MIP verification problem. The MIP maximizes the ADMM fixed-point residual over the bounded initial dual iterate $v^0$ for each horizon.
+    We solve the exact MIP verification problem. The MIP maximizes the ADMM fixed-point residual over the bounded initial dual iterate $v^0$ for each horizon.
     """)
     return
 
 
 @app.cell
-def _(
-    A_mat,
-    K,
-    Verifier,
-    l_val,
-    lhs_mat,
-    mu,
-    n,
-    rho,
-    sigma,
-    solver_params,
-    u_val,
-    v0_lb,
-    v0_ub,
-    x0_val,
-):
-    _VP = Verifier(method="mip", solver="gurobi", obbt_solver="highs", params=solver_params)
-
-    _x = [x0_val]
-    _v = [_VP.add_iterate(n + 1, lb=v0_lb, ub=v0_ub)]
-    _w = [None]
-
-    all_residuals = []
-    worst_case_v0_admm = []
-    for _k in range(K):
-        _w.append(_VP.step.satlin(_v[_k], l=l_val, u=u_val))
-        _rhs = sigma * _x[_k] + mu + rho * A_mat.T @ (2 * _w[_k + 1] - _v[_k])
-        _x.append(_VP.step.implicit_linear(_rhs, output_mat=lhs_mat))
-        _v.append(_v[_k] + A_mat @ _x[_k + 1] - _w[_k + 1])
-        _VP.set_objective_norm([_x[_k + 1] - _x[_k], _v[_k + 1] - _v[_k]], ord=2)
-        all_residuals.append(_VP.solve())
-        worst_case_v0_admm.append(_VP.get_solution_value(_v[0]))
-    return all_residuals, worst_case_v0_admm
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    We replay the horizon-specific worst-case initial dual iterates in simulator mode to check the explicit residual trajectory produced by the MIP optimizer. After calling `solve()`, the replay's final residual is available through the `final_residuals` summary statistic.
-    """)
-    return
-
-
-@app.cell
-def _(
-    A_mat,
-    K,
-    Verifier,
-    l_val,
-    lhs_mat,
-    mu,
-    n,
-    np,
-    rho,
-    sigma,
-    u_val,
-    worst_case_v0_admm,
-    x0_val,
-):
-    worst_case_residuals_admm = []
-    _lhs_mat_sim = lhs_mat.toarray()
-    for _k in range(1, K + 1):
-        _VP = Verifier(method="simulator", obbt_solver=None)
-        _v0_k = np.asarray(worst_case_v0_admm[_k - 1])
-
-        _x = [x0_val]
-        _v = [_VP.add_param(ndim=n + 1, samples=[_v0_k])]
-        _w = [None]
-
-        for _j in range(_k):
-            _w.append(_VP.step.satlin(_v[_j], l=l_val, u=u_val))
-            _rhs = sigma * _x[_j] + mu + rho * A_mat.T @ (2 * _w[_j + 1] - _v[_j])
-            _x.append(_VP.step.implicit_linear(_rhs, output_mat=_lhs_mat_sim))
-            _v.append(_v[_j] + A_mat @ _x[_j + 1] - _w[_j + 1])
-            _VP.set_objective_norm([_x[_j + 1] - _x[_j], _v[_j + 1] - _v[_j]], ord=2)
-
-        _VP.solve()
-        # Each replay contains one sampled instance.
-        _final_residual = float(_VP['final_residuals'][0])
-        worst_case_residuals_admm.append(_final_residual)
-
-    worst_case_residuals_admm = np.array(worst_case_residuals_admm)
-    return (worst_case_residuals_admm,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ### PEP-obtained worst-case convergence rate
-
-    We compare the MIP result to a PEPit ADMM residual bound for the smooth strongly-convex quadratic term and the indicator function of the portfolio constraint set. As in the comparison script, the initial radius is calibrated so the PEPit value matches the MIP value at $K=1$.
-    """)
-    return
-
-
-@app.cell
-def _(K, PEPitRunner, Sigma, all_residuals, np):
-    _Sigma_eigs = np.linalg.eigvalsh(Sigma)
-    _mu_f = float(_Sigma_eigs.min())
-    _L_f = float(_Sigma_eigs.max())
-    all_residuals_PEP, pepit_radius = PEPitRunner().admm_residuals(
-        K=K,
-        mu=_mu_f,
-        L=_L_f,
-        R=None,
-        calibrate_to=all_residuals[0],
+def _(K, admm_verification, solver_params):
+    _, all_residuals = admm_verification(
+        K, "mip", solver="gurobi", obbt_solver="highs", params=solver_params,
     )
-    return (all_residuals_PEP,)
+    return (all_residuals,)
 
 
 @app.cell(hide_code=True)
@@ -315,42 +284,48 @@ def _(mo):
 
 
 @app.cell
-def _(
-    A_mat,
-    K,
-    Verifier,
-    l_val,
-    lhs_mat,
-    mu,
-    n,
-    rho,
-    sigma,
-    u_val,
-    v0_lb,
-    v0_ub,
-    x0_val,
-):
-    _VP = Verifier(method="sdp", solver="clarabel", obbt_solver="highs")
-
-    _x = [x0_val]
-    _v = [_VP.add_iterate(n + 1, lb=v0_lb, ub=v0_ub)]
-    _w = [None]
-
-    all_residuals_sdp = []
-    for _k in range(K):
-        _w.append(_VP.step.satlin(_v[_k], l=l_val, u=u_val))
-        _rhs = sigma * _x[_k] + mu + rho * A_mat.T @ (2 * _w[_k + 1] - _v[_k])
-        _x.append(_VP.step.implicit_linear(_rhs, output_mat=lhs_mat))
-        _v.append(_v[_k] + A_mat @ _x[_k + 1] - _w[_k + 1])
-        _VP.set_objective_norm([_x[_k + 1] - _x[_k], _v[_k + 1] - _v[_k]], ord=2)
-        all_residuals_sdp.append(_VP.solve())
+def _(K, admm_verification):
+    _, all_residuals_sdp = admm_verification(
+        K, "sdp", solver="clarabel", obbt_solver="highs",
+    )
     return (all_residuals_sdp,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Now we plot the verification results against the PEPit bound, the simulator statistics, and the horizon-specific worst-case instances extracted from MIP.
+    ### PEP-obtained worst-case convergence rate
+
+    We compare the MIP result to a PEPit ADMM residual bound for the smooth strongly-convex quadratic term and the indicator function of the portfolio constraint set. As in the comparison script, the initial radius is calibrated so the PEPit value matches the MIP value at $K=1$.
+    """)
+    return
+
+
+@app.cell
+def _(K, Sigma, all_residuals, np):
+    from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
+
+    _Sigma_eigs = np.linalg.eigvalsh(Sigma)
+    _mu_f = float(_Sigma_eigs.min())
+    _L_f = float(_Sigma_eigs.max())
+    all_residuals_PEP, _ = PEPitRunner().admm_residuals(
+        K=K,
+        mu=_mu_f,
+        L=_L_f,
+        R=None,
+        calibrate_to=all_residuals[0],
+    )
+    return (all_residuals_PEP,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Numerical Result
+
+    Now we plot the verification results against the PEPit bound, the SDP
+    bound, and the in-sample simulation statistics, including the sample
+    worst-case instance.
     """)
     return
 
@@ -364,14 +339,13 @@ def _(
     plt,
     simulation_residual_quantiles_admm,
     simulation_residuals_admm,
-    worst_case_residuals_admm,
 ):
     plt.figure()
     _ks = range(1, K + 1)
     plt.plot(_ks, all_residuals_PEP, label="ADMM (PEPit)")
     plt.plot(_ks, all_residuals, label="ADMM (MIP worst-case)")
     plt.plot(_ks, all_residuals_sdp, label="ADMM (SDP bound)")
-    plt.plot(_ks, simulation_residuals_admm, "--", label="ADMM (in-sample avg)")
+    _avg_line, = plt.plot(_ks, simulation_residuals_admm, "--", label="ADMM (in-sample avg)")
     plt.fill_between(
         _ks,
         simulation_residual_quantiles_admm[2],
@@ -379,7 +353,7 @@ def _(
         alpha=.18,
         label="ADMM simulation 10%-90% band",
     )
-    plt.plot(_ks, worst_case_residuals_admm, "-.", color="k", linewidth=.7, label="worst-case ADMM instance")
+    plt.plot(_ks, simulation_residual_quantiles_admm[3], ":", color=_avg_line.get_color(), label="ADMM sample worst-case")
     plt.yscale("log")
     plt.ylabel("Worst-case fixed-point residual")
     plt.xlabel(r"$K$")
