@@ -6,11 +6,12 @@ app = marimo.App(width="medium")
 
 @app.cell(hide_code=True)
 def _():
+    import sys
+    from pathlib import Path
+
     import marimo as mo
     import matplotlib.pyplot as plt
     import numpy as np
-    import sys
-    from pathlib import Path
 
     start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
     for candidate in (start, *start.parents):
@@ -23,8 +24,11 @@ def _():
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
-    from docs.tutorials.helper_functions.nnls import make_nnls_matrix, pgd_step
-    from scipy.optimize import nnls
+    from docs.tutorials.helper_functions.nnls import (
+        certify_nnls_pepit_radius,
+        make_nnls_matrix,
+        pgd_step,
+    )
 
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
@@ -33,7 +37,15 @@ def _():
         'OutputFlag': 0,
         'LogToConsole': 0,
     }
-    return make_nnls_matrix, mo, nnls, np, pgd_step, plt, solver_params
+    return (
+        certify_nnls_pepit_radius,
+        make_nnls_matrix,
+        mo,
+        np,
+        pgd_step,
+        plt,
+        solver_params,
+    )
 
 
 @app.cell(hide_code=True)
@@ -404,30 +416,32 @@ def _(mo):
     return
 
 
-@app.cell
-def _(A, m, nnls, np, x_lb, x_ub, z0_lb, z0_ub):
-    # Certified upper bound on sup_{z0 in Z, x in X} ||z0 - z*(x)||_2 (see above).
-    _sigma_min = np.sqrt(np.min(np.linalg.eigvalsh(A.T @ A)))
-    _x_center = np.full(m, 0.5 * (x_lb + x_ub))
-    _z_star_center = nnls(A, _x_center)[0]
-    # Farthest z0 in [z0_lb, z0_ub]^n from z*(xbar): pick the extreme per axis.
-    _z0_far = np.maximum(
-        np.abs(z0_ub - _z_star_center), np.abs(z0_lb - _z_star_center)
-    )
-    _x_circumradius = 0.5 * np.linalg.norm(np.full(m, x_ub - x_lb))
-    pepit_radius = np.linalg.norm(_z0_far) + _x_circumradius / _sigma_min
-    return (pepit_radius,)
-
-
-@app.cell
-def _(K, L, eta, pepit_radius):
+@app.cell(hide_code=True)
+def _(
+    A,
+    K,
+    L,
+    certify_nnls_pepit_radius,
+    eta,
+    x_lb,
+    x_ub,
+    z0_lb,
+    z0_ub,
+):
     from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 
+    _pepit_radius = certify_nnls_pepit_radius(
+        A,
+        x_lb,
+        x_ub,
+        z0_lb,
+        z0_ub,
+    )
     all_residuals_PEP, _ = PEPitRunner().proximal_gradient_residuals(
-        K=K, L=float(L), eta=float(eta), R=pepit_radius, nonsmooth="indicator"
+        K=K, L=float(L), eta=float(eta), R=_pepit_radius, nonsmooth="indicator"
     )
     all_residuals_PEP_momentum, _ = PEPitRunner().accelerated_proximal_gradient_residuals(
-        K=K, L=float(L), eta=float(eta), R=pepit_radius, nonsmooth="indicator"
+        K=K, L=float(L), eta=float(eta), R=_pepit_radius, nonsmooth="indicator"
     )
     return all_residuals_PEP, all_residuals_PEP_momentum
 
@@ -637,11 +651,6 @@ def _(np):
         print("no-collapse is a sparser (>=) relaxation; timing favors it as K/n grow")
     except Exception as exc:  # missing SDP solver in this environment
         print(f"(skipping SDP comparison: {exc})")
-    return
-
-
-@app.cell
-def _():
     return
 
 

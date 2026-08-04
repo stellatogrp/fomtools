@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from fomtools import IterateTrajectory
+
 
 def make_portfolio_data(n: int = 4, seed: int = 0, position_limit: float = 0.6):
     """Return deterministic mean-variance data and the portfolio constraint box."""
@@ -29,17 +31,43 @@ def admm_step(
     x_prev,
     v_prev,
     lhs_mat,
+    k=None,
 ):
-    """Apply one OSQP-style ADMM step for the portfolio problem."""
-    w_next = VP.step.satlin(v_prev, l=lower, u=upper)
+    """Apply one OSQP-style ADMM step for the portfolio problem.
+
+    ``x_prev`` and ``v_prev`` may be current expressions or backend-aware
+    trajectories. Trajectories read slot ``k - 1`` and store the next state in
+    slot ``k``.
+    """
+    x_trajectory = x_prev if isinstance(x_prev, IterateTrajectory) else None
+    v_trajectory = v_prev if isinstance(v_prev, IterateTrajectory) else None
+    if (x_trajectory is not None or v_trajectory is not None) and k is None:
+        raise ValueError("k is required when admm_step receives a trajectory.")
+
+    x_current = x_trajectory[k - 1] if x_trajectory is not None else x_prev
+    v_current = v_trajectory[k - 1] if v_trajectory is not None else v_prev
+
+    w_next = VP.step.satlin(v_current, l=lower, u=upper)
     rhs = (
-        sigma * x_prev
+        sigma * x_current
         + expected_return
-        + rho * constraint_matrix.T @ (2 * w_next - v_prev)
+        + rho * constraint_matrix.T @ (2 * w_next - v_current)
     )
     x_next = VP.step.implicit_linear(rhs, output_mat=lhs_mat)
-    v_next = v_prev + constraint_matrix @ x_next - w_next
-    return x_next, v_next, [x_next - x_prev, v_next - v_prev]
+    if x_trajectory is not None:
+        x_trajectory[k] = x_next
+        x_next = x_trajectory[k]
+
+    v_next = v_current + constraint_matrix @ x_next - w_next
+    if v_trajectory is not None:
+        v_trajectory[k] = v_next
+        v_next = v_trajectory[k]
+
+    return (
+        x_trajectory if x_trajectory is not None else x_next,
+        v_trajectory if v_trajectory is not None else v_next,
+        [x_next - x_current, v_next - v_current],
+    )
 
 
 def solve_admm_numpy(
@@ -64,3 +92,28 @@ def solve_admm_numpy(
         x = np.linalg.solve(lhs, rhs)
         v = v + constraint_matrix @ x - w
     return np.concatenate([x, v])
+
+
+def calibrated_portfolio_pepit_residuals(
+    covariance,
+    K,
+    target_residual,
+):
+    """Return portfolio ADMM PEP bounds calibrated at the first iteration.
+
+    Computes the strong-convexity and smoothness constants of the quadratic
+    objective, then asks :class:`PEPitRunner` to calibrate the initial radius
+    so its first residual equals ``target_residual``. Returns both the residual
+    curve and the calibrated radius.
+    """
+    from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
+
+    covariance_eigenvalues = np.linalg.eigvalsh(covariance)
+    mu = float(covariance_eigenvalues.min())
+    L = float(covariance_eigenvalues.max())
+    return PEPitRunner().admm_residuals(
+        K=K,
+        mu=mu,
+        L=L,
+        calibrate_to=target_residual,
+    )

@@ -25,7 +25,11 @@ def _():
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
-    from docs.tutorials.helper_functions.network import make_network_data, pdhg_step
+    from docs.tutorials.helper_functions.network import (
+        estimate_network_pepit_radius,
+        make_network_data,
+        pdhg_step,
+    )
 
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
@@ -34,7 +38,16 @@ def _():
         'OutputFlag': 0,
         'LogToConsole': 0,
     }
-    return cp, make_network_data, mo, np, pdhg_step, plt, solver_params
+    return (
+        cp,
+        estimate_network_pepit_radius,
+        make_network_data,
+        mo,
+        np,
+        pdhg_step,
+        plt,
+        solver_params,
+    )
 
 
 @app.cell(hide_code=True)
@@ -438,9 +451,12 @@ def _(
         else:
             capacity, supply, cost = c, b_s, mu
 
-        z = VP.add_iterate(n_e, lb=z0_lb, ub=z0_ub)
-        v = VP.add_iterate(n_s, lb=v0_lb, ub=v0_ub)
-        w = VP.add_iterate(n_d, lb=w0_lb, ub=w0_ub)
+        z = VP.iterate_trajectory(K + 1, collapse_expr='auto')
+        v = VP.iterate_trajectory(K + 1, collapse_expr='auto')
+        w = VP.iterate_trajectory(K + 1, collapse_expr='auto')
+        z[0] = VP.add_iterate(n_e, lb=z0_lb, ub=z0_ub)
+        v[0] = VP.add_iterate(n_s, lb=v0_lb, ub=v0_ub)
+        w[0] = VP.add_iterate(n_d, lb=w0_lb, ub=w0_ub)
 
         ord = ord if ord is not None else (np.inf if method == 'mip' else 2)
 
@@ -531,6 +547,7 @@ def _(
     all_residuals_sdp,
     b_s,
     c,
+    estimate_network_pepit_radius,
     eta,
     mu,
     plt,
@@ -543,11 +560,24 @@ def _(
 ):
     from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 
-    _pepit_radius = PEPitRunner().pdhg_radius(
-        A_s=A_s, A_d=A_d, b_s=b_s, mu=mu, c=c, eta=eta,
-        z0_samples=z0_samples, v0_samples=v0_samples, w0_samples=w0_samples, x_samples=x_samples,
+    # Empirical primal-dual radius over the shared simulation samples.
+    _pepit_radius = estimate_network_pepit_radius(
+        A_s,
+        A_d,
+        b_s,
+        mu,
+        c,
+        eta,
+        z0_samples,
+        v0_samples,
+        w0_samples,
+        x_samples,
     )
-    all_residuals_PEP, _ = PEPitRunner().pdhg_residuals(
+    _runner = PEPitRunner()
+    all_residuals_PEP, _ = _runner.pdhg_residuals(
+        K=K, L=float(L), eta=float(eta), R=_pepit_radius
+    )
+    all_residuals_PEP_momentum, _ = _runner.pdhg_momentum_residuals(
         K=K, L=float(L), eta=float(eta), R=_pepit_radius
     )
 
@@ -564,7 +594,7 @@ def _(
     plt.ylabel('Worst-case KKT residual')
     plt.legend()
     plt.suptitle('network optimization example')
-    return (PEPitRunner,)
+    return (all_residuals_PEP_momentum,)
 
 
 @app.cell(hide_code=True)
@@ -577,33 +607,14 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _(
-    A_d,
-    A_s,
     K,
-    L,
-    PEPitRunner,
+    all_residuals_PEP_momentum,
     all_residuals_momentum,
     all_residuals_sdp_momentum,
-    b_s,
-    c,
-    eta,
-    mu,
     plt,
     simulation_residual_quantiles_pdhg_mom,
     simulation_residuals_pdhg_mom,
-    v0_samples,
-    w0_samples,
-    x_samples,
-    z0_samples,
 ):
-    _pepit_radius = PEPitRunner().pdhg_radius(
-        A_s=A_s, A_d=A_d, b_s=b_s, mu=mu, c=c, eta=eta,
-        z0_samples=z0_samples, v0_samples=v0_samples, w0_samples=w0_samples, x_samples=x_samples,
-    )
-    all_residuals_PEP_momentum, _ = PEPitRunner().pdhg_momentum_residuals(
-        K=K, L=float(L), eta=float(eta), R=_pepit_radius
-    )
-
     plt.figure()
     _ks = range(1, K+1)
     plt.plot(_ks, all_residuals_PEP_momentum, label='PEPit')

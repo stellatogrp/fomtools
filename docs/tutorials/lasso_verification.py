@@ -24,7 +24,11 @@ def _():
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
-    from docs.tutorials.helper_functions.lasso import ista_step, make_lasso_data
+    from docs.tutorials.helper_functions.lasso import (
+        estimate_lasso_pepit_radius,
+        ista_step,
+        make_lasso_data,
+    )
 
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
@@ -33,7 +37,15 @@ def _():
         'OutputFlag': 0,
         'LogToConsole': 0,
     }
-    return ista_step, make_lasso_data, mo, np, plt, solver_params
+    return (
+        estimate_lasso_pepit_radius,
+        ista_step,
+        make_lasso_data,
+        mo,
+        np,
+        plt,
+        solver_params,
+    )
 
 
 @app.cell(hide_code=True)
@@ -193,7 +205,13 @@ def _(D, eta, ista_step, lambd, n, np, p):
 
 
 @app.cell
-def _(D, K, eta, ista_simulation, lambd, np, s0_samples, x_samples):
+def _(
+    K,
+    ista_simulation,
+    np,
+    s0_samples,
+    x_samples,
+):
     _VP, _residuals = ista_simulation(x_samples, s0_samples, K, momentum=False, ord=np.inf)
 
     print(
@@ -207,22 +225,7 @@ def _(D, K, eta, ista_simulation, lambd, np, s0_samples, x_samples):
     simulation_residuals_ista = np.mean(_residuals, axis=0)
     # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
     simulation_residual_quantiles_ista = np.quantile(_residuals, [0.90, 0.50, 0.10, 1.0], axis=0)
-
-    # Empirical initial-condition radius for the PEPit comparison.
-    _s_star_samples = np.zeros((x_samples.shape[0], D.shape[1]), dtype=float)
-    for _ in range(2000):
-        _grad = (_s_star_samples @ D.T - x_samples) @ D
-        _s_next_samples = np.sign(_s_star_samples - eta * _grad) * np.maximum(
-            np.abs(_s_star_samples - eta * _grad) - lambd * eta,
-            0.0,
-        )
-        if np.max(np.linalg.norm(_s_next_samples - _s_star_samples, axis=1)) <= 1e-10:
-            _s_star_samples = _s_next_samples
-            break
-        _s_star_samples = _s_next_samples
-    pepit_radius = np.max(np.linalg.norm(s0_samples - _s_star_samples, axis=1))
     return (
-        pepit_radius,
         simulation_residual_quantiles_ista,
         simulation_residuals_ista,
     )
@@ -273,9 +276,9 @@ def _(D, Verifier, eta, ista_step, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
         """
         VP = Verifier(method=method, **verifier_kwargs)
         x_param = VP.add_param(p, lb=x_lb, ub=x_ub)
-        s0 = VP.add_iterate(n, lb=s0_lb, ub=s0_ub)
-
-        z, y, t = s0, s0, 1.0
+        z = VP.iterate_trajectory(K + 1, collapse_expr='auto')
+        z[0] = VP.add_iterate(n, lb=s0_lb, ub=s0_ub)
+        y, t = z[0], 1.0
         residuals = []
         for k in range(1, K + 1):
             z, y, t, residual = ista_step(
@@ -344,15 +347,32 @@ def _(mo):
     return
 
 
-@app.cell
-def _(K, L, eta, pepit_radius):
+@app.cell(hide_code=True)
+def _(
+    D,
+    K,
+    L,
+    estimate_lasso_pepit_radius,
+    eta,
+    lambd,
+    s0_samples,
+    x_samples,
+):
     from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 
+    # Empirical initial-condition radius for the PEPit comparison.
+    _pepit_radius = estimate_lasso_pepit_radius(
+        D,
+        eta,
+        lambd,
+        s0_samples,
+        x_samples,
+    )
     all_residuals_PEP, _ = PEPitRunner().proximal_gradient_residuals(
-        K=K, L=float(L), eta=float(eta), R=pepit_radius, nonsmooth="convex"
+        K=K, L=float(L), eta=float(eta), R=_pepit_radius, nonsmooth="convex"
     )
     all_residuals_PEP_fista, _ = PEPitRunner().accelerated_proximal_gradient_residuals(
-        K=K, L=float(L), eta=float(eta), R=pepit_radius, nonsmooth="convex"
+        K=K, L=float(L), eta=float(eta), R=_pepit_radius, nonsmooth="convex"
     )
     return all_residuals_PEP, all_residuals_PEP_fista
 

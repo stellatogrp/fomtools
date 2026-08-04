@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.optimize import nnls
 
 from fomtools import IterateTrajectory, LinearExpression
 
@@ -57,3 +58,28 @@ def solve_pgd_numpy(A, eta, z0, x, max_iters):
     for _ in range(max_iters):
         z = np.maximum(z - eta * A.T @ (A @ z - x), 0.0)
     return z
+
+
+def certify_nnls_pepit_radius(A, x_lb, x_ub, z0_lb, z0_ub):
+    """Return a certified initial-condition radius for the NNLS PEP.
+
+    The NNLS solution map is ``1 / sigma_min(A)``-Lipschitz. The returned
+    radius combines the farthest initial-box point from the solution at the
+    center of the parameter box with this Lipschitz constant times the
+    parameter box's Euclidean circumradius.
+    """
+    m, n = A.shape
+    x_lb = np.broadcast_to(np.asarray(x_lb, dtype=float), (m,))
+    x_ub = np.broadcast_to(np.asarray(x_ub, dtype=float), (m,))
+    z0_lb = np.broadcast_to(np.asarray(z0_lb, dtype=float), (n,))
+    z0_ub = np.broadcast_to(np.asarray(z0_ub, dtype=float), (n,))
+
+    sigma_min = np.sqrt(np.min(np.linalg.eigvalsh(A.T @ A)))
+    x_center = 0.5 * (x_lb + x_ub)
+    z_star_center = nnls(A, x_center)[0]
+    z0_far = np.maximum(
+        np.abs(z0_ub - z_star_center),
+        np.abs(z0_lb - z_star_center),
+    )
+    x_circumradius = 0.5 * np.linalg.norm(x_ub - x_lb)
+    return float(np.linalg.norm(z0_far) + x_circumradius / sigma_min)

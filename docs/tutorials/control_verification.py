@@ -29,6 +29,7 @@ def _():
         admm_step,
         build_admm_lhs,
         build_control_qp,
+        estimate_control_pepit_radius,
         make_control_dynamics,
     )
     from fomtools.proxable_functions import IndBox
@@ -45,6 +46,7 @@ def _():
         admm_step,
         build_admm_lhs,
         build_control_qp,
+        estimate_control_pepit_radius,
         make_control_dynamics,
         mo,
         np,
@@ -332,63 +334,6 @@ def _(mo):
     return
 
 
-@app.cell
-def _(
-    M,
-    P,
-    build_lhs,
-    n_samples,
-    np,
-    q,
-    rho,
-    sigma,
-    spa,
-    u_stack_max,
-    u_stack_min,
-    v0_samples,
-    x_samples,
-    z0_samples,
-):
-    _lhs_mat_lu = spa.linalg.splu(build_lhs(P).tocsc())
-    _z_star_samples = z0_samples.copy()
-    _v_star_samples = v0_samples.copy()
-    _l_x_samples = np.hstack([
-        x_samples,
-        u_stack_min[np.newaxis, :].repeat(n_samples, axis=0),
-    ])
-    _u_x_samples = np.hstack([
-        x_samples,
-        u_stack_max[np.newaxis, :].repeat(n_samples, axis=0),
-    ])
-    for _ in range(2000):
-        _w_star_samples = np.clip(_v_star_samples, _l_x_samples, _u_x_samples)
-        _rhs_samples = sigma * _z_star_samples - q[np.newaxis, :] + rho * (
-            2*_w_star_samples - _v_star_samples
-        ) @ M
-        _z_next_samples = _lhs_mat_lu.solve(_rhs_samples.T).T
-        _v_next_samples = _v_star_samples + _z_next_samples @ M - _w_star_samples
-        _step_norm = np.max(np.linalg.norm(
-            np.hstack([
-                _z_next_samples - _z_star_samples,
-                _v_next_samples - _v_star_samples,
-            ]),
-            axis=1,
-        ))
-        _z_star_samples = _z_next_samples
-        _v_star_samples = _v_next_samples
-        if _step_norm <= 1e-10:
-            break
-
-    pepit_radius_empirical = np.max(np.linalg.norm(
-        np.hstack([
-            z0_samples - _z_star_samples,
-            v0_samples - _v_star_samples,
-        ]),
-        axis=1,
-    ))
-    return (pepit_radius_empirical,)
-
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -467,14 +412,16 @@ def _(
         def project(VP, v_prev):
             return VP.prox(indbox, v_prev)
 
-        z = VP.add_iterate(n_xz, lb=z0_lb, ub=z0_ub)
-        v = VP.add_iterate(n_xz, lb=v0_lb, ub=v0_ub)
+        z = VP.iterate_trajectory(K + 1, collapse_expr='auto')
+        v = VP.iterate_trajectory(K + 1, collapse_expr='auto')
+        z[0] = VP.add_iterate(n_xz, lb=z0_lb, ub=z0_ub)
+        v[0] = VP.add_iterate(n_xz, lb=v0_lb, ub=v0_ub)
         lhs_mat = build_lhs(P)
 
         residuals = []
-        for _ in range(K):
+        for k in range(1, K + 1):
             z, v, residual = admm_step(
-                VP, M, q, rho, sigma, z, v, project, lhs_mat
+                VP, M, q, rho, sigma, z, v, project, lhs_mat, k=k
             )
             VP.set_objective_norm(residual, ord)
             residuals.append(VP.solve())
@@ -529,10 +476,38 @@ def _(mo):
     return
 
 
-@app.cell
-def _(K, P, all_residuals, np, pepit_radius_empirical, rho, sigma):
+@app.cell(hide_code=True)
+def _(
+    K,
+    M,
+    P,
+    all_residuals,
+    build_lhs,
+    estimate_control_pepit_radius,
+    np,
+    q,
+    rho,
+    sigma,
+    u_stack_max,
+    u_stack_min,
+    v0_samples,
+    x_samples,
+    z0_samples,
+):
     from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 
+    _pepit_radius_empirical = estimate_control_pepit_radius(
+        M,
+        q,
+        rho,
+        sigma,
+        build_lhs(P),
+        u_stack_min,
+        u_stack_max,
+        z0_samples,
+        v0_samples,
+        x_samples,
+    )
     _P_eigs = np.linalg.eigvalsh(P.toarray())
     _mu = float(_P_eigs.min())
     _L = float(_P_eigs.max())
@@ -543,7 +518,7 @@ def _(K, P, all_residuals, np, pepit_radius_empirical, rho, sigma):
         L=_L,
         sigma=sigma,
         rho=rho,
-        R=pepit_radius_empirical,
+        R=_pepit_radius_empirical,
     )
     all_residuals_PEP, pepit_radius_calibrated = _runner.osqp_admm_residuals(
         K=K,

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
-
 
 class PEPitRunner:
     """Run the PEPit bounds used by the comparison examples."""
@@ -178,62 +176,6 @@ class PEPitRunner:
             for k in range(1, K + 1)
         ]
         return residuals, R
-
-    def pdhg_radius(
-        self,
-        *,
-        A_s: np.ndarray,
-        A_d: np.ndarray,
-        b_s: np.ndarray,
-        mu: np.ndarray,
-        c: np.ndarray,
-        eta: float,
-        z0_samples: np.ndarray,
-        v0_samples: np.ndarray,
-        w0_samples: np.ndarray,
-        x_samples: np.ndarray,
-        max_iter: int = 2000,
-        tol: float = 1e-10,
-    ) -> float:
-        """Estimate the PEPit initial-condition radius ``R`` for network PDHG.
-
-        Runs the exact (NumPy) PDHG recursion from each sampled initial point
-        to its own fixed point, then returns the largest distance between an
-        initial sample and its fixed point. This gives an empirical ``R`` for
-        calibrating :meth:`pdhg_residuals`, sized to the actual sampled
-        initial-iterate and demand distributions rather than a generic bound.
-        """
-        z_star = z0_samples.copy()
-        v_star = v0_samples.copy()
-        w_star = w0_samples.copy()
-        for _ in range(max_iter):
-            z_rhs = z_star - eta * (
-                mu[np.newaxis, :] + v_star @ A_s - w_star @ A_d
-            )
-            z_next = np.clip(z_rhs, 0.0, c)
-            v_rhs = v_star + eta * (
-                -b_s[np.newaxis, :] + (2 * z_next - z_star) @ A_s.T
-            )
-            v_next = np.maximum(v_rhs, 0.0)
-            w_next = w_star + eta * (
-                x_samples - (2 * z_next - z_star) @ A_d.T
-            )
-            step_norm = np.max(np.linalg.norm(
-                np.hstack([z_next - z_star, v_next - v_star, w_next - w_star]),
-                axis=1,
-            ))
-            z_star, v_star, w_star = z_next, v_next, w_next
-            if step_norm <= tol:
-                break
-
-        return np.max(np.linalg.norm(
-            np.hstack([
-                z0_samples - z_star,
-                v0_samples - v_star,
-                w0_samples - w_star,
-            ]),
-            axis=1,
-        ))
 
     def _proximal_gradient_residual(
         self, *, k: int, L: float, eta: float, R: float, nonsmooth: str

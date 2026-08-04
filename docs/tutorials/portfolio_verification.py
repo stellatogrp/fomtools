@@ -25,7 +25,11 @@ def _():
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
-    from docs.tutorials.helper_functions.portfolio import admm_step, make_portfolio_data
+    from docs.tutorials.helper_functions.portfolio import (
+        admm_step,
+        calibrated_portfolio_pepit_residuals,
+        make_portfolio_data,
+    )
 
     np.set_printoptions(precision=5)
     np.set_printoptions(suppress=True)
@@ -34,7 +38,16 @@ def _():
         "OutputFlag": 0,
         "LogToConsole": 0,
     }
-    return admm_step, csr_matrix, make_portfolio_data, mo, np, plt, solver_params
+    return (
+        admm_step,
+        calibrated_portfolio_pepit_residuals,
+        csr_matrix,
+        make_portfolio_data,
+        mo,
+        np,
+        plt,
+        solver_params,
+    )
 
 
 @app.cell(hide_code=True)
@@ -234,13 +247,15 @@ def _(A_mat, Verifier, admm_step, l_val, lhs_mat, mu, n, rho, sigma, u_val, v0_l
         ``Verifier`` constructor.
         """
         VP = Verifier(method=method, **verifier_kwargs)
-        x = x0_val
-        v = VP.add_iterate(n + 1, lb=v0_lb, ub=v0_ub)
+        x = VP.iterate_trajectory(K + 1, collapse_expr="auto")
+        v = VP.iterate_trajectory(K + 1, collapse_expr="auto")
+        x[0] = VP.add_iterate(n, lb=x0_val, ub=x0_val)
+        v[0] = VP.add_iterate(n + 1, lb=v0_lb, ub=v0_ub)
 
         residuals = []
-        for _ in range(K):
+        for k in range(1, K + 1):
             x, v, residual = admm_step(
-                VP, A_mat, l_val, u_val, mu, rho, sigma, x, v, lhs_mat
+                VP, A_mat, l_val, u_val, mu, rho, sigma, x, v, lhs_mat, k=k
             )
             VP.set_objective_norm(residual, ord)
             residuals.append(VP.solve())
@@ -295,19 +310,12 @@ def _(mo):
     return
 
 
-@app.cell
-def _(K, Sigma, all_residuals, np):
-    from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
-
-    _Sigma_eigs = np.linalg.eigvalsh(Sigma)
-    _mu_f = float(_Sigma_eigs.min())
-    _L_f = float(_Sigma_eigs.max())
-    all_residuals_PEP, _ = PEPitRunner().admm_residuals(
-        K=K,
-        mu=_mu_f,
-        L=_L_f,
-        R=None,
-        calibrate_to=all_residuals[0],
+@app.cell(hide_code=True)
+def _(K, Sigma, all_residuals, calibrated_portfolio_pepit_residuals):
+    all_residuals_PEP, _ = calibrated_portfolio_pepit_residuals(
+        Sigma,
+        K,
+        all_residuals[0],
     )
     return (all_residuals_PEP,)
 
