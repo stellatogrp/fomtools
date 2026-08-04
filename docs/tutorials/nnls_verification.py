@@ -313,13 +313,14 @@ def _(A, Verifier, eta, m, n, np, pgd_step, x_lb, x_ub, z0_lb, z0_ub):
         for MIP and ``2`` for SDP. Extra ``verifier_kwargs`` (``solver``, ``params``, ...)
         are forwarded to the ``Verifier`` constructor.
         """
-        VP = Verifier(method=method, **verifier_kwargs)
-        x_param = VP.add_param(m, lb=x_lb, ub=x_ub)
-        z0 = VP.add_iterate(n, lb=z0_lb, ub=z0_ub)
-
         ord = ord if ord is not None else (np.inf if method == 'mip' else 2)
 
-        z, w = z0, z0
+        VP = Verifier(method=method, **verifier_kwargs)
+        x_param = VP.add_param(m, lb=x_lb, ub=x_ub)
+        z = VP.iterate_trajectory(K+1, collapse_expr='auto')
+        z[0] = VP.add_iterate(n, lb=z0_lb, ub=z0_ub)
+        w = z[0]
+
         residuals = []
         for k in range(1, K + 1):
             z, w, residual = pgd_step(
@@ -464,7 +465,7 @@ def _(
     plt.yscale('log')
     plt.ylabel('Worst-case fixed-point residual')
     plt.xlabel(r'$K$')
-    plt.suptitle('nonnegative least-squares example')
+    plt.suptitle('NNLS: projected gradient descent (PGD)')
     plt.legend()
     return
 
@@ -472,7 +473,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We also plot the verification results for momentum PGD.
+    We run the simulation of momentum-accelerated projected gradient descent as well, reusing the same `pgd_simulation` helper and samples with `momentum=True`.
     """)
     return
 
@@ -498,7 +499,7 @@ def _(
     plt.yscale('log')
     plt.ylabel('Worst-case fixed-point residual')
     plt.xlabel(r'$K$')
-    plt.suptitle('nonnegative least-squares momentum PGD example')
+    plt.suptitle('NNLS: momentum PGD')
     plt.legend()
     return
 
@@ -564,7 +565,83 @@ def _(
     _leg = plt.legend(handles=_method_handles, loc='upper right')
     plt.gca().add_artist(_leg)
     plt.legend(handles=_style_handles, loc='lower left')
-    plt.suptitle('nonnegative least-squares: PGD vs. momentum PGD')
+    plt.suptitle('NNLS: PGD vs. momentum PGD')
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # Appendix
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Backend-aware collapsing with `iterate_trajectory`
+
+    Writing an affine update such as `z[k] = M @ z[k-1] + c` produces a
+    *collapsed* linear expression: it references existing variables and mints no
+    new one. This is ideal for the MIP and simulator backends. For the **SDP**
+    backend, however, collapsing couples many variables in a single dense moment
+    matrix; keeping each iterate as its own leaf (linked by an equality) yields a
+    much sparser matrix that decomposes into many small PSD cones and is often
+    substantially faster to solve.
+
+    `verifier.iterate_trajectory(K + 1, collapse_expr="auto")` picks the right
+    behavior automatically: collapse on MIP/simulator, keep a separate leaf on
+    SDP. Pass `collapse_expr=True`/`False` (on the trajectory or per slot via
+    `z.assign(k, expr, collapse_expr=...)`) to force it. Note the policy only
+    applies to *collapsed* expressions — a value that is already a fresh variable
+    (a `relu`/`satlin`/`soft_threshold` output on MIP, or a `relu` on SDP) is
+    stored as-is regardless.
+
+    The cell below illustrates the SDP effect on a soft-threshold (ISTA) chain,
+    where the collapsed and separated formulations are genuinely different SDP
+    relaxations.
+    """)
+    return
+
+
+@app.cell
+def _(np):
+    import time
+
+    from fomtools.verifier import Verifier as _V
+
+    def _sdp_ista_bound(collapse_expr, K=2, seed=0):
+        m2, n2 = 4, 3
+        t, lambd = 0.05, 0.1
+        np.random.seed(seed)
+        A2 = np.random.normal(size=(m2, n2))
+        vp = _V(method="sdp", solver="clarabel", obbt_solver=None)
+        xp = vp.add_param(m2, lb=-1, ub=1)
+        zt = vp.iterate_trajectory(K + 1, collapse_expr=collapse_expr)
+        zt[0] = vp.add_iterate(n2, lb=-0.5, ub=0.5)
+        for kk in range(1, K + 1):
+            zt[kk] = vp.step.soft_threshold(
+                zt[kk - 1] - t * A2.T @ (A2 @ zt[kk - 1] - xp), lambd=lambd * t
+            )
+        vp.set_objective_norm(zt[K] - zt[K - 1], 2)
+        t0 = time.perf_counter()
+        bound = vp.solve()
+        return bound, time.perf_counter() - t0
+
+    try:
+        b_collapse, s_collapse = _sdp_ista_bound(True, K=7)
+        b_auto, s_auto = _sdp_ista_bound("auto")  # -> no-collapse on SDP
+        print(f"SDP collapsed    : bound={b_collapse:.4f}  solve={s_collapse:.3f}s")
+        print(f"SDP no-collapse  : bound={b_auto:.4f}  solve={s_auto:.3f}s")
+        print("no-collapse is a sparser (>=) relaxation; timing favors it as K/n grow")
+    except Exception as exc:  # missing SDP solver in this environment
+        print(f"(skipping SDP comparison: {exc})")
+    return
+
+
+@app.cell
+def _():
     return
 
 

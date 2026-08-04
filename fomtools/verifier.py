@@ -120,6 +120,7 @@ class Verifier(object):
             for ``method != "sdp"``.
         """
         self.theory_func = theory_func
+        self.method = method.lower()
         self.iterates = []
         self.params = []
         self.steps = []
@@ -479,6 +480,41 @@ class Verifier(object):
             whose decomposition references the leaves of the input parameters.
         """
         return stack(param_list)
+
+    def iterate_trajectory(self, length: int, collapse_expr="auto"):
+        """Create a backend-aware iterate trajectory of ``length`` slots.
+
+        Returns an :class:`~fomtools.iteratetrajectory.IterateTrajectory` that
+        behaves like a fixed-length list of iterates. Assigning a collapsed
+        affine expression (``z[k] = M @ z[k - 1] + c``) is handled per backend:
+        for MIP/simulator the expression stays collapsed (no new variable), and
+        for SDP a fresh leaf linked by an equality is minted so the moment
+        matrix stays sparse (smaller PSD cones). See
+        :class:`~fomtools.iteratetrajectory.IterateTrajectory` for details.
+
+        Parameters
+        ----------
+        length : int
+            Number of slots (e.g. ``K + 1`` for ``K`` steps).
+        collapse_expr : {'auto', True, False}, default 'auto'
+            Trajectory-level default collapse policy. ``'auto'`` collapses on
+            MIP/simulator and keeps a separate leaf on SDP.
+
+        Returns
+        -------
+        IterateTrajectory
+            A list-like trajectory bound to this verifier.
+
+        Examples
+        --------
+        >>> z = verifier.iterate_trajectory(K + 1)
+        >>> z[0] = verifier.add_iterate(n, lb=z0, ub=z0)
+        >>> for k in range(1, K + 1):
+        ...     z[k] = verifier.step.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x))
+        """
+        from fomtools.iteratetrajectory import IterateTrajectory
+
+        return IterateTrajectory(self, length, collapse_expr)
 
     def add_constraint(self, constr: Constraint):
         """
