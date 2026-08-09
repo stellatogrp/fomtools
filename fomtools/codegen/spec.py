@@ -31,7 +31,7 @@ from fomtools.codegen.ir import (
 def _linop_to_dict(lin: LinearOp) -> dict:
     return {
         "out_dim": lin.out_dim,
-        "terms": [{"source": t.source, "matrix": t.matrix} for t in lin.terms],
+        "terms": [{"source": t.source, "matrix": t.matrix, "scale": t.scale} for t in lin.terms],
         "const": lin.const,
     }
 
@@ -88,6 +88,7 @@ def ir_to_dict(ir: FomIR) -> dict:
             name: {"shape": list(md.shape), "sparse": md.sparse_pattern is not None}
             for name, md in ir.matrices.items()
         },
+        "schedules": {name: {"len": int(len(values))} for name, values in ir.schedules.items()},
     }
 
 
@@ -107,6 +108,8 @@ def save(ir: FomIR, directory: str | Path) -> tuple[Path, Path]:
             rows, cols = md.sparse_pattern
             arrays[f"sp_rows::{name}"] = np.asarray(rows)
             arrays[f"sp_cols::{name}"] = np.asarray(cols)
+    for name, values in ir.schedules.items():
+        arrays[f"sched::{name}"] = np.asarray(values, dtype=float)
     arrays["state_init"] = ir.state.init
     for p in ir.params:
         arrays[f"param_lb::{p.name}"] = p.lb
@@ -207,6 +210,7 @@ def load(directory: str | Path) -> FomIR:
         termination=term,
         matrices=matrices,
         factorizations=factorizations,
+        schedules={name: npz[f"sched::{name}"] for name in spec.get("schedules", {})},
         dtype=spec["dtype"],
         name=spec["name"],
     )
@@ -233,7 +237,9 @@ def _load_csc(npz, prefix: str) -> CSC:
 def _dict_to_linop(d: dict) -> LinearOp:
     return LinearOp(
         out_dim=d["out_dim"],
-        terms=tuple(Term(source=t["source"], matrix=t["matrix"]) for t in d["terms"]),
+        terms=tuple(
+            Term(source=t["source"], matrix=t["matrix"], scale=t.get("scale")) for t in d["terms"]
+        ),
         const=d["const"],
     )
 
@@ -280,6 +286,22 @@ def render_markdown(ir: FomIR) -> str:
     lines += ["", "## State layout", ""]
     for slot_name, dim in ir.state.slots:
         lines.append(f"- `{slot_name}`: dimension {dim}")
+
+    if ir.schedules:
+        lines += ["", "## Iteration-varying coefficients", ""]
+        lines.append("Some terms below are scaled by a coefficient that changes with the")
+        lines.append("iteration. Each is tabulated in `fom_data.c`, one value per iteration,")
+        lines.append("and read through the accessor declared in `fom_data.h`:")
+        lines.append("")
+        for name, values in sorted(ir.schedules.items()):
+            head = ", ".join(f"{v:.6g}" for v in values[:4])
+            lines.append(f"- `fom_sched_{name}(it)` — {len(values)} values, starting {head}, ...")
+        lines.append("")
+        lines.append("`it` is the **0-based** loop counter. Always call the accessor rather")
+        lines.append("than indexing `FOM_SCHED_*` directly: the loop bound is the runtime")
+        lines.append("`work->settings.max_iter`, which a caller may raise above the table")
+        lines.append("length, and the accessor clamps. Hoist the value into a local at the")
+        lines.append("top of each iteration; it does not change within one iteration.")
 
     lines += ["", "## Iteration body", ""]
     lines.append("Each step computes `tmp = activation(linear_op)`, except affine")
@@ -340,7 +362,10 @@ def _linop_str(lin: LinearOp) -> str:
     if lin.const is not None:
         parts.append(lin.const)
     for t in lin.terms:
-        parts.append(f"{t.matrix} @ {t.source}")
+        if t.scale is None:
+            parts.append(f"{t.matrix} @ {t.source}")
+        else:
+            parts.append(f"fom_sched_{t.scale}(it) * ({t.matrix} @ {t.source})")
     body = " + ".join(parts) if parts else "0"
     return body
 

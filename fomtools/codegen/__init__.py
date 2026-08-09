@@ -10,7 +10,12 @@ The public surface:
 
 * :func:`extract_ir` / :class:`FomIR` — the single-iteration intermediate
   representation extracted from a verifier.
+* :func:`extract_scheduled_ir` / :class:`Recording` — the same, for a method with
+  an iteration-varying coefficient such as FISTA's momentum. See
+  :mod:`fomtools.codegen.schedule`.
 * :class:`ReferenceOracle` — ground-truth NumPy execution of the FOM.
+* :func:`check_stationary` — verify that the rolled IR reproduces the recorded
+  tape, which is what catches a method that is not stationary.
 * :class:`CodegenConfig` — what to generate (embedded/large-scale, backend,
   termination, dtype).
 * :func:`generate_code` — the end-to-end entry point.
@@ -30,8 +35,16 @@ from fomtools.codegen.emit import scaffold
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.generate import CodegenResult, generate_code
 from fomtools.codegen.harness import BenchResult, ProfRegion, TimingReport
-from fomtools.codegen.ir import FomIR, NonStationaryFOMError
-from fomtools.codegen.oracle import OracleResult, ReferenceOracle, run_faithful
+from fomtools.codegen.ir import FomIR, NonStationaryFOMError, ScheduleFitError
+from fomtools.codegen.oracle import (
+    OracleResult,
+    ReferenceOracle,
+    check_stationary,
+    run_faithful,
+    run_recorded_tape,
+)
+from fomtools.codegen.schedule import Schedule, fista_momentum, nesterov_momentum
+from fomtools.codegen.scheduled import Recording, extract_scheduled_ir
 
 __all__ = [
     "AgentDriver",
@@ -52,7 +65,15 @@ __all__ = [
     "ProfRegion",
     "FomIR",
     "NonStationaryFOMError",
+    "ScheduleFitError",
     "OracleResult",
     "ReferenceOracle",
     "run_faithful",
+    "run_recorded_tape",
+    "check_stationary",
+    "Schedule",
+    "nesterov_momentum",
+    "fista_momentum",
+    "Recording",
+    "extract_scheduled_ir",
 ]

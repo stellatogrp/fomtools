@@ -17,6 +17,7 @@ Flow:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from fomtools.codegen.harness import (
     time_python_oracle,
 )
 from fomtools.codegen.ir import FomIR
+from fomtools.codegen.oracle import check_stationary
 from fomtools.codegen.postprocess import (
     extract_agent_notes,
     unified_solver_diff,
@@ -95,10 +97,35 @@ def optimization_is_faster(
     return c_phase_b <= c_phase_a * tol
 
 
+def _gate_stationarity(ir, verifier, iterates, param_values, state, params) -> None:
+    """Check the rolled IR against the recorded tape, or warn that nothing did.
+
+    Extraction reads a single iteration and repeats it, which silently produces
+    the wrong algorithm when the recording is not stationary. This is the only
+    check that can catch that, and it needs the recorded iterates to compare
+    against, so it stays opt-in — but its absence is worth saying out loud.
+    """
+    if iterates is None:
+        warnings.warn(
+            "generate_code() did not check that the recorded method is stationary. "
+            "Extraction reads one iteration and repeats it, so a coefficient that "
+            "changes with the iteration index would be frozen at its recorded value "
+            "and the generated solver would run a different algorithm. Pass "
+            "iterates= (the successive recorded iterate expressions) and "
+            "param_values= to check, or schedules= to declare the variation.",
+            UserWarning,
+            stacklevel=3,
+        )
+        return
+    if param_values is None:
+        raise ValueError("iterates= requires param_values= (keyed by parameter leaf).")
+    check_stationary(ir, verifier, iterates, param_values, state=state, params=params)
+
+
 def generate_code(
     verifier,
-    next_state,
-    out_dir: str | Path,
+    next_state=None,
+    out_dir: str | Path = None,
     config: CodegenConfig | None = None,
     driver: AgentDriver | None = None,
     state=None,
@@ -106,6 +133,9 @@ def generate_code(
     name: str = "fom",
     run_phase_b: bool = False,
     profile: bool = False,
+    schedules: dict | None = None,
+    iterates=None,
+    param_values: dict | None = None,
 ) -> CodegenResult:
     """Generate a low-level solver for the FOM recorded in ``verifier``.
 
@@ -113,6 +143,12 @@ def generate_code(
     ----------
     verifier, next_state, state, params:
         Forwarded to :func:`fomtools.codegen.extract.extract_ir`.
+
+        For a method with an iteration-varying coefficient, pass a *build
+        function* as ``verifier`` and its ``schedules`` instead: the function
+        records one iteration as a function of the schedule scalars and returns a
+        :class:`~fomtools.codegen.scheduled.Recording`. See
+        :func:`~fomtools.codegen.scheduled.extract_scheduled_ir`.
     out_dir:
         Directory to emit the solver into.
     config:
@@ -128,11 +164,44 @@ def generate_code(
     profile:
         Collect before/after timing + a profiling breakdown (needs a C
         compiler). Always skipped silently when no compiler is available.
+    schedules:
+        Iteration-varying scalars, mapping name to a callable of the 0-based
+        iteration index, a sequence, or a
+        :class:`~fomtools.codegen.schedule.Schedule`. Selects the scheduled
+        extraction path.
+    iterates:
+        The successive recorded iterate expressions. When given (together with
+        ``param_values``), the rolled IR is checked against the recorded tape
+        before anything is emitted, and generation fails if the recording is not
+        stationary. Only meaningful on the plain ``(verifier, next_state)`` path;
+        strongly recommended there, since without it nothing detects a method
+        whose coefficients vary with ``k``.
+    param_values:
+        Parameter values, keyed by parameter *leaf*, used for the ``iterates``
+        check.
     """
     config = config or CodegenConfig()
     out_dir = Path(out_dir)
 
-    ir = extract_ir(verifier, next_state, state=state, params=params, config=config, name=name)
+    if schedules:
+        from fomtools.codegen.scheduled import extract_scheduled_ir
+
+        if not callable(verifier):
+            raise TypeError(
+                "schedules= requires a build function as the first argument: a "
+                "callable taking one keyword per schedule and returning a "
+                "codegen.Recording."
+            )
+        ir = extract_scheduled_ir(verifier, schedules, config=config, name=name)
+    else:
+        if callable(verifier):
+            raise TypeError(
+                "a build function was passed but no schedules=; call generate_code "
+                "with (verifier, next_state) for a stationary method."
+            )
+        ir = extract_ir(verifier, next_state, state=state, params=params, config=config, name=name)
+        _gate_stationarity(ir, verifier, iterates, param_values, state, params)
+
     target = scaffold(ir, out_dir, config)
 
     if driver is None:

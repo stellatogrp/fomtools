@@ -1190,12 +1190,24 @@ class Verifier(object):
         name="fom",
         run_phase_b=False,
         profile=False,
+        iterates=None,
+        param_values=None,
     ):
         """Generate a low-level solver for the FOM recorded on this verifier.
 
         Thin delegate to :func:`fomtools.codegen.generate_code`. See that
         function for parameter semantics. ``next_state`` is the iterate
         ``LinearExpression`` produced after exactly one iteration.
+
+        Pass ``iterates`` (the successive recorded iterate expressions) and
+        ``param_values`` to have the extracted iteration checked against the
+        recorded tape before anything is emitted. Without them nothing verifies
+        that the method is stationary, so a coefficient that varies with the
+        iteration index would be frozen at its recorded value.
+
+        A method that *does* vary with the iteration index goes through
+        :func:`fomtools.codegen.generate_code` with ``schedules=`` instead, since
+        that needs the recording as a function rather than a finished tape.
 
         Returns
         -------
@@ -1215,6 +1227,8 @@ class Verifier(object):
             name=name,
             run_phase_b=run_phase_b,
             profile=profile,
+            iterates=iterates,
+            param_values=param_values,
         )
 
     def get_solution_value(self, iterate: LinearExpression) -> np.ndarray:

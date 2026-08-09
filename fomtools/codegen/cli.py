@@ -2,7 +2,9 @@
 
 Generate a low-level solver for a built-in example FOM or one defined in a
 Python module exposing ``build_fom() -> dict`` (with keys ``verifier`` and
-``next_state``; optional ``name``, ``state``, ``params``).
+``next_state``; optional ``name``, ``state``, ``params``). A FOM with an
+iteration-varying coefficient supplies ``build`` and ``schedules`` instead of
+``verifier`` and ``next_state``.
 """
 
 from __future__ import annotations
@@ -109,6 +111,26 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _extract_fom(fom: dict, config):
+    """Extract the IR for a FOM dict, stationary or scheduled."""
+    if fom.get("schedules"):
+        from fomtools.codegen.scheduled import extract_scheduled_ir
+
+        return extract_scheduled_ir(
+            fom["build"], fom["schedules"], config=config, name=fom.get("name", "fom")
+        )
+    from fomtools.codegen.extract import extract_ir
+
+    return extract_ir(
+        fom["verifier"],
+        fom["next_state"],
+        state=fom.get("state"),
+        params=fom.get("params"),
+        config=config,
+        name=fom.get("name", "fom"),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     fom = _load_module_fom(args.module) if args.module else get_example(args.example)
@@ -116,16 +138,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.scaffold_only:
         from fomtools.codegen.emit import scaffold
-        from fomtools.codegen.extract import extract_ir
 
-        ir = extract_ir(
-            fom["verifier"],
-            fom["next_state"],
-            state=fom.get("state"),
-            params=fom.get("params"),
-            config=config,
-            name=fom.get("name", "fom"),
-        )
+        ir = _extract_fom(fom, config)
         scaffold(ir, args.out, config)
         print(f"scaffolded {fom.get('name', 'fom')} into {args.out}")
         return 0
@@ -136,8 +150,8 @@ def main(argv: list[str] | None = None) -> int:
     run_phase_b = args.phase_b if args.phase_b is not None else (args.driver == "agent")
     try:
         result = generate_code(
-            fom["verifier"],
-            fom["next_state"],
+            fom["build"] if fom.get("schedules") else fom["verifier"],
+            fom.get("next_state"),
             args.out,
             config=config,
             driver=driver,
@@ -146,6 +160,9 @@ def main(argv: list[str] | None = None) -> int:
             name=fom.get("name", "fom"),
             run_phase_b=run_phase_b,
             profile=args.profile,
+            schedules=fom.get("schedules"),
+            iterates=fom.get("iterates"),
+            param_values=fom.get("param_values"),
         )
     except AgentBackendError as exc:
         # A missing / unauthenticated backend is a clear user-fixable setup

@@ -8,7 +8,7 @@ import numpy as np
 from fomtools.codegen import ReferenceOracle, StubAgentDriver, generate_code
 from fomtools.codegen.harness import build_lib
 from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
-from tests.codegen.conftest import build_dr
+from tests.codegen.conftest import build_dr, gate
 
 GOLDEN = Path(__file__).parent / "golden" / "dr" / "embedded_c" / "fom_solver.c"
 
@@ -27,6 +27,7 @@ def test_dr_stub_pipeline_verifies(tmp_path, requires_compiler):
         config=case["config"],
         driver=StubAgentDriver(GOLDEN),
         name="dr",
+        **gate(case),
     )
     assert result.translate.success, result.translate.log
     assert "VERIFY OK" in result.translate.log
@@ -41,6 +42,7 @@ def test_dr_wrapper_matches_oracle(tmp_path, requires_compiler):
         config=case["config"],
         driver=StubAgentDriver(GOLDEN),
         name="dr",
+        **gate(case),
     )
     assert result.translate.success, result.translate.log
 

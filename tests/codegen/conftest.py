@@ -19,8 +19,24 @@ from fomtools.codegen.config import (
     TerminationSpec,
     Version,
 )
+from fomtools.codegen.examples import fista_example
 from fomtools.linearexpression import stack
 from fomtools.verifier import Verifier
+
+
+def gate(case):
+    """Kwargs that turn on ``generate_code``'s stationarity check for a fixture.
+
+    Every builder here records several iterations and exposes them as
+    ``case["iterates"]`` (entry 0 is the initial iterate), plus its single
+    parameter leaf as ``case["param"]``. Passing these makes ``generate_code``
+    replay the recorded tape and compare it against the rolled IR before
+    emitting anything, which is what catches a non-stationary recording.
+    """
+    leaf = case["param"]
+    lb = np.asarray(leaf.lb, dtype=float).reshape(-1)
+    ub = np.asarray(leaf.ub, dtype=float).reshape(-1)
+    return dict(iterates=case["iterates"][1:], param_values={leaf: 0.5 * (lb + ub)})
 
 
 def importorskip_cvxpygen():
@@ -88,6 +104,59 @@ def build_ista(*, K=5, seed=0, n=2, m=4, max_iters=200, tol=None, dtype="float64
         data=data,
         name="ista",
     )
+
+
+# --------------------------------------------------------------------------
+# FISTA — ISTA with a momentum coefficient that changes every iteration
+# --------------------------------------------------------------------------
+def build_fista(*, seed=0, n=2, m=4, max_iters=200, tol=None, dtype="float64"):
+    """Build the scheduled FISTA case: a build function plus its schedule.
+
+    Unlike the stationary builders this returns no ``verifier``: the momentum
+    coefficient must stay free so extraction can probe the recording at several
+    of its values. The state carries two iterates, which is what keeps the
+    dependency cone of one iteration from reaching back through the whole tape.
+    """
+    ex = fista_example(n=n, m=m, seed=seed)
+    kind = TerminationKind.INF_NORM_CHANGE if tol is not None else TerminationKind.MAX_ITERS
+    config = CodegenConfig(
+        termination=TerminationSpec(kind=kind, max_iters=max_iters, tol=tol),
+        dtype=dtype,
+    )
+    return dict(
+        build=ex["build"],
+        schedules=ex["schedules"],
+        config=config,
+        data=ex["data"],
+        name="fista",
+    )
+
+
+def fista_reference(data, b_val, n_iters, momentum=True, tol=None):
+    """Pure-NumPy trajectory of the FOM defined by :func:`build_fista`.
+
+    With ``momentum=False`` this is plain ISTA over the same data, which is what
+    the generated solver degenerates to if the schedule is dropped — so tests
+    can assert the two are genuinely different.
+    """
+    At, Bt, t, lambd, z0 = data["At"], data["Bt"], data["t"], data["lambd"], data["z0"]
+    y_prev = np.asarray(z0, dtype=float).copy()
+    y = np.asarray(z0, dtype=float).copy()
+    beta = 1.0
+    traj = [np.concatenate([y_prev, y])]
+    for _ in range(n_iters):
+        beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
+        gamma = (beta - 1.0) / beta_next if momentum else 0.0
+        extrap = y + gamma * (y - y_prev)
+        r = At @ extrap + Bt @ b_val
+        y_next = np.sign(r) * np.maximum(np.abs(r) - lambd * t, 0.0)
+        state = np.concatenate([y, y_next])
+        resid = np.max(np.abs(state - traj[-1]))
+        y_prev, y, beta = y, y_next, beta_next
+        traj.append(state)
+        if tol is not None and resid <= tol:
+            break
+    return traj
 
 
 def ista_reference(data, b_val, x0, n_iters, tol=None):

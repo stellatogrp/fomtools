@@ -38,7 +38,27 @@ from fomtools.codegen.factorize import Factorization
 
 class NonStationaryFOMError(ValueError):
     """Raised when the recorded steps cannot be rolled into a single repeating
-    iteration body (and ``allow_unroll`` was not requested)."""
+    iteration body.
+
+    A coefficient that varies with the iteration index is *not* in itself a
+    reason to raise: declare it as a :mod:`~fomtools.codegen.schedule` and it
+    lowers to a table read at the loop counter. This error means the recording
+    cannot be rolled at all — the body changes shape between iterations, or a
+    varying quantity reaches somewhere a table cannot (see
+    :class:`ScheduleFitError`).
+    """
+
+
+class ScheduleFitError(NonStationaryFOMError):
+    """Raised when a declared schedule does not explain how a coefficient varies.
+
+    Extraction probes the recording at several values of each schedule scalar and
+    recovers a base/slope pair per coefficient block, assuming the dependence is
+    affine (which it is whenever the scalar enters the recorded
+    ``LinearExpression`` linearly). This error means the recovered fit failed to
+    predict a held-out probe, so the emitted table would not reproduce the
+    method.
+    """
 
 
 class ActivationKind(str, Enum):
@@ -92,10 +112,16 @@ class Term:
     """One ``matrix @ source`` summand of a :class:`LinearOp`.
 
     ``source`` is one of ``"state"``, ``"param:<name>"`` or ``"tmp:<name>"``.
+
+    When :attr:`scale` is set, the summand is multiplied by that schedule's value
+    at the current iteration, i.e. ``schedules[scale][k] * (matrix @ source)``. A
+    coefficient block that varies with ``k`` is emitted as two terms: an unscaled
+    base and a scaled slope.
     """
 
     source: str
     matrix: str  # name into FomIR.matrices
+    scale: str | None = None  # name into FomIR.schedules, or None for a fixed term
 
 
 @dataclass(frozen=True)
@@ -209,6 +235,10 @@ class FomIR:
         Loop termination criterion.
     matrices:
         All named coefficient/const blocks referenced by the ops.
+    schedules:
+        Iteration-varying scalars referenced by :attr:`Term.scale`, each a table
+        of at least ``termination.max_iters`` values indexed by the 0-based
+        iteration counter. Empty for a fully stationary method.
     dtype:
         Numeric dtype string (``"float64"`` / ``"float32"``).
     name:
@@ -222,12 +252,18 @@ class FomIR:
     termination: TerminationSpec
     matrices: dict[str, MatrixData]
     factorizations: dict[str, Factorization] = field(default_factory=dict)
+    schedules: dict[str, np.ndarray] = field(default_factory=dict)
     dtype: str = "float64"
     name: str = "fom"
 
     @property
     def state_dim(self) -> int:
         return self.state.dim
+
+    @property
+    def is_scheduled(self) -> bool:
+        """Whether any coefficient varies with the iteration index."""
+        return bool(self.schedules)
 
     @property
     def max_rhs_dim(self) -> int:

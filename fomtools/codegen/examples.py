@@ -4,6 +4,11 @@ Each builder returns a dict with at least ``verifier`` and ``next_state`` (the
 iterate after one iteration), plus a ``name``. These mirror the ISTA and
 Douglas-Rachford problems used throughout the test suite and use the
 ``simulator`` backend so no MIP/SDP solver is required.
+
+:func:`fista_example` is the exception: a method whose momentum coefficient
+changes every iteration cannot be recorded as a finished tape, so it returns a
+``build`` function and its ``schedules`` instead of a ``verifier``. See
+:mod:`fomtools.codegen.scheduled`.
 """
 
 from __future__ import annotations
@@ -11,6 +16,7 @@ from __future__ import annotations
 import numpy as np
 import scipy.sparse as spa
 
+from fomtools.codegen.schedule import fista_momentum
 from fomtools.linearexpression import stack
 from fomtools.verifier import Verifier
 
@@ -81,6 +87,55 @@ def ista_example(*, n: int = 2, m: int = 4, seed: int = 0, K: int = 3) -> dict:
         z = v.step.soft_threshold(At @ z + Bt @ b_param, lambd=lambd * t)
         iterates.append(z)
     return {"verifier": v, "next_state": iterates[1], "name": "ista"}
+
+
+def fista_example(*, n: int = 2, m: int = 4, seed: int = 0) -> dict:
+    """Lasso FISTA: ISTA plus a momentum coefficient that changes every iteration.
+
+    This is the example for a *scheduled* method, and it differs from the others
+    in two ways that matter.
+
+    First, it returns a ``build`` function rather than a finished verifier. The
+    momentum coefficient stays a free variable, so extraction can probe the
+    recording at several of its values and recover how each coefficient depends
+    on it (see :mod:`fomtools.codegen.scheduled`).
+
+    Second, the state carries **two** iterates. Written the obvious way, over a
+    single iterate, the dependency cone of iteration ``k`` reaches back through
+    every earlier step and extraction returns the unrolled prefix rather than a
+    repeatable body. Declaring ``(y^{k-1}, y^k)`` as the state closes the cone
+    after one step.
+    """
+    rng = np.random.default_rng(seed)
+    A = rng.normal(size=(m, n))
+    b = rng.normal(size=(m,))
+    # A milder threshold than ista_example uses: at lambda = 1 this instance has
+    # the all-zero solution and converges in a single step, which would make
+    # acceleration indistinguishable from plain ISTA.
+    lambd = 0.05
+    t = 1.0 / np.max(np.real(np.linalg.eigvals(A.T @ A)))
+    At = np.eye(n) - t * A.T @ A
+    Bt = t * A.T
+    z0 = np.full(n, 2.0)
+
+    def build(gamma):
+        from fomtools.codegen.scheduled import Recording
+
+        v = Verifier(method="simulator", obbt_solver=None)
+        b_param = v.add_param(m, lb=b - 1.0, ub=b + 1.0)
+        y_prev = v.add_iterate(n, lb=z0, ub=z0)
+        y_curr = v.add_iterate(n, lb=z0, ub=z0)
+        extrap = y_curr + gamma * (y_curr - y_prev)
+        y_next = v.step.soft_threshold(At @ extrap + Bt @ b_param, lambd=lambd * t)
+        # The state shifts: (y_prev, y_curr) <- (y_curr, y_next).
+        return Recording(v, next_state=[y_curr, y_next], state=[y_prev, y_curr])
+
+    return {
+        "build": build,
+        "schedules": {"gamma": fista_momentum()},
+        "name": "fista",
+        "data": {"At": At, "Bt": Bt, "lambd": lambd, "t": t, "z0": z0, "n": n, "m": m, "b": b},
+    }
 
 
 def dr_example(*, n: int = 4, m: int = 3, seed: int = 5, K: int = 3) -> dict:
@@ -333,6 +388,7 @@ def indefinite_kkt_example(*, n: int = 4, seed: int = 4) -> dict:
 
 EXAMPLES = {
     "ista": ista_example,
+    "fista": fista_example,
     "dr": dr_example,
     "mpc": mpc_osqp_example,
     "cgqp": cg_qp_example,

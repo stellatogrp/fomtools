@@ -34,6 +34,33 @@ for _ in range(4):  # a few more, for context (optional)
     next_state = vp.step.soft_threshold(At @ z + Bt @ b_param, lambd=t)
 ```
 
+### The iteration must be stationary
+
+Extraction reads **one** iteration and emits a loop that repeats it. That is
+faithful only if the method really does the same thing every iteration. A
+coefficient that changes with the iteration index — FISTA's momentum, a decaying
+step size, a Halpern anchor weight — would otherwise be frozen at whatever value
+the recorded iteration happened to use, and the generated solver would run a
+different algorithm than the one you verified.
+
+Pass the recorded iterates so this is checked rather than assumed:
+
+```python
+vp.codegen(
+    "out/ista", next_state,
+    iterates=[...],                    # the successive recorded iterates
+    param_values={b_param: b},         # any value in the parameter set
+)
+```
+
+The check replays the recorded tape and compares it against the rolled loop
+before anything is emitted. Omit it and you get a warning, because nothing else
+in the pipeline can catch the mistake: the reference oracle is itself a rolled
+loop, so it agrees with a wrongly rolled iteration by construction.
+
+An iteration-varying coefficient is not a dead end — see
+[Iteration-varying coefficients](#iteration-varying-coefficients) below.
+
 ## Generating the solver
 
 ```python
@@ -180,6 +207,91 @@ sparse — and dense only when the matrix genuinely is. Together these make the
 to recover structure): on the MPC example the un-optimized C solver already runs
 ~29× faster than the NumPy reference.
 
+## Iteration-varying coefficients
+
+Accelerated methods use a coefficient that changes every iteration: FISTA's
+momentum `γ_k = (β_{k-1} - 1)/β_k`, Nesterov's `(k-1)/(k+2)`, a Halpern anchor
+weight. Verification handles these for free — the tape is unrolled, so each
+iteration just gets its own number. Rolling the tape back into a loop is the only
+place the dependence on `k` could be lost.
+
+Declare it as a **schedule** and it is not. FOMTools tabulates the coefficient at
+generation time and the emitted loop reads the table at its counter, so the
+iteration stays division-free and needs no `libm` call.
+
+Two things differ from the stationary case. You supply the recording as a
+*function* of the schedule scalars rather than a finished tape, and the state
+carries both iterates the method needs:
+
+```python
+import numpy as np
+from fomtools.codegen import CodegenConfig, Recording, TerminationSpec, generate_code
+from fomtools.codegen.schedule import fista_momentum
+from fomtools.verifier import Verifier
+
+def build(gamma):
+    vp = Verifier(method="simulator", obbt_solver=None)
+    b_param = vp.add_param(m, lb=b - 1.0, ub=b + 1.0)
+    y_prev = vp.add_iterate(n, lb=2, ub=2)
+    y_curr = vp.add_iterate(n, lb=2, ub=2)
+    extrap = y_curr + gamma * (y_curr - y_prev)
+    y_next = vp.step.soft_threshold(At @ extrap + Bt @ b_param, lambd=t)
+    # the state shifts: (y_prev, y_curr) <- (y_curr, y_next)
+    return Recording(vp, next_state=[y_curr, y_next], state=[y_prev, y_curr])
+
+generate_code(
+    build, None, "out/fista",
+    schedules={"gamma": fista_momentum()},
+    config=CodegenConfig(termination=TerminationSpec(max_iters=200)),
+)
+```
+
+A schedule is a callable of the **0-based** loop index, a sequence, or a
+`Schedule`. `fista_momentum()` and `nesterov_momentum()` ship with the package
+and already account for the offset between the textbook 1-based `k` and the
+emitted loop counter.
+
+### Why a build function
+
+A schedule scalar enters the recorded expression linearly, so every extracted
+coefficient block is *affine* in it: `M(γ) = M₀ + γ M₁`. FOMTools evaluates
+`build` at a few values of `γ`, recovers `M₀` and `M₁` by finite differences, and
+holds one probe back to check the fit. The generated code then computes
+`M₀ @ state + γ_k * (M₁ @ state)`, one extra matrix-vector product per varying
+term.
+
+That validation is what makes this safe rather than merely convenient. If a
+coefficient does *not* depend affinely on the scalar — a product of two
+schedules, or a scalar used inside a nonlinearity — the held-out probe fails and
+you get a `ScheduleFitError` instead of a wrong solver.
+
+### Declaring the state
+
+Written over a single iterate, the dependency cone of iteration `k` reaches back
+through every earlier step, and extraction returns the unrolled prefix rather
+than a repeatable body — quietly, since a longer body is still a valid body.
+Declaring `state=[y_prev, y_curr]` closes the cone after one step. This is worth
+remembering for any method that looks back more than one iterate, scheduled or
+not.
+
+### What is not supported
+
+The varying quantity has to be a linear-operator coefficient. These each raise a
+clear error rather than lowering something wrong:
+
+- a **factorized system matrix** that varies (an ADMM `ρ` that changes with `k`),
+  since the factorization is computed once at generation time;
+- a varying **activation scalar** — a soft-threshold level or a saturated-linear
+  bound that changes with `k`;
+- a varying **constant offset**;
+- a scalar the build function ignores, which is nearly always a typo in its
+  keyword name.
+
+The table is sized to `max_iters`. Raising `settings.max_iter` past that at
+runtime holds the last value rather than reading off the end; the generated
+accessor `fom_sched_<name>(it)` clamps, and the static checker rejects any solver
+body that indexes `FOM_SCHED_*` directly.
+
 ## Targets
 
 `CodegenConfig` selects what to emit:
@@ -194,9 +306,10 @@ to recover structure): on the MPC example the un-optimized C solver already runs
 ## CLI
 
 ```
-fomtools-codegen --example ista --out out/ista --driver agent
-fomtools-codegen --example dr   --out out/dr   --scaffold-only
-fomtools-codegen --example mpc  --out out/mpc  --driver agent   # OSQP MPC, larger
+fomtools-codegen --example ista  --out out/ista  --driver agent
+fomtools-codegen --example dr    --out out/dr    --scaffold-only
+fomtools-codegen --example mpc   --out out/mpc   --driver agent   # OSQP MPC, larger
+fomtools-codegen --example fista --out out/fista --scaffold-only  # scheduled momentum
 ```
 
 The built-in `mpc` example is a model-predictive-control QP solved with **OSQP's
@@ -206,7 +319,12 @@ recombinations. It is the largest built-in example (state dimension in the
 hundreds), so it is a good showcase for the Python-vs-C and the optimization-loop
 speedups.
 
+The `fista` example is the same lasso problem as `ista` with a scheduled
+momentum coefficient; scaffolding it is the quickest way to see what a schedule
+table looks like in `fom_data.c` and how `SPEC.md` describes it.
+
 `--scaffold-only` emits everything except the solver body (useful to inspect the
 spec and data before invoking the agent). A custom FOM can be supplied with
 `--module mymodule.py`, where the module defines `build_fom()` returning a dict
-with `verifier` and `next_state`.
+with `verifier` and `next_state` — or, for a scheduled method, with `build` and
+`schedules`.

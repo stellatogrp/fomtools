@@ -281,6 +281,25 @@ class EmbeddedCTarget(TargetDescriptor):
             "extern const fom_float FOM_STATE_INIT[FOM_STATE_DIM];",
             "",
         ]
+        # Iteration-varying coefficients, tabulated at generation time and read at
+        # the 0-based loop counter. Tabulating keeps the iteration division-free
+        # and free of any libm call.
+        for sched in sorted(ir.schedules):
+            upper = sched.upper()
+            lines.append(f"/* Schedule {sched}: one value per iteration, indexed by the")
+            lines.append("   0-based loop counter. Read it through the accessor below, which")
+            lines.append("   cannot run off the end: the loop bound is the runtime")
+            lines.append("   settings.max_iter, which a caller may raise above FOM_MAX_ITER.")
+            lines.append("   Past the table the last value is held. */")
+            lines.append(f"#define FOM_SCHED_{upper}_LEN {len(ir.schedules[sched])}")
+            lines.append(_c_extern(f"FOM_SCHED_{sched}"))
+            lines.append(f"static inline fom_float fom_sched_{sched}(fom_int it) {{")
+            lines.append(
+                f"    return FOM_SCHED_{sched}[(it < FOM_SCHED_{upper}_LEN) "
+                f"? it : (FOM_SCHED_{upper}_LEN - 1)];"
+            )
+            lines.append("}")
+            lines.append("")
         csr = {n for n in _matvec_matrix_names(ir) if _is_csr(ir.matrices[n])}
         for name, md in ir.matrices.items():
             if name in csr:
@@ -319,6 +338,9 @@ class EmbeddedCTarget(TargetDescriptor):
         lines = ['#include "fom_data.h"', ""]
         lines.append(_c_array("FOM_STATE_INIT", ir.state.init, storage="const"))
         lines.append("")
+        for sched in sorted(ir.schedules):
+            lines.append(_c_array(f"FOM_SCHED_{sched}", ir.schedules[sched], storage="const"))
+            lines.append("")
         for name, md in ir.matrices.items():
             if name in csr:
                 continue  # emitted as CSR in fom_ops.c
@@ -953,5 +975,14 @@ class EmbeddedCTarget(TargetDescriptor):
                 violations.append(
                     "division operator '/' found; embedded target must be division-free"
                 )
+        # Schedule tables must be read through the generated accessor, which
+        # clamps the index. The loop bound is the runtime settings.max_iter, so
+        # indexing the table directly can read past its end.
+        for match in re.finditer(r"\bFOM_SCHED_(\w+?)\s*\[", code):
+            violations.append(
+                f"schedule table 'FOM_SCHED_{match.group(1)}' is indexed directly; "
+                f"use the generated accessor fom_sched_{match.group(1).lower()}(it), "
+                "which clamps the index"
+            )
         # crude VLA guard: array decl with a non-numeric, non-macro size token
         return violations

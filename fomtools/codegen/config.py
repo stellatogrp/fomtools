@@ -151,10 +151,6 @@ class CodegenConfig(BaseModel):
         output against the Python reference oracle. When left unset it defaults
         by dtype (1e-6 for float64, 1e-4 for float32, since single precision
         cannot meet a 1e-6 gate); set it explicitly to override.
-    allow_unroll:
-        When extraction cannot roll the recorded steps into a stationary loop
-        body (e.g. iteration-dependent step sizes), emit a straight-line,
-        loop-free body instead of raising.
     num_verify_samples:
         Number of random parameter instances drawn for the golden verify data.
     seed:
@@ -181,7 +177,6 @@ class CodegenConfig(BaseModel):
             "iterative CG). Set explicitly to override."
         ),
     )
-    allow_unroll: bool = False
     num_verify_samples: int = 8
     seed: int = 0
     cg_auto_min_dim: int = Field(
