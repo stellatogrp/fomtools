@@ -13,7 +13,7 @@ from fomtools.canonicalizers.simulator import (
 )
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.stepdecomposers.step_decomposer import StepDecomposer
-from fomtools.steps import Affine
+from fomtools.steps import Affine, SaturatedLinear
 from fomtools.steps.step import Step
 
 # A linear system this ill-conditioned yields solutions with no significant digits
@@ -88,6 +88,24 @@ class SimulatorStepDecomposer(StepDecomposer):
             self.register_var(leaf, var_type="param")
         self.canonicalizer.canonicalize(step)
         return step.output
+
+    def decompose_saturatedlinear(self, step: SaturatedLinear) -> LinearExpression:
+        """Evaluate symbolic saturation bounds through per-sample expressions.
+
+        Constant bounds keep the simulator's native ``clip`` activation. When
+        either bound is a ``LinearExpression``, reuse the shared identity
+
+            satlin(x, l, u) = relu(x - l) - relu(x - u) + l,
+
+        so sampled bounds flow through the simulator as ordinary expression
+        inputs and are evaluated independently for every sample.
+        """
+        has_symbolic_bound = hasattr(step.l, "decomposition_dict") or hasattr(
+            step.u, "decomposition_dict"
+        )
+        if not has_symbolic_bound:
+            return self._process_primitive(step)
+        return self._decompose_saturatedlinear_to_relus(step)
 
     # ------------------------------------------------------------------
     # Shared helpers
@@ -290,6 +308,7 @@ class SimulatorStepDecomposer(StepDecomposer):
         return out
 
     _DECOMPOSERS: ClassVar[dict] = {
+        "saturatedlinear": decompose_saturatedlinear,
         "quadraticprogram": decompose_quadraticprogram,
         "linearprogram": decompose_quadraticprogram,
     }
