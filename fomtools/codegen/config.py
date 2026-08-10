@@ -179,6 +179,27 @@ class CodegenConfig(BaseModel):
     )
     num_verify_samples: int = 8
     seed: int = 0
+    agent_timeout_s: int = Field(
+        ge=1,
+        default=600,
+        description=(
+            "Wall-clock budget, in seconds, for one coding-agent attempt at the "
+            "translation phase. The phase is a bounded task, so the default is "
+            "generous for it."
+        ),
+    )
+    agent_optimize_timeout_s: int = Field(
+        ge=1,
+        default=1800,
+        description=(
+            "Wall-clock budget, in seconds, for one coding-agent attempt at the "
+            "optimization phase. Larger than the translation budget because the "
+            "phase is open-ended: profile, rewrite, re-verify, benchmark, repeat. "
+            "An attempt killed part-way still leaves whatever it had written on "
+            "disk (which the pipeline re-verifies), but loses the agent's own "
+            "summary of what it did and why."
+        ),
+    )
     cg_auto_min_dim: int = Field(
         ge=1,
         default=256,

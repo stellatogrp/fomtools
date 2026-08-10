@@ -5,6 +5,14 @@ from __future__ import annotations
 from fomtools.codegen.ir import FomIR
 from fomtools.codegen.targets import TargetDescriptor
 
+# Delimiters the optimization agent wraps its summary in, so
+# fomtools.codegen.postprocess can lift it out exactly rather than guessing at a
+# phrase. Imported there; keep the two in step.
+_SUMMARY_BEGIN = "FOMTOOLS-SUMMARY-BEGIN"
+_SUMMARY_END = "FOMTOOLS-SUMMARY-END"
+SUMMARY_BEGIN = _SUMMARY_BEGIN
+SUMMARY_END = _SUMMARY_END
+
 
 def phase_a_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     """Initial faithful-translation instructions."""
@@ -100,8 +108,19 @@ In your FINAL version, KEEP `FOM_PROF_BEGIN/END` markers around
 the main computational regions (they are no-ops in production) so that
 `make profile` still reports a per-region breakdown after optimization.
 
-When done, print a FINAL SUMMARY containing:
+When done, print a summary as the last thing you output, bracketed by these two
+marker lines exactly, each alone on its own line:
+
+{_SUMMARY_BEGIN}
+...your summary here...
+{_SUMMARY_END}
+
+Between the markers, give:
 - the initial vs. final whole-solve `mean_us` and the overall speedup factor;
 - the profiling breakdown of the FINAL solver (region, time, %), hottest first;
-- a short list of the optimizations you applied and why.
+- a short list of the optimizations you applied and why. For each one, name the
+  structure you exploited, so a reader can tell what made it valid here.
+
+The markers are how your summary is lifted into the generated `OPTIMIZATIONS.md`
+report, so emit them literally, and only once.
 """

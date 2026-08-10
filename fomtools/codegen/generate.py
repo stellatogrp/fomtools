@@ -97,6 +97,22 @@ def optimization_is_faster(
     return c_phase_b <= c_phase_a * tol
 
 
+def _write_agent_transcripts(out_dir: Path, translate, optimize) -> None:
+    """Persist each phase's raw agent output next to the generated solver.
+
+    The optimization report keeps only a bounded excerpt, so without this the
+    agent's full reasoning exists nowhere after the process exits. Best-effort:
+    failing to write a transcript must never fail a successful generation.
+    """
+    for name, result in (("a_translate", translate), ("b_optimize", optimize)):
+        if result is None or not getattr(result, "agent_log", ""):
+            continue
+        try:
+            (out_dir / f"agent_phase_{name}.log").write_text(result.agent_log)
+        except OSError:
+            pass
+
+
 def _gate_stationarity(ir, verifier, iterates, param_values, state, params) -> None:
     """Check the rolled IR against the recorded tape, or warn that nothing did.
 
@@ -314,8 +330,10 @@ def generate_code(
         optimize = AgentResult(
             success=kept,
             log=optimize.log + ("\n" + "\n".join(notes) if notes else ""),
+            agent_log=optimize.agent_log,
             turns_used=optimize.turns_used,
             artifacts=[solver_path],
+            truncated=optimize.truncated,
         )
 
         # Record exactly what changed (diff phase A -> final) + the agent's notes.
@@ -323,13 +341,32 @@ def generate_code(
         optimization_diff = unified_solver_diff(
             phase_a_source, final_source, target.solver_source_path()
         )
+        # The agent's own output only: the combined log interleaves compiler and
+        # verify output, and carries the pipeline's bracketed notes appended above.
+        agent_notes = extract_agent_notes(optimize.agent_log)
+        caveats = []
+        if optimize.truncated:
+            caveats.append(
+                "The agent was terminated at its wall-clock budget before it finished, so it "
+                "may never have written a summary. The timing and diff below are still sound: "
+                "the solver on disk was re-verified and benchmarked. Raise "
+                "`CodegenConfig.agent_optimize_timeout_s` to give it longer."
+            )
+        if not agent_notes.strip():
+            caveats.append(
+                "No agent summary was recovered from this run, so the 'Agent notes' section "
+                "is absent rather than empty-by-choice."
+            )
         optimizations_md = write_optimization_report(
             out_dir,
             timing_summary=timing.summary() if timing is not None else "",
             diff=optimization_diff,
-            agent_notes=extract_agent_notes(optimize.log),
+            agent_notes=agent_notes,
             optimize_succeeded=optimize.success,
+            caveats=caveats,
         )
+    # Always persist the raw agent output, phase B or not.
+    _write_agent_transcripts(out_dir, translate, optimize)
 
     # Always emit a clean, marker-free production copy of the final solver.
     production_path = None

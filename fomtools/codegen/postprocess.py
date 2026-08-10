@@ -18,6 +18,8 @@ import difflib
 import re
 from pathlib import Path
 
+from fomtools.codegen.agent.prompts import SUMMARY_BEGIN, SUMMARY_END
+
 _PROFILE_INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"fom_profile\.h"\s*$')
 # A line that is solely a FOM_PROF_BEGIN(...)/FOM_PROF_END(...) statement.
 _PROFILE_CALL_RE = re.compile(r"^\s*FOM_PROF_(?:BEGIN|END)\s*\([^;]*\)\s*;\s*$")
@@ -83,20 +85,76 @@ def unified_solver_diff(before: str, after: str, filename: str) -> str:
     return "".join(diff)
 
 
-def extract_agent_notes(log: str, max_chars: int = 4000) -> str:
-    """Best-effort extraction of the agent's own optimization summary.
+def _looks_like_prompt_echo(text: str) -> bool:
+    """Whether ``text`` is our own instructions rather than the agent's answer.
 
-    Prefers an explicit 'FINAL SUMMARY' section; otherwise returns the tail of
-    the log (where any concluding summary lives).
+    A log can end up containing the prompt — a subprocess exception that
+    stringifies its argv is one way, and the re-prompt on a failed attempt is
+    another. Since the prompt is what *asks* for a summary, naive marker search
+    happily returns the request instead of the reply. These phrases appear only
+    in :mod:`fomtools.codegen.agent.prompts`, never in an agent's own prose.
+    """
+    lowered = text.lower()
+    tells = (
+        "--append-system-prompt",
+        "--allowedtools",
+        "--permission-mode",
+        "--output-format",
+        "...your summary here...",
+        "the markers are how your summary is lifted",
+        "print a final summary",
+        "emit them literally",
+    )
+    return any(tell in lowered for tell in tells)
+
+
+def extract_agent_notes(log: str, max_chars: int = 4000) -> str:
+    """Extract the agent's own optimization summary from its output.
+
+    Pass the agent-only log (:attr:`~fomtools.codegen.agent.driver.AgentResult.agent_log`),
+    not the combined one: the combined log interleaves build and verify output,
+    so the fallback branches below would otherwise return compiler noise.
+
+    Resolution order:
+
+    1. the block the agent was asked to bracket with explicit markers, which is
+       exact;
+    2. a recognizable summary heading, as a fallback for a backend that ignored
+       the markers;
+    3. the tail of the log.
+
+    Returns ``""`` rather than something misleading when the only candidate is
+    our own prompt echoed back (see :func:`_looks_like_prompt_echo`) — an empty
+    notes section is honest, whereas the prompt masquerading as a summary is not.
     """
     if not log:
         return ""
+
+    begin_idx = log.rfind(SUMMARY_BEGIN)
+    if begin_idx != -1:
+        body = log[begin_idx + len(SUMMARY_BEGIN) :]
+        end_idx = body.find(SUMMARY_END)
+        if end_idx != -1:
+            body = body[:end_idx]
+        candidate = body.strip()
+        if candidate and not _looks_like_prompt_echo(candidate):
+            # Not truncated: the agent delimited this block itself, so its extent
+            # is known rather than guessed, and cutting it would land mid-sentence
+            # in the one section a reader most needs whole. The heuristic branches
+            # below stay capped precisely because their extent is a guess.
+            return candidate
+
     lower = log.lower()
     for marker in ("final summary", "## summary", "summary of optimizations"):
         idx = lower.rfind(marker)
-        if idx != -1:
-            return log[idx:][:max_chars].strip()
-    return log[-max_chars:].strip()
+        while idx != -1:
+            candidate = log[idx:][:max_chars].strip()
+            if not _looks_like_prompt_echo(candidate):
+                return candidate
+            idx = lower.rfind(marker, 0, idx)
+
+    tail = log[-max_chars:].strip()
+    return "" if _looks_like_prompt_echo(tail) else tail
 
 
 def write_optimization_report(
@@ -105,8 +163,16 @@ def write_optimization_report(
     diff: str,
     agent_notes: str,
     optimize_succeeded: bool,
+    caveats: list[str] | None = None,
 ) -> Path:
-    """Write ``OPTIMIZATIONS.md`` recording timing, agent notes, and the diff."""
+    """Write ``OPTIMIZATIONS.md`` recording timing, agent notes, and the diff.
+
+    ``caveats`` records anything a reader must know to interpret the rest — most
+    importantly that the agent was cut off before it could summarize. The timing
+    and the diff stay trustworthy in that case (the solver on disk is re-verified
+    and benchmarked either way), but an absent or partial notes section must not
+    be mistaken for the agent having nothing to say.
+    """
     out_dir = Path(out_dir)
     lines = ["# Optimization report", ""]
     if timing_summary:
@@ -115,6 +181,10 @@ def write_optimization_report(
         "kept (re-verified correct)" if optimize_succeeded else "not kept (reverted to phase A)"
     )
     lines += [f"Optimization outcome: **{status}**.", ""]
+    if caveats:
+        lines += ["## Caveats", ""]
+        lines += [f"- {c}" for c in caveats]
+        lines += [""]
     lines += ["## What the agent changed", ""]
     if diff.strip():
         lines += ["```diff", diff.rstrip(), "```", ""]
