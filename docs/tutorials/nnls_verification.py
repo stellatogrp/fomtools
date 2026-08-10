@@ -417,17 +417,7 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(
-    A,
-    K,
-    L,
-    certify_nnls_pepit_radius,
-    eta,
-    x_lb,
-    x_ub,
-    z0_lb,
-    z0_ub,
-):
+def _(A, K, L, certify_nnls_pepit_radius, eta, x_lb, x_ub, z0_lb, z0_ub):
     from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 
     _pepit_radius = certify_nnls_pepit_radius(

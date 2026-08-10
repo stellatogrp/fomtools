@@ -183,7 +183,7 @@ def _(A_d, A_s, np):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Every verification mode below (simulator, MIP-VP, SDP-VP, and the worst-case replays) drives this *same* recurrence and residual; only the `Verifier` backend, the initial iterates, and whether capacities/costs/supply are fixed numbers or search parameters change.
+    Every verification mode below (simulator, MIP-VP, SDP-VP, and the worst-case replays) drives this *same* recurrence and residual. In the current experiment, capacity, cost, and supply have zero-width bounds, so MIP and SDP use the same nominal problem data. The MIP represents those values as fixed symbolic parameters, whereas the SDP passes them as numeric constants to avoid an unnecessarily larger lifted matrix.
     Each cell rolls out the recurrence directly by iterating `pdhg_step` from the initial iterates $(z^0, v^0, w^0)$ over the horizon $K$, registering the scaled KKT residual at each step as an objective along the way.
     Setting `momentum=True` applies the extrapolation $\tilde z^k = z^k + \frac{k-1}{k+2}(z^k - z^{k-1})$
     (see below) before the dual updates.
@@ -391,16 +391,16 @@ def _(mo):
     ## Algorithm verification through verification problem (VP)
 
     ### MIP-VP
-    We now obtain worst-case guarantees by solving the corresponding verification problem with a MIP formulation. The demand vector, capacities, costs, supplies, and initial iterates are represented with bounded parameters or iterates, and the objective maximizes the PDHG residual after each horizon.
+    We now obtain worst-case guarantees by solving the corresponding verification problem with a MIP formulation. The demand vector and initial iterates vary over their prescribed bounds. Capacities, costs, and supplies are represented as parameters too, but their lower and upper bounds coincide in this experiment, so they remain fixed at the same nominal values used by the SDP.
     """)
     return
 
 
 @app.cell
 def _(
-    Verifier,
     A_d,
     A_s,
+    Verifier,
     b_s,
     c,
     c_lb,
@@ -431,13 +431,16 @@ def _(
         horizon ``K``, and returns ``(VP, residuals)`` with one worst-case
         residual per iteration.
 
-        The MIP backend searches over the problem data (capacity, cost,
-        supply) while the SDP backend fixes it to the nominal values; pass
-        ``parametrize_data`` to override this backend-derived default. ``ord``
-        selects the residual norm (defaults to ``inf`` for MIP and ``2`` for
-        SDP); a 2-norm objective is squared, so its value is square-rooted on
-        return. Extra ``verifier_kwargs`` (``solver``, ``obbt_solver``,
-        ``params``, ...) are forwarded to the ``Verifier`` constructor.
+        By default, the MIP backend represents capacity, cost, and supply as
+        symbolic parameters while the SDP backend uses numeric constants. In
+        this tutorial those parameter bounds have zero width, so both choices
+        describe the same nominal problem; the numeric SDP representation
+        merely avoids redundant lifted variables. Pass ``parametrize_data``
+        to override this backend-derived default. ``ord`` selects the residual
+        norm (defaults to ``inf`` for MIP and ``2`` for SDP); a 2-norm
+        objective is squared, so its value is square-rooted on return. Extra
+        ``verifier_kwargs`` (``solver``, ``obbt_solver``, ``params``, ...) are
+        forwarded to the ``Verifier`` constructor.
         """
         VP = Verifier(method=method, **verifier_kwargs)
         x_param = VP.add_param(n_d, lb=x_lb, ub=x_ub)

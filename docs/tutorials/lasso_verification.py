@@ -205,13 +205,7 @@ def _(D, eta, ista_step, lambd, n, np, p):
 
 
 @app.cell
-def _(
-    K,
-    ista_simulation,
-    np,
-    s0_samples,
-    x_samples,
-):
+def _(K, ista_simulation, np, s0_samples, x_samples):
     _VP, _residuals = ista_simulation(x_samples, s0_samples, K, momentum=False, ord=np.inf)
 
     print(
@@ -225,10 +219,7 @@ def _(
     simulation_residuals_ista = np.mean(_residuals, axis=0)
     # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
     simulation_residual_quantiles_ista = np.quantile(_residuals, [0.90, 0.50, 0.10, 1.0], axis=0)
-    return (
-        simulation_residual_quantiles_ista,
-        simulation_residuals_ista,
-    )
+    return simulation_residual_quantiles_ista, simulation_residuals_ista
 
 
 @app.cell(hide_code=True)
@@ -348,16 +339,7 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(
-    D,
-    K,
-    L,
-    estimate_lasso_pepit_radius,
-    eta,
-    lambd,
-    s0_samples,
-    x_samples,
-):
+def _(D, K, L, estimate_lasso_pepit_radius, eta, lambd, s0_samples, x_samples):
     from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 
     # Empirical initial-condition radius for the PEPit comparison.

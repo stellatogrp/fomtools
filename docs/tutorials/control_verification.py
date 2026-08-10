@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.14"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
@@ -189,7 +189,8 @@ def _(mo):
     simulator cannot project onto the resulting zero-width state box, each mode
     passes the appropriate projection into the shared `admm_step`: the
     simulator clips the input block with `satlin` and stacks $x$ on top, while
-    the MIP projects onto an `IndBox` whose bounds pin the state block to $x$.
+    the MIP and SDP verification backends project onto an `IndBox` whose
+    bounds pin the state block to $x$.
     """)
     return
 
@@ -199,7 +200,7 @@ def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    We now describe how to use `fomtools` to verify the worst-case convergence rate of the OSQP-style ADMM method for constrained optimal control. We compare randomly sampled simulations, exact MIP verification, and a PEPit bound, up to $K$ iterations. The initial state parameter $x$ can either be fixed at $x_\text{init}$ or allowed to vary over its prescribed box.
+    We now describe how to use `fomtools` to verify the worst-case convergence rate of the OSQP-style ADMM method for constrained optimal control. We compare randomly sampled simulations, exact MIP verification, SDP-relaxed verification, and a PEPit bound, up to $K$ iterations. The initial state parameter $x$ can either be fixed at $x_\text{init}$ or allowed to vary over its prescribed box.
     """)
     return
 
@@ -249,7 +250,7 @@ def _(
         x_samples = _rng.uniform(low=x_lb, high=x_ub, size=(n_samples, n_s))
     z0_samples = _rng.uniform(low=z0_lb, high=z0_ub, size=(n_samples, n_xz))
     v0_samples = _rng.uniform(low=v0_lb, high=v0_ub, size=(n_samples, n_xz))
-    return n_samples, v0_samples, x_samples, z0_samples
+    return v0_samples, x_samples, z0_samples
 
 
 @app.cell(hide_code=True)
@@ -261,7 +262,18 @@ def _(mo):
 
 
 @app.cell
-def _(M, admm_step, build_lhs, n_s, n_xz, q, rho, sigma, u_stack_max, u_stack_min):
+def _(
+    M,
+    admm_step,
+    build_lhs,
+    n_s,
+    n_xz,
+    q,
+    rho,
+    sigma,
+    u_stack_max,
+    u_stack_min,
+):
     from fomtools.verifier import Verifier
 
     def admm_simulation(x_samples, z0_samples, v0_samples, P, K, ord=2):
@@ -321,22 +333,6 @@ def _(K, P, admm_simulation, np, v0_samples, x_samples, z0_samples):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    For the radius-conditioned PEP comparison, we estimate the OSQP-state
-    initial radius
-    \[
-        \|z^0-z^\star\|_2^2+\|v^0-v^\star\|_2^2 \le R^2
-    \]
-    from the same initial-state parameter set used by the MIP. Because the
-    maximum below is taken over random initial iterates, it is an empirical
-    radius rather than a certificate for every point in the initialization
-    boxes.
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
     ## Algorithm verification through verification problem (VP)
 
     ### MIP-VP
@@ -361,6 +357,7 @@ def _(mo):
 @app.cell
 def _(
     IndBox,
+    M,
     T,
     Verifier,
     admm_step,
@@ -370,7 +367,6 @@ def _(
     n_u,
     n_xz,
     np,
-    M,
     q,
     rho,
     sigma,
@@ -447,6 +443,38 @@ def _(K, P, admm_verification, n_xz, np, solver_params):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ### SDP-VP
+
+    > **Runtime warning.** The SDP relaxation for this control example is
+    > substantially more expensive than the other verification problems. On
+    > the benchmark machine, even the first two horizons took several minutes
+    > each. The solve cell below is therefore disabled by default so that the
+    > notebook remains practical to run end to end. Uncomment the marked lines
+    > to compute the SDP curve.
+
+    We also solve the SDP-relaxed verification problem using the squared
+    Euclidean OSQP-state residual. This is the same recurrence, parameter set,
+    and initialization set as the MIP-VP above; only the verification backend
+    and residual formulation differ. The SDP value is already in the squared
+    Euclidean units used by the simulations and PEP comparison.
+    """)
+    return
+
+
+@app.cell
+def _(K, P, admm_verification):
+    # WARNING: this solve can take a very long time, especially as K grows.
+    # Uncomment the following lines to enable the SDP comparison.
+    # _, all_residuals_sdp = admm_verification(
+    #     K, 'sdp', P, ord=2, solver='clarabel', obbt_solver='highs',
+    # )
+    all_residuals_sdp = None
+    return (all_residuals_sdp,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ### PEP-obtained worst-case convergence rate
 
     We compare the MIP result with a PEP that uses the same OSQP recurrence,
@@ -472,6 +500,16 @@ def _(mo):
     show both the bound conditioned on the empirical radius above and a
     rate-shape curve calibrated to match the norm-converted MIP upper bound at
     $K=1$. The calibrated curve is not an independent absolute guarantee.
+
+    For the radius-conditioned PEP comparison, we estimate the OSQP-state
+    initial radius
+    \[
+        \|z^0-z^\star\|_2^2+\|v^0-v^\star\|_2^2 \le R^2
+    \]
+    from the same initial-state parameter set used by the MIP. Because the
+    maximum below is taken over random initial iterates, it is an empirical
+    radius rather than a certificate for every point in the initialization
+    boxes.
     """)
     return
 
@@ -537,8 +575,8 @@ def _(mo):
     ## Numerical Result
 
     We plot every curve in squared Euclidean units. The MIP curve uses the
-    dimension-dependent norm conversion above; simulation and PEP use the
-    squared Euclidean residual directly, and the simulation includes the
+    dimension-dependent norm conversion above; SDP, simulation, and PEP use
+    the squared Euclidean residual directly, and the simulation includes the
     sample worst-case instance.
     """)
     return
@@ -550,6 +588,7 @@ def _(
     all_residuals,
     all_residuals_PEP,
     all_residuals_PEP_radius,
+    all_residuals_sdp,
     plt,
     simulation_residual_quantiles_admm,
     simulation_residuals_admm,
@@ -568,6 +607,8 @@ def _(
         all_residuals,
         label=r'ADMM (MIP upper bound via $2n_{xz}\|\cdot\|_\infty^2$)',
     )
+    if all_residuals_sdp is not None:
+        plt.plot(_ks, all_residuals_sdp, label='ADMM (SDP bound)')
     _avg_line, = plt.plot(_ks, simulation_residuals_admm, '--', label='ADMM (in-sample avg)')
     plt.fill_between(_ks, simulation_residual_quantiles_admm[2], simulation_residual_quantiles_admm[0], alpha=.18, label='ADMM sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_admm[3], ':', color=_avg_line.get_color(), label='ADMM sample worst-case')

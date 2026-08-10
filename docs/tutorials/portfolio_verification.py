@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.14"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
@@ -235,7 +235,21 @@ def _(mo):
 
 
 @app.cell
-def _(A_mat, Verifier, admm_step, l_val, lhs_mat, mu, n, rho, sigma, u_val, v0_lb, v0_ub, x0_val):
+def _(
+    A_mat,
+    Verifier,
+    admm_step,
+    l_val,
+    lhs_mat,
+    mu,
+    n,
+    rho,
+    sigma,
+    u_val,
+    v0_lb,
+    v0_ub,
+    x0_val,
+):
     def admm_verification(K, method, ord=2, **verifier_kwargs):
         """Solve the portfolio ADMM verification problem for one backend.
 
