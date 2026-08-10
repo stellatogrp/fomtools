@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.11"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
@@ -61,8 +61,8 @@ def _():
         mo,
         np,
         recorded_timings,
-        statistics,
         solve_admm_numpy,
+        statistics,
         textwrap,
         time,
     )
@@ -71,15 +71,15 @@ def _():
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-# Portfolio: Python vs Codegen
+    # Portfolio: Python vs Codegen
 
-In this tutorial we benchmark a small mean-variance portfolio problem.
-The portfolio weights must satisfy lower bounds, upper bounds, and a budget equality.
+    In this tutorial we benchmark a small mean-variance portfolio problem.
+    The portfolio weights must satisfy lower bounds, upper bounds, and a budget equality.
 
-The solver uses the alternating direction method of multipliers: each iteration clips an auxiliary variable to the constraint box, solves a small linear system, and updates the auxiliary variable.
-We compare a direct NumPy implementation with the verified generated C solver.
-The problem construction, ADMM step, and NumPy reference solver are shared with the [portfolio verification tutorial](portfolio_verification.html).
-""")
+    The solver uses the alternating direction method of multipliers: each iteration clips an auxiliary variable to the constraint box, solves a small linear system, and updates the auxiliary variable.
+    We compare a direct NumPy implementation with the verified generated C solver.
+    The problem construction, ADMM step, and NumPy reference solver are shared with the [portfolio verification tutorial](portfolio_verification.html).
+    """)
     )
     return
 
@@ -87,9 +87,9 @@ The problem construction, ADMM step, and NumPy reference solver are shared with 
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-We generate a positive definite covariance matrix and a vector of expected returns.
-Both implementations start from the same fixed vectors and run the same update rule for the same number of iterations.
-""")
+    We generate a positive definite covariance matrix and a vector of expected returns.
+    Both implementations start from the same fixed vectors and run the same update rule for the same number of iterations.
+    """)
     )
     return
 
@@ -108,11 +108,40 @@ def _(examples_dir, make_portfolio_data, np):
     v0 = 0.5 * np.ones(n + 1)
     K = 200
     out_dir = examples_dir / "_codegen_speedups" / "portfolio_codegen_speedup"
-    return A, K, expected_return, lhs, lower, n, out_dir, rho, sigma, upper, v0, x0
+    return (
+        A,
+        K,
+        expected_return,
+        lhs,
+        lower,
+        n,
+        out_dir,
+        rho,
+        sigma,
+        upper,
+        v0,
+        x0,
+    )
 
 
 @app.cell
-def _(A, CodegenConfig, K, TerminationSpec, Verifier, admm_step, expected_return, lhs, lower, n, rho, sigma, upper, v0, x0):
+def _(
+    A,
+    CodegenConfig,
+    K,
+    TerminationSpec,
+    Verifier,
+    admm_step,
+    expected_return,
+    lhs,
+    lower,
+    n,
+    rho,
+    sigma,
+    upper,
+    v0,
+    x0,
+):
     verifier = Verifier(
         method="mip",
         solver="highs",
@@ -136,7 +165,21 @@ def _(A, CodegenConfig, K, TerminationSpec, Verifier, admm_step, expected_return
 
 
 @app.cell
-def _(A, K, expected_return, lhs, lower, rho, sigma, solve_admm_numpy, statistics, time, upper, v0, x0):
+def _(
+    A,
+    K,
+    expected_return,
+    lhs,
+    lower,
+    rho,
+    sigma,
+    solve_admm_numpy,
+    statistics,
+    time,
+    upper,
+    v0,
+    x0,
+):
     def portfolio_solve():
         return solve_admm_numpy(
             A,
@@ -259,35 +302,35 @@ def _(
 ):
     if timings_live:
         _footer = f"""
-Generated solver directory: `{out_dir}`
+    Generated solver directory: `{out_dir}`
 
-Generated solver source: `{solver_path}`
-"""
+    Generated solver source: `{solver_path}`
+    """
     else:
         _prov = recorded_timings["provenance"]
         _footer = f"""
-> **Recorded measurement.** These timings were recorded by {_prov["recorded_by"]} on
-> {_prov["recorded_date"]} (commit `{_prov["recorded_commit"]}`) and are **not** recomputed in
-> this build, since a docs build has no coding-agent backend and its timings would in any case
-> come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
-> to generate, verify and re-time the solver on your own machine. Every example's recorded
-> numbers are collected in the [code generation speedup results](codegen_speedup_results.md).
-"""
+    > **Recorded measurement.** These timings were recorded by {_prov["recorded_by"]} on
+    > {_prov["recorded_date"]} (commit `{_prov["recorded_commit"]}`) and are **not** recomputed in
+    > this build, since a docs build has no coding-agent backend and its timings would in any case
+    > come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
+    > to generate, verify and re-time the solver on your own machine. Every example's recorded
+    > numbers are collected in the [code generation speedup results](codegen_speedup_results.md).
+    """
     summary = mo.md(f"""
-## Timing summary
+    ## Timing summary
 
-One complete solve runs `{K}` iterations.
+    One complete solve runs `{K}` iterations.
 
-| implementation | median / mean per solve |
-|---|---:|
-| direct NumPy Python | `{table_python_us:.3f} µs` |
-| generated C after code generation | `{codegen_us:.3f} µs` |
-| generated C after optimization iteration | `{iteration_us:.3f} µs` |
+    | implementation | median / mean per solve |
+    |---|---:|
+    | direct NumPy Python | `{table_python_us:.3f} µs` |
+    | generated C after code generation | `{codegen_us:.3f} µs` |
+    | generated C after optimization iteration | `{iteration_us:.3f} µs` |
 
-The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
+    The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
 
-The optimization iteration uses a live coding agent to edit `src/fom_solver.c`; the edited solver was `{optimization_status}` after verification and timing.
-{_footer}"""
+    The optimization iteration uses a live coding agent to edit `src/fom_solver.c`; the edited solver was `{optimization_status}` after verification and timing.
+    {_footer}"""
     )
     summary
     return

@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.11"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
@@ -61,8 +61,8 @@ def _():
         mo,
         np,
         recorded_timings,
-        statistics,
         solve_ista_numpy,
+        statistics,
         textwrap,
         time,
     )
@@ -71,28 +71,28 @@ def _():
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-# Lasso: Python vs Codegen
+    # Lasso: Python vs Codegen
 
-In this tutorial we benchmark iterative soft-thresholding for the Lasso problem:
+    In this tutorial we benchmark iterative soft-thresholding for the Lasso problem:
 
-\[
-\begin{array}{ll}
+    \[
+    \begin{array}{ll}
     \text{minimize} & (1/2)\lVert Ds - x \rVert_2^2 + \lambda \lVert s \rVert_1,
-\end{array}
-\]
+    \end{array}
+    \]
 
-where \(D \in \mathbb{R}^{p \times n}\), \(s \in \mathbb{R}^n\), and \(x\) is the parameter.
-The method is
+    where \(D \in \mathbb{R}^{p \times n}\), \(s \in \mathbb{R}^n\), and \(x\) is the parameter.
+    The method is
 
-\[
-s^{k+1} =
-\mathbf{soft}_{\lambda\eta}\left(s^k - \eta D^\top(Ds^k - x)\right).
-\]
+    \[
+    s^{k+1} =
+    \mathbf{soft}_{\lambda\eta}\left(s^k - \eta D^\top(Ds^k - x)\right).
+    \]
 
-We compare a direct NumPy implementation with the verified generated C solver.
-The problem construction, ISTA step, and NumPy reference solver are shared with the [Lasso verification tutorial](lasso_verification.html).
-The generated C is timed after code generation, then timed again after the C-editing optimization pass.
-""")
+    We compare a direct NumPy implementation with the verified generated C solver.
+    The problem construction, ISTA step, and NumPy reference solver are shared with the [Lasso verification tutorial](lasso_verification.html).
+    The generated C is timed after code generation, then timed again after the C-editing optimization pass.
+    """)
     )
     return
 
@@ -100,9 +100,9 @@ The generated C is timed after code generation, then timed again after the C-edi
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-We generate a small sparse dictionary \(D\), sample sparse signals, and use those samples to define the range of possible inputs \(x\).
-Both implementations run the same update rule for the same number of iterations.
-""")
+    We generate a small sparse dictionary \(D\), sample sparse signals, and use those samples to define the range of possible inputs \(x\).
+    Both implementations run the same update rule for the same number of iterations.
+    """)
     )
     return
 
@@ -124,7 +124,21 @@ def _(examples_dir, make_lasso_data, np):
 
 
 @app.cell
-def _(CodegenConfig, D, K, TerminationSpec, Verifier, eta, ista_step, lambd, n, p, s0, x_lb, x_ub):
+def _(
+    CodegenConfig,
+    D,
+    K,
+    TerminationSpec,
+    Verifier,
+    eta,
+    ista_step,
+    lambd,
+    n,
+    p,
+    s0,
+    x_lb,
+    x_ub,
+):
     verifier = Verifier(
         method="mip",
         solver="highs",
@@ -260,35 +274,35 @@ def _(
 ):
     if timings_live:
         _footer = f"""
-Generated solver directory: `{out_dir}`
+    Generated solver directory: `{out_dir}`
 
-Generated solver source: `{solver_path}`
-"""
+    Generated solver source: `{solver_path}`
+    """
     else:
         _prov = recorded_timings["provenance"]
         _footer = f"""
-> **Recorded measurement.** These timings were recorded by {_prov["recorded_by"]} on
-> {_prov["recorded_date"]} (commit `{_prov["recorded_commit"]}`) and are **not** recomputed in
-> this build, since a docs build has no coding-agent backend and its timings would in any case
-> come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
-> to generate, verify and re-time the solver on your own machine. Every example's recorded
-> numbers are collected in the [code generation speedup results](codegen_speedup_results.md).
-"""
+    > **Recorded measurement.** These timings were recorded by {_prov["recorded_by"]} on
+    > {_prov["recorded_date"]} (commit `{_prov["recorded_commit"]}`) and are **not** recomputed in
+    > this build, since a docs build has no coding-agent backend and its timings would in any case
+    > come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
+    > to generate, verify and re-time the solver on your own machine. Every example's recorded
+    > numbers are collected in the [code generation speedup results](codegen_speedup_results.md).
+    """
     summary = mo.md(f"""
-## Timing summary
+    ## Timing summary
 
-One complete solve runs `{K}` iterations.
+    One complete solve runs `{K}` iterations.
 
-| implementation | median / mean per solve |
-|---|---:|
-| direct NumPy Python | `{table_python_us:.3f} µs` |
-| generated C after code generation | `{codegen_us:.3f} µs` |
-| generated C after optimization iteration | `{iteration_us:.3f} µs` |
+    | implementation | median / mean per solve |
+    |---|---:|
+    | direct NumPy Python | `{table_python_us:.3f} µs` |
+    | generated C after code generation | `{codegen_us:.3f} µs` |
+    | generated C after optimization iteration | `{iteration_us:.3f} µs` |
 
-The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
+    The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
 
-The optimization iteration uses a live coding agent to edit `src/fom_solver.c`; the edited solver was `{optimization_status}` after verification and timing.
-{_footer}"""
+    The optimization iteration uses a live coding agent to edit `src/fom_solver.c`; the edited solver was `{optimization_status}` after verification and timing.
+    {_footer}"""
     )
     summary
     return

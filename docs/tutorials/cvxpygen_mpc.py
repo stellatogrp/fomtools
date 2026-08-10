@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.0"
+__generated_with = "0.23.9"
 app = marimo.App()
 
 
@@ -18,7 +18,6 @@ def _():
     # When it isn't configured (e.g. a headless docs build), the codegen and
     # solve cells below skip with a message instead of raising.
     agent_available = os.environ.get("FOMTOOLS_CODEGEN_AGENT") == "1"
-
     return CodegenConfig, TerminationSpec, agent_available, cp, fcpg, np
 
 

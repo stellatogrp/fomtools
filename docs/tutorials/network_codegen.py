@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.11"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
@@ -63,8 +63,8 @@ def _():
         np,
         pdhg_step,
         recorded_timings,
-        statistics,
         solve_pdhg_numpy,
+        statistics,
         textwrap,
         time,
     )
@@ -73,15 +73,15 @@ def _():
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-# Network Flow: Python vs Codegen
+    # Network Flow: Python vs Codegen
 
-In this tutorial we benchmark a small capacitated network-flow problem.
-There are supply nodes, demand nodes, edge capacities, and linear edge costs.
+    In this tutorial we benchmark a small capacitated network-flow problem.
+    There are supply nodes, demand nodes, edge capacities, and linear edge costs.
 
-The solver uses a primal-dual projected update: each iteration clips the flow to the capacity box, projects one dual variable to be nonnegative, and updates the demand-side dual variable.
-We compare a direct NumPy implementation with the verified generated C solver.
-The problem construction, PDHG step, and NumPy reference solver are shared with the [network verification tutorial](network_verification.html).
-""")
+    The solver uses a primal-dual projected update: each iteration clips the flow to the capacity box, projects one dual variable to be nonnegative, and updates the demand-side dual variable.
+    We compare a direct NumPy implementation with the verified generated C solver.
+    The problem construction, PDHG step, and NumPy reference solver are shared with the [network verification tutorial](network_verification.html).
+    """)
     )
     return
 
@@ -89,10 +89,10 @@ The problem construction, PDHG step, and NumPy reference solver are shared with 
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-We generate a complete bipartite graph from supply nodes to demand nodes.
-The starting flow is computed once by solving the linear program at the lower-demand endpoint.
-Both implementations then run the same fixed iteration map.
-""")
+    We generate a complete bipartite graph from supply nodes to demand nodes.
+    The starting flow is computed once by solving the linear program at the lower-demand endpoint.
+    Both implementations then run the same fixed iteration map.
+    """)
     )
     return
 
@@ -349,35 +349,35 @@ def _(
 ):
     if timings_live:
         _footer = f"""
-Generated solver directory: `{out_dir}`
+    Generated solver directory: `{out_dir}`
 
-Generated solver source: `{solver_path}`
-"""
+    Generated solver source: `{solver_path}`
+    """
     else:
         _prov = recorded_timings["provenance"]
         _footer = f"""
-> **Recorded measurement.** These timings were recorded by {_prov["recorded_by"]} on
-> {_prov["recorded_date"]} (commit `{_prov["recorded_commit"]}`) and are **not** recomputed in
-> this build, since a docs build has no coding-agent backend and its timings would in any case
-> come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
-> to generate, verify and re-time the solver on your own machine. Every example's recorded
-> numbers are collected in the [code generation speedup results](codegen_speedup_results.md).
-"""
+    > **Recorded measurement.** These timings were recorded by {_prov["recorded_by"]} on
+    > {_prov["recorded_date"]} (commit `{_prov["recorded_commit"]}`) and are **not** recomputed in
+    > this build, since a docs build has no coding-agent backend and its timings would in any case
+    > come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
+    > to generate, verify and re-time the solver on your own machine. Every example's recorded
+    > numbers are collected in the [code generation speedup results](codegen_speedup_results.md).
+    """
     summary = mo.md(f"""
-## Timing summary
+    ## Timing summary
 
-One complete solve runs `{K}` iterations.
+    One complete solve runs `{K}` iterations.
 
-| implementation | median / mean per solve |
-|---|---:|
-| direct NumPy Python | `{table_python_us:.3f} µs` |
-| generated C after code generation | `{codegen_us:.3f} µs` |
-| generated C after optimization iteration | `{iteration_us:.3f} µs` |
+    | implementation | median / mean per solve |
+    |---|---:|
+    | direct NumPy Python | `{table_python_us:.3f} µs` |
+    | generated C after code generation | `{codegen_us:.3f} µs` |
+    | generated C after optimization iteration | `{iteration_us:.3f} µs` |
 
-The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
+    The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
 
-The optimization iteration uses a live coding agent to edit `src/fom_solver.c`; the edited solver was `{optimization_status}` after verification and timing.
-{_footer}"""
+    The optimization iteration uses a live coding agent to edit `src/fom_solver.c`; the edited solver was `{optimization_status}` after verification and timing.
+    {_footer}"""
     )
     summary
     return

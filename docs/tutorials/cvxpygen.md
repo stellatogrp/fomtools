@@ -1,3 +1,8 @@
+---
+title: Cvxpygen
+marimo-version: 0.23.9
+---
+
 # CVXPYgen integration: model in CVXPY, solve with a generated FOM
 
 `fomtools.cvxpygen` connects the FOMTools code generator to
