@@ -276,7 +276,7 @@ def generate_code(
             verify_cmd=target.verify_command(),
             instructions=phase_b_instructions(ir, target),
             phase="B_optimize",
-            max_turns=60,
+            max_turns=config.agent_optimize_max_turns,
             bench_cmd=["make", "bench"],
             restore_hook=restore_deterministic_files,
         )

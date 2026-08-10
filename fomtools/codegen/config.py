@@ -188,6 +188,17 @@ class CodegenConfig(BaseModel):
             "generous for it."
         ),
     )
+    agent_optimize_max_turns: int = Field(
+        ge=1,
+        default=60,
+        description=(
+            "Turn budget for one coding-agent attempt at the optimization phase. "
+            "The phase is a profile/rewrite/verify/benchmark loop, so a method "
+            "with more structure to exploit needs more turns; exhausting the "
+            "budget leaves the verified solver in place but costs the agent's own "
+            "summary of what it did."
+        ),
+    )
     agent_optimize_timeout_s: int = Field(
         ge=1,
         default=1800,

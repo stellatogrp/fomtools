@@ -28,7 +28,7 @@ only the Claude-specific argv and in-process SDK invocation.
 
 from __future__ import annotations
 
-from fomtools.codegen.agent.driver import AgentTask
+from fomtools.codegen.agent.driver import AgentTask, _redact_exception
 from fomtools.codegen.agent.sdk_base import (
     _ALLOWED_TOOLS,
     _SYSTEM_PROMPT,
@@ -165,14 +165,27 @@ class ClaudeAgentDriver(SdkAgentDriver):
                 **({"env": env} if env else {}),
                 **({"model": self.model} if self.model else {}),
             )
-            async for message in query(prompt=prompt, options=options):
-                for block in getattr(message, "content", []) or []:
-                    text = getattr(block, "text", None)
-                    if text:
-                        chunks.append(text)
-                result = getattr(message, "result", None)
-                if result:
-                    chunks.append(str(result))
+            try:
+                async for message in query(prompt=prompt, options=options):
+                    for block in getattr(message, "content", []) or []:
+                        text = getattr(block, "text", None)
+                        if text:
+                            chunks.append(text)
+                    result = getattr(message, "result", None)
+                    if result:
+                        chunks.append(str(result))
+            except Exception as exc:  # noqa: BLE001 - keep the partial transcript
+                # The stream can end early — most often at the turn cap. Letting
+                # this propagate would discard everything the agent said, which
+                # is the artifact the optimization report is built from. Keep it
+                # and record that the run was cut short; the caller's verify
+                # decides success either way.
+                self._truncated = True
+                chunks.append(
+                    f"\n[fomtools: the {self.label} agent stopped early "
+                    f"({_redact_exception(exc)}); any output above is partial. Raise "
+                    "CodegenConfig.agent_optimize_max_turns to give it more turns.]\n"
+                )
             return "\n".join(chunks)
 
         return asyncio.run(_run())

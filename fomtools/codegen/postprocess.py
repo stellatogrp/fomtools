@@ -86,16 +86,20 @@ def unified_solver_diff(before: str, after: str, filename: str) -> str:
 
 
 def _looks_like_prompt_echo(text: str) -> bool:
-    """Whether ``text`` is our own instructions rather than the agent's answer.
+    """Whether ``text`` is something other than the agent's own prose.
 
-    A log can end up containing the prompt — a subprocess exception that
-    stringifies its argv is one way, and the re-prompt on a failed attempt is
-    another. Since the prompt is what *asks* for a summary, naive marker search
-    happily returns the request instead of the reply. These phrases appear only
-    in :mod:`fomtools.codegen.agent.prompts`, never in an agent's own prose.
+    Two things get mistaken for a summary. The prompt, when a log ends up
+    containing it — a subprocess exception that stringifies its argv is one way,
+    the re-prompt on a failed attempt another; since the prompt is what *asks*
+    for a summary, a naive marker search returns the request instead of the
+    reply. And the harness's own bracketed diagnostics, which describe the agent
+    rather than quoting it. Neither belongs in a report section headed "Agent
+    notes". The phrases below appear only in
+    :mod:`fomtools.codegen.agent.prompts` or in harness messages.
     """
     lowered = text.lower()
     tells = (
+        # the prompt, echoed back
         "--append-system-prompt",
         "--allowedtools",
         "--permission-mode",
@@ -104,6 +108,9 @@ def _looks_like_prompt_echo(text: str) -> bool:
         "the markers are how your summary is lifted",
         "print a final summary",
         "emit them literally",
+        # the harness talking about the agent, rather than the agent talking
+        "[agent invocation raised:",
+        "[fomtools:",
     )
     return any(tell in lowered for tell in tells)
 

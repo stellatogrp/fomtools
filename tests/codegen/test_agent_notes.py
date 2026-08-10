@@ -120,6 +120,29 @@ def test_empty_log_gives_empty_notes():
     assert extract_agent_notes("") == ""
 
 
+def test_harness_diagnostic_is_not_reported_as_notes():
+    """A message *about* the agent is not the agent talking.
+
+    A turn-capped run left only this line in the log, and it was rendered under
+    an "Agent notes" heading as though the agent had written it.
+    """
+    log = (
+        "[agent invocation raised: Exception: Claude Code returned an error "
+        "result: Reached maximum number of turns (60)]"
+    )
+    assert extract_agent_notes(log) == ""
+
+
+def test_partial_transcript_survives_its_truncation_marker():
+    """Real prose plus a trailing harness marker still yields the prose."""
+    log = (
+        f"{SUMMARY_BEGIN}\n{REAL_SUMMARY}\n{SUMMARY_END}\n"
+        "\n[fomtools: the Claude agent stopped early (Exception: ...); "
+        "any output above is partial.]\n"
+    )
+    assert extract_agent_notes(log) == REAL_SUMMARY
+
+
 # --- redaction -------------------------------------------------------------
 def test_redact_exception_hides_the_argv_and_prompt():
     exc = subprocess.TimeoutExpired(
