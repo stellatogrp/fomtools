@@ -16,7 +16,18 @@ reference to an earlier iterate held across the whole run -- a Halpern anchor
 ``z_{k+1} = a_k z_0 + (1 - a_k) T(z_k)``, where ``z_0`` simply resolves as a state
 slot that nothing updates.
 
-The cost is size. Extraction expresses each iterate in terms of leaves and
+The cost is size, so a recording that did not need unrolling is rolled back up.
+Before unrolling anything we extract iteration one on its own and ask
+:func:`~fomtools.codegen.oracle.check_stationary` whether repeating it reproduces
+the recorded tape. When it does, that compact IR is what gets emitted, so writing
+a stationary method as a loop costs nothing. **Rolling changes the artifact and
+never the computation**: the rolled IR keeps the recorded horizon, and the same
+check that decides to roll is the proof it was safe. Using the gate as the
+decision rather than comparing block structure means a wrong roll is not merely
+unlikely; it cannot be returned.
+
+What remains unrolled is what genuinely varies. There the size depends on how the
+loop carries its iterate. Extraction expresses each iterate in terms of leaves and
 earlier temporaries, which is linear in the iteration count when the loop carries
 a *leaf* -- a step output fed into the next step, as in ISTA, FISTA and Halpern --
 and quadratic when it carries a non-leaf accumulation like Douglas-Rachford's
@@ -24,21 +35,29 @@ and quadratic when it carries a non-leaf accumulation like Douglas-Rachford's
 materializes an accumulating iterate as its own variable and restores linear
 growth; a recording that would blow up raises
 :class:`~fomtools.codegen.ir.UnrolledBlowupError` naming it. Repeated coefficient
-blocks are then merged by content, so a stationary method unrolled stores its
-data once rather than once per iteration.
+blocks are then merged by content, so what is unrolled stores its data once
+rather than once per iteration.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 
 from fomtools.codegen.config import CodegenConfig, TerminationKind, TerminationSpec
 from fomtools.codegen.dedup import dedup_matrices
 from fomtools.codegen.extract import extract_ir, normalize_iterates
-from fomtools.codegen.ir import FomIR, UnrolledBlowupError
-from fomtools.codegen.oracle import check_unrolled
+from fomtools.codegen.ir import FomIR, NonStationaryFOMError, UnrolledBlowupError
+from fomtools.codegen.oracle import check_stationary, check_unrolled, sample_param_values
 
 __all__ = ["extract_unrolled_ir"]
+
+log = logging.getLogger(__name__)
+
+#: Parameter draws used to decide whether the recording rolls. A wrong roll
+#: silently changes the algorithm, so one coincidental agreement must not be
+#: enough; the check also compares every iteration, not just the answer.
+_ROLL_CONFIRM_SEEDS = (0, 1, 2)
 
 
 #: A body is judged to accumulate when its late steps carry this many times more
@@ -55,17 +74,22 @@ _BLOWUP_MIN_TERMS = 200
 _BLOWUP_MIN_STEPS = 10
 
 
-def _one_pass(config: CodegenConfig) -> TerminationSpec:
-    """The termination an unrolled body must carry: execute once, no early exit."""
+def _require_max_iters(config: CodegenConfig) -> None:
+    """Reject a tolerance-based criterion, whether or not the recording rolls.
+
+    Checked up front rather than per branch: generating from a tape means
+    generating the run that was recorded, and a rolled result keeps that same
+    horizon, so an early exit is not honored either way.
+    """
     if config.termination.kind != TerminationKind.MAX_ITERS:
         raise ValueError(
             f"termination kind {config.termination.kind.value!r} cannot be combined with "
-            "unrolled code generation: the body is the whole run executed once, so there "
-            "is no repeated iteration to measure a change across. Use "
-            "TerminationKind.MAX_ITERS, or generate a rolled solver instead, where the "
-            "criterion is evaluated every iteration."
+            "code generation from a recorded tape: the generated solver runs the run that "
+            "was recorded, so there is no criterion to evaluate against a horizon the "
+            "recording does not have. Use TerminationKind.MAX_ITERS, or generate a rolled "
+            "solver directly from one iteration, where the criterion is evaluated every "
+            "iteration."
         )
-    return TerminationSpec(kind=TerminationKind.MAX_ITERS, max_iters=1)
 
 
 def _term_counts(ir: FomIR) -> list[int]:
@@ -100,6 +124,45 @@ def _check_no_blowup(ir: FomIR, n_iterations: int) -> None:
     )
 
 
+def _try_roll(
+    verifier, groups, config: CodegenConfig, name: str, state, params, param_values
+) -> FomIR | None:
+    """The compact rolled IR if repeating iteration one reproduces the tape.
+
+    Returns ``None`` when it does not, which is the signal to unroll. The rolled
+    IR keeps the *recorded* horizon rather than any configured loop count: rolling
+    is a size optimization, and running a different number of iterations would
+    make it a change of behavior.
+    """
+    rolled_config = config.model_copy(
+        update={
+            "termination": TerminationSpec(kind=TerminationKind.MAX_ITERS, max_iters=len(groups))
+        }
+    )
+    try:
+        rolled = extract_ir(
+            verifier, groups[0], state=state, params=params, config=rolled_config, name=name
+        )
+    except NonStationaryFOMError:
+        # Iteration one is not extractable on its own; nothing to roll.
+        return None
+
+    draws = (
+        [param_values]
+        if param_values is not None
+        else [
+            sample_param_values(verifier, groups, state=state, params=params, seed=seed)
+            for seed in _ROLL_CONFIRM_SEEDS
+        ]
+    )
+    for values in draws:
+        try:
+            check_stationary(rolled, verifier, groups, values, state=state, params=params)
+        except NonStationaryFOMError:
+            return None
+    return rolled
+
+
 def extract_unrolled_ir(
     verifier,
     iterates,
@@ -109,6 +172,7 @@ def extract_unrolled_ir(
     params=None,
     dedup: bool = True,
     check: bool = True,
+    roll: bool = True,
     param_values: dict | None = None,
 ) -> FomIR:
     """Extract the whole recorded run as one unrolled body.
@@ -132,17 +196,23 @@ def extract_unrolled_ir(
         Merge coefficient blocks holding identical numbers.
     check:
         Verify the result against the recorded tape before returning.
+    roll:
+        Emit the compact rolled IR when repeating one iteration is verified to
+        reproduce the recording. Pass ``False`` to unroll regardless.
     param_values:
-        Parameter values for that check, keyed by parameter leaf. Defaults to a
-        deterministic draw inside the declared box.
+        Parameter values for the checks, keyed by parameter leaf. Defaults to
+        deterministic draws inside the declared box.
 
     Returns
     -------
     FomIR
-        With :attr:`~fomtools.codegen.ir.FomIR.unrolled` set, a body holding the
-        whole run in dependency order, and ``state_update`` producing the answer.
+        Either a rolled IR (``unrolled`` false, the recorded horizon in
+        ``termination.max_iters``), or an unrolled one whose body holds the whole
+        run in dependency order with ``state_update`` producing the answer.
+        :attr:`~fomtools.codegen.ir.FomIR.unrolled` says which.
     """
     config = config or CodegenConfig()
+    _require_max_iters(config)
 
     groups = normalize_iterates(verifier, iterates)
     if not groups:
@@ -151,15 +221,38 @@ def extract_unrolled_ir(
             "sequence the loop produced, or an IterateTrajectory."
         )
 
+    # Try rolling before unrolling: for a stationary recording this is both the
+    # better artifact and the cheaper path, since it never builds the big body.
+    if roll:
+        rolled = _try_roll(verifier, groups, config, name, state, params, param_values)
+        if rolled is not None:
+            log.info(
+                "%s: repeating one iteration reproduces the %d recorded iteration(s); "
+                "emitting a rolled body of %d step(s) instead of unrolling.",
+                name,
+                len(groups),
+                len(rolled.body),
+            )
+            return rolled
+
     ir = extract_ir(
         verifier,
         groups[-1],
         state=state,
         params=params,
-        config=config.model_copy(update={"termination": _one_pass(config)}),
+        config=config.model_copy(
+            update={"termination": TerminationSpec(kind=TerminationKind.MAX_ITERS, max_iters=1)}
+        ),
         name=name,
     )
     _check_no_blowup(ir, len(groups))
+    log.info(
+        "%s: the recording does not roll; emitting %d unrolled step(s) over "
+        "%d recorded iteration(s).",
+        name,
+        len(ir.body),
+        len(groups),
+    )
 
     ir = replace(ir, unrolled=True)
     if dedup:

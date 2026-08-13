@@ -104,8 +104,13 @@ def build_mixed_step_loop(steps=8):
     return v, iterates, x, d
 
 
-def build_dr_loop(steps=20, collapse_expr="auto"):
-    """Douglas-Rachford: the iterate is carried through a non-leaf accumulation."""
+def build_dr_loop(steps=20, collapse_expr="auto", relaxation=None):
+    """Douglas-Rachford: the iterate is carried through a non-leaf accumulation.
+
+    ``relaxation`` takes the 0-based iteration index and returns that iteration's
+    relaxation weight. Pass one to make the recording genuinely non-stationary, so
+    it cannot be rolled back up.
+    """
     rng = np.random.default_rng(0)
     n, m = 8, 4
     amat = rng.normal(size=(m, n))
@@ -119,7 +124,8 @@ def build_dr_loop(steps=20, collapse_expr="auto"):
     for k in range(1, steps + 1):
         u = v.step.implicit_linear(z[k - 1] - q, output_mat=kkt)
         ut = v.step.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
-        z[k] = z[k - 1] + ut - u
+        theta = 1.0 if relaxation is None else relaxation(k - 1)
+        z[k] = z[k - 1] + theta * (ut - u)
     return v, z, q
 
 
@@ -170,12 +176,64 @@ def test_step_type_may_change_with_the_iteration():
     _assert_matches_tape(v, iterates, ir, x)
 
 
+# --- rolling back up --------------------------------------------------------
+
+
+def test_a_stationary_loop_rolls_back_up():
+    """Writing a stationary method as a loop must cost nothing."""
+    v, iterates, x, _ = build_ista_loop(steps=40)
+    ir = extract_unrolled_ir(v, iterates, name="ista")
+
+    assert ir.unrolled is False
+    assert len(ir.body) == 1
+    assert len(ir.matrices) == 3
+
+
+def test_rolling_preserves_the_recorded_horizon():
+    """Rolling changes the artifact, never the computation -- including how long."""
+    v, iterates, _, _ = build_ista_loop(steps=12)
+    ir = extract_unrolled_ir(
+        v, iterates, config=CodegenConfig(termination=TerminationSpec(max_iters=999))
+    )
+    assert ir.unrolled is False
+    assert ir.termination.max_iters == 12, "the recording fixes the horizon, not the config"
+
+
+@pytest.mark.parametrize("builder", [build_fista_loop, build_halpern_loop, build_mixed_step_loop])
+def test_a_varying_loop_does_not_roll(builder):
+    v, iterates, x, _ = builder(steps=10)
+    ir = extract_unrolled_ir(v, iterates)
+
+    assert ir.unrolled is True
+    assert len(ir.body) == 10
+    _assert_matches_tape(v, iterates, ir, x)
+
+
+def test_a_stationary_accumulating_loop_rolls_rather_than_blowing_up():
+    """Rolling is attempted first, so quadratic growth never gets built."""
+    v, iterates, _ = build_dr_loop(steps=80, collapse_expr=True)
+    ir = extract_unrolled_ir(v, iterates, name="dr")
+
+    assert ir.unrolled is False
+    assert len(ir.body) == 2
+    assert ir.termination.max_iters == 80
+
+
+def test_roll_can_be_disabled():
+    v, iterates, x, _ = build_ista_loop(steps=8)
+    ir = extract_unrolled_ir(v, iterates, roll=False)
+
+    assert ir.unrolled is True
+    assert len(ir.body) == 8
+    _assert_matches_tape(v, iterates, ir, x)
+
+
 # --- shape of the result ----------------------------------------------------
 
 
-def test_body_is_a_single_pass():
+def test_unrolled_body_is_a_single_pass():
     v, iterates, _, _ = build_ista_loop(steps=5)
-    ir = extract_unrolled_ir(v, iterates)
+    ir = extract_unrolled_ir(v, iterates, roll=False)
     assert ir.termination.kind == TerminationKind.MAX_ITERS
     assert ir.termination.max_iters == 1
 
@@ -184,19 +242,24 @@ def test_configured_max_iters_is_overridden_by_the_recorded_length():
     """The recording fixes the horizon; a configured loop count is meaningless."""
     v, iterates, _, _ = build_ista_loop(steps=5)
     ir = extract_unrolled_ir(
-        v, iterates, config=CodegenConfig(termination=TerminationSpec(max_iters=999))
+        v,
+        iterates,
+        roll=False,
+        config=CodegenConfig(termination=TerminationSpec(max_iters=999)),
     )
     assert ir.termination.max_iters == 1
     assert len(ir.body) == 5
 
 
-def test_tolerance_based_termination_is_rejected():
+@pytest.mark.parametrize("roll", [True, False])
+def test_tolerance_based_termination_is_rejected(roll):
+    """Rejected up front, so the roll path cannot slip past the check."""
     v, iterates, _, _ = build_ista_loop(steps=5)
     config = CodegenConfig(
         termination=TerminationSpec(kind=TerminationKind.INF_NORM_CHANGE, max_iters=50, tol=1e-6)
     )
-    with pytest.raises(ValueError, match="whole run executed once"):
-        extract_unrolled_ir(v, iterates, config=config)
+    with pytest.raises(ValueError, match="recorded tape"):
+        extract_unrolled_ir(v, iterates, config=config, roll=roll)
 
 
 # --- iterate sequence conventions ------------------------------------------
@@ -209,7 +272,7 @@ def test_a_leading_initial_iterate_is_recognized_and_dropped(kwargs):
     """Slot 0 of a trajectory is the initial iterate; hand-built lists go both ways."""
     steps = 6
     v, iterates, x, _ = build_ista_loop(steps=steps, **kwargs)
-    ir = extract_unrolled_ir(v, iterates)
+    ir = extract_unrolled_ir(v, iterates, roll=False)
     assert len(ir.body) == steps
     _assert_matches_tape(v, iterates, ir, x)
 
@@ -225,8 +288,8 @@ def test_empty_iterates_raises():
 
 def test_dedup_collapses_a_stationary_unrolled_loop():
     v, iterates, _, _ = build_ista_loop(steps=40)
-    plain = extract_unrolled_ir(v, iterates, dedup=False)
-    merged = extract_unrolled_ir(v, iterates, dedup=True)
+    plain = extract_unrolled_ir(v, iterates, roll=False, dedup=False)
+    merged = extract_unrolled_ir(v, iterates, roll=False, dedup=True)
 
     assert len(plain.matrices) == 2 * 40 + 1
     assert len(merged.matrices) == 3
@@ -234,15 +297,21 @@ def test_dedup_collapses_a_stationary_unrolled_loop():
 
 def test_repeated_solves_share_one_factorization():
     v, iterates, _ = build_dr_loop(steps=20, collapse_expr=False)
-    ir = extract_unrolled_ir(v, iterates, name="dr")
+    ir = extract_unrolled_ir(v, iterates, name="dr", roll=False)
+    assert len(ir.body) == 60, "three steps per iteration, unrolled"
     assert len(ir.factorizations) == 1
 
 
 # --- accumulation -----------------------------------------------------------
 
 
-def test_accumulating_loop_is_rejected_with_an_actionable_message():
-    v, iterates, _ = build_dr_loop(steps=20, collapse_expr=True)
+def _varying_relaxation(k):
+    return 1.0 + 0.05 * k
+
+
+def test_a_varying_accumulating_loop_is_rejected_with_an_actionable_message():
+    """The realistic path: it cannot roll, and collapsed it cannot be unrolled either."""
+    v, iterates, _ = build_dr_loop(steps=20, collapse_expr=True, relaxation=_varying_relaxation)
     with pytest.raises(UnrolledBlowupError) as excinfo:
         extract_unrolled_ir(v, iterates, name="dr")
 
@@ -251,20 +320,27 @@ def test_accumulating_loop_is_rejected_with_an_actionable_message():
     assert "iterate_trajectory" in message
 
 
-def test_materialized_accumulating_loop_extracts_linearly():
-    v, iterates, q = build_dr_loop(steps=20, collapse_expr=False)
+def test_the_same_varying_loop_extracts_linearly_when_materialized():
+    v, iterates, q = build_dr_loop(steps=20, collapse_expr=False, relaxation=_varying_relaxation)
     ir = extract_unrolled_ir(v, iterates, name="dr")
 
+    assert ir.unrolled is True, "a varying relaxation cannot be rolled"
     terms = sum(len(s.linear_op.terms) for s in ir.body) + len(ir.state_update.terms)
     assert terms < 200, "materializing each iterate must keep the term count linear"
     assert len(ir.state_update.terms) == 1, "the answer is the last materialized iterate"
     _assert_matches_tape(v, iterates, ir, q, atol=1e-11)
 
 
+def test_blowup_is_detected_independently_of_rolling():
+    v, iterates, _ = build_dr_loop(steps=20, collapse_expr=True)
+    with pytest.raises(UnrolledBlowupError):
+        extract_unrolled_ir(v, iterates, name="dr", roll=False)
+
+
 def test_a_short_accumulating_loop_is_not_rejected():
     """Growth only matters once the artifact is big enough to care about."""
     v, iterates, _ = build_dr_loop(steps=4, collapse_expr=True)
-    ir = extract_unrolled_ir(v, iterates, name="dr")
+    ir = extract_unrolled_ir(v, iterates, name="dr", roll=False)
     assert ir.unrolled is True
 
 
@@ -274,7 +350,7 @@ def test_a_short_accumulating_loop_is_not_rejected():
 def test_the_gate_catches_a_corrupted_body():
     """Proves the check is not vacuous."""
     v, iterates, _, d = build_ista_loop(steps=6)
-    ir = extract_unrolled_ir(v, iterates)
+    ir = extract_unrolled_ir(v, iterates, roll=False)
 
     victim = ir.body[3].linear_op.terms[0].matrix
     broken = replace(
@@ -291,13 +367,13 @@ def test_the_gate_catches_a_corrupted_body():
 def test_the_gate_accepts_a_trajectory_directly():
     """A trajectory keeps its initial iterate in slot 0; the gate must cope."""
     v, traj, _, _ = build_ista_loop(steps=6, trajectory=True)
-    ir = extract_unrolled_ir(v, traj, check=False)
+    ir = extract_unrolled_ir(v, traj, check=False, roll=False)
     check_unrolled(ir, v, traj)
 
 
 def test_check_can_be_skipped():
     v, iterates, _, _ = build_ista_loop(steps=6)
-    ir = extract_unrolled_ir(v, iterates, check=False)
+    ir = extract_unrolled_ir(v, iterates, check=False, roll=False)
     assert ir.unrolled is True
 
 
