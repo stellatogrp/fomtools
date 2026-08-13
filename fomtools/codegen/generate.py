@@ -152,8 +152,23 @@ def generate_code(
     schedules: dict | None = None,
     iterates=None,
     param_values: dict | None = None,
+    roll: bool = True,
 ) -> CodegenResult:
     """Generate a low-level solver for the FOM recorded in ``verifier``.
+
+    Three ways in, selected by what you pass:
+
+    * ``iterates=`` with no ``next_state`` generates the **whole recorded run**,
+      straight from the loop you wrote to verify with. This accepts arbitrary
+      per-iteration coefficients and step types, and anchored methods. It rolls
+      the run back up when repeating one iteration is verified to reproduce it,
+      so a stationary method costs nothing here. See
+      :func:`~fomtools.codegen.unrolled.extract_unrolled_ir`.
+    * ``next_state=`` generates a **rolled** solver from one stationary
+      iteration, repeated ``config.termination.max_iters`` times.
+    * a *build function* plus ``schedules=`` generates a rolled solver whose
+      declared coefficients are tabulated and read at the loop counter. See
+      :func:`~fomtools.codegen.scheduled.extract_scheduled_ir`.
 
     Parameters
     ----------
@@ -186,15 +201,21 @@ def generate_code(
         :class:`~fomtools.codegen.schedule.Schedule`. Selects the scheduled
         extraction path.
     iterates:
-        The successive recorded iterate expressions. When given (together with
-        ``param_values``), the rolled IR is checked against the recorded tape
-        before anything is emitted, and generation fails if the recording is not
-        stationary. Only meaningful on the plain ``(verifier, next_state)`` path;
-        strongly recommended there, since without it nothing detects a method
-        whose coefficients vary with ``k``.
+        The successive recorded iterate expressions, or an
+        :class:`~fomtools.iteratetrajectory.IterateTrajectory`.
+
+        Passed *without* ``next_state`` this selects the unrolled path and is the
+        run to generate. Passed *with* ``next_state`` it instead checks the rolled
+        IR against the recorded tape before anything is emitted, failing if the
+        recording is not stationary — strongly recommended there, since without it
+        nothing detects a method whose coefficients vary with ``k``.
     param_values:
-        Parameter values, keyed by parameter *leaf*, used for the ``iterates``
-        check.
+        Parameter values, keyed by parameter *leaf*, used for whichever check the
+        chosen path runs. Optional on the unrolled path, which draws its own.
+    roll:
+        Unrolled path only: emit the compact rolled IR when repeating one
+        iteration is verified to reproduce the recording. Pass ``False`` to unroll
+        regardless.
     """
     config = config or CodegenConfig()
     out_dir = Path(out_dir)
@@ -209,12 +230,34 @@ def generate_code(
                 "codegen.Recording."
             )
         ir = extract_scheduled_ir(verifier, schedules, config=config, name=name)
-    else:
-        if callable(verifier):
+    elif callable(verifier):
+        raise TypeError(
+            "a build function was passed but no schedules=; call generate_code "
+            "with (verifier, next_state) for a stationary method, or with "
+            "iterates= to generate the whole recorded run."
+        )
+    elif next_state is None:
+        # Unrolled: generate the run the user recorded. Rolls back up when
+        # repeating one iteration is verified to reproduce it.
+        from fomtools.codegen.unrolled import extract_unrolled_ir
+
+        if iterates is None:
             raise TypeError(
-                "a build function was passed but no schedules=; call generate_code "
-                "with (verifier, next_state) for a stationary method."
+                "generate_code needs either iterates= (the iterate sequence your loop "
+                "produced, generating that whole run) or next_state= (the iterate after "
+                "one iteration, generating a rolled solver that repeats it)."
             )
+        ir = extract_unrolled_ir(
+            verifier,
+            iterates,
+            config=config,
+            name=name,
+            state=state,
+            params=params,
+            roll=roll,
+            param_values=param_values,
+        )
+    else:
         ir = extract_ir(verifier, next_state, state=state, params=params, config=config, name=name)
         _gate_stationarity(ir, verifier, iterates, param_values, state, params)
 

@@ -1,10 +1,17 @@
 """``fomtools-codegen`` command-line interface.
 
 Generate a low-level solver for a built-in example FOM or one defined in a
-Python module exposing ``build_fom() -> dict`` (with keys ``verifier`` and
-``next_state``; optional ``name``, ``state``, ``params``). A FOM with an
-iteration-varying coefficient supplies ``build`` and ``schedules`` instead of
-``verifier`` and ``next_state``.
+Python module exposing ``build_fom() -> dict``. Three shapes of dict select the
+three generation paths, all with optional ``name``, ``state`` and ``params``:
+
+* ``verifier`` and ``iterates`` (the sequence the recorded loop produced, or an
+  ``IterateTrajectory``) generates that whole run, rolling it back up when
+  repeating one iteration is verified to reproduce it. Use ``--no-roll`` to
+  unroll regardless.
+* ``verifier`` and ``next_state`` generates a rolled solver from one stationary
+  iteration.
+* ``build`` and ``schedules`` generates a rolled solver whose declared
+  iteration-varying coefficients are tabulated.
 """
 
 from __future__ import annotations
@@ -108,16 +115,36 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-profile", dest="profile", action="store_false", help="skip timing/profiling"
     )
     p.add_argument("--scaffold-only", action="store_true", help="emit files but skip the agent")
+    p.add_argument(
+        "--no-roll",
+        dest="roll",
+        action="store_false",
+        help="for a FOM given as a recorded run, emit the unrolled body even when it "
+        "could be rolled back up into a repeating iteration",
+    )
     return p
 
 
-def _extract_fom(fom: dict, config):
-    """Extract the IR for a FOM dict, stationary or scheduled."""
+def _extract_fom(fom: dict, config, roll: bool = True):
+    """Extract the IR for a FOM dict: unrolled, stationary, or scheduled."""
     if fom.get("schedules"):
         from fomtools.codegen.scheduled import extract_scheduled_ir
 
         return extract_scheduled_ir(
             fom["build"], fom["schedules"], config=config, name=fom.get("name", "fom")
+        )
+    if fom.get("next_state") is None:
+        from fomtools.codegen.unrolled import extract_unrolled_ir
+
+        return extract_unrolled_ir(
+            fom["verifier"],
+            fom["iterates"],
+            state=fom.get("state"),
+            params=fom.get("params"),
+            config=config,
+            name=fom.get("name", "fom"),
+            roll=roll,
+            param_values=fom.get("param_values"),
         )
     from fomtools.codegen.extract import extract_ir
 
@@ -139,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.scaffold_only:
         from fomtools.codegen.emit import scaffold
 
-        ir = _extract_fom(fom, config)
+        ir = _extract_fom(fom, config, roll=args.roll)
         scaffold(ir, args.out, config)
         print(f"scaffolded {fom.get('name', 'fom')} into {args.out}")
         return 0
@@ -163,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
             schedules=fom.get("schedules"),
             iterates=fom.get("iterates"),
             param_values=fom.get("param_values"),
+            roll=args.roll,
         )
     except AgentBackendError as exc:
         # A missing / unauthenticated backend is a clear user-fixable setup

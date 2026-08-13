@@ -9,8 +9,9 @@ is numerically verified.
 
 ## Defining the FOM
 
-Build the algorithm exactly as you would for verification, and keep a handle on
-the iterate produced after **one** iteration (`next_state`):
+Write the algorithm as a loop, exactly as you would to verify it, and keep the
+iterate sequence. An [`iterate_trajectory`](#accumulating-methods) is the tidiest
+way to hold it, but any list works:
 
 ```python
 import numpy as np
@@ -23,45 +24,116 @@ b = rng.normal(size=(m,))
 t = 1.0 / np.max(np.real(np.linalg.eigvals(A.T @ A)))
 At = np.eye(n) - t * A.T @ A
 Bt = t * A.T
+K = 200
 
 vp = Verifier(method="simulator", obbt_solver=None)
 b_param = vp.add_param(m, lb=b - 1.0, ub=b + 1.0)
-z = vp.add_iterate(n, lb=2, ub=2)
 
-next_state = vp.step.soft_threshold(At @ z + Bt @ b_param, lambd=t)  # one iteration
-for _ in range(4):  # a few more, for context (optional)
-    z = next_state
-    next_state = vp.step.soft_threshold(At @ z + Bt @ b_param, lambd=t)
+z = vp.iterate_trajectory(K + 1)
+z[0] = vp.add_iterate(n, lb=2, ub=2)
+for k in range(1, K + 1):
+    z[k] = vp.step.soft_threshold(At @ z[k - 1] + Bt @ b_param, lambd=t)
 ```
 
-### The iteration must be stationary
-
-Extraction reads **one** iteration and emits a loop that repeats it. That is
-faithful only if the method really does the same thing every iteration. A
-coefficient that changes with the iteration index — FISTA's momentum, a decaying
-step size, a Halpern anchor weight — would otherwise be frozen at whatever value
-the recorded iteration happened to use, and the generated solver would run a
-different algorithm than the one you verified.
-
-Pass the recorded iterates so this is checked rather than assumed:
+Verify it however you normally would, then hand the same object to `codegen`:
 
 ```python
-vp.codegen(
+result = vp.codegen("out/ista", iterates=z, name="ista")
+```
+
+There is nothing to restructure: the program you generate from is the program you
+verified. Each iteration carries its own coefficients, so the recording may do
+whatever it likes with the iteration index — a decaying step size, momentum, a
+step whose *type* changes with `k`, or a reference to an earlier iterate held
+across the whole run, as in a Halpern anchor.
+
+### Rolling back up
+
+Generating the run literally would emit `K` blocks, which for a method that does
+the same thing every iteration is wasteful. So before unrolling anything,
+extraction pulls out iteration one on its own and asks whether repeating it
+reproduces the recording. When it does, that compact IR is what gets emitted —
+one block, whatever `K` was:
+
+```python
+result = vp.codegen("out/ista", iterates=z)
+result.ir.unrolled     # False: the run rolled back up
+len(result.ir.body)    # 1
+```
+
+Rolling changes the artifact and never the computation. The rolled solver keeps
+the **recorded** horizon rather than any horizon you configure, and the check that
+decides to roll is the proof it was safe: it replays the recorded tape and
+compares it against the rolled loop, iteration by iteration, over several
+parameter draws. Pass `roll=False` to emit the unrolled body regardless.
+
+`result.ir.unrolled` tells you which you got.
+
+### Generating from a single iteration instead
+
+If you would rather supply one stationary iteration and choose the loop count
+yourself, `codegen_rolled` does that:
+
+```python
+next_state = z[1]
+result = vp.codegen_rolled(
     "out/ista", next_state,
-    iterates=[...],                    # the successive recorded iterates
-    param_values={b_param: b},         # any value in the parameter set
+    iterates=[z[k] for k in range(1, K + 1)],   # optional, but see below
+    param_values={b_param: b},                  # any value in the parameter set
 )
 ```
 
-The check replays the recorded tape and compares it against the rolled loop
-before anything is emitted. Omit it and you get a warning, because nothing else
-in the pipeline can catch the mistake: the reference oracle is itself a rolled
-loop, so it agrees with a wrongly rolled iteration by construction.
+Here the iteration **must** be stationary, because extraction reads it once and
+emits a loop that repeats it. A coefficient that changes with the iteration index
+would be frozen at whatever value the recorded iteration happened to use, and the
+generated solver would run a different algorithm than the one you verified.
+Passing `iterates` and `param_values` has that checked rather than assumed; omit
+them and you get a warning, because nothing else in the pipeline can catch the
+mistake — the reference oracle is itself a rolled loop, so it agrees with a
+wrongly rolled iteration by construction.
 
-An iteration-varying coefficient is not a dead end — see
-[Iteration-varying coefficients](#iteration-varying-coefficients) below.
+`codegen` needs no such argument: it generates the recording itself, and gates the
+result against the tape using parameter values it draws from the declared box.
+
+## Accumulating methods
+
+Douglas–Rachford and ADMM carry their iterate through an expression rather than a
+step output:
+
+```python
+for k in range(1, K + 1):
+    u = vp.step.implicit_linear(z[k - 1] - q, output_mat=kkt)
+    ut = vp.step.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
+    z[k] = z[k - 1] + ut - u        # not a step output
+```
+
+Written that way, each iterate references every leaf the previous one did plus the
+new step outputs, so the expression grows down the trajectory — leaf support runs
+3, 5, 7, 9, … — and generating the run would need a number of matrix-vector
+products that grows with the *square* of the iteration count.
+
+`iterate_trajectory` handles this for you. Its default `collapse_expr="auto"`
+notices the growth after two consecutive increases and keeps each subsequent
+iterate as its own variable, which restores linear growth. A method that merely
+*refers* to an earlier iterate — a Halpern anchor — holds its support flat instead,
+so it is left alone. Nothing to configure either way.
+
+Forcing `collapse_expr=True` opts out of that, and generating the resulting
+recording raises `UnrolledBlowupError` with the measured counts rather than
+emitting a solver nobody wants. (A stationary accumulating method is unaffected
+either way: it rolls back up before size matters.)
 
 ## Generating the solver
+
+```python
+result = vp.codegen("out/ista", iterates=z, name="ista")
+assert result.success
+```
+
+### Stopping early on a tolerance
+
+A solver that exits once the iterate stops moving is a property of the *rolled*
+form, so it comes from `codegen_rolled`:
 
 ```python
 from fomtools.codegen import CodegenConfig, TerminationKind, TerminationSpec
@@ -70,9 +142,14 @@ config = CodegenConfig(
     termination=TerminationSpec(kind=TerminationKind.INF_NORM_CHANGE, max_iters=2000, tol=1e-6),
 )
 
-result = vp.codegen("out/ista", next_state=next_state, config=config, name="ista")
+result = vp.codegen_rolled("out/ista", next_state=next_state, config=config, name="ista")
 assert result.success
 ```
+
+Generating from a recorded run runs that run, so there is no horizon to stop short
+of and `codegen` rejects a tolerance-based criterion rather than quietly ignoring
+it. Reach for `codegen_rolled` when you want a stopping rule, or `codegen` when
+you want the algorithm you recorded.
 
 `TerminationSpec` also takes `check_termination` (named after OSQP's setting):
 the residual is computed and tested only every `check_termination` iterations,
@@ -131,7 +208,7 @@ optimization phase:
 
 ```python
 result = vp.codegen(
-    "out/ista", next_state=next_state, config=config, name="ista",
+    "out/ista", iterates=z, name="ista",
     run_phase_b=True, profile=True,
 )
 print(result.timing.summary())
@@ -212,16 +289,18 @@ to recover structure): on the MPC example the un-optimized C solver already runs
 Accelerated methods use a coefficient that changes every iteration: FISTA's
 momentum `γ_k = (β_{k-1} - 1)/β_k`, Nesterov's `(k-1)/(k+2)`, a Halpern anchor
 weight. Verification handles these for free — the tape is unrolled, so each
-iteration just gets its own number. Rolling the tape back into a loop is the only
-place the dependence on `k` could be lost.
+iteration just gets its own number.
 
-Declare it as a **schedule** and it is not. FOMTools tabulates the coefficient at
-generation time and the emitted loop reads the table at its counter, so the
-iteration stays division-free and needs no `libm` call.
+Generating the recorded run keeps that property, so `codegen` needs nothing
+special from you: the run will not roll back up, and each iteration keeps its own
+coefficients. The cost is one block per iteration.
 
-Two things differ from the stationary case. You supply the recording as a
-*function* of the schedule scalars rather than a finished tape, and the state
-carries both iterates the method needs:
+A **schedule** buys back the compact loop. You declare which scalars vary,
+FOMTools tabulates them at generation time, and the emitted loop reads the table
+at its counter — one block total, still division-free and with no `libm` call. Two
+things differ from the stationary case: you supply the recording as a *function*
+of the schedule scalars rather than a finished tape, and the state carries both
+iterates the method needs:
 
 ```python
 import numpy as np
@@ -268,11 +347,12 @@ you get a `ScheduleFitError` instead of a wrong solver.
 ### Declaring the state
 
 Written over a single iterate, the dependency cone of iteration `k` reaches back
-through every earlier step, and extraction returns the unrolled prefix rather
-than a repeatable body — quietly, since a longer body is still a valid body.
-Declaring `state=[y_prev, y_curr]` closes the cone after one step. This is worth
-remembering for any method that looks back more than one iterate, scheduled or
-not.
+through every earlier step, so extraction returns the unrolled prefix rather than
+a repeatable body. On the `codegen` path that is the intended answer. On the
+scheduled and `codegen_rolled` paths it is not what you asked for, and a longer
+body is still a valid body, so declaring `state=[y_prev, y_curr]` closes the cone
+after one step. Worth remembering for any method that looks back more than one
+iterate.
 
 ### What is not supported
 
@@ -324,7 +404,16 @@ momentum coefficient; scaffolding it is the quickest way to see what a schedule
 table looks like in `fom_data.c` and how `SPEC.md` describes it.
 
 `--scaffold-only` emits everything except the solver body (useful to inspect the
-spec and data before invoking the agent). A custom FOM can be supplied with
-`--module mymodule.py`, where the module defines `build_fom()` returning a dict
-with `verifier` and `next_state` — or, for a scheduled method, with `build` and
-`schedules`.
+spec and data before invoking the agent). `--no-roll` keeps a recorded run
+unrolled even when it could be rolled back up.
+
+A custom FOM can be supplied with `--module mymodule.py`, where the module defines
+`build_fom()` returning a dict. Which key you provide selects the path:
+
+| keys | generates |
+|---|---|
+| `verifier`, `iterates` | the whole recorded run, rolled back up when that is verified to be equivalent |
+| `verifier`, `next_state` | a rolled solver from one stationary iteration |
+| `build`, `schedules` | a rolled solver with tabulated iteration-varying coefficients |
+
+`name`, `state` and `params` are optional in all three.

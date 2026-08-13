@@ -167,6 +167,40 @@ def _cg_tol_for_dtype(dtype: str) -> float:
     return _CG_TOL_BY_DTYPE.get(dtype, 1e-12)
 
 
+def _matrix_key(mat) -> tuple:
+    """A hashable content key for an affine operator.
+
+    Canonicalized through CSR with duplicates summed, explicit zeros dropped and
+    indices sorted, so a dense and a sparse spelling of the same operator agree.
+    The input is never mutated.
+    """
+    m = mat if spa.issparse(mat) else spa.csr_matrix(np.asarray(mat, dtype=float))
+    m = m.tocsr().copy()
+    m.sum_duplicates()
+    m.eliminate_zeros()
+    m.sort_indices()
+    return (
+        m.shape,
+        m.indptr.tobytes(),
+        m.indices.tobytes(),
+        m.data.astype(np.float64).tobytes(),
+    )
+
+
+def _is_identity(mat) -> bool:
+    """Whether ``mat`` is *exactly* the identity.
+
+    Deliberately exact: treating a nearly-identity operator as a copy would
+    change the numerics rather than the implementation.
+    """
+    rows, cols = mat.shape
+    if rows != cols:
+        return False
+    if spa.issparse(mat):
+        return (mat != spa.eye(rows, format="csr")).nnz == 0
+    return np.array_equal(np.asarray(mat, dtype=float), np.eye(rows))
+
+
 def _resolve_solve_method(output_mat, config: CodegenConfig) -> str:
     """Pick the concrete solve method for an affine operator ``output_mat w = rhs``.
 
@@ -188,6 +222,35 @@ def _resolve_solve_method(output_mat, config: CodegenConfig) -> str:
     ):
         return "cg"
     return config.solve_method.value
+
+
+def normalize_iterates(verifier, iterates) -> list[list[LinearExpression]]:
+    """Normalize a recorded iterate sequence to one group per *iteration*.
+
+    Accepts an :class:`~fomtools.iteratetrajectory.IterateTrajectory` or a plain
+    sequence, and drops a leading entry that is the *initial* iterate rather than
+    the result of an iteration: a trajectory keeps the initial iterate in slot 0,
+    while hand-built lists go both ways. The test is structural -- an entry that
+    references no step output cannot be an iteration's result -- so both
+    conventions work without the caller having to say which it used.
+    """
+    # A LinearExpression is iterable through __getitem__, so passing one here
+    # would silently be read as a sequence of its rows. Catch the likely mistake:
+    # this is the argument that used to be `next_state`.
+    if isinstance(iterates, LinearExpression):
+        raise TypeError(
+            "iterates must be the sequence of iterate expressions the loop produced "
+            "(or an IterateTrajectory), not a single LinearExpression. To generate a "
+            "rolled solver from one iteration, use Verifier.codegen_rolled(out_dir, "
+            "next_state=...) or generate_code(verifier, next_state, ...)."
+        )
+    groups = [_as_list(g) for g in iterates]
+    if not groups:
+        return groups
+    produced = {leaf for step in verifier.steps for leaf in step.output_leaves}
+    if any(produced & set(expr.decomposition_dict.keys()) for expr in groups[0]):
+        return groups
+    return groups[1:]
 
 
 def _dependency_cone(steps, next_state_leaves: set[LinearExpression]):
@@ -328,6 +391,10 @@ def extract_ir(
     factorizations: dict[str, Factorization] = {}
     body: list[IterationStep] = []
     tmp_map: dict[LinearExpression, tuple[str, int]] = {}
+    # Affine steps sharing an operator share one factorization. An unrolled
+    # recording repeats the same solve every iteration, so this saves the
+    # extraction-time factorization work as well as the emitted data.
+    fac_cache: dict[tuple, str] = {}
 
     for i, step in enumerate(body_steps):
         source, activation, out_dim = _step_source_activation(step)
@@ -336,12 +403,20 @@ def extract_ir(
         solve_name = None
         # Affine operator: factorize M once (never inverted); the solver applies
         # division-free triangular solves to the assembled right-hand side.
-        if isinstance(step, Affine):
-            solve_name = prefix
+        if isinstance(step, Affine) and not _is_identity(step.output_mat):
             method = _resolve_solve_method(step.output_mat, config)
-            factorizations[prefix] = factorize(
-                step.output_mat, method=method, cg_tol=_cg_tol_for_dtype(config.dtype)
-            )
+            key = (_matrix_key(step.output_mat), method)
+            solve_name = fac_cache.get(key)
+            if solve_name is None:
+                solve_name = fac_cache[key] = prefix
+                factorizations[solve_name] = factorize(
+                    step.output_mat, method=method, cg_tol=_cg_tol_for_dtype(config.dtype)
+                )
+        # ``M w = rhs`` with ``M = I`` is a copy, not a solve, and keeps its
+        # identity activation. Trajectory barriers
+        # (``IterateTrajectory._make_linked_leaf``) record exactly this, so
+        # factorizing here would cost a stored LDL^T plus two triangular solves
+        # per iteration for nothing.
         # Saturated-linear clip bounds become per-coordinate IR arrays.
         if activation.kind == ActivationKind.SATURATED_LINEAR:
             lower, upper = _satlin_arrays(step)

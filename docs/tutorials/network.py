@@ -278,7 +278,7 @@ def _(
     elif find_compiler() is None:
         raise RuntimeError("No C compiler found. Install cc/gcc/clang to run codegen timing.")
     else:
-        result = verifier.codegen(
+        result = verifier.codegen_rolled(
             out_dir,
             next_state=next_state,
             config=config,
