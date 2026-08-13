@@ -287,6 +287,20 @@ def test_check_can_be_skipped():
     assert ir.unrolled is True
 
 
+def test_check_false_does_not_disable_the_roll_decision():
+    """``check=False`` applies to the unrolled result only.
+
+    On the roll path the check *is* the decision, so it cannot be skipped without
+    changing the answer. Observable both ways: a stationary recording still rolls,
+    and a varying one still refuses to.
+    """
+    v, iterates, _, _ = build_ista_loop(steps=10)
+    assert extract_unrolled_ir(v, iterates, check=False).unrolled is False
+
+    v, iterates, _, _ = build_halpern_loop(steps=10)
+    assert extract_unrolled_ir(v, iterates, check=False).unrolled is True
+
+
 def test_sampled_param_values_are_deterministic_and_inside_the_box():
     v, iterates, x, d = build_ista_loop(steps=4)
     first = sample_param_values(v, list(iterates))

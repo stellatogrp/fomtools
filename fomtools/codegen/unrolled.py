@@ -198,7 +198,10 @@ def extract_unrolled_ir(
     dedup:
         Merge coefficient blocks holding identical numbers.
     check:
-        Verify the result against the recorded tape before returning.
+        Verify the *unrolled* result against the recorded tape before returning.
+        Does not apply to a rolled result: there the check is what decides to roll
+        in the first place, so it cannot be skipped without changing the answer.
+        Combine with ``roll=False`` to return an IR that has not been verified.
     roll:
         Emit the compact rolled IR when repeating one iteration is verified to
         reproduce the recording. Pass ``False`` to unroll regardless.
