@@ -13,9 +13,13 @@ The public surface:
 * :func:`extract_scheduled_ir` / :class:`Recording` — the same, for a method with
   an iteration-varying coefficient such as FISTA's momentum. See
   :mod:`fomtools.codegen.schedule`.
+* :func:`extract_unrolled_ir` — the whole recorded run as one unrolled body,
+  straight from the loop the user wrote to verify with. Takes arbitrary
+  per-iteration coefficients and step types, and anchored methods.
 * :class:`ReferenceOracle` — ground-truth NumPy execution of the FOM.
-* :func:`check_stationary` — verify that the rolled IR reproduces the recorded
-  tape, which is what catches a method that is not stationary.
+* :func:`check_stationary` / :func:`check_unrolled` — verify that the extracted
+  IR reproduces the recorded tape. The first is what catches a method that is not
+  stationary; the second gates every unrolled extraction.
 * :class:`CodegenConfig` — what to generate (embedded/large-scale, backend,
   termination, dtype).
 * :func:`generate_code` — the end-to-end entry point.
@@ -35,16 +39,24 @@ from fomtools.codegen.emit import scaffold
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.generate import CodegenResult, generate_code
 from fomtools.codegen.harness import BenchResult, ProfRegion, TimingReport
-from fomtools.codegen.ir import FomIR, NonStationaryFOMError, ScheduleFitError
+from fomtools.codegen.ir import (
+    FomIR,
+    NonStationaryFOMError,
+    ScheduleFitError,
+    UnrolledBlowupError,
+    UnrolledFidelityError,
+)
 from fomtools.codegen.oracle import (
     OracleResult,
     ReferenceOracle,
     check_stationary,
+    check_unrolled,
     run_faithful,
     run_recorded_tape,
 )
 from fomtools.codegen.schedule import Schedule, fista_momentum, nesterov_momentum
 from fomtools.codegen.scheduled import Recording, extract_scheduled_ir
+from fomtools.codegen.unrolled import extract_unrolled_ir
 
 __all__ = [
     "AgentDriver",
@@ -66,14 +78,18 @@ __all__ = [
     "FomIR",
     "NonStationaryFOMError",
     "ScheduleFitError",
+    "UnrolledBlowupError",
+    "UnrolledFidelityError",
     "OracleResult",
     "ReferenceOracle",
     "run_faithful",
     "run_recorded_tape",
     "check_stationary",
+    "check_unrolled",
     "Schedule",
     "nesterov_momentum",
     "fista_momentum",
     "Recording",
     "extract_scheduled_ir",
+    "extract_unrolled_ir",
 ]

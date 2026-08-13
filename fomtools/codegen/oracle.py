@@ -26,6 +26,7 @@ from fomtools.codegen.extract import (
     _eval_step_fresh,
     eval_expr,
     fresh_leaf_of,
+    normalize_iterates,
     resolve_structure,
 )
 from fomtools.codegen.ir import (
@@ -34,6 +35,7 @@ from fomtools.codegen.ir import (
     FomIR,
     LinearOp,
     NonStationaryFOMError,
+    UnrolledFidelityError,
 )
 
 
@@ -336,3 +338,76 @@ def check_stationary(
                 "extract_scheduled_ir()/generate_code(build, schedules=...), which "
                 "tabulates it and reads the table at the loop counter."
             )
+
+
+def sample_param_values(verifier, iterates, state=None, params=None, seed: int = 0) -> dict:
+    """A deterministic parameter draw keyed by parameter *leaf*.
+
+    Mirrors what the emitted verify harness does: uniform inside the declared box,
+    with an infinite bound standing in as -1 / +1. A draw rather than the box
+    midpoint, because the midpoint of a symmetric box is zero, which would make a
+    soft-threshold step trivially zero and hide exactly the errors worth catching.
+    """
+    groups = normalize_iterates(verifier, iterates)
+    _, _, _, _, param_leaves = resolve_structure(verifier, groups[-1], state, params)
+    rng = np.random.default_rng(seed)
+    values = {}
+    for leaf in param_leaves:
+        lb = np.asarray(leaf.lb, dtype=float).reshape(-1)
+        ub = np.asarray(leaf.ub, dtype=float).reshape(-1)
+        values[leaf] = rng.uniform(
+            np.where(np.isfinite(lb), lb, -1.0), np.where(np.isfinite(ub), ub, 1.0)
+        )
+    return values
+
+
+def check_unrolled(
+    ir: FomIR,
+    verifier,
+    iterates,
+    param_values: dict | None = None,
+    state=None,
+    params=None,
+    tol: float = 1e-9,
+) -> None:
+    """Verify that an unrolled IR reproduces the recorded tape.
+
+    The unrolled body is the whole run, so only its *final* state is comparable
+    with the tape; the intermediate iterates are temporaries rather than states.
+
+    Unlike :func:`check_stationary`, this needs nothing from the caller:
+    ``param_values`` defaults to :func:`sample_param_values`. That is why the
+    unrolled path can gate itself unconditionally where the rolled path has to
+    warn when it was given no data to check with.
+
+    Raises
+    ------
+    UnrolledFidelityError
+        If the final states differ by more than ``tol``.
+    """
+    groups = normalize_iterates(verifier, iterates)
+    if param_values is None:
+        param_values = sample_param_values(verifier, groups, state=state, params=params)
+
+    truth = run_recorded_tape(verifier, groups, param_values, state=state, params=params)
+
+    _, _, _, _, param_leaves = resolve_structure(verifier, groups[-1], state, params)
+    named = {
+        f"p{i}": np.asarray(param_values[leaf], dtype=float).reshape(-1)
+        for i, leaf in enumerate(param_leaves)
+    }
+
+    # Execute the body exactly once, whatever termination the caller configured:
+    # an unrolled body is a single pass by construction.
+    probe_ir = replace(ir, termination=TerminationSpec(kind=TerminationKind.MAX_ITERS, max_iters=1))
+    got = ReferenceOracle(probe_ir).solve(param_values=named, x0=truth[0]).solution
+
+    err = float(np.max(np.abs(got - truth[-1]))) if truth[-1].size else 0.0
+    if err > tol:
+        raise UnrolledFidelityError(
+            f"the unrolled body does not reproduce the recorded tape: the final state "
+            f"differs by {err:.3e} over {len(truth) - 1} recorded iteration(s) "
+            f"(tolerance {tol:.1e}).\n"
+            "An unrolled body gives every iteration its own coefficients, so this is "
+            "not a limitation of the recording. Please report it with the recording."
+        )

@@ -61,6 +61,29 @@ class ScheduleFitError(NonStationaryFOMError):
     """
 
 
+class UnrolledBlowupError(NonStationaryFOMError):
+    """Raised when an unrolled recording would emit a quadratic number of terms.
+
+    Unrolled extraction expresses each iterate in terms of leaves and earlier
+    temporaries. When the recorded loop carries its iterate through a *non-leaf*
+    expression -- ``z = z + ut - u``, as in Douglas-Rachford and ADMM -- every
+    block reaches back through all earlier temporaries and the operation count
+    grows with the square of the iteration count. Materializing each iterate as
+    its own variable restores linear growth; see
+    :class:`fomtools.iteratetrajectory.IterateTrajectory`.
+    """
+
+
+class UnrolledFidelityError(NonStationaryFOMError):
+    """Raised when an unrolled IR does not reproduce the recorded tape.
+
+    Unlike :class:`NonStationaryFOMError`, this is not something a recording can
+    provoke by being iteration-varying: an unrolled body gives every iteration
+    its own coefficients, so it should reproduce the tape exactly whatever the
+    method does. Raising means extraction and the tape disagree.
+    """
+
+
 class ActivationKind(str, Enum):
     """Elementwise nonlinearity applied after a step's linear op."""
 

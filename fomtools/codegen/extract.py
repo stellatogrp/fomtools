@@ -224,6 +224,25 @@ def _resolve_solve_method(output_mat, config: CodegenConfig) -> str:
     return config.solve_method.value
 
 
+def normalize_iterates(verifier, iterates) -> list[list[LinearExpression]]:
+    """Normalize a recorded iterate sequence to one group per *iteration*.
+
+    Accepts an :class:`~fomtools.iteratetrajectory.IterateTrajectory` or a plain
+    sequence, and drops a leading entry that is the *initial* iterate rather than
+    the result of an iteration: a trajectory keeps the initial iterate in slot 0,
+    while hand-built lists go both ways. The test is structural -- an entry that
+    references no step output cannot be an iteration's result -- so both
+    conventions work without the caller having to say which it used.
+    """
+    groups = [_as_list(g) for g in iterates]
+    if not groups:
+        return groups
+    produced = {leaf for step in verifier.steps for leaf in step.output_leaves}
+    if any(produced & set(expr.decomposition_dict.keys()) for expr in groups[0]):
+        return groups
+    return groups[1:]
+
+
 def _dependency_cone(steps, next_state_leaves: set[LinearExpression]):
     """Return the body steps that ``next_state`` transitively depends on.
 
