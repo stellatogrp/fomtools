@@ -291,22 +291,56 @@ momentum `γ_k = (β_{k-1} - 1)/β_k`, Nesterov's `(k-1)/(k+2)`, a Halpern ancho
 weight. Verification handles these for free — the tape is unrolled, so each
 iteration just gets its own number.
 
-Generating the recorded run keeps that property, so `codegen` needs nothing
-special from you: the run will not roll back up, and each iteration keeps its own
-coefficients. The cost is one block per iteration.
+Generating the recorded run keeps that property, so **nothing special is needed**.
+Write the coefficient in Python, where the rest of your algorithm already lives:
+
+```python
+vp = Verifier(method="simulator", obbt_solver=None)
+b_param = vp.add_param(m, lb=b - 1.0, ub=b + 1.0)
+y0 = vp.add_iterate(n, lb=2, ub=2)
+
+y_prev, y_curr, beta = y0, y0, 1.0
+iterates = []
+for _ in range(K):
+    beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
+    gamma = (beta - 1.0) / beta_next          # ordinary Python, evaluated while recording
+    extrap = y_curr + gamma * (y_curr - y_prev)
+    y_next = vp.step.soft_threshold(At @ extrap + Bt @ b_param, lambd=t)
+    y_prev, y_curr, beta = y_curr, y_next, beta_next
+    iterates.append(y_next)
+
+vp.codegen("out/fista", iterates=iterates, name="fista")
+```
+
+Because the momentum genuinely varies, this run will not roll back up: each
+iteration keeps its own coefficient blocks. The cost is one emitted block per
+iteration, which is fine at a horizon of tens and impractical at a horizon of
+hundreds.
 
 A **schedule** buys back the compact loop. You declare which scalars vary,
 FOMTools tabulates them at generation time, and the emitted loop reads the table
-at its counter — one block total, still division-free and with no `libm` call. Two
-things differ from the stationary case: you supply the recording as a *function*
+at its counter — one block total whatever the horizon, still division-free and
+with no `libm` call. Two things differ: you supply the recording as a *function*
 of the schedule scalars rather than a finished tape, and the state carries both
 iterates the method needs:
 
 ```python
 import numpy as np
 from fomtools.codegen import CodegenConfig, Recording, TerminationSpec, generate_code
-from fomtools.codegen.schedule import fista_momentum
 from fomtools.verifier import Verifier
+
+def momentum(k):
+    """FISTA's γ in the 0-based index of the emitted loop.
+
+    Note the `k + 1`: γ_0 is the coefficient the *first* iteration applies, and it
+    is 0. Stopping one step short is the easy mistake, and it silently shifts the
+    whole schedule.
+    """
+    beta = 1.0
+    for _ in range(k + 1):
+        beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
+        gamma, beta = (beta - 1.0) / beta_next, beta_next
+    return gamma
 
 def build(gamma):
     vp = Verifier(method="simulator", obbt_solver=None)
@@ -320,15 +354,16 @@ def build(gamma):
 
 generate_code(
     build, None, "out/fista",
-    schedules={"gamma": fista_momentum()},
+    schedules={"gamma": momentum},
     config=CodegenConfig(termination=TerminationSpec(max_iters=200)),
 )
 ```
 
 A schedule is a callable of the **0-based** loop index, a sequence, or a
-`Schedule`. `fista_momentum()` and `nesterov_momentum()` ship with the package
-and already account for the offset between the textbook 1-based `k` and the
-emitted loop counter.
+`Schedule`. Textbook formulas are written in 1-based `k`, so shifting them is your
+job: what a coefficient *is* belongs to the method, not to the code generator, and
+nothing in the package knows any particular one. `as_schedule` calls a callable
+with increasing indices, so a coefficient defined by a recurrence may cache it.
 
 ### Why a build function
 
@@ -386,10 +421,11 @@ body that indexes `FOM_SCHED_*` directly.
 ## CLI
 
 ```
-fomtools-codegen --example ista  --out out/ista  --driver agent
-fomtools-codegen --example dr    --out out/dr    --scaffold-only
-fomtools-codegen --example mpc   --out out/mpc   --driver agent   # OSQP MPC, larger
-fomtools-codegen --example fista --out out/fista --scaffold-only  # scheduled momentum
+fomtools-codegen --example ista      --out out/ista  --driver agent
+fomtools-codegen --example dr        --out out/dr    --scaffold-only
+fomtools-codegen --example mpc       --out out/mpc   --driver agent   # OSQP MPC, larger
+fomtools-codegen --example fista     --out out/fista --scaffold-only  # a recorded run
+fomtools-codegen --example scheduled --out out/sched --scaffold-only  # a declared coefficient
 ```
 
 The built-in `mpc` example is a model-predictive-control QP solved with **OSQP's
@@ -399,9 +435,12 @@ recombinations. It is the largest built-in example (state dimension in the
 hundreds), so it is a good showcase for the Python-vs-C and the optimization-loop
 speedups.
 
-The `fista` example is the same lasso problem as `ista` with a scheduled
-momentum coefficient; scaffolding it is the quickest way to see what a schedule
-table looks like in `fom_data.c` and how `SPEC.md` describes it.
+`fista` and `scheduled` are the same accelerated lasso reached the two ways.
+`fista` records it as an ordinary loop, so scaffolding it shows an unrolled
+`SPEC.md`: one block per recorded iteration, `FOM_UNROLLED 1`, and no table.
+`scheduled` declares the momentum instead, so it shows a single block, the
+`FOM_SCHED_gamma` table in `fom_data.c`, and the clamping accessor. Scaffolding
+both side by side is the quickest way to see what declaring a coefficient buys.
 
 `--scaffold-only` emits everything except the solver body (useful to inspect the
 spec and data before invoking the agent). `--no-roll` keeps a recorded run

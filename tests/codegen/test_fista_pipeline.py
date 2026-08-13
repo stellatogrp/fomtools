@@ -1,48 +1,38 @@
-"""End-to-end code generation for a method with a scheduled coefficient.
+"""End-to-end code generation for FISTA written as an ordinary loop.
 
-Runs the full pipeline — probe, extract, scaffold, build, verify — with the
-deterministic stub driver, then checks the compiled solver against a plain
-NumPy FISTA loop over the *whole* generated horizon, not just the few iterations
-that were recorded.
+FISTA used to be the awkward case: its momentum changes every iteration, so it
+could not be recorded as a finished tape and had to be restructured into a build
+function over a declared schedule. It no longer does. These tests generate the
+loop a user writes to verify with, unchanged.
+
+The trade is size, not capability: because the momentum genuinely varies, the run
+does not roll back up and each iteration gets its own block. Declaring the same
+method as a schedule gets one block plus a table instead — see
+``test_scheduled_pipeline.py``.
 """
 
-import importlib.util
 from pathlib import Path
 
 import numpy as np
 
-from fomtools.codegen import ReferenceOracle, StubAgentDriver, generate_code
-from fomtools.codegen.harness import build_lib
-from fomtools.codegen.spec import load, save
+from fomtools.codegen import ReferenceOracle, StubAgentDriver
+from fomtools.codegen.spec import render_markdown
 from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
 from fomtools.codegen.unrolled import extract_unrolled_ir
-from tests.codegen.conftest import (
-    build_fista_run,
-    build_scheduled,
-    fista_loop_reference,
-    fista_reference,
-)
+from tests.codegen.conftest import build_fista_run, build_ista, fista_loop_reference
 
 GOLDEN = Path(__file__).parent / "golden" / "fista" / "embedded_c" / "fom_solver.c"
 
-
-def _generate(tmp_path, max_iters=200, **kwargs):
-    case = build_scheduled(max_iters=max_iters, **kwargs)
-    result = generate_code(
-        case["build"],
-        None,
-        tmp_path,
-        config=case["config"],
-        driver=StubAgentDriver(GOLDEN),
-        name="fista",
-        schedules=case["schedules"],
-    )
-    return case, result
+#: Matches the golden solver body, which names one block per recorded iteration.
+STEPS = 6
 
 
-# --------------------------------------------------------------------------
-# FISTA as a recorded run: the loop a user writes, generated as written.
-# --------------------------------------------------------------------------
+def _ir(K=STEPS):
+    case = build_fista_run(K=K)
+    return case, extract_unrolled_ir(case["verifier"], case["iterates"], name="fista")
+
+
+# --- the recording ----------------------------------------------------------
 
 
 def test_recorded_fista_is_textbook_fista():
@@ -52,135 +42,82 @@ def test_recorded_fista_is_textbook_fista():
     Extraction self-checks against the recorded tape, so a lagged loop reproduces
     itself perfectly and looks fine; only an independent NumPy FISTA notices.
     """
-    case = build_fista_run(K=6)
-    ir = extract_unrolled_ir(case["verifier"], case["iterates"], name="fista")
+    case, ir = _ir()
     data = case["data"]
 
     got = ReferenceOracle(ir).solve(param_values={"p0": data["b"]}).solution
-    assert np.allclose(got, fista_loop_reference(data, data["b"], 6)[-1], atol=1e-12)
+    assert np.allclose(got, fista_loop_reference(data, data["b"], STEPS)[-1], atol=1e-12)
 
 
 def test_recorded_fista_is_not_ista():
     """The anti-degradation assertion, on the recorded-run path."""
-    case = build_fista_run(K=6)
-    ir = extract_unrolled_ir(case["verifier"], case["iterates"], name="fista")
+    case, ir = _ir()
     data = case["data"]
 
     got = ReferenceOracle(ir).solve(param_values={"p0": data["b"]}).solution
-    plain = fista_loop_reference(data, data["b"], 6, momentum=False)[-1]
+    plain = fista_loop_reference(data, data["b"], STEPS, momentum=False)[-1]
     assert np.abs(got - plain).max() > 1e-2
 
 
 def test_recorded_fista_does_not_roll():
     """Its momentum genuinely varies, so one iteration cannot stand for the run."""
-    case = build_fista_run(K=6)
-    ir = extract_unrolled_ir(case["verifier"], case["iterates"], name="fista")
+    _, ir = _ir()
     assert ir.unrolled is True
-    assert len(ir.body) == 6
+    assert len(ir.body) == STEPS
+
+
+def test_momentum_appears_as_a_two_iterate_lookback():
+    """Nothing declared it: extrapolating over two iterates is what the tape says.
+
+    Later blocks read the two preceding temporaries. The first two are the
+    exception, because there are not yet two to read.
+    """
+    _, ir = _ir()
+    for step in ir.body[2:]:
+        tmps = [t.source for t in step.linear_op.terms if t.source.startswith("tmp:")]
+        assert len(tmps) == 2, (step.name, tmps)
+
+
+def test_the_parameter_block_is_shared_across_iterations():
+    """Every iteration applies the same parameter coefficient, so dedup merges it."""
+    _, ir = _ir()
+    param_blocks = {
+        t.matrix for step in ir.body for t in step.linear_op.terms if t.source == "param:p0"
+    }
+    assert len(param_blocks) == 1
+
+
+# --- emission ---------------------------------------------------------------
+
+
+def test_spec_describes_a_single_pass():
+    _, ir = _ir()
+    md = render_markdown(ir)
+    assert "to be implemented as a single pass" in md
+    assert "Do **not** write a loop over iterations" in md
+    # No schedule was declared, so there is no table to document.
+    assert "## Iteration-varying coefficients" not in md
+    assert "fom_sched" not in md
 
 
 def test_golden_passes_static_checks():
-    """The golden must read the table through the clamping accessor."""
-    target = EmbeddedCTarget(build_scheduled()["config"])
+    target = EmbeddedCTarget(build_ista()["config"])
     assert target.static_checks(GOLDEN.read_text()) == []
 
 
-def test_direct_table_indexing_is_rejected():
-    """Indexing FOM_SCHED_* can run past the table, since the bound is runtime."""
-    target = EmbeddedCTarget(build_scheduled()["config"])
-    bad = GOLDEN.read_text().replace("fom_sched_gamma(it)", "FOM_SCHED_gamma[it]")
-    violations = target.static_checks(bad)
-    assert any("indexed directly" in v for v in violations)
-
-
-def test_fista_stub_pipeline_verifies(tmp_path, requires_compiler):
-    _, result = _generate(tmp_path)
-    assert result.translate.success, result.translate.log
-    assert "VERIFY OK" in result.translate.log
-    assert (tmp_path / "src" / "fom_solver.c").exists()
-
-
-def test_schedule_table_is_emitted(tmp_path):
-    case, result = _generate(tmp_path, max_iters=64)
-
-    header = (tmp_path / "include" / "fom_data.h").read_text()
-    source = (tmp_path / "src" / "fom_data.c").read_text()
-
-    assert "#define FOM_SCHED_GAMMA_LEN 64" in header
-    assert "fom_float fom_sched_gamma(fom_int it)" in header
-    assert "const fom_float FOM_SCHED_gamma[64]" in source
-    # The emitted values are the schedule the IR carries.
-    assert len(result.ir.schedules["gamma"]) == 64
-
-
-def _load_wrapper(out_dir):
-    spec = importlib.util.spec_from_file_location(
-        "fista_wrapper", out_dir / "python" / "fom_solver.py"
+def test_codegen_verifies_the_recorded_loop(tmp_path, requires_compiler):
+    """The whole point: verify with a loop, then generate that same loop."""
+    case = build_fista_run(K=STEPS)
+    result = case["verifier"].codegen(
+        tmp_path,
+        iterates=case["iterates"],
+        config=case["config"],
+        driver=StubAgentDriver(GOLDEN),
+        name="fista",
     )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
-
-def test_generated_solver_matches_numpy_fista(tmp_path, requires_compiler):
-    """The point of the whole exercise, over the full 200-iteration horizon.
-
-    The recording is one iteration long; the generated solver runs 200. Nothing
-    about the momentum schedule is inferred from the recorded horizon, so this
-    is the check that matters.
-    """
-    case, result = _generate(tmp_path, max_iters=200)
-    assert result.translate.success, result.translate.log
-
-    build_lib(tmp_path)
-    solver = _load_wrapper(tmp_path).Solver()
-
-    rng = np.random.default_rng(7)
-    for _ in range(3):
-        b_val = case["data"]["b"] + rng.uniform(-0.5, 0.5, size=case["data"]["m"])
-        out = solver.solve(p0=b_val)
-        truth = fista_reference(case["data"], b_val, n_iters=200)
-        assert np.allclose(out["x"], truth[-1], atol=1e-9), (out["x"], truth[-1])
-
-
-def test_generated_solver_is_not_ista(tmp_path, requires_compiler):
-    """Guards the original silent degradation: momentum must survive lowering.
-
-    Both methods converge to the same solution, so they are compared over a
-    short horizon where the acceleration still shows.
-    """
-    case, result = _generate(tmp_path, max_iters=6)
-    assert result.translate.success, result.translate.log
-
-    from fomtools.codegen import ReferenceOracle
-
-    b_val = case["data"]["b"]
-    rolled = ReferenceOracle(result.ir).solve(param_values={"p0": b_val}).solution
-    accelerated = fista_reference(case["data"], b_val, n_iters=6)[-1]
-    plain = fista_reference(case["data"], b_val, n_iters=6, momentum=False)[-1]
-
-    assert np.abs(rolled - accelerated).max() < 1e-12
-    assert np.abs(rolled - plain).max() > 1e-2
-
-
-def test_scheduled_ir_survives_a_spec_roundtrip(tmp_path):
-    case, result = _generate(tmp_path / "gen", max_iters=32)
-
-    save(result.ir, tmp_path / "spec")
-    loaded = load(tmp_path / "spec")
-
-    assert set(loaded.schedules) == {"gamma"}
-    assert np.allclose(loaded.schedules["gamma"], result.ir.schedules["gamma"])
-    scaled = {t.matrix: t.scale for t in loaded.body[0].linear_op.terms if t.scale is not None}
-    assert scaled == {"t0_state__d_gamma": "gamma"}
-
-
-def test_spec_markdown_documents_the_schedule(tmp_path):
-    from fomtools.codegen.spec import render_markdown
-
-    _, result = _generate(tmp_path, max_iters=16)
-    md = render_markdown(result.ir)
-
-    assert "## Iteration-varying coefficients" in md
-    assert "fom_sched_gamma(it)" in md
-    assert "0-based" in md
+    assert result.success, result.translate.log
+    assert "VERIFY OK" in result.translate.log
+    assert result.ir.unrolled is True
+    assert len(result.ir.body) == STEPS
+    assert "#define FOM_UNROLLED 1" in (tmp_path / "include" / "fom_workspace.h").read_text()

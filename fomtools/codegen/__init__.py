@@ -8,14 +8,16 @@ is numerically verified.
 
 The public surface:
 
-* :func:`extract_ir` / :class:`FomIR` — the single-iteration intermediate
-  representation extracted from a verifier.
-* :func:`extract_scheduled_ir` / :class:`Recording` — the same, for a method with
-  an iteration-varying coefficient such as FISTA's momentum. See
-  :mod:`fomtools.codegen.schedule`.
 * :func:`extract_unrolled_ir` — the whole recorded run as one unrolled body,
   straight from the loop the user wrote to verify with. Takes arbitrary
-  per-iteration coefficients and step types, and anchored methods.
+  per-iteration coefficients and step types, and anchored methods. Rolls the run
+  back up when repeating one iteration reproduces it.
+* :func:`extract_ir` / :class:`FomIR` — the single-iteration intermediate
+  representation extracted from a verifier.
+* :func:`extract_scheduled_ir` / :class:`Recording` / :func:`as_schedule` — the
+  same, for a method whose varying coefficients are *declared*, which buys a
+  compact solver at a long horizon. The coefficients themselves are the caller's
+  to supply; see :mod:`fomtools.codegen.schedule`.
 * :class:`ReferenceOracle` — ground-truth NumPy execution of the FOM.
 * :func:`check_stationary` / :func:`check_unrolled` — verify that the extracted
   IR reproduces the recorded tape. The first is what catches a method that is not
@@ -31,6 +33,7 @@ from fomtools.codegen.agent import AgentDriver, AgentResult, AgentTask, StubAgen
 from fomtools.codegen.config import (
     Backend,
     CodegenConfig,
+    SolveMethod,
     TerminationKind,
     TerminationSpec,
     Version,
@@ -54,7 +57,7 @@ from fomtools.codegen.oracle import (
     run_faithful,
     run_recorded_tape,
 )
-from fomtools.codegen.schedule import Schedule, fista_momentum, nesterov_momentum
+from fomtools.codegen.schedule import Schedule, as_schedule
 from fomtools.codegen.scheduled import Recording, extract_scheduled_ir
 from fomtools.codegen.unrolled import extract_unrolled_ir
 
@@ -65,6 +68,7 @@ __all__ = [
     "StubAgentDriver",
     "Backend",
     "CodegenConfig",
+    "SolveMethod",
     "TerminationKind",
     "TerminationSpec",
     "Version",
@@ -87,8 +91,7 @@ __all__ = [
     "check_stationary",
     "check_unrolled",
     "Schedule",
-    "nesterov_momentum",
-    "fista_momentum",
+    "as_schedule",
     "Recording",
     "extract_scheduled_ir",
     "extract_unrolled_ir",

@@ -18,10 +18,19 @@ from fomtools.codegen import (
     extract_scheduled_ir,
 )
 from fomtools.codegen.ir import NonStationaryFOMError
-from fomtools.codegen.schedule import Schedule, as_schedule, fista_momentum, nesterov_momentum
+from fomtools.codegen.schedule import Schedule, as_schedule
 from fomtools.codegen.scheduled import Recording
 from fomtools.verifier import Verifier
 from tests.codegen.conftest import build_scheduled, fista_reference
+
+
+def _varying(k: int) -> float:
+    """Some coefficient that changes with the iteration; the values do not matter.
+
+    Written here rather than imported: what a coefficient *is* belongs to the
+    method being generated, not to the code generator.
+    """
+    return k / (k + 3.0)
 
 
 def test_fista_extracts_to_a_single_stationary_body():
@@ -119,7 +128,7 @@ def test_non_affine_dependence_is_rejected():
 
     config = CodegenConfig(termination=TerminationSpec(max_iters=10))
     with pytest.raises(ScheduleFitError, match="does not depend affinely"):
-        extract_scheduled_ir(build, {"gamma": nesterov_momentum()}, config=config)
+        extract_scheduled_ir(build, {"gamma": _varying}, config=config)
 
 
 def test_scheduled_factorization_is_rejected():
@@ -164,7 +173,7 @@ def test_shape_change_between_probes_is_rejected():
 
     config = CodegenConfig(termination=TerminationSpec(max_iters=10))
     with pytest.raises(NonStationaryFOMError, match="changes shape"):
-        extract_scheduled_ir(build, {"gamma": nesterov_momentum()}, config=config)
+        extract_scheduled_ir(build, {"gamma": _varying}, config=config)
 
 
 def test_a_vanishing_state_slot_is_reported_helpfully():
@@ -192,7 +201,7 @@ def test_a_vanishing_state_slot_is_reported_helpfully():
 
     config = CodegenConfig(termination=TerminationSpec(max_iters=10))
     # The probes are all non-zero, so this lowers fine.
-    ir = extract_scheduled_ir(build, {"gamma": nesterov_momentum()}, config=config)
+    ir = extract_scheduled_ir(build, {"gamma": _varying}, config=config)
     assert ir.state.dim == 2 * n
 
 
@@ -206,7 +215,7 @@ def test_unused_schedule_is_rejected():
     with pytest.raises(ScheduleFitError, match="do not affect any coefficient"):
         extract_scheduled_ir(
             build,
-            {"gamma": fista_momentum(), "unused": lambda k: 1.0 + k},
+            {"gamma": _varying, "unused": lambda k: 1.0 + k},
             config=case["config"],
         )
 
@@ -237,12 +246,19 @@ def test_as_schedule_rejects_a_table_shorter_than_the_loop():
         as_schedule("g", [0.0, 1.0, 2.0], 10)
 
 
-def test_nesterov_and_fista_momentum_are_zero_based():
-    """Both start at 0 for k=0 and increase towards 1, in the emitted loop's index."""
-    nesterov = as_schedule("g", nesterov_momentum(), 200).values
-    fista = as_schedule("g", fista_momentum(), 200).values
+def test_as_schedule_calls_a_callable_with_increasing_indices():
+    """A coefficient defined by a recurrence may cache, so the order is a contract.
 
-    for values in (nesterov, fista):
-        assert values[0] == pytest.approx(0.0)
-        assert np.all(np.diff(values) > 0)
-        assert 0.9 < values[-1] < 1.0
+    ``scheduled_example``'s momentum is written that way, and would return wrong
+    values if the index ever went backwards.
+    """
+    seen = []
+
+    def spec(k: int) -> float:
+        seen.append(k)
+        return float(k)
+
+    values = as_schedule("g", spec, 6).values
+
+    assert seen == [0, 1, 2, 3, 4, 5]
+    assert values.tolist() == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]

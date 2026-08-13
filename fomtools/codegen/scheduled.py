@@ -265,10 +265,10 @@ def extract_scheduled_ir(
         times, at different values of those scalars, and must build the same
         algorithm each time.
     schedules:
-        Maps a schedule name to a callable of the 0-based iteration index, a
-        sequence of values, or a :class:`~fomtools.codegen.schedule.Schedule`.
-        See :func:`~fomtools.codegen.schedule.nesterov_momentum` and
-        :func:`~fomtools.codegen.schedule.fista_momentum`.
+        Maps a schedule name to a callable of the **0-based** iteration index, a
+        sequence of values, or a :class:`~fomtools.codegen.schedule.Schedule`. A
+        textbook formula written in 1-based ``k`` must be shifted by the caller;
+        the coefficient belongs to the method, not to the generator.
     config:
         Code-generation configuration; its ``termination.max_iters`` fixes the
         length of every emitted table.

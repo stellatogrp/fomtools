@@ -24,39 +24,28 @@ from fomtools.codegen import (
     generate_code,
     run_recorded_tape,
 )
-from fomtools.verifier import Verifier
-from tests.codegen.conftest import build_dr, build_ista, build_pdhg_lp, gate
+from tests.codegen.conftest import (
+    build_dr,
+    build_fista_loop,
+    build_ista,
+    build_pdhg_lp,
+    gate,
+)
+
+K = 6
 
 
-def _record_lasso(momentum, K=6, n=3, m=4, seed=0):
+def _record_lasso(momentum):
     """Record a lasso method the way a user naturally would: one iterate leaf.
 
     With ``momentum=True`` this is FISTA, and it is *not* stationary: the
-    coefficient on the previous iterate changes every step.
+    coefficient on the previous iterate changes every step. The two recordings
+    differ in exactly one place, which is what makes the comparison below mean
+    something.
     """
-    rng = np.random.default_rng(seed)
-    D = rng.normal(size=(m, n))
-    eta = 1.0 / np.max(np.linalg.eigvalsh(D.T @ D))
-    lambd = 0.05
-    s0 = np.zeros(n)
-
-    v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(m, lb=-np.ones(m), ub=np.ones(m))
-    s = v.add_iterate(n, lb=s0, ub=s0)
-
-    y_prev, extrap, beta = s, s, 1.0
-    iterates = []
-    for _ in range(K):
-        y = v.step.soft_threshold(extrap - eta * D.T @ (D @ extrap - x), lambd=lambd * eta)
-        if momentum:
-            beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
-            extrap = y + ((beta - 1.0) / beta_next) * (y - y_prev)
-            beta = beta_next
-        else:
-            extrap = y
-        y_prev = y
-        iterates.append(y)
-    return v, iterates, x, rng.uniform(-1.0, 1.0, size=m)
+    v, iterates, x, _ = build_fista_loop(steps=K, momentum=momentum)
+    x_val = np.random.default_rng(0).uniform(-1.0, 1.0, size=len(np.atleast_1d(x.lb)))
+    return v, iterates, x, x_val
 
 
 def _config(max_iters=50):
