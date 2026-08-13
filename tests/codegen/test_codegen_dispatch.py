@@ -13,8 +13,7 @@ import pytest
 
 from fomtools.codegen import StubAgentDriver, generate_code
 from fomtools.codegen.config import CodegenConfig, TerminationSpec
-from tests.codegen.conftest import build_ista, gate
-from tests.codegen.test_unrolled_ir import build_halpern_loop, build_ista_loop
+from tests.codegen.conftest import build_halpern_loop, build_ista, build_ista_loop, gate
 
 HALPERN_GOLDEN = Path(__file__).parent / "golden" / "halpern" / "embedded_c" / "fom_solver.c"
 ISTA_GOLDEN = Path(__file__).parent / "golden" / "ista" / "embedded_c" / "fom_solver.c"

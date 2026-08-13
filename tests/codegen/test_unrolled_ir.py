@@ -19,114 +19,13 @@ from fomtools.codegen.oracle import (
     sample_param_values,
 )
 from fomtools.codegen.unrolled import extract_unrolled_ir
-from fomtools.verifier import Verifier
-
-
-def _lasso_data(m=6, n=10, seed=0):
-    rng = np.random.default_rng(seed)
-    dmat = rng.normal(size=(m, n)) / np.sqrt(m)
-    eta = 1.0 / np.max(np.linalg.eigvalsh(dmat.T @ dmat))
-    return {
-        "m": m,
-        "n": n,
-        "at": np.eye(n) - eta * dmat.T @ dmat,
-        "bt": eta * dmat.T,
-        "lambd": 0.05 * eta,
-    }
-
-
-def build_ista_loop(steps=8, trajectory=False, include_initial=False):
-    """A stationary loop, written as a loop rather than as one iteration."""
-    d = _lasso_data()
-    v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
-    z0 = v.add_iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
-
-    if trajectory:
-        traj = v.iterate_trajectory(steps + 1)
-        traj[0] = z0
-        for k in range(1, steps + 1):
-            traj[k] = v.step.soft_threshold(d["at"] @ traj[k - 1] + d["bt"] @ x, lambd=d["lambd"])
-        return v, traj, x, d
-
-    z, iterates = z0, [z0] if include_initial else []
-    for _ in range(steps):
-        z = v.step.soft_threshold(d["at"] @ z + d["bt"] @ x, lambd=d["lambd"])
-        iterates.append(z)
-    return v, iterates, x, d
-
-
-def build_fista_loop(steps=8):
-    """FISTA written the natural way: one iterate leaf, momentum in Python."""
-    d = _lasso_data()
-    v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
-    s = v.add_iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
-
-    y_prev, extrap, beta, iterates = s, s, 1.0, []
-    for _ in range(steps):
-        y = v.step.soft_threshold(d["at"] @ extrap + d["bt"] @ x, lambd=d["lambd"])
-        beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
-        extrap = y + ((beta - 1.0) / beta_next) * (y - y_prev)
-        beta, y_prev = beta_next, y
-        iterates.append(y)
-    return v, iterates, x, d
-
-
-def build_halpern_loop(steps=8):
-    """An anchored method: every iteration refers back to ``z_0``."""
-    d = _lasso_data()
-    v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
-    z0 = v.add_iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
-
-    z, iterates = z0, []
-    for k in range(steps):
-        alpha = 1.0 / (k + 2.0)
-        tz = v.step.soft_threshold(d["at"] @ z + d["bt"] @ x, lambd=d["lambd"])
-        z = alpha * z0 + (1.0 - alpha) * tz
-        iterates.append(z)
-    return v, iterates, x, d
-
-
-def build_mixed_step_loop(steps=8):
-    """The step *type* changes with the iteration index."""
-    d = _lasso_data()
-    v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
-    z = v.add_iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
-
-    iterates = []
-    for k in range(steps):
-        arg = d["at"] @ z + d["bt"] @ x
-        z = v.step.relu(arg) if k % 2 else v.step.soft_threshold(arg, lambd=0.01 * (k + 1))
-        iterates.append(z)
-    return v, iterates, x, d
-
-
-def build_dr_loop(steps=20, collapse_expr="auto", relaxation=None):
-    """Douglas-Rachford: the iterate is carried through a non-leaf accumulation.
-
-    ``relaxation`` takes the 0-based iteration index and returns that iteration's
-    relaxation weight. Pass one to make the recording genuinely non-stationary, so
-    it cannot be rolled back up.
-    """
-    rng = np.random.default_rng(0)
-    n, m = 8, 4
-    amat = rng.normal(size=(m, n))
-    kkt = np.block([[np.eye(n), amat.T], [amat, -np.eye(m)]])
-    dim = n + m
-
-    v = Verifier(method="simulator", obbt_solver=None)
-    q = v.add_param(dim, lb=-np.ones(dim), ub=np.ones(dim))
-    z = v.iterate_trajectory(steps + 1, collapse_expr=collapse_expr)
-    z[0] = v.add_iterate(dim, lb=np.zeros(dim), ub=np.zeros(dim))
-    for k in range(1, steps + 1):
-        u = v.step.implicit_linear(z[k - 1] - q, output_mat=kkt)
-        ut = v.step.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
-        theta = 1.0 if relaxation is None else relaxation(k - 1)
-        z[k] = z[k - 1] + theta * (ut - u)
-    return v, z, q
+from tests.codegen.conftest import (
+    build_dr_loop,
+    build_fista_loop,
+    build_halpern_loop,
+    build_ista_loop,
+    build_mixed_step_loop,
+)
 
 
 def _assert_matches_tape(v, iterates, ir, param_leaf, atol=1e-12):
