@@ -1190,6 +1190,72 @@ class Verifier(object):
     def codegen(
         self,
         out_dir,
+        iterates=None,
+        config=None,
+        driver=None,
+        state=None,
+        params=None,
+        name="fom",
+        run_phase_b=False,
+        profile=False,
+        roll=True,
+        param_values=None,
+    ):
+        """Generate a low-level solver for the run recorded on this verifier.
+
+        Takes the iterate sequence your loop produced -- the same program you
+        verified with, no restructuring:
+
+        >>> z = verifier.iterate_trajectory(K + 1)
+        >>> z[0] = verifier.add_iterate(n, lb=z0, ub=z0)
+        >>> for k in range(1, K + 1):
+        ...     z[k] = verifier.step.soft_threshold(...)
+        >>> verifier.solve()
+        >>> verifier.codegen("out/", iterates=z)
+
+        Arbitrary per-iteration coefficients, a step type that changes with the
+        iteration, and methods that hold a reference to an earlier iterate (a
+        Halpern anchor) all work, because each iteration carries its own
+        coefficient blocks. When repeating one iteration is *verified* to
+        reproduce the recording, the compact rolled solver is emitted instead, so
+        writing a stationary method as a loop costs nothing; pass ``roll=False``
+        to unroll regardless.
+
+        The result is checked against the recorded tape before anything is
+        emitted, drawing its own parameter values, so no extra arguments are
+        needed to gate it.
+
+        Thin delegate to :func:`fomtools.codegen.generate_code`; see that function
+        for the remaining parameter semantics. To generate a rolled solver from a
+        single stationary iteration instead, use :meth:`codegen_rolled`.
+
+        Returns
+        -------
+        CodegenResult
+            The IR, output directory, target, and agent results.
+            ``result.ir.unrolled`` says whether the run was rolled back up.
+        """
+        from fomtools.codegen import generate_code
+
+        return generate_code(
+            self,
+            None,
+            out_dir,
+            config=config,
+            driver=driver,
+            state=state,
+            params=params,
+            name=name,
+            run_phase_b=run_phase_b,
+            profile=profile,
+            iterates=iterates,
+            param_values=param_values,
+            roll=roll,
+        )
+
+    def codegen_rolled(
+        self,
+        out_dir,
         next_state,
         config=None,
         driver=None,
@@ -1201,21 +1267,26 @@ class Verifier(object):
         iterates=None,
         param_values=None,
     ):
-        """Generate a low-level solver for the FOM recorded on this verifier.
+        """Generate a rolled solver from one stationary iteration.
 
         Thin delegate to :func:`fomtools.codegen.generate_code`. See that
         function for parameter semantics. ``next_state`` is the iterate
-        ``LinearExpression`` produced after exactly one iteration.
+        ``LinearExpression`` produced after exactly one iteration, and the
+        generated loop repeats it ``config.termination.max_iters`` times -- so
+        unlike :meth:`codegen`, the horizon is yours to choose rather than the
+        one you recorded.
 
         Pass ``iterates`` (the successive recorded iterate expressions) and
         ``param_values`` to have the extracted iteration checked against the
         recorded tape before anything is emitted. Without them nothing verifies
         that the method is stationary, so a coefficient that varies with the
-        iteration index would be frozen at its recorded value.
+        iteration index would be frozen at its recorded value. :meth:`codegen`
+        needs no such argument, since it generates the recording itself.
 
-        A method that *does* vary with the iteration index goes through
-        :func:`fomtools.codegen.generate_code` with ``schedules=`` instead, since
-        that needs the recording as a function rather than a finished tape.
+        A method that *does* vary with the iteration index can go through
+        :func:`fomtools.codegen.generate_code` with ``schedules=``, which
+        tabulates the declared coefficients but needs the recording as a build
+        function; or through :meth:`codegen`, which takes the finished tape.
 
         Returns
         -------

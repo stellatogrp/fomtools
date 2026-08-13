@@ -234,6 +234,16 @@ def normalize_iterates(verifier, iterates) -> list[list[LinearExpression]]:
     references no step output cannot be an iteration's result -- so both
     conventions work without the caller having to say which it used.
     """
+    # A LinearExpression is iterable through __getitem__, so passing one here
+    # would silently be read as a sequence of its rows. Catch the likely mistake:
+    # this is the argument that used to be `next_state`.
+    if isinstance(iterates, LinearExpression):
+        raise TypeError(
+            "iterates must be the sequence of iterate expressions the loop produced "
+            "(or an IterateTrajectory), not a single LinearExpression. To generate a "
+            "rolled solver from one iteration, use Verifier.codegen_rolled(out_dir, "
+            "next_state=...) or generate_code(verifier, next_state, ...)."
+        )
     groups = [_as_list(g) for g in iterates]
     if not groups:
         return groups
