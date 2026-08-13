@@ -13,10 +13,10 @@ from pathlib import Path
 from fomtools.codegen.agent.prompts import phase_a_instructions
 from fomtools.codegen.emit import scaffold
 from fomtools.codegen.extract import extract_ir
+from fomtools.codegen.extract_unrolled import extract_unrolled_ir
 from fomtools.codegen.harness import build_and_verify
 from fomtools.codegen.spec import render_markdown
 from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
-from fomtools.codegen.unrolled import extract_unrolled_ir
 from tests.codegen.conftest import build_halpern_loop, build_ista
 
 GOLDEN = Path(__file__).parent / "golden" / "halpern" / "embedded_c" / "fom_solver.c"

@@ -16,9 +16,9 @@ from pathlib import Path
 import numpy as np
 
 from fomtools.codegen import ReferenceOracle, StubAgentDriver
+from fomtools.codegen.extract_unrolled import extract_unrolled_ir
 from fomtools.codegen.spec import render_markdown
 from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
-from fomtools.codegen.unrolled import extract_unrolled_ir
 from tests.codegen.conftest import build_fista_run, build_ista, fista_loop_reference
 
 GOLDEN = Path(__file__).parent / "golden" / "fista" / "embedded_c" / "fom_solver.c"

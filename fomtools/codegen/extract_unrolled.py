@@ -3,7 +3,7 @@
 The other two extraction paths need the method restructured before it can be
 generated. :func:`~fomtools.codegen.extract.extract_ir` wants one *stationary*
 iteration that a generated loop repeats, and
-:func:`~fomtools.codegen.scheduled.extract_scheduled_ir` wants the recording as a
+:func:`~fomtools.codegen.extract_scheduled.extract_scheduled_ir` wants the recording as a
 *build function* of the coefficients that vary, whose dependence must be affine.
 Neither accepts the program the user already wrote to verify with: a plain Python
 loop over ``verifier.step.*``.

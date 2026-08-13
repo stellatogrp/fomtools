@@ -58,8 +58,8 @@ from fomtools.codegen.oracle import (
     run_recorded_tape,
 )
 from fomtools.codegen.schedule import Schedule, as_schedule
-from fomtools.codegen.scheduled import Recording, extract_scheduled_ir
-from fomtools.codegen.unrolled import extract_unrolled_ir
+from fomtools.codegen.extract_scheduled import Recording, extract_scheduled_ir
+from fomtools.codegen.extract_unrolled import extract_unrolled_ir
 
 __all__ = [
     "AgentDriver",

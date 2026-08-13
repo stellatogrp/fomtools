@@ -3,7 +3,7 @@
 A single :class:`CliAgentDriver` drives every prompt-in/files-out CLI backend
 (the example Cursor spec and any user-registered agent); the per-tool differences
 live in
-:class:`~fomtools.codegen.agent.specs.CliAgentSpec`. This is the agent-agnostic
+:class:`~fomtools.codegen.agent.cli_specs.CliAgentSpec`. This is the agent-agnostic
 core: the authoritative verify/retry loop is shared via
 :func:`~fomtools.codegen.agent.driver.run_verify_loop`, and authentication is
 forced to API-key mode when a key is available (the key is forwarded into the
@@ -18,6 +18,7 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
+from fomtools.codegen.agent.cli_specs import SYSTEM_PROMPT, CliAgentSpec
 from fomtools.codegen.agent.driver import (
     AgentBackendError,
     AgentDriver,
@@ -26,7 +27,6 @@ from fomtools.codegen.agent.driver import (
     _decode_stream,
     run_verify_loop,
 )
-from fomtools.codegen.agent.specs import SYSTEM_PROMPT, CliAgentSpec
 
 
 class CliAgentDriver(AgentDriver):

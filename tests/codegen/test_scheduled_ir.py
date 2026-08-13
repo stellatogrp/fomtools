@@ -17,9 +17,9 @@ from fomtools.codegen import (
     extract_ir,
     extract_scheduled_ir,
 )
+from fomtools.codegen.extract_scheduled import Recording
 from fomtools.codegen.ir import NonStationaryFOMError
 from fomtools.codegen.schedule import Schedule, as_schedule
-from fomtools.codegen.scheduled import Recording
 from fomtools.verifier import Verifier
 from tests.codegen.conftest import build_scheduled, fista_reference
 

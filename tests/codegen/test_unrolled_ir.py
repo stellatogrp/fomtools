@@ -11,6 +11,7 @@ import pytest
 
 from fomtools.codegen.config import CodegenConfig, TerminationKind, TerminationSpec
 from fomtools.codegen.extract import normalize_iterates
+from fomtools.codegen.extract_unrolled import extract_unrolled_ir
 from fomtools.codegen.ir import MatrixData, UnrolledBlowupError, UnrolledFidelityError
 from fomtools.codegen.oracle import (
     ReferenceOracle,
@@ -18,7 +19,6 @@ from fomtools.codegen.oracle import (
     run_recorded_tape,
     sample_param_values,
 )
-from fomtools.codegen.unrolled import extract_unrolled_ir
 from tests.codegen.conftest import (
     build_dr_loop,
     build_fista_loop,

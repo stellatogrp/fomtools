@@ -22,6 +22,11 @@ coefficient that varies in some way a table cannot express.
 The recovered slopes are emitted as extra coefficient blocks paired with a
 scaled :class:`~fomtools.codegen.ir.Term`, and the schedule itself becomes a
 table read at the loop counter. Nothing about the stationary path changes.
+
+The tables are :class:`~fomtools.codegen.schedule.Schedule` objects, coerced from
+whatever the caller supplied by
+:func:`~fomtools.codegen.schedule.as_schedule`; that module is the type, this one
+is the pass over it.
 """
 
 from __future__ import annotations

@@ -496,7 +496,7 @@ class Verifier(object):
         ADMM, where each slot would otherwise reference every leaf the previous
         one did. That growth is what makes such a method expensive to generate
         code from, so keeping each iterate as its own variable is what lets
-        :func:`~fomtools.codegen.unrolled.extract_unrolled_ir` handle it. See
+        :func:`~fomtools.codegen.extract_unrolled.extract_unrolled_ir` handle it. See
         :class:`~fomtools.iteratetrajectory.IterateTrajectory` for details.
 
         Parameters

@@ -1,4 +1,8 @@
-"""Iteration-varying scalar coefficients for code generation.
+"""The iteration-varying coefficient *type*: a scalar tabulated over a loop.
+
+This module holds only the data structure and its input coercion. The extraction
+pass that recovers such coefficients from a recording and lowers them into the IR
+is :mod:`fomtools.codegen.extract_scheduled`.
 
 Some first-order methods use a coefficient that changes with the iteration
 index: an accelerated method's momentum, a decaying step size, an anchor weight.
@@ -30,7 +34,7 @@ Nothing here knows what any particular method's coefficient is.
 
 Only needed to get a *compact* solver for a method whose coefficients vary. The
 same method can be recorded as an ordinary loop and generated as written, with no
-schedule declared at all -- see :mod:`fomtools.codegen.unrolled`.
+schedule declared at all -- see :mod:`fomtools.codegen.extract_unrolled`.
 """
 
 from __future__ import annotations

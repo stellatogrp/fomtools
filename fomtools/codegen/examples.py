@@ -11,7 +11,7 @@ method whose coefficients change every iteration is handled without declaring
 anything. :func:`scheduled_example` returns a ``build`` function and its
 ``schedules``, which trades that generality for a compact solver at a long
 horizon — one block plus a table rather than one block per iteration. See
-:mod:`fomtools.codegen.unrolled` and :mod:`fomtools.codegen.scheduled`.
+:mod:`fomtools.codegen.extract_unrolled` and :mod:`fomtools.codegen.extract_scheduled`.
 
 Algorithm coefficients are written out here rather than imported: they belong to
 the method being demonstrated, not to the code generator.
@@ -163,7 +163,7 @@ def scheduled_example(*, n: int = 2, m: int = 4, seed: int = 0) -> dict:
     Returns a ``build`` function rather than a finished verifier, which is what
     the scheduled path needs: the momentum coefficient stays a free variable so
     extraction can probe the recording at several of its values and recover how
-    each coefficient depends on it (see :mod:`fomtools.codegen.scheduled`). The
+    each coefficient depends on it (see :mod:`fomtools.codegen.extract_scheduled`). The
     reward is one emitted block and a table of coefficients, whatever the horizon.
 
     The state carries **two** iterates. Written over a single iterate, the
@@ -177,7 +177,7 @@ def scheduled_example(*, n: int = 2, m: int = 4, seed: int = 0) -> dict:
     threshold = d["lambd"] * d["t"]
 
     def build(gamma):
-        from fomtools.codegen.scheduled import Recording
+        from fomtools.codegen.extract_scheduled import Recording
 
         v = Verifier(method="simulator", obbt_solver=None)
         b_param = v.add_param(m, lb=d["b"] - 1.0, ub=d["b"] + 1.0)

@@ -128,13 +128,13 @@ def build_parser() -> argparse.ArgumentParser:
 def _extract_fom(fom: dict, config, roll: bool = True):
     """Extract the IR for a FOM dict: unrolled, stationary, or scheduled."""
     if fom.get("schedules"):
-        from fomtools.codegen.scheduled import extract_scheduled_ir
+        from fomtools.codegen.extract_scheduled import extract_scheduled_ir
 
         return extract_scheduled_ir(
             fom["build"], fom["schedules"], config=config, name=fom.get("name", "fom")
         )
     if fom.get("next_state") is None:
-        from fomtools.codegen.unrolled import extract_unrolled_ir
+        from fomtools.codegen.extract_unrolled import extract_unrolled_ir
 
         return extract_unrolled_ir(
             fom["verifier"],

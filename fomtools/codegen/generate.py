@@ -163,12 +163,12 @@ def generate_code(
       per-iteration coefficients and step types, and anchored methods. It rolls
       the run back up when repeating one iteration is verified to reproduce it,
       so a stationary method costs nothing here. See
-      :func:`~fomtools.codegen.unrolled.extract_unrolled_ir`.
+      :func:`~fomtools.codegen.extract_unrolled.extract_unrolled_ir`.
     * ``next_state=`` generates a **rolled** solver from one stationary
       iteration, repeated ``config.termination.max_iters`` times.
     * a *build function* plus ``schedules=`` generates a rolled solver whose
       declared coefficients are tabulated and read at the loop counter. See
-      :func:`~fomtools.codegen.scheduled.extract_scheduled_ir`.
+      :func:`~fomtools.codegen.extract_scheduled.extract_scheduled_ir`.
 
     Parameters
     ----------
@@ -178,8 +178,8 @@ def generate_code(
         For a method with an iteration-varying coefficient, pass a *build
         function* as ``verifier`` and its ``schedules`` instead: the function
         records one iteration as a function of the schedule scalars and returns a
-        :class:`~fomtools.codegen.scheduled.Recording`. See
-        :func:`~fomtools.codegen.scheduled.extract_scheduled_ir`.
+        :class:`~fomtools.codegen.extract_scheduled.Recording`. See
+        :func:`~fomtools.codegen.extract_scheduled.extract_scheduled_ir`.
     out_dir:
         Directory to emit the solver into.
     config:
@@ -221,7 +221,7 @@ def generate_code(
     out_dir = Path(out_dir)
 
     if schedules:
-        from fomtools.codegen.scheduled import extract_scheduled_ir
+        from fomtools.codegen.extract_scheduled import extract_scheduled_ir
 
         if not callable(verifier):
             raise TypeError(
@@ -239,7 +239,7 @@ def generate_code(
     elif next_state is None:
         # Unrolled: generate the run the user recorded. Rolls back up when
         # repeating one iteration is verified to reproduce it.
-        from fomtools.codegen.unrolled import extract_unrolled_ir
+        from fomtools.codegen.extract_unrolled import extract_unrolled_ir
 
         if iterates is None:
             raise TypeError(
