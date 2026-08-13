@@ -265,7 +265,9 @@ class FomIR:
     schedules:
         Iteration-varying scalars referenced by :attr:`Term.scale`, each a table
         of at least ``termination.max_iters`` values indexed by the 0-based
-        iteration counter. Empty for a fully stationary method.
+        iteration counter. Empty for a fully stationary method. Mutually
+        exclusive with :attr:`unrolled`: both express iteration-varying
+        coefficients, and they do it in incompatible ways.
     dtype:
         Numeric dtype string (``"float64"`` / ``"float32"``).
     name:
@@ -289,6 +291,22 @@ class FomIR:
     dtype: str = "float64"
     name: str = "fom"
     unrolled: bool = False
+
+    def __post_init__(self):
+        # Enforced here rather than left to "whichever extraction function you
+        # happened to call": the two representations answer the same question
+        # differently, and an IR holding both would make the emitted spec
+        # self-contradictory -- "executed once, ignore max_iter" next to a table
+        # indexed by a loop counter that no longer exists.
+        if self.unrolled and self.schedules:
+            raise ValueError(
+                "an IR cannot be both unrolled and scheduled: an unrolled body already "
+                "carries its own coefficients per iteration, so the schedule(s) "
+                f"{sorted(self.schedules)} would be tabulated over a loop that is not "
+                "emitted. Extract the run with extract_unrolled_ir (arbitrary variation, "
+                "size grows with the horizon) or declare the variation with "
+                "extract_scheduled_ir (compact, affine dependence only)."
+            )
 
     @property
     def state_dim(self) -> int:

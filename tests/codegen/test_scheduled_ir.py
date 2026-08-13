@@ -152,6 +152,33 @@ def test_scheduled_factorization_is_rejected():
         extract_scheduled_ir(build, {"rho": lambda k: 0.5 + 0.01 * k}, config=config)
 
 
+def test_a_weakly_varying_factorization_is_still_rejected():
+    """The check is only useful at a tight tolerance.
+
+    A system matrix can depend on the schedule scalar too faintly to notice at
+    ``np.allclose``'s default 1e-5 and still be a different matrix. Freezing it at
+    the base factorization would emit a solver that quietly drifts from the
+    recorded algorithm, so the comparison uses the same tolerance as every other
+    numeric decision in the module.
+    """
+    rng = np.random.default_rng(4)
+    n = 4
+    M = rng.normal(size=(n, n))
+    M = M @ M.T + n * np.eye(n)
+    z0 = np.zeros(n)
+
+    def build(rho):
+        v = Verifier(method="simulator", obbt_solver=None)
+        p = v.add_param(n, lb=-np.ones(n), ub=np.ones(n))
+        z = v.add_iterate(n, lb=z0, ub=z0)
+        z_next = v.step.implicit_linear(z + p, output_mat=M + rho * 1e-8 * np.eye(n))
+        return Recording(v, next_state=[z_next], state=[z])
+
+    config = CodegenConfig(termination=TerminationSpec(max_iters=10))
+    with pytest.raises(ScheduleFitError, match="linear system"):
+        extract_scheduled_ir(build, {"rho": lambda k: 0.5 + 0.01 * k}, config=config)
+
+
 def test_shape_change_between_probes_is_rejected():
     """The build function must record the same algorithm at every probe value."""
     rng = np.random.default_rng(2)

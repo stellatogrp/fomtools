@@ -126,35 +126,25 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _extract_fom(fom: dict, config, roll: bool = True):
-    """Extract the IR for a FOM dict: unrolled, stationary, or scheduled."""
-    if fom.get("schedules"):
-        from fomtools.codegen.extract_scheduled import extract_scheduled_ir
+    """Extract the IR for a FOM dict: unrolled, stationary, or scheduled.
 
-        return extract_scheduled_ir(
-            fom["build"], fom["schedules"], config=config, name=fom.get("name", "fom")
-        )
-    if fom.get("next_state") is None:
-        from fomtools.codegen.extract_unrolled import extract_unrolled_ir
+    Unpacks the dict and hands the same arguments to the same dispatch
+    :func:`~fomtools.codegen.generate.generate_code` uses, so ``--scaffold-only``
+    cannot preview an IR the full run would have rejected.
+    """
+    from fomtools.codegen.generate import extract_fom_ir
 
-        return extract_unrolled_ir(
-            fom["verifier"],
-            fom["iterates"],
-            state=fom.get("state"),
-            params=fom.get("params"),
-            config=config,
-            name=fom.get("name", "fom"),
-            roll=roll,
-            param_values=fom.get("param_values"),
-        )
-    from fomtools.codegen.extract import extract_ir
-
-    return extract_ir(
-        fom["verifier"],
-        fom["next_state"],
+    return extract_fom_ir(
+        fom["build"] if fom.get("schedules") else fom["verifier"],
+        fom.get("next_state"),
+        config=config,
         state=fom.get("state"),
         params=fom.get("params"),
-        config=config,
         name=fom.get("name", "fom"),
+        schedules=fom.get("schedules"),
+        iterates=fom.get("iterates"),
+        param_values=fom.get("param_values"),
+        roll=roll,
     )
 
 

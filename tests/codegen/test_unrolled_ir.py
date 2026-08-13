@@ -9,6 +9,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+import fomtools.codegen.extract_unrolled as unrolled_mod
 from fomtools.codegen.config import CodegenConfig, TerminationKind, TerminationSpec
 from fomtools.codegen.extract import normalize_iterates
 from fomtools.codegen.extract_unrolled import extract_unrolled_ir
@@ -299,6 +300,76 @@ def test_check_false_does_not_disable_the_roll_decision():
 
     v, iterates, _, _ = build_halpern_loop(steps=10)
     assert extract_unrolled_ir(v, iterates, check=False).unrolled is True
+
+
+def test_an_ir_cannot_be_both_unrolled_and_scheduled():
+    """The two ways of expressing a varying coefficient are mutually exclusive.
+
+    No public path produces both -- unrolled extraction never declares a schedule
+    and scheduled extraction never unrolls -- but the combination is rejected by
+    the IR rather than by which function you happened to call, since a spec
+    holding both would tell the agent to ignore a loop and to index a table by its
+    counter.
+    """
+    v, iterates, _, _ = build_fista_loop(steps=5)
+    ir = extract_unrolled_ir(v, iterates, roll=False)
+    assert ir.unrolled is True and not ir.schedules
+
+    with pytest.raises(ValueError, match="both unrolled and scheduled"):
+        replace(ir, schedules={"gamma": np.zeros(5)})
+
+
+def test_caller_param_values_add_to_the_roll_confirmation(monkeypatch):
+    """A supplied draw is checked *as well as* the default seeds, not instead of them.
+
+    One agreement cannot license a roll, and a caller's own draw is not special:
+    a degenerate choice of parameters can make a varying method look stationary,
+    which is exactly how FISTA once collapsed into ISTA.
+    """
+    v, iterates, _, _ = build_ista_loop(steps=6)
+    pvals = sample_param_values(v, normalize_iterates(v, iterates))
+
+    seen = []
+    real = unrolled_mod.check_stationary
+
+    def spy(ir, verifier, groups, values, **kwargs):
+        seen.append(values)
+        return real(ir, verifier, groups, values, **kwargs)
+
+    monkeypatch.setattr(unrolled_mod, "check_stationary", spy)
+    ir = extract_unrolled_ir(v, iterates, param_values=pvals)
+
+    assert ir.unrolled is False
+    assert len(seen) == 1 + len(unrolled_mod._ROLL_CONFIRM_SEEDS)
+    assert seen[0] is pvals
+
+
+@pytest.mark.parametrize("stage", ["extract", "check"])
+def test_a_real_failure_on_the_roll_path_is_not_read_as_not_rolling(monkeypatch, stage):
+    """``UnrolledFidelityError`` and friends subclass the error that means "does not roll".
+
+    The roll attempt catches ``NonStationaryFOMError`` as a decision to unroll, so
+    a subclass raised from inside it must propagate instead of being swallowed and
+    silently answered with a large unrolled body.
+    """
+    v, iterates, _, _ = build_ista_loop(steps=6)
+    calls = []
+
+    def failing(real):
+        def wrapper(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise UnrolledFidelityError("something actually went wrong")
+            return real(*args, **kwargs)
+
+        return wrapper
+
+    target = "extract_ir" if stage == "extract" else "check_stationary"
+    monkeypatch.setattr(unrolled_mod, target, failing(getattr(unrolled_mod, target)))
+
+    # Without the re-raise this returns a perfectly good unrolled IR instead.
+    with pytest.raises(UnrolledFidelityError, match="actually went wrong"):
+        extract_unrolled_ir(v, iterates)
 
 
 def test_sampled_param_values_are_deterministic_and_inside_the_box():

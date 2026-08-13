@@ -123,19 +123,93 @@ def _gate_stationarity(ir, verifier, iterates, param_values, state, params) -> N
     """
     if iterates is None:
         warnings.warn(
-            "generate_code() did not check that the recorded method is stationary. "
+            # Not "generate_code() did not ...": the CLI reaches this gate too,
+            # including from --scaffold-only, where nothing is generated at all.
+            "this extraction did not check that the recorded method is stationary. "
             "Extraction reads one iteration and repeats it, so a coefficient that "
             "changes with the iteration index would be frozen at its recorded value "
             "and the generated solver would run a different algorithm. Pass "
             "iterates= (the successive recorded iterate expressions) and "
             "param_values= to check, or schedules= to declare the variation.",
             UserWarning,
-            stacklevel=3,
+            # Two frames intervene on both paths in: generate_code or the CLI's
+            # _extract_fom, then extract_fom_ir, then here.
+            stacklevel=4,
         )
         return
     if param_values is None:
         raise ValueError("iterates= requires param_values= (keyed by parameter leaf).")
     check_stationary(ir, verifier, iterates, param_values, state=state, params=params)
+
+
+def extract_fom_ir(
+    verifier,
+    next_state=None,
+    config: CodegenConfig | None = None,
+    state=None,
+    params=None,
+    name: str = "fom",
+    schedules: dict | None = None,
+    iterates=None,
+    param_values: dict | None = None,
+    roll: bool = True,
+) -> FomIR:
+    """Extract an IR by whichever of the three paths the arguments select.
+
+    The dispatch, and the stationarity gate that goes with the rolled path, live
+    here rather than inside :func:`generate_code` so that every caller reaching
+    for an IR gets the same one. The CLI used to reimplement this branch for its
+    ``--scaffold-only`` mode and drifted: it skipped the gate, so previewing a
+    method whose coefficients vary with ``k`` reported nothing while the full run
+    on the same input failed.
+
+    See :func:`generate_code` for what each argument selects and means.
+    """
+    config = config or CodegenConfig()
+
+    if schedules:
+        from fomtools.codegen.extract_scheduled import extract_scheduled_ir
+
+        if not callable(verifier):
+            raise TypeError(
+                "schedules= requires a build function as the first argument: a "
+                "callable taking one keyword per schedule and returning a "
+                "codegen.Recording."
+            )
+        return extract_scheduled_ir(verifier, schedules, config=config, name=name)
+
+    if callable(verifier):
+        raise TypeError(
+            "a build function was passed but no schedules=; call generate_code "
+            "with (verifier, next_state) for a stationary method, or with "
+            "iterates= to generate the whole recorded run."
+        )
+
+    if next_state is None:
+        # Unrolled: generate the run the user recorded. Rolls back up when
+        # repeating one iteration is verified to reproduce it.
+        from fomtools.codegen.extract_unrolled import extract_unrolled_ir
+
+        if iterates is None:
+            raise TypeError(
+                "generate_code needs either iterates= (the iterate sequence your loop "
+                "produced, generating that whole run) or next_state= (the iterate after "
+                "one iteration, generating a rolled solver that repeats it)."
+            )
+        return extract_unrolled_ir(
+            verifier,
+            iterates,
+            config=config,
+            name=name,
+            state=state,
+            params=params,
+            roll=roll,
+            param_values=param_values,
+        )
+
+    ir = extract_ir(verifier, next_state, state=state, params=params, config=config, name=name)
+    _gate_stationarity(ir, verifier, iterates, param_values, state, params)
+    return ir
 
 
 def generate_code(
@@ -220,46 +294,18 @@ def generate_code(
     config = config or CodegenConfig()
     out_dir = Path(out_dir)
 
-    if schedules:
-        from fomtools.codegen.extract_scheduled import extract_scheduled_ir
-
-        if not callable(verifier):
-            raise TypeError(
-                "schedules= requires a build function as the first argument: a "
-                "callable taking one keyword per schedule and returning a "
-                "codegen.Recording."
-            )
-        ir = extract_scheduled_ir(verifier, schedules, config=config, name=name)
-    elif callable(verifier):
-        raise TypeError(
-            "a build function was passed but no schedules=; call generate_code "
-            "with (verifier, next_state) for a stationary method, or with "
-            "iterates= to generate the whole recorded run."
-        )
-    elif next_state is None:
-        # Unrolled: generate the run the user recorded. Rolls back up when
-        # repeating one iteration is verified to reproduce it.
-        from fomtools.codegen.extract_unrolled import extract_unrolled_ir
-
-        if iterates is None:
-            raise TypeError(
-                "generate_code needs either iterates= (the iterate sequence your loop "
-                "produced, generating that whole run) or next_state= (the iterate after "
-                "one iteration, generating a rolled solver that repeats it)."
-            )
-        ir = extract_unrolled_ir(
-            verifier,
-            iterates,
-            config=config,
-            name=name,
-            state=state,
-            params=params,
-            roll=roll,
-            param_values=param_values,
-        )
-    else:
-        ir = extract_ir(verifier, next_state, state=state, params=params, config=config, name=name)
-        _gate_stationarity(ir, verifier, iterates, param_values, state, params)
+    ir = extract_fom_ir(
+        verifier,
+        next_state,
+        config=config,
+        state=state,
+        params=params,
+        name=name,
+        schedules=schedules,
+        iterates=iterates,
+        param_values=param_values,
+        roll=roll,
+    )
 
     target = scaffold(ir, out_dir, config)
 

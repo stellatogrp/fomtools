@@ -47,12 +47,25 @@ from dataclasses import replace
 from fomtools.codegen.config import CodegenConfig, TerminationKind, TerminationSpec
 from fomtools.codegen.dedup import dedup_matrices
 from fomtools.codegen.extract import extract_ir, normalize_iterates
-from fomtools.codegen.ir import FomIR, NonStationaryFOMError, UnrolledBlowupError
+from fomtools.codegen.ir import (
+    FomIR,
+    NonStationaryFOMError,
+    ScheduleFitError,
+    UnrolledBlowupError,
+    UnrolledFidelityError,
+)
 from fomtools.codegen.oracle import check_stationary, check_unrolled, sample_param_values
 
 __all__ = ["extract_unrolled_ir"]
 
 log = logging.getLogger(__name__)
+
+#: Subclasses of ``NonStationaryFOMError`` that mean a genuine failure rather
+#: than "this recording is not stationary". ``NonStationaryFOMError`` is caught to
+#: decide against rolling, so these must be re-raised past that handler; none is
+#: raised by the rolled path today, and this keeps that from becoming a trap if
+#: one ever is.
+_REAL_FAILURES = (ScheduleFitError, UnrolledBlowupError, UnrolledFidelityError)
 
 #: Parameter draws used to decide whether the recording rolls. A wrong roll
 #: silently changes the algorithm, so one coincidental agreement must not be
@@ -146,21 +159,31 @@ def _try_roll(
         rolled = extract_ir(
             verifier, groups[0], state=state, params=params, config=rolled_config, name=name
         )
+    except _REAL_FAILURES:
+        # Subclasses of NonStationaryFOMError that report something wrong rather
+        # than "this does not roll". Listed first so they propagate: swallowing
+        # one would turn a real error into a silent decision to unroll.
+        raise
     except NonStationaryFOMError:
         # Iteration one is not extractable on its own; nothing to roll.
         return None
 
-    draws = (
-        [param_values]
-        if param_values is not None
-        else [
-            sample_param_values(verifier, groups, state=state, params=params, seed=seed)
-            for seed in _ROLL_CONFIRM_SEEDS
-        ]
-    )
+    # The multi-seed confirmation runs whether or not the caller supplied values.
+    # A single draw is not enough to license a roll even when it is the caller's
+    # own: one degenerate choice of parameters can make a genuinely varying
+    # method look stationary, which is the original FISTA-collapses-to-ISTA
+    # failure. A caller's draw is checked too, never instead.
+    draws = [
+        sample_param_values(verifier, groups, state=state, params=params, seed=seed)
+        for seed in _ROLL_CONFIRM_SEEDS
+    ]
+    if param_values is not None:
+        draws.insert(0, param_values)
     for values in draws:
         try:
             check_stationary(rolled, verifier, groups, values, state=state, params=params)
+        except _REAL_FAILURES:
+            raise
         except NonStationaryFOMError:
             return None
     return rolled
@@ -207,7 +230,9 @@ def extract_unrolled_ir(
         reproduce the recording. Pass ``False`` to unroll regardless.
     param_values:
         Parameter values for the checks, keyed by parameter leaf. Defaults to
-        deterministic draws inside the declared box.
+        deterministic draws inside the declared box. Supplying them *adds* a
+        draw to the roll decision rather than replacing the default ones: no
+        single draw, the caller's included, is enough to license a roll.
 
     Returns
     -------

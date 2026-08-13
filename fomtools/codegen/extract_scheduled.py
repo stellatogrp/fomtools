@@ -171,13 +171,23 @@ def _check_scalars_fixed(irs: list[FomIR]) -> None:
 
 
 def _check_factorizations_fixed(irs: list[FomIR]) -> None:
-    """A factorization is computed once at generation time, so its matrix must be fixed."""
+    """A factorization is computed once at generation time, so its matrix must be fixed.
+
+    Compared at ``_VARY_RTOL``, the same tolerance that decides whether a
+    coefficient block varies, rather than at ``np.allclose``'s default ``rtol`` of
+    1e-5. A system matrix that moves only weakly with the schedule scalar would
+    clear the loose default and then be silently frozen at the base
+    factorization, which is the single outcome this check exists to prevent.
+    """
     ref = irs[0]
-    for other in irs[1:]:
-        for fname, fac in ref.factorizations.items():
-            rng = np.random.default_rng(0)
-            probe = rng.normal(size=fac.dim)
-            if not np.allclose(fac.solve(probe), other.factorizations[fname].solve(probe)):
+    for fname, fac in ref.factorizations.items():
+        rng = np.random.default_rng(0)
+        probe = rng.normal(size=fac.dim)
+        base = fac.solve(probe)
+        scale = _scale_of(base)
+        for other in irs[1:]:
+            moved = other.factorizations[fname].solve(probe)
+            if float(np.max(np.abs(moved - base))) > _VARY_RTOL * scale:
                 raise ScheduleFitError(
                     f"the linear system solved by step {fname!r} varies with the "
                     "iteration index. Its factorization is computed once at generation "
