@@ -320,6 +320,17 @@ def test_a_varying_accumulating_loop_is_rejected_with_an_actionable_message():
     assert "iterate_trajectory" in message
 
 
+def test_a_trajectory_handles_accumulation_with_no_user_action():
+    """The default 'auto' policy latches, so this needs no collapse_expr at all."""
+    v, iterates, q = build_dr_loop(steps=20, collapse_expr="auto", relaxation=_varying_relaxation)
+    ir = extract_unrolled_ir(v, iterates, name="dr")
+
+    assert ir.unrolled is True
+    terms = sum(len(s.linear_op.terms) for s in ir.body) + len(ir.state_update.terms)
+    assert terms < 200
+    _assert_matches_tape(v, iterates, ir, q, atol=1e-11)
+
+
 def test_the_same_varying_loop_extracts_linearly_when_materialized():
     v, iterates, q = build_dr_loop(steps=20, collapse_expr=False, relaxation=_varying_relaxation)
     ir = extract_unrolled_ir(v, iterates, name="dr")

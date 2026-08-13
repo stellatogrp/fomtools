@@ -114,13 +114,16 @@ def _check_no_blowup(ir: FomIR, n_iterations: int) -> None:
         f"unrolled body grows with the square of the iteration count: its steps start at "
         f"{early:.0f} term(s) and end at {late:.0f}, for {total} matrix-vector products "
         f"over {n_iterations} iteration(s).\n"
-        "Materialize each iterate as its own variable and the growth becomes linear:\n\n"
-        "    z = verifier.iterate_trajectory(K + 1, collapse_expr=False)\n"
+        "Build the iterate sequence with a trajectory and the growth becomes linear: "
+        "its default 'auto' policy notices the accumulation and keeps each iterate as "
+        "its own variable.\n\n"
+        "    z = verifier.iterate_trajectory(K + 1)\n"
         "    z[0] = verifier.add_iterate(n, lb=z0, ub=z0)\n"
         "    for k in range(1, K + 1):\n"
         "        ...\n"
         "        z[k] = <the iterate>\n\n"
-        "then pass that trajectory as iterates=."
+        "then pass that trajectory as iterates=. If this recording already used a "
+        "trajectory, it was built with collapse_expr=True, which overrides that."
     )
 
 

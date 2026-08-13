@@ -1,6 +1,7 @@
 """Tests for the backend-aware :class:`IterateTrajectory` abstraction.
 
-Covers list semantics, the collapse-vs-leaf policy per backend, the SDP
+Covers list semantics, the collapse-vs-leaf policy per backend, the accumulation
+latch that stops ``'auto'`` collapsing an ever-widening expression, the SDP
 relaxation-ordering relationship between the collapsed and no-collapse forms,
 cross-backend sanity (MIP lower-bounds the SDP relaxation), the defensive
 unbounded-SDP guard, and drop-in parity with the legacy ``z = [None] * (K+1)``
@@ -134,6 +135,126 @@ def test_leaf_value_never_mints_extra():
         after_assign = (len(v.iterates) - n_it, len(v.steps) - n_st)
         assert after_assign == after_step
         assert traj[1] is out
+
+
+# --------------------------------------------------------------------------
+# The accumulation latch
+# --------------------------------------------------------------------------
+
+
+def _support(expr):
+    """``'leaf'``, or the number of leaves a collapsed expression references."""
+    return "leaf" if expr.is_leaf else len(expr.decomposition_dict)
+
+
+def _accumulating_loop(collapse_expr, K=7):
+    """Douglas-Rachford: each slot references everything the previous one did."""
+    np.random.seed(0)
+    n, m = 8, 4
+    amat = np.random.normal(size=(m, n))
+    kkt = np.block([[np.eye(n), amat.T], [amat, -np.eye(m)]])
+    dim = n + m
+
+    v = Verifier(method="simulator", obbt_solver=None)
+    q = v.add_param(dim, lb=-np.ones(dim), ub=np.ones(dim))
+    z = v.iterate_trajectory(K + 1, collapse_expr=collapse_expr)
+    z[0] = v.add_iterate(dim, lb=np.zeros(dim), ub=np.zeros(dim))
+    for k in range(1, K + 1):
+        u = v.step.implicit_linear(z[k - 1] - q, output_mat=kkt)
+        ut = v.step.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
+        z[k] = z[k - 1] + ut - u
+    return [_support(z[k]) for k in range(K + 1)]
+
+
+def _anchored_loop(collapse_expr, K=7):
+    """Halpern: refers back to ``z[0]`` forever, but support stays flat."""
+    np.random.seed(0)
+    m, n = 4, 8
+    dmat = np.random.normal(size=(m, n)) / np.sqrt(m)
+    eta = 1.0 / np.max(np.linalg.eigvalsh(dmat.T @ dmat))
+
+    v = Verifier(method="simulator", obbt_solver=None)
+    x = v.add_param(m, lb=-np.ones(m), ub=np.ones(m))
+    z = v.iterate_trajectory(K + 1, collapse_expr=collapse_expr)
+    z[0] = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    for k in range(1, K + 1):
+        alpha = 1.0 / (k + 1.0)
+        tz = v.step.soft_threshold(
+            (np.eye(n) - eta * dmat.T @ dmat) @ z[k - 1] + eta * dmat.T @ x, lambd=0.05 * eta
+        )
+        z[k] = alpha * z[0] + (1.0 - alpha) * tz
+    return [_support(z[k]) for k in range(K + 1)]
+
+
+def test_auto_latches_once_the_expression_accumulates():
+    """Two consecutive increases and 'auto' stops collapsing, for good."""
+    assert _accumulating_loop("auto") == ["leaf", 3, "leaf", "leaf", "leaf", "leaf", "leaf", "leaf"]
+
+
+def test_forcing_collapse_keeps_the_unbounded_growth():
+    """``collapse_expr=True`` is the escape hatch, and still behaves as before."""
+    assert _accumulating_loop(True) == ["leaf", 3, 5, 7, 9, 11, 13, 15]
+
+
+def test_forcing_no_collapse_materializes_every_non_leaf():
+    assert _accumulating_loop(False) == ["leaf"] * 8
+
+
+def test_auto_leaves_an_anchored_loop_collapsed():
+    """A method that only *refers* to an earlier iterate must not be latched.
+
+    Support widens once, from the initial leaf, and then stays flat -- which is
+    why the latch needs two consecutive increases rather than one.
+    """
+    assert _anchored_loop("auto") == ["leaf", 2, 2, 2, 2, 2, 2, 2]
+
+
+def test_auto_leaves_a_loop_of_step_outputs_alone():
+    """Every slot is already a single variable; the policy has nothing to do."""
+    v = Verifier(method="simulator", obbt_solver=None)
+    x = v.add_param(3, lb=-np.ones(3), ub=np.ones(3))
+    z = v.iterate_trajectory(6)
+    z[0] = v.add_iterate(3, lb=np.zeros(3), ub=np.zeros(3))
+    for k in range(1, 6):
+        z[k] = v.step.relu(z[k - 1] + x)
+    assert [_support(z[k]) for k in range(6)] == ["leaf"] * 6
+
+
+def test_a_single_widening_that_settles_does_not_latch():
+    """A two-term recursion widens once and stays put; that is not accumulation."""
+    v = Verifier(method="simulator", obbt_solver=None)
+    z = v.iterate_trajectory(6)
+    z[0] = v.add_iterate(2, lb=np.zeros(2), ub=np.zeros(2))
+    prev = z[0]
+    for k in range(1, 6):
+        step = v.step.relu(z[k - 1])
+        # References the step output and the previous iterate: support 2 throughout.
+        z[k] = 0.5 * step + 0.5 * prev
+        prev = step
+    assert [_support(z[k]) for k in range(6)] == ["leaf", 2, 2, 2, 2, 2]
+
+
+def test_the_latch_does_not_change_a_mip_bound():
+    """Materializing links a fresh variable by equality, so the optimum is the same."""
+    np.random.seed(0)
+    n, m = 3, 2
+    amat = np.random.normal(size=(m, n))
+    kkt = np.block([[np.eye(n), amat.T], [amat, -np.eye(m)]])
+    dim, K = n + m, 3
+
+    def solve(collapse_expr):
+        v = _mip()
+        q = v.add_param(dim, lb=-0.2, ub=0.2)
+        z = v.iterate_trajectory(K + 1, collapse_expr=collapse_expr)
+        z[0] = v.add_iterate(dim, lb=-0.1, ub=0.1)
+        for k in range(1, K + 1):
+            u = v.step.implicit_linear(z[k - 1] - q, output_mat=kkt)
+            ut = v.step.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
+            z[k] = z[k - 1] + ut - u
+        v.set_objective_norm([z[K] - z[K - 1]], np.inf)
+        return v.solve()
+
+    assert abs(solve("auto") - solve(True)) <= TEST_EPS
 
 
 # --------------------------------------------------------------------------

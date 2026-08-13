@@ -489,7 +489,14 @@ class Verifier(object):
         affine expression (``z[k] = M @ z[k - 1] + c``) is handled per backend:
         for MIP/simulator the expression stays collapsed (no new variable), and
         for SDP a fresh leaf linked by an equality is minted so the moment
-        matrix stays sparse (smaller PSD cones). See
+        matrix stays sparse (smaller PSD cones).
+
+        ``'auto'`` also stops collapsing once the assignments are seen to
+        *accumulate* -- ``z[k] = z[k - 1] + ut - u``, as in Douglas-Rachford and
+        ADMM, where each slot would otherwise reference every leaf the previous
+        one did. That growth is what makes such a method expensive to generate
+        code from, so keeping each iterate as its own variable is what lets
+        :func:`~fomtools.codegen.unrolled.extract_unrolled_ir` handle it. See
         :class:`~fomtools.iteratetrajectory.IterateTrajectory` for details.
 
         Parameters
@@ -498,7 +505,8 @@ class Verifier(object):
             Number of slots (e.g. ``K + 1`` for ``K`` steps).
         collapse_expr : {'auto', True, False}, default 'auto'
             Trajectory-level default collapse policy. ``'auto'`` collapses on
-            MIP/simulator and keeps a separate leaf on SDP.
+            MIP/simulator, keeps a separate leaf on SDP, and keeps a separate leaf
+            once the assignments accumulate.
 
         Returns
         -------
