@@ -22,9 +22,20 @@ def phase_a_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     linsolve_src = target.linsolve_source_path()
     notes = target.agent_notes()
     notes_block = f"\n{notes}\n" if notes else ""
+    shape_block = (
+        """
+This specification is UNROLLED: its body is the whole recorded run, not one
+iteration to repeat. Execute the steps once, in order, then apply the final
+state update. Do not write a loop over iterations and do not read
+`work->settings.max_iter` in `fom_solve` — see SPEC.md for why.
+"""
+        if ir.unrolled
+        else ""
+    )
     return f"""\
 You are generating a high-performance, embedded implementation of a verified
 first-order optimization method named `{ir.name}`.
+{shape_block}
 
 Write the file `{src}` ONLY. Everything else in this directory is already
 generated and must not be changed:
