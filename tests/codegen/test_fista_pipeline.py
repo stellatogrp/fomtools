@@ -11,17 +11,23 @@ from pathlib import Path
 
 import numpy as np
 
-from fomtools.codegen import StubAgentDriver, generate_code
+from fomtools.codegen import ReferenceOracle, StubAgentDriver, generate_code
 from fomtools.codegen.harness import build_lib
 from fomtools.codegen.spec import load, save
 from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
-from tests.codegen.conftest import build_fista, fista_reference
+from fomtools.codegen.unrolled import extract_unrolled_ir
+from tests.codegen.conftest import (
+    build_fista_run,
+    build_scheduled,
+    fista_loop_reference,
+    fista_reference,
+)
 
 GOLDEN = Path(__file__).parent / "golden" / "fista" / "embedded_c" / "fom_solver.c"
 
 
 def _generate(tmp_path, max_iters=200, **kwargs):
-    case = build_fista(max_iters=max_iters, **kwargs)
+    case = build_scheduled(max_iters=max_iters, **kwargs)
     result = generate_code(
         case["build"],
         None,
@@ -34,15 +40,54 @@ def _generate(tmp_path, max_iters=200, **kwargs):
     return case, result
 
 
+# --------------------------------------------------------------------------
+# FISTA as a recorded run: the loop a user writes, generated as written.
+# --------------------------------------------------------------------------
+
+
+def test_recorded_fista_is_textbook_fista():
+    """Guards an off-by-one nothing else could catch.
+
+    The recording must apply momentum from the *second* iteration, not the third.
+    Extraction self-checks against the recorded tape, so a lagged loop reproduces
+    itself perfectly and looks fine; only an independent NumPy FISTA notices.
+    """
+    case = build_fista_run(K=6)
+    ir = extract_unrolled_ir(case["verifier"], case["iterates"], name="fista")
+    data = case["data"]
+
+    got = ReferenceOracle(ir).solve(param_values={"p0": data["b"]}).solution
+    assert np.allclose(got, fista_loop_reference(data, data["b"], 6)[-1], atol=1e-12)
+
+
+def test_recorded_fista_is_not_ista():
+    """The anti-degradation assertion, on the recorded-run path."""
+    case = build_fista_run(K=6)
+    ir = extract_unrolled_ir(case["verifier"], case["iterates"], name="fista")
+    data = case["data"]
+
+    got = ReferenceOracle(ir).solve(param_values={"p0": data["b"]}).solution
+    plain = fista_loop_reference(data, data["b"], 6, momentum=False)[-1]
+    assert np.abs(got - plain).max() > 1e-2
+
+
+def test_recorded_fista_does_not_roll():
+    """Its momentum genuinely varies, so one iteration cannot stand for the run."""
+    case = build_fista_run(K=6)
+    ir = extract_unrolled_ir(case["verifier"], case["iterates"], name="fista")
+    assert ir.unrolled is True
+    assert len(ir.body) == 6
+
+
 def test_golden_passes_static_checks():
     """The golden must read the table through the clamping accessor."""
-    target = EmbeddedCTarget(build_fista()["config"])
+    target = EmbeddedCTarget(build_scheduled()["config"])
     assert target.static_checks(GOLDEN.read_text()) == []
 
 
 def test_direct_table_indexing_is_rejected():
     """Indexing FOM_SCHED_* can run past the table, since the bound is runtime."""
-    target = EmbeddedCTarget(build_fista()["config"])
+    target = EmbeddedCTarget(build_scheduled()["config"])
     bad = GOLDEN.read_text().replace("fom_sched_gamma(it)", "FOM_SCHED_gamma[it]")
     violations = target.static_checks(bad)
     assert any("indexed directly" in v for v in violations)

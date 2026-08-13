@@ -139,8 +139,8 @@ def test_generate_code_requires_param_values_with_iterates(tmp_path):
 
 
 def test_generate_code_rejects_a_build_function_without_schedules(tmp_path):
-    from tests.codegen.conftest import build_fista
+    from tests.codegen.conftest import build_scheduled
 
-    case = build_fista(max_iters=20)
+    case = build_scheduled(max_iters=20)
     with pytest.raises(TypeError, match="no schedules"):
         generate_code(case["build"], None, tmp_path, config=case["config"])

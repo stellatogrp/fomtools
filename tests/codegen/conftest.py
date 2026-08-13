@@ -19,7 +19,7 @@ from fomtools.codegen.config import (
     TerminationSpec,
     Version,
 )
-from fomtools.codegen.examples import fista_example
+from fomtools.codegen.examples import fista_example, scheduled_example
 from fomtools.linearexpression import stack
 from fomtools.verifier import Verifier
 
@@ -107,17 +107,35 @@ def build_ista(*, K=5, seed=0, n=2, m=4, max_iters=200, tol=None, dtype="float64
 
 
 # --------------------------------------------------------------------------
-# FISTA — ISTA with a momentum coefficient that changes every iteration
+# Accelerated lasso, both ways: recorded as a run, and declared as a schedule
 # --------------------------------------------------------------------------
-def build_fista(*, seed=0, n=2, m=4, max_iters=200, tol=None, dtype="float64"):
-    """Build the scheduled FISTA case: a build function plus its schedule.
+def build_fista_run(*, seed=0, n=2, m=4, K=6, dtype="float64"):
+    """FISTA recorded as the loop a user writes, for the recorded-run path.
+
+    One iterate leaf and the momentum recurrence in ordinary Python, so nothing
+    is declared. The horizon comes from the recording, which is why there is no
+    ``max_iters`` argument here.
+    """
+    ex = fista_example(n=n, m=m, seed=seed, K=K)
+    return dict(
+        verifier=ex["verifier"],
+        iterates=ex["iterates"],
+        param=ex["param"],
+        config=CodegenConfig(dtype=dtype),
+        data=ex["data"],
+        name="fista",
+    )
+
+
+def build_scheduled(*, seed=0, n=2, m=4, max_iters=200, tol=None, dtype="float64"):
+    """The same accelerated lasso declared as a schedule: a build function plus it.
 
     Unlike the stationary builders this returns no ``verifier``: the momentum
     coefficient must stay free so extraction can probe the recording at several
     of its values. The state carries two iterates, which is what keeps the
     dependency cone of one iteration from reaching back through the whole tape.
     """
-    ex = fista_example(n=n, m=m, seed=seed)
+    ex = scheduled_example(n=n, m=m, seed=seed)
     kind = TerminationKind.INF_NORM_CHANGE if tol is not None else TerminationKind.MAX_ITERS
     config = CodegenConfig(
         termination=TerminationSpec(kind=kind, max_iters=max_iters, tol=tol),
@@ -128,16 +146,17 @@ def build_fista(*, seed=0, n=2, m=4, max_iters=200, tol=None, dtype="float64"):
         schedules=ex["schedules"],
         config=config,
         data=ex["data"],
-        name="fista",
+        name="scheduled",
     )
 
 
 def fista_reference(data, b_val, n_iters, momentum=True, tol=None):
-    """Pure-NumPy trajectory of the FOM defined by :func:`build_fista`.
+    """Pure-NumPy trajectory of the accelerated lasso, over the two-slot state.
 
-    With ``momentum=False`` this is plain ISTA over the same data, which is what
-    the generated solver degenerates to if the schedule is dropped — so tests
-    can assert the two are genuinely different.
+    Matches what the *scheduled* IR carries, ``concatenate([y_prev, y])``. With
+    ``momentum=False`` this is plain ISTA over the same data, which is what the
+    generated solver degenerates to if the momentum is lost — so tests can assert
+    the two are genuinely different.
     """
     At, Bt, t, lambd, z0 = data["At"], data["Bt"], data["t"], data["lambd"], data["z0"]
     y_prev = np.asarray(z0, dtype=float).copy()
@@ -157,6 +176,18 @@ def fista_reference(data, b_val, n_iters, momentum=True, tol=None):
         if tol is not None and resid <= tol:
             break
     return traj
+
+
+def fista_loop_reference(data, b_val, n_iters, momentum=True):
+    """The plain iterate sequence, for the one-slot *recorded run*.
+
+    Derived from :func:`fista_reference` rather than repeating the recurrence: the
+    two-slot entries are ``concatenate([y_prev, y])``, so the iterates the natural
+    loop records are their second halves, minus the initial state.
+    """
+    n = data["n"]
+    traj = fista_reference(data, b_val, n_iters, momentum=momentum)
+    return [state[n:] for state in traj[1:]]
 
 
 def ista_reference(data, b_val, x0, n_iters, tol=None):
@@ -497,20 +528,26 @@ def build_ista_loop(steps=8, trajectory=False, include_initial=False):
     return v, iterates, x, d
 
 
-def build_fista_loop(steps=8):
-    """FISTA written the natural way: one iterate leaf, momentum in Python."""
+def build_fista_loop(steps=8, momentum=True):
+    """FISTA written the natural way: one iterate leaf, momentum in Python.
+
+    With ``momentum=False`` the same code records plain ISTA, which is what a
+    wrongly rolled FISTA degenerates to. Tests that need both use the toggle so
+    the two recordings differ in exactly one place.
+    """
     d = _lasso_data()
     v = Verifier(method="simulator", obbt_solver=None)
     x = v.add_param(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
     s = v.add_iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
 
-    y_prev, extrap, beta, iterates = s, s, 1.0, []
+    y_prev, y_curr, beta, iterates = s, s, 1.0, []
     for _ in range(steps):
-        y = v.step.soft_threshold(d["at"] @ extrap + d["bt"] @ x, lambd=d["lambd"])
         beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
-        extrap = y + ((beta - 1.0) / beta_next) * (y - y_prev)
-        beta, y_prev = beta_next, y
-        iterates.append(y)
+        gamma = (beta - 1.0) / beta_next if momentum else 0.0
+        extrap = y_curr + gamma * (y_curr - y_prev)
+        y_next = v.step.soft_threshold(d["at"] @ extrap + d["bt"] @ x, lambd=d["lambd"])
+        y_prev, y_curr, beta = y_curr, y_next, beta_next
+        iterates.append(y_next)
     return v, iterates, x, d
 
 

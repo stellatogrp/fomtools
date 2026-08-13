@@ -21,12 +21,12 @@ from fomtools.codegen.ir import NonStationaryFOMError
 from fomtools.codegen.schedule import Schedule, as_schedule, fista_momentum, nesterov_momentum
 from fomtools.codegen.scheduled import Recording
 from fomtools.verifier import Verifier
-from tests.codegen.conftest import build_fista, fista_reference
+from tests.codegen.conftest import build_scheduled, fista_reference
 
 
 def test_fista_extracts_to_a_single_stationary_body():
     """Over a two-slot state, FISTA is one step: only its coefficient moves."""
-    case = build_fista(max_iters=50)
+    case = build_scheduled(max_iters=50)
     ir = extract_scheduled_ir(case["build"], case["schedules"], config=case["config"])
 
     assert len(ir.body) == 1
@@ -38,7 +38,7 @@ def test_fista_extracts_to_a_single_stationary_body():
 
 def test_only_the_momentum_coefficient_is_scheduled():
     """Exactly one block varies, and it is split into a base plus a scaled slope."""
-    case = build_fista(max_iters=20)
+    case = build_scheduled(max_iters=20)
     ir = extract_scheduled_ir(case["build"], case["schedules"], config=case["config"])
 
     scaled = {t.matrix: t.scale for t in ir.body[0].linear_op.terms if t.scale is not None}
@@ -52,7 +52,7 @@ def test_only_the_momentum_coefficient_is_scheduled():
 
 def test_affine_recovery_is_exact():
     """base + gamma * slope must reproduce a directly extracted IR at any gamma."""
-    case = build_fista(max_iters=20)
+    case = build_scheduled(max_iters=20)
     ir = extract_scheduled_ir(case["build"], case["schedules"], config=case["config"])
     base = ir.matrices["t0_state"].array
     slope = ir.matrices["t0_state__d_gamma"].array
@@ -75,7 +75,7 @@ def test_first_momentum_value_is_zero_but_the_schedule_is_not_frozen():
     Tabulating the coefficient rather than reading it off one iteration is
     precisely what keeps that from collapsing the method.
     """
-    case = build_fista(max_iters=20)
+    case = build_scheduled(max_iters=20)
     ir = extract_scheduled_ir(case["build"], case["schedules"], config=case["config"])
     gamma = ir.schedules["gamma"]
 
@@ -86,7 +86,7 @@ def test_first_momentum_value_is_zero_but_the_schedule_is_not_frozen():
 
 def test_scheduled_oracle_matches_numpy_fista():
     """The rolled IR reproduces FISTA at every iteration, and is not ISTA."""
-    case = build_fista(max_iters=100)
+    case = build_scheduled(max_iters=100)
     ir = extract_scheduled_ir(case["build"], case["schedules"], config=case["config"])
     b_val = case["data"]["b"]
 
@@ -198,7 +198,7 @@ def test_a_vanishing_state_slot_is_reported_helpfully():
 
 def test_unused_schedule_is_rejected():
     """An ignored scalar is almost always a misspelled keyword."""
-    case = build_fista(max_iters=10)
+    case = build_scheduled(max_iters=10)
 
     def build(gamma, unused):
         return case["build"](gamma=gamma)
@@ -212,7 +212,7 @@ def test_unused_schedule_is_rejected():
 
 
 def test_extract_scheduled_ir_needs_a_schedule():
-    case = build_fista(max_iters=10)
+    case = build_scheduled(max_iters=10)
     with pytest.raises(ValueError, match="at least one schedule"):
         extract_scheduled_ir(case["build"], {}, config=case["config"])
 
