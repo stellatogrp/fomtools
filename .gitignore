@@ -384,3 +384,6 @@ fomtools.project
 .entropy/
 __marimo__/
 *.npz
+# Generated experiment artifacts
+experiments/*/out/
+.ruff_cache/
