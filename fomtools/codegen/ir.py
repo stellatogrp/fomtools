@@ -219,18 +219,22 @@ class StateSpec:
 
 @dataclass(frozen=True)
 class FomIR:
-    """Complete single-iteration IR for a stationary first-order method.
+    """Complete IR for one repeatable iteration, or for a whole unrolled run.
 
     Attributes
     ----------
     params:
         Solve-time parameter vectors.
     state:
-        Loop-carried state layout + initial value.
+        Loop-carried state layout + initial value. For an unrolled IR this is
+        the solver's *input*: the initial iterates, plus any earlier iterate the
+        method keeps referring to (a Halpern anchor, say).
     body:
-        Ordered iteration-body steps producing temporaries.
+        Ordered iteration-body steps producing temporaries. For an unrolled IR
+        this is the whole run as one straight-line program, in dependency order.
     state_update:
-        Linear op producing the next state from current state + temporaries.
+        Linear op producing the next state from current state + temporaries. For
+        an unrolled IR it produces the final answer.
     termination:
         Loop termination criterion.
     matrices:
@@ -243,6 +247,12 @@ class FomIR:
         Numeric dtype string (``"float64"`` / ``"float32"``).
     name:
         Human-friendly FOM name (used for fixtures / file naming).
+    unrolled:
+        Whether :attr:`body` is a whole run rather than one repeatable
+        iteration. An unrolled body is executed **once**, so
+        ``termination.max_iters`` is 1 and no residual-based early exit applies;
+        each iteration carries its own coefficient blocks, which is what lets a
+        recording use arbitrary per-iteration steps.
     """
 
     params: tuple[ParamSpec, ...]
@@ -255,6 +265,7 @@ class FomIR:
     schedules: dict[str, np.ndarray] = field(default_factory=dict)
     dtype: str = "float64"
     name: str = "fom"
+    unrolled: bool = False
 
     @property
     def state_dim(self) -> int:

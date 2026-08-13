@@ -70,6 +70,7 @@ def ir_to_dict(ir: FomIR) -> dict:
     return {
         "name": ir.name,
         "dtype": ir.dtype,
+        "unrolled": ir.unrolled,
         "factorizations": {name: _fac_meta(fac) for name, fac in ir.factorizations.items()},
         "termination": {
             "kind": ir.termination.kind.value,
@@ -213,6 +214,8 @@ def load(directory: str | Path) -> FomIR:
         schedules={name: npz[f"sched::{name}"] for name in spec.get("schedules", {})},
         dtype=spec["dtype"],
         name=spec["name"],
+        # Defaulted so spec directories written before unrolled emission load.
+        unrolled=spec.get("unrolled", False),
     )
 
 
