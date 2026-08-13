@@ -20,18 +20,19 @@ and saves it.  That box is the parameter set the verification problem searches
 over and the one the generated code is checked on, so it belongs with the
 experiment rather than being invented later.
 
-    python check_against_fomtools.py
+    python -m condensed.check_against_fomtools
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import admm
 import numpy as np
-import simulate
-from mpc import build_mpc
-from reference import figure_eight
+from common.reference import figure_eight
+from common.simulate import closed_loop
+from condensed import admm
+from condensed.controller import CondensedController
+from condensed.mpc import build_mpc
 
 TOL = 1e-9
 OUT = Path(__file__).parent / "out"
@@ -68,7 +69,7 @@ def cost_box(problem, ref, duration: float = 8.0, iterations: int = 1000):
     states a working controller actually reaches rather than the excursions of
     a diverging one.
     """
-    roll = simulate.closed_loop(problem, ref, iterations, duration=duration)
+    roll = closed_loop(CondensedController(problem, ref), ref, iterations, duration=duration)
     costs = np.vstack(
         [
             problem.linear_cost(roll.states[k], problem.reference_window(ref, k * problem.dt))

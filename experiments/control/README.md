@@ -12,70 +12,117 @@ number of iterations inside the same wall-clock budget, so the same controller
 flies cleanly, wobbles, or crashes depending only on how fast its inner loop
 runs.  This directory is the first stage: the problem, the algorithm, the
 simulation, and the pictures, calibrated by sweeping the iteration count
-directly.  Code generation and the wall-clock budget sweep come later.
+directly.  Code generation comes later.
+
+The same control problem is posed two ways, one per subdirectory.
+
+| | variables | constraint rows | system matrix | per iteration |
+|---|---:|---:|---|---:|
+| `condensed/` | 40 | 40 | dense, 100% filled | 6.3 us |
+| `uncondensed/` | 1240 | 1240 | sparse, 0.99% filled, factor 26739 | 36.5 us |
+
+**Condensed** eliminates the states through the dynamics, leaving a small dense
+program in the input moves alone, with the identity as its constraint matrix and
+the measured state folded into the linear cost.  **Uncondensed** keeps the
+states as variables and the dynamics as constraints: thirty-one times as many
+variables, but every matrix banded, and the measured state entering through the
+constraint bounds instead.  Both minimize the same function of the input
+sequence and have the same minimizing first input, checked to 4e-8 in
+`compare.py`, so any difference in how they fly is a property of the algorithm
+rather than of the controller.
 
 ## Running it
 
-Everything is run from this directory.
+Everything runs as a module from this directory.
 
 ```
-python check_against_fomtools.py   # the controller is the algorithm fomtools records
-python run_budget_sweep.py         # the flights, the table, the figures, the animation
+python -m condensed.check_against_fomtools    # the controller is the recorded algorithm
+python -m condensed.run_budget_sweep          # flights, table, figures, animation
+python -m uncondensed.check_against_fomtools
+python -m uncondensed.run_budget_sweep
+python -m compare                             # the two at equal wall-clock budgets
 ```
 
-`run_budget_sweep.py` writes to `out/`:
+The two studies write to their own `out/`; `compare.py` writes to `out/` here.
 
-| file | what it is |
-|---|---|
-| `sweep.csv` | one row per iteration budget: tracking error, crash, saturation |
-| `rollouts.npz` | the flown trajectories, for replotting without re-flying |
-| `comparison.pdf` | side-by-side 3-D panels at three illustrative budgets |
-| `flight.gif` | the same comparison, animated |
-| `error.pdf` | tracking error against time |
-| `parameter_box.npz` | the box of linear costs a flight visits (written by the check) |
+## What the comparison says
 
-Useful flags: `--budgets`, `--figure-budgets`, `--duration`, `--no-gif`.
+Each formulation on its own answers "how many iterations does this need".  The
+question a controller faces is how well it flies given a fixed slice of time,
+and since the two do not cost the same per iteration, that needs both numbers.
+Converting a budget into an iteration count separately for each, over an eight
+second flight:
+
+| budget | condensed | | uncondensed | |
+|---:|---:|---|---:|---|
+| 0.2 ms | 31 it | crashed | 5 it | crashed |
+| 0.5 ms | 78 it | crashed | 13 it | 1.79 m |
+| 1 ms | 157 it | crashed | 27 it | 2.08 m |
+| 2 ms | 315 it | 0.43 m | 54 it | 2.21 m |
+| 5 ms | 789 it | 0.11 m | 137 it | 1.16 m |
+| 10 ms | 1578 it | 0.12 m | 274 it | 0.22 m |
+
+Three things come out of this.
+
+**Sparsity does its job, and it is still not enough.**  Thirty-one times the
+variables cost only six times the time per iteration, which is the sparse
+factorization working as advertised: the factor holds 26739 entries where a
+dense one of that size would hold 769000.  But six times is six times, and both
+formulations need a comparable number of iterations to converge, so the
+condensed one is ahead at every budget.  Eliminating the states is worth more
+here than exploiting the sparsity that not eliminating them leaves behind.
+
+**The advantage is a property of this problem's size.**  The condensed Hessian
+is 100% filled at any horizon, so its cost grows with the square of the number
+of input moves while the uncondensed one grows linearly in the horizon.  Ten
+input moves is far inside the range where dense wins.  The crossover is a
+horizon question, not a formulation question, and this experiment sits on one
+side of it by construction: the move blocking that keeps the condensed program
+at 40 variables is what makes it the better choice.
+
+**Starved, the uncondensed controller fails more gracefully.**  Below about one
+millisecond the condensed controller crashes outright while the uncondensed one
+stays airborne at two metres of error.  The large penalty its equality rows
+carry keeps the predicted trajectory roughly consistent with the dynamics even
+when the solve is nowhere near converged, so the first input it returns is
+merely sluggish rather than wrong.  The condensed formulation has substituted
+the dynamics away and has no such protection: an under-converged iterate is an
+arbitrary input sequence.
 
 ## The setup
 
 **Plant.**  The hover linearization of a quadcopter from the OSQP documentation,
 twelve states and four rotor thrusts, taken verbatim from the verification
 experiments in `mip_algo_verify` so that both analyze the same vehicle.  It is
-published at a 0.1 s sampling period; `quadcopter.py` recovers the underlying
-continuous-time model and re-discretizes at 10 ms.  Every eigenvalue is real and
-positive, so the matrix logarithm is real and the recovery is exact to machine
-precision.  The plant and the controller's prediction model are the same, so
-there is no model mismatch and the only source of tracking error is the finite
-iteration budget.
+published at a 0.1 s sampling period; `common/quadcopter.py` recovers the
+underlying continuous-time model and re-discretizes at 10 ms.  Every eigenvalue
+is real and positive, so the matrix logarithm is real and the recovery is exact
+to machine precision.  The plant and the controller's prediction model are the
+same, so there is no model mismatch and the only source of tracking error is the
+finite iteration budget.
 
-**Problem.**  States are eliminated, leaving a box-constrained quadratic program
-in the input sequence.  The constraint matrix is then the identity, the bounds
-are the constant thrust box, and the parameter enters only through the linear
-cost.  That last property is what makes the family suitable for code generation:
-the saturated-linear step has constant bounds, which is the only form the
-extraction accepts, and the system matrix is fixed and factorized once.
+**Move blocking.**  The input is held constant over blocks of ten sampling
+instants in both formulations.  A one second lookahead at 10 ms is 100 steps,
+which condensed would turn into 396 variables and uncondensed into 1596;
+blocking gives 40 and 1240 at the same lookahead.  For the condensed program
+this is what keeps the interpreted iteration dominated by per-operation
+overhead, which is exactly the cost that generated code removes.
 
-The input is held constant over blocks of ten sampling instants.  A one second
-lookahead at 10 ms is 100 steps and would give 396 variables; blocking gives 40
-at the same lookahead.  This is not cosmetic.  At 40 variables an interpreted
-iteration is dominated by per-operation overhead, which is exactly what
-generated code removes; at 396 both implementations spend their time inside the
-same dense triangular solve and the difference between them largely disappears.
-
-**Algorithm.**  Equation (16), with the constraint matrix equal to the identity:
+**Algorithm.**  Equation (16):
 
 ```
-w = clip(v, l, u)
-z = solve(P + sigma I + rho I,  sigma z - q + rho (2 w - v))
-v = v + z - w
+w    = clip(v, l, u)
+zeta = solve(P + sigma I + M' R M,  sigma zeta - q + M' R (2 w - v))
+v    = v + M zeta - w
 ```
 
-`rho = 0.1` is OSQP's default penalty and `sigma = 1e-4` is the regularization
-used in the verification experiments; neither is tuned to this instance.  The
-system matrix is factorized once when the problem is built, matching what the
-generated code does with a factorization computed at generation time.  The
-iterate is cold started at every sampling instant, matching the generated
-interface, which resets its state on every parameter update.
+with `M = I` and a scalar `R = rho` in the condensed case.  `rho = 0.1` is
+OSQP's default penalty and `sigma = 1e-4` is the regularization used in the
+verification experiments.  The system matrix is factorized once when the problem
+is built, matching what generated code does with a factorization computed at
+generation time.  The iterate is cold started at every sampling instant,
+matching the generated interface, which resets its state on every parameter
+update.
 
 **Reference.**  A figure eight of amplitude 1 m and period 2.25 s with a slow
 climb, flown from the origin so the flight opens with a capture transient.  The
@@ -84,60 +131,35 @@ bounds for roughly three quarters of the flight.  This matters — a gentler
 reference leaves the box slack, the program becomes effectively unconstrained,
 and the iteration count stops mattering at all.
 
-## Calibration
-
-Eight second flights, 10 ms sampling, error in metres.  "Steady" excludes the
-first two seconds, which is the climb from the origin up to the trajectory.
-
-| iterations | outcome | steady error | thrusts on the box |
-|---:|---|---:|---:|
-| 10 | crashed at 3.1 s | | |
-| 25 | crashed at 4.0 s | | |
-| 50 | crashed at 3.9 s | | |
-| 100 | crashed at 5.3 s | | |
-| 250 | flew | 0.93 m | 84% |
-| 500 | flew | 0.11 m | 85% |
-| 1000 | flew | 0.12 m | 74% |
-| 2500 | flew | 0.12 m | 71% |
-| 5000 | flew | 0.12 m | 68% |
-
-Three regimes, and the figures use one budget from each: lost below 250,
-holding on badly at 250, flying the curve from 500.  A NumPy iteration costs
-about 6.0 us here, so a 10 ms budget buys roughly 1660 of them; converting a
-time budget into an iteration budget for each implementation is what stage
-three does with that number.
-
-Two things worth knowing about the table.  Tracking error is very slightly
-*worse* at 5000 iterations than at 500: an under-converged iterate is not a
-worse control law in any monotone sense, it is a different one, and here it
-happens to lag marginally less.  And the crashed rows have no meaningful error,
-since a diverging flight leaves the region where the linear model describes a
-quadcopter at all.
-
 ## Files
 
 | file | contents |
 |---|---|
-| `quadcopter.py` | the model, its cost and constraint data, re-discretization |
-| `mpc.py` | condensing, move blocking, the parametric linear cost, the factorization |
-| `reference.py` | the figure eight, and a random B-spline generator for later |
-| `admm.py` | the iteration, the scaled residual, and an OSQP reference solve |
-| `simulate.py` | the closed loop and crash detection |
-| `plots.py` | 3-D panels, the still comparison, the animation, error against time |
-| `run_budget_sweep.py` | the driver |
-| `check_against_fomtools.py` | the controller against the recorded and extracted algorithm |
+| `common/quadcopter.py` | the model, its cost and constraint data, re-discretization |
+| `common/reference.py` | the figure eight, and a random B-spline generator |
+| `common/simulate.py` | the `Controller` protocol, the closed loop, crash detection, timing |
+| `common/plots.py` | 3-D panels, the still comparison, the animation, error against time |
+| `common/sweep.py` | the budget sweep both studies run |
+| `<study>/mpc.py` | that formulation's problem assembly |
+| `<study>/admm.py` | that formulation's iteration |
+| `<study>/controller.py` | the adapter the shared simulator flies |
+| `compare.py` | the two formulations at equal wall-clock budgets |
 
-## Checks
+## A note on code generation
 
-`check_against_fomtools.py` runs the same data through three executions: the
-NumPy controller, `run_faithful` on the recorded step objects, and
-`ReferenceOracle` on the extracted intermediate representation that code
-generation lowers to C.  The three agree to about 2e-11, which is the
-precondition for generating a solver from this recording.
+The two formulations are not equally ready to be generated as C.  The condensed
+one confines the parameter to the linear cost, so its saturated-linear step has
+constant bounds, which is the only form `fomtools.codegen` accepts: its
+intermediate representation stores those bounds as names of constant arrays
+(`ir.py`, `ActivationOp.lower`), and `extract.py:_satlin_arrays` raises
+`NonStationaryFOMError` on a bound that is a `LinearExpression`.  The
+uncondensed one puts the measured state into the bounds, so a *deployed*
+uncondensed solver would need that extension.
 
-It also compares the converged iterate against OSQP *by objective value* rather
-than by iterate.  Most coordinates of the solution sit exactly on the thrust box
-and the remaining subspace is poorly conditioned, so the minimizer is not
-numerically well determined: OSQP and an interior-point solver disagree with
-each other by more than either disagrees with the converged ADMM iterate, while
-all three agree on the objective to about 1e-13 relative.
+This does not affect the experiment.  The simulation supplies the bounds as
+numbers refreshed each instant, never as symbolic parameters, and
+`uncondensed/check_against_fomtools.py` records the iteration with the bounds
+frozen at one representative state, which is enough to establish that the
+hand-written controller, the recorded steps, and the extracted representation
+are the same map.  The restriction is worth knowing because §6.4 of the paper
+currently describes the uncondensed form.

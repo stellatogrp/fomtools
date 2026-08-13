@@ -1,11 +1,15 @@
-"""Closed-loop simulation of the quadcopter under the ADMM controller.
+"""Closed-loop simulation, shared by both formulations.
 
-At every sampling instant the controller measures the state, forms the linear
-cost of the condensed program, runs a fixed number of ADMM iterations from a
-cold start, and applies the first input move.  The plant is the same linear
-model the controller predicts with, so there is no model mismatch and the only
-source of tracking error is the finite iteration budget.  That is the point of
-the experiment: whatever the trajectory does, the algorithm did it.
+At every sampling instant the controller measures the state, solves its
+quadratic program for a fixed number of ADMM iterations from a cold start, and
+returns the rotor thrusts to apply.  The plant is the same linear model the
+controller predicts with, so there is no model mismatch and the only source of
+tracking error is the finite iteration budget.  That is the point of the
+experiment: whatever the trajectory does, the algorithm did it.
+
+Everything specific to a formulation sits behind :class:`Controller`, so the
+condensed and uncondensed studies fly the same simulator and are compared on
+trajectories produced by identical code.
 
 A rollout ends early if the quadcopter reaches the ground or leaves the flight
 volume.  Both are recorded as a crash, since neither the linear model nor the
@@ -14,13 +18,14 @@ tracking metric means anything past that point.
 
 from __future__ import annotations
 
+import statistics
+import time
 from dataclasses import dataclass
+from typing import Protocol
 
-import admm
 import numpy as np
-from mpc import MpcProblem
-from quadcopter import N_INPUT, N_STATE, POS, VEL
-from reference import Reference
+from common.quadcopter import N_INPUT, N_STATE, POS, VEL
+from common.reference import Reference
 
 #: A rollout is abandoned once the altitude drops below this height, in metres.
 GROUND = 0.0
@@ -32,6 +37,35 @@ FLIGHT_VOLUME = 20.0
 #: tracking error is measured.  The quadcopter starts at the origin and the
 #: reference starts a metre above it, so the flight opens with a climb.
 SETTLE = 2.0
+
+
+@dataclass
+class Command:
+    """What a controller returns for one sampling instant."""
+
+    u: np.ndarray  # the thrusts to apply, already saturated
+    residual: float  # the solver's fixed-point residual at the last iteration
+    saturated: bool  # whether the solver's own iterate violated the thrust box
+
+
+class Controller(Protocol):
+    """A model predictive controller, however its program is formulated."""
+
+    #: Sampling period in seconds.
+    dt: float
+    #: Number of optimization variables, reported in the summaries.
+    n: int
+    #: Plant matrices at this sampling period.
+    A: np.ndarray
+    B: np.ndarray
+
+    def describe(self) -> str:
+        """One line naming the formulation and its dimensions."""
+        ...
+
+    def command(self, state: np.ndarray, t: float, iterations: int) -> Command:
+        """Solve for the thrusts to apply at time ``t`` from ``state``."""
+        ...
 
 
 @dataclass
@@ -71,7 +105,7 @@ class Rollout:
         """Mean error after the capture transient.
 
         The flight starts at the origin while the reference starts a metre up,
-        so the first second is a climb whose error swamps everything after it.
+        so the first seconds are a climb whose error swamps everything after it.
         This is the number that says how well the quadcopter holds the curve.
         """
         first = int(round(settle / self.dt))
@@ -113,23 +147,15 @@ def initial_state(ref: Reference, on_reference: bool = False) -> np.ndarray:
 
 
 def closed_loop(
-    problem: MpcProblem,
+    controller: Controller,
     ref: Reference,
     iterations: int,
-    duration: float = 6.0,
+    duration: float = 8.0,
     on_reference: bool = False,
-    warm_start: bool = False,
 ) -> Rollout:
-    """Fly the quadcopter for ``duration`` seconds at ``iterations`` per solve.
-
-    Parameters
-    ----------
-    warm_start:
-        Carry the ADMM iterate across sampling instants.  Off by default, which
-        matches the generated solver: its interface resets the state on every
-        parameter update, so a fair comparison cold starts everywhere.
-    """
-    steps = int(round(duration / problem.dt))
+    """Fly the quadcopter for ``duration`` seconds at ``iterations`` per solve."""
+    dt = controller.dt
+    steps = int(round(duration / dt))
     x = initial_state(ref, on_reference)
 
     states = np.empty((steps + 1, N_STATE))
@@ -142,26 +168,20 @@ def closed_loop(
     states[0] = x
     ref_pos[0] = ref(0.0)[0]
 
-    z = v = None
     crashed = False
     reason = None
     taken = 0
 
     for k in range(steps):
-        t = k * problem.dt
-        q = problem.linear_cost(x, problem.reference_window(ref, t))
-        result = admm.solve(problem, q, iterations, z0=z, v0=v)
-        if warm_start:
-            z, v = result.z, result.v
+        t = k * dt
+        command = controller.command(x, t, iterations)
+        x = controller.A @ x + controller.B @ command.u
 
-        u = problem.first_input(result.z)
-        saturated[k] = bool(np.any(np.abs(result.z[:N_INPUT] - u) > 1e-9))
-        x = problem.A @ x + problem.B @ u
-
-        inputs[k] = u
-        residuals[k] = result.residual if result.residual is not None else np.nan
+        inputs[k] = command.u
+        residuals[k] = command.residual
+        saturated[k] = command.saturated
         states[k + 1] = x
-        ref_pos[k + 1] = ref(t + problem.dt)[0]
+        ref_pos[k + 1] = ref(t + dt)[0]
         errors[k] = float(np.linalg.norm(x[POS] - ref_pos[k + 1]))
         taken = k + 1
 
@@ -172,7 +192,7 @@ def closed_loop(
 
     return Rollout(
         iterations=iterations,
-        dt=problem.dt,
+        dt=dt,
         states=states[: taken + 1],
         inputs=inputs[:taken],
         reference=ref_pos[: taken + 1],
@@ -182,6 +202,29 @@ def closed_loop(
         crashed=crashed,
         crash_reason=reason if crashed else None,
     )
+
+
+def time_per_iteration(
+    controller: Controller,
+    ref: Reference,
+    iterations: int = 500,
+    repeats: int = 5,
+) -> float:
+    """Median wall-clock cost of one ADMM iteration, in microseconds.
+
+    Measured through the controller's own solve at a representative state, so
+    it includes whatever linear algebra that formulation performs and nothing
+    else.  Converting a time budget into an iteration budget needs this number,
+    which is why it is recorded alongside every flight.
+    """
+    state = initial_state(ref)
+    controller.command(state, 0.0, 200)  # warm the caches and the BLAS threads
+    samples = []
+    for _ in range(repeats):
+        start = time.perf_counter()
+        controller.command(state, 0.0, iterations)
+        samples.append((time.perf_counter() - start) * 1e6 / iterations)
+    return float(statistics.median(samples))
 
 
 def _crash_reason(x: np.ndarray) -> str | None:
