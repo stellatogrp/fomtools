@@ -135,7 +135,7 @@ class Canonicalizer:
 
         Parameters
         ----------
-        var : LinearExpression
+        iterate : LinearExpression
             Linear expression object to add to the canonicalizer.
 
         Raises

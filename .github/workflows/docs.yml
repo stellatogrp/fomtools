@@ -54,13 +54,10 @@ jobs:
       - name: Export marimo notebooks
         env:
           GRB_LICENSE_FILE: ${{ github.workspace }}/gurobi.lic
-        run: |
-          for file in docs/tutorials/*.py; do
-            marimo export html "$file" -o "${file%.py}.html"
-          done
+        run: python scripts/export_marimo.py --force
 
-      - name: Verify html generation
-        run: ls docs/tutorials
+      - name: Build documentation strictly
+        run: mkdocs build --strict
 
       - name: Configure Git Credentials
         run: |

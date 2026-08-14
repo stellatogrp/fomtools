@@ -112,7 +112,7 @@ class HiGHSSolver(MIPSolver):
     def expression_to_solver(
         self, expression: LinearExpression
     ) -> np.ndarray[hp.highs.highs_linear_expression]:
-        """
+        r"""
         Convert a ``LinearExpression`` into a list of HiGHS  ``highs_linear_expression``.
 
         Given a ``LinearExpression`` object with a decomposition of the form

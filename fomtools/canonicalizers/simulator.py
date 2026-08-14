@@ -833,7 +833,7 @@ class Simulator(Canonicalizer):
     def _register_statistics(
         self, residuals: cp.ndarray, delta: float, epsilon: float, total_time: float
     ):
-        """
+        r"""
         Compute and register summary statistics from simulation residuals.
 
         Parameters
@@ -1304,8 +1304,8 @@ class Simulator(Canonicalizer):
         Returns
         -------
         residuals: cp.ndarray
-           A 2D array of shape ``(num_samples, n_residuals)`` containing
-           the residual at each step for each parameter sample.
+            A 2D array of shape ``(num_samples, n_residuals)`` containing
+            the residual at each step for each parameter sample.
 
         Raises
         ------

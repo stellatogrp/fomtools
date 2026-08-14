@@ -46,3 +46,20 @@ Once `uv` is installed.
    its dev and docs extras:
 
         pip install -e .[dev, docs]
+
+## Previewing the documentation
+
+Install the documentation dependencies and start the local MkDocs server:
+
+    uv sync --extra docs
+    make docs-serve
+
+The `docs-serve` target recursively discovers marimo notebooks under `docs/tutorials`, exports
+missing or stale notebooks to ignored HTML files, and then starts MkDocs. Restart the server after
+editing a notebook so that its HTML is refreshed.
+
+Use these targets to export or validate the documentation without starting the server:
+
+    make docs-export        # Export only missing or stale notebooks
+    make docs-export-force  # Regenerate every notebook
+    make docs-build         # Force export, then run a strict MkDocs build
