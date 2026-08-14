@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fomtools.cvxpygen.builders import FomSpec
+from fomtools.cvxpygen.builders import BaseFomSpec
 from fomtools.cvxpygen.qpdata import QPData
 
 _BANNER = (
@@ -115,7 +115,7 @@ def _residual_block(qp: QPData, prefix: str, has_quad_term: bool) -> str:
 
 
 def emit_bridge(
-    spec: FomSpec,
+    spec: BaseFomSpec,
     qp: QPData,
     solver_code_dir: str | Path,
     prefix: str,

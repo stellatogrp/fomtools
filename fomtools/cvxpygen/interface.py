@@ -33,11 +33,11 @@ from cvxpygen.mappings import Setting, WorkspacePointerInfo
 from cvxpygen.solvers import QPCanonMixin, SolverInterface
 
 from fomtools.codegen.agent.driver import AgentDriver
-from fomtools.codegen.config import Backend, CodegenConfig, Version
+from fomtools.codegen.config import Backend, CodegenConfig, TerminationKind, Version
 from fomtools.codegen.generate import CodegenResult
 from fomtools.codegen.generate import generate_code as fomtools_generate_code
 from fomtools.codegen.targets import get_target
-from fomtools.cvxpygen.builders import resolve_builder
+from fomtools.cvxpygen.builders import ScheduledFomSpec, fom_kind, resolve_builder
 from fomtools.cvxpygen.glue import cmake_solver_sources, emit_bridge, write_solver_cmake_stub
 from fomtools.cvxpygen.qpdata import extract_qp_data
 
@@ -61,6 +61,7 @@ class FomtoolsOptions:
     driver: AgentDriver | None = None
     param_bounds: dict | None = None
     bound_margin: float = 1.0
+    allow_unrolled: bool = False
 
 
 _OPTIONS: contextvars.ContextVar[FomtoolsOptions | None] = contextvars.ContextVar(
@@ -105,6 +106,113 @@ def _current_options() -> FomtoolsOptions:
     """Options for the active generation run (defaults when cvxpygen is driven
     directly via ``cpg.generate_code(..., solver='FOMTOOLS')``)."""
     return _OPTIONS.get() or FomtoolsOptions()
+
+
+def _check_spec_matches_kind(spec, kind: str) -> None:
+    """Reject a builder whose returned spec cannot go down the path it declared."""
+    if kind == "scheduled":
+        if not isinstance(spec, ScheduledFomSpec):
+            raise TypeError(
+                f"the builder declares fom_kind='scheduled' but returned "
+                f"{type(spec).__name__}; the scheduled path needs a ScheduledFomSpec "
+                "carrying the build function and its schedules."
+            )
+        return
+    if isinstance(spec, ScheduledFomSpec):
+        raise TypeError(
+            f"the builder returned a ScheduledFomSpec but declares fom_kind={kind!r}; "
+            "decorate it with @fom_builder('scheduled')."
+        )
+    if kind == "rolled" and spec.next_state is None:
+        raise ValueError(
+            "the builder declares fom_kind='rolled' but its spec has no next_state. "
+            "Give the iterate after one iteration, or declare @fom_builder('unrolled') "
+            "to generate the whole recorded run."
+        )
+    if kind == "unrolled":
+        if not spec.iterates:
+            raise ValueError(
+                "the builder declares fom_kind='unrolled' but recorded no iterates; "
+                "the unrolled path generates the run they hold."
+            )
+        if spec.next_state is not None:
+            raise ValueError(
+                "the builder declares fom_kind='unrolled' but also set next_state. "
+                "Those select different paths: with next_state the recorded run is only "
+                "*checked* against one repeated iteration, without it the run itself is "
+                "generated. Leave next_state=None for the unrolled path."
+            )
+
+
+def _check_unrolled_allowed(opts: "FomtoolsOptions", config: CodegenConfig) -> None:
+    """Gate the unrolled path: it is opt-in, and its horizon is baked in."""
+    if not opts.allow_unrolled:
+        raise ValueError(
+            "this FOM generates an unrolled solver — the whole recorded run emitted as "
+            "one straight-line pass, which for a realistic horizon is a very large "
+            "program on an embedded target, with the iteration count fixed at code "
+            "generation time (cpg_set_solver_max_iter no longer applies). Pass "
+            "generate_solver(..., allow_unrolled=True) to accept that, or use a "
+            "scheduled builder to get one block plus a coefficient table instead."
+        )
+    if config.termination.kind != TerminationKind.MAX_ITERS:
+        raise ValueError(
+            f"termination kind {config.termination.kind.value!r} cannot be combined with "
+            "an unrolled FOM: the generated solver runs exactly the run that was "
+            "recorded, so there is no per-iteration residual to stop on and "
+            "cpg_set_solver_tol would have nothing to act on. Use "
+            "TerminationKind.MAX_ITERS, or a rolled builder, where the criterion is "
+            "evaluated every iteration."
+        )
+
+
+def _check_ir_matches_kind(ir, kind: str) -> None:
+    """Fail if generation produced a differently-shaped solver than was declared.
+
+    A declared-unrolled FOM that *rolls back up* is fine and expected: rolling is
+    a size optimization that generation performs only after verifying it
+    reproduces the recording. Every other mismatch means the settings surface and
+    bridge — both chosen from the declared kind — would describe the wrong solver.
+    """
+    actual = "scheduled" if ir.schedules else ("unrolled" if ir.unrolled else "rolled")
+    if actual == kind or (kind == "unrolled" and actual == "rolled"):
+        return
+    raise RuntimeError(
+        f"the builder declares fom_kind={kind!r} but generation produced a {actual!r} "
+        f"solver. The runtime settings and the C bridge are chosen from the declared "
+        f"kind, so emitting this would ship plumbing that misdescribes the solver."
+    )
+
+
+def _run_codegen(spec, kind: str, out_dir: Path, config: CodegenConfig, driver) -> CodegenResult:
+    """Call fomtools code generation down the path ``kind`` selects."""
+    if kind == "scheduled":
+        return fomtools_generate_code(
+            spec.build,
+            out_dir=out_dir,
+            config=config,
+            driver=driver,
+            name=spec.name,
+            schedules=spec.schedules,
+        )
+    return fomtools_generate_code(
+        spec.verifier,
+        spec.next_state,
+        out_dir=out_dir,
+        config=config,
+        driver=driver,
+        state=list(spec.state),
+        params=list(spec.params),
+        name=spec.name,
+        # With next_state (the rolled path) this is the tape generation replays
+        # to *check* that the recorded method is stationary — extraction reads
+        # one iteration and repeats it, so without it a builder whose
+        # coefficients vary with the iteration index would be frozen at its first
+        # recorded value and silently generate a different algorithm. Without
+        # next_state (the unrolled path) it is the run to generate.
+        iterates=list(spec.iterates) or None,
+        param_values=spec.param_values,
+    )
 
 
 class FomtoolsInterface(QPCanonMixin, SolverInterface):
@@ -198,38 +306,28 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
 
         qp = extract_qp_data(canon, param_bounds=opts.param_bounds, bound_margin=opts.bound_margin)
         _UNBOUNDED_PARAMS.set(qp.unbounded_params)
+        kind = fom_kind(opts.fom)
         spec = resolve_builder(opts.fom)(qp, **opts.fom_options)
+        _check_spec_matches_kind(spec, kind)
         if not spec.param_copy:
             raise ValueError(
                 "no canonical vector piece (q, l, u) depends on the CVXPY parameters; "
                 "there is nothing for the generated solver to update at runtime"
             )
+        if kind == "unrolled":
+            _check_unrolled_allowed(opts, config)
 
         solver_code_dir = Path(solver_code_dir)
-        result = fomtools_generate_code(
-            spec.verifier,
-            spec.next_state,
-            out_dir=solver_code_dir,
-            config=config,
-            driver=opts.driver,
-            state=list(spec.state),
-            params=list(spec.params),
-            name=spec.name,
-            # The recorded tape and the draw to replay it at, when the builder
-            # supplied them. This is what makes generation *check* that the
-            # recorded method is stationary instead of assuming it: extraction
-            # reads one iteration and repeats it, so a builder whose
-            # coefficients vary with the iteration index would otherwise be
-            # frozen at its first recorded value and silently generate a
-            # different algorithm.
-            iterates=list(spec.iterates) or None,
-            param_values=spec.param_values,
-        )
+        result = _run_codegen(spec, kind, solver_code_dir, config, opts.driver)
         if not result.success:
             raise RuntimeError(
                 "fomtools code generation failed to produce a verified solver:\n"
                 + result.translate.log
             )
+        # Before anything is emitted around it: the bridge and the runtime
+        # settings are chosen from the *declared* kind, so a solver that came out
+        # a different shape would be wrapped in plumbing that misdescribes it.
+        _check_ir_matches_kind(result.ir, kind)
 
         # The bridge's objective loop exists iff Canon_Params has a P member.
         has_quad_term = canon.parameter_canon.p.get("P") is not None

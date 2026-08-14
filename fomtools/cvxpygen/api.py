@@ -33,6 +33,7 @@ def generate_solver(
     driver: AgentDriver | None = None,
     param_bounds: dict | None = None,
     bound_margin: float = 1.0,
+    allow_unrolled: bool = False,
     prefix: str = "",
     wrapper: bool = True,
     enable_settings: tuple[str, ...] = (),
@@ -55,6 +56,13 @@ def generate_solver(
         Built-in FOM name (``"admm"`` — default, any QP — or ``"pdhg"`` — LPs,
         factorization-free) or a custom builder callable
         ``f(qp: QPData, **fom_options) -> FomSpec``.
+
+        A custom builder may target any of the three generation paths by
+        declaring it with :func:`~fomtools.cvxpygen.builders.fom_builder`:
+        ``"rolled"`` (the default — one stationary iteration, repeated),
+        ``"scheduled"`` (varying coefficients declared and tabulated, returning a
+        :class:`~fomtools.cvxpygen.builders.ScheduledFomSpec`), or ``"unrolled"``
+        (the whole recorded run, which also needs ``allow_unrolled=True``).
     fom_options:
         Extra keyword arguments forwarded to the FOM builder (e.g. ``rho``,
         ``alpha`` for ADMM; ``step_scale`` for PDHG).
@@ -79,6 +87,12 @@ def generate_solver(
         Mapping from CVXPY ``Parameter`` objects (or names) to ``(lb, ub)``
         used for verification sampling. Parameters without bounds fall back to
         their current value ``+/- bound_margin`` with a warning.
+    allow_unrolled:
+        Accept a FOM that generates the whole recorded run as one straight-line
+        pass. Opt-in because the emitted program grows with the horizon — large
+        for an embedded target — and because the iteration count is then fixed at
+        code-generation time, so ``cpg_set_solver_max_iter`` no longer applies.
+        Ignored by rolled and scheduled builders.
     prefix, wrapper, enable_settings:
         Forwarded to ``cvxpygen.cpg.generate_code``. ``wrapper=True`` compiles
         the Python extension module so ``problem.solve(method='CPG')`` works.
@@ -98,6 +112,7 @@ def generate_solver(
         driver=driver,
         param_bounds=param_bounds,
         bound_margin=bound_margin,
+        allow_unrolled=allow_unrolled,
     )
     with pending_options(options):
         cpg.generate_code(

@@ -1,9 +1,9 @@
 """First-order-method builders over the canonical QP form.
 
 A *builder* takes a :class:`~fomtools.cvxpygen.qpdata.QPData` snapshot and
-records one iteration of a first-order method in a fomtools
-:class:`~fomtools.verifier.Verifier`, returning a :class:`FomSpec` that the
-code generator and the C bridge consume. Built-in builders:
+records a first-order method in a fomtools :class:`~fomtools.verifier.Verifier`,
+returning a spec that the code generator and the C bridge consume. Built-in
+builders:
 
 ``admm``
     ADMM (KKT solve + projection). Default; handles any QP.
@@ -11,9 +11,37 @@ code generator and the C bridge consume. Built-in builders:
     PDHG / Chambolle-Pock (matrix-vector products only, no linear solve).
     Requires a zero quadratic term (LP).
 
-Users can pass their own builder callable ``f(qp, **fom_options) -> FomSpec``
-to ``generate_solver(fom=...)`` — this is the "define your FOM in fomtools"
+Users can pass their own builder callable ``f(qp, **fom_options) -> spec`` to
+``generate_solver(fom=...)`` — this is the "define your FOM in fomtools"
 extension point.
+
+Three generation paths
+----------------------
+A builder returns one of two spec types and declares which path it wants with
+:func:`fom_builder`, mirroring the dispatch in
+:func:`fomtools.codegen.generate.generate_code`:
+
+``"rolled"``
+    A :class:`FomSpec` with ``next_state``: one stationary iteration, which the
+    generated loop repeats ``config.termination.max_iters`` times. Pass
+    ``iterates`` too and generation *checks* that the method really is
+    stationary.
+``"unrolled"``
+    A :class:`FomSpec` with ``next_state=None`` and ``iterates``: the whole
+    recorded run, which accepts arbitrary per-iteration coefficients, a step
+    type that changes with the iteration, and anchored methods. Generation rolls
+    it back up when repeating one iteration is verified to reproduce it. The
+    horizon is baked in, so this needs ``allow_unrolled=True`` at the
+    ``generate_solver`` call.
+``"scheduled"``
+    A :class:`ScheduledFomSpec`: a build function whose varying coefficients are
+    declared as schedules and tabulated, giving one emitted block plus a table
+    whatever the horizon.
+
+The declared kind is what the cvxpygen interface reads to decide which runtime
+settings the generated solver can honestly expose, and it has to be known before
+the builder can run (cvxpygen fixes the settings struct before canonicalization
+reaches us) — hence a declaration rather than an inference from the produced IR.
 
 Canonical structure exploited throughout: the first ``n_eq`` constraint rows
 are equalities (projection onto the point ``b``) and the remaining rows are
@@ -35,10 +63,14 @@ from fomtools.cvxpygen.qpdata import QPData
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.verifier import Verifier
 
+#: The generation paths a builder may declare, as named by
+#: :func:`fomtools.codegen.generate.generate_code`.
+FOM_KINDS = ("rolled", "unrolled", "scheduled")
 
-@dataclass(frozen=True)
-class FomSpec:
-    """A recorded FOM iteration plus the layout info the C bridge needs.
+
+@dataclass(frozen=True, kw_only=True)
+class BaseFomSpec:
+    """Where the QP lives inside the FOM state — everything the C bridge needs.
 
     ``param_copy`` lists, in ``Verifier.add_param`` order (i.e. FomParams field
     order ``p0, p1, ...``), which canonical piece feeds each runtime parameter:
@@ -46,32 +78,106 @@ class FomSpec:
     or ``'u_ineq'`` (last ``n_ineq`` entries of canonical ``u``). The primal /
     dual slices locate the QP solution inside the stacked FOM state.
 
-    ``state`` and ``params`` are the explicit leaf lists passed to
-    ``extract_ir`` so that the state layout matches ``next_state`` (extraction
-    would otherwise infer the ordering from leaf-discovery order).
-
-    ``iterates`` and ``param_values`` are what turn on code generation's
-    stationarity check: the recorded tape to replay the extracted iteration
-    against, and the parameter draw to replay it at. Extraction reads *one*
-    iteration and repeats it, so without them nothing would catch a builder
-    whose coefficients vary with the iteration index — the generated solver
-    would run a different algorithm than the one recorded. Both default to
-    empty for builders that supply no tape; generation then warns, as it does
-    for any unchecked extraction.
+    Shared by both spec types so :func:`fomtools.cvxpygen.glue.emit_bridge` can
+    take either: the bridge cares only about the layout, never about which path
+    produced the solver.
     """
 
-    verifier: Verifier
-    next_state: LinearExpression
     name: str
     primal_offset: int
     primal_dim: int
     dual_offset: int
     dual_dim: int
     param_copy: tuple[str, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class FomSpec(BaseFomSpec):
+    """A recorded FOM, as a tape: the ``rolled`` and ``unrolled`` paths.
+
+    ``state`` and ``params`` are the explicit leaf lists passed to
+    ``extract_ir`` so that the state layout matches ``next_state`` (extraction
+    would otherwise infer the ordering from leaf-discovery order).
+
+    ``next_state`` is the iterate after exactly one iteration, which the
+    generated loop repeats. Leave it ``None`` and generation reads ``iterates``
+    as the whole run to emit — the unrolled path, which takes coefficients that
+    vary with the iteration index in any way at all.
+
+    ``iterates`` and ``param_values`` are what turn on code generation's
+    stationarity check when ``next_state`` is given: the recorded tape to replay
+    the extracted iteration against, and the parameter draw to replay it at.
+    Extraction reads *one* iteration and repeats it, so without them nothing
+    would catch a builder whose coefficients vary with the iteration index — the
+    generated solver would run a different algorithm than the one recorded. Both
+    default to empty for builders that supply no tape; generation then warns, as
+    it does for any unchecked extraction.
+    """
+
+    verifier: Verifier
+    next_state: LinearExpression | None
     state: tuple[LinearExpression, ...]
     params: tuple[LinearExpression, ...]
     iterates: tuple = ()
     param_values: dict | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ScheduledFomSpec(BaseFomSpec):
+    """A FOM whose varying coefficients are declared: the ``scheduled`` path.
+
+    ``build`` records **one** iteration as a function of its schedule scalars
+    and returns a :class:`fomtools.codegen.extract_scheduled.Recording`; it is
+    called several times, at different scalar values, so it must be free of side
+    effects and must build the same algorithm each time.
+
+    ``schedules`` maps each scalar's name to a callable of the **0-based**
+    iteration index, a sequence, or a
+    :class:`~fomtools.codegen.schedule.Schedule`. The tables are emitted
+    alongside the solver and read at the loop counter, so the solver stays one
+    block long however far it runs — but only as far as the tables reach, which
+    is why the interface refuses a horizon longer than they cover.
+
+    The state/parameter leaf lists live inside the ``Recording`` the build
+    function returns, so unlike :class:`FomSpec` this carries none.
+    """
+
+    build: Callable
+    schedules: dict
+
+
+def fom_builder(kind: str) -> Callable:
+    """Declare which generation path a builder's spec goes down.
+
+    Used as a decorator on a builder function::
+
+        @fom_builder("scheduled")
+        def my_fom(qp, **options) -> ScheduledFomSpec:
+            ...
+
+    An undecorated callable is read as ``"rolled"``, which is what a builder
+    returning a plain ``FomSpec`` with a ``next_state`` wants and what every
+    builder written against the older API is.
+    """
+    if kind not in FOM_KINDS:
+        raise ValueError(f"unknown FOM kind {kind!r}; choices: {list(FOM_KINDS)}")
+
+    def decorate(fn: Callable) -> Callable:
+        fn.fom_kind = kind
+        return fn
+
+    return decorate
+
+
+def fom_kind(fom: str | Callable) -> str:
+    """The generation path declared by ``fom`` (a built-in name or a callable)."""
+    kind = getattr(resolve_builder(fom), "fom_kind", "rolled")
+    if kind not in FOM_KINDS:
+        raise ValueError(
+            f"builder for {fom!r} declares unknown fom_kind {kind!r}; "
+            f"choices: {list(FOM_KINDS)}. Declare it with @fom_builder(...)."
+        )
+    return kind
 
 
 #: The canonical vector pieces a FOM consumes, in FomParams field order.
@@ -147,6 +253,7 @@ def _gate_param_values(verifier: Verifier, iterates: tuple, state: tuple, params
     )
 
 
+@fom_builder("rolled")
 def build_admm_qp(
     qp: QPData,
     *,
@@ -226,6 +333,7 @@ def build_admm_qp(
     )
 
 
+@fom_builder("rolled")
 def build_pdhg_lp(qp: QPData, *, step_scale: float = 0.9) -> FomSpec:
     """One iteration of PDHG (Chambolle-Pock) for the canonical LP.
 
@@ -289,7 +397,7 @@ def build_pdhg_lp(qp: QPData, *, step_scale: float = 0.9) -> FomSpec:
     )
 
 
-FomBuilder = Callable[..., FomSpec]
+FomBuilder = Callable[..., BaseFomSpec]
 
 BUILDERS: dict[str, FomBuilder] = {
     "admm": build_admm_qp,

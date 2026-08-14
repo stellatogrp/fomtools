@@ -10,6 +10,7 @@ of being silently frozen at its first recorded value.
 """
 
 import warnings
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -19,15 +20,19 @@ from tests.codegen.conftest import importorskip_cvxpygen  # noqa: E402
 
 importorskip_cvxpygen()
 
-from fomtools.codegen.config import CodegenConfig, TerminationSpec  # noqa: E402
+from fomtools.codegen.config import CodegenConfig, TerminationKind, TerminationSpec  # noqa: E402
 from fomtools.codegen.generate import extract_fom_ir  # noqa: E402
 from fomtools.codegen.ir import NonStationaryFOMError  # noqa: E402
 from fomtools.codegen.oracle import sample_param_values  # noqa: E402
+from fomtools.cvxpygen import interface  # noqa: E402
 from fomtools.cvxpygen.builders import (  # noqa: E402
     _GATE_ITERS,
     FomSpec,
+    ScheduledFomSpec,
     build_admm_qp,
     build_pdhg_lp,
+    fom_builder,
+    fom_kind,
 )
 from fomtools.cvxpygen.qpdata import extract_qp_data  # noqa: E402
 from fomtools.linearexpression import stack  # noqa: E402
@@ -140,11 +145,13 @@ def test_admm_ir_is_one_solve_plus_one_projection():
 # --- a builder that is not stationary is now caught --------------------------
 
 
-def _decaying_step_spec(qp, decay: bool):
+def _decaying_step_spec(qp, decay: bool, with_next_state: bool = True):
     """A custom builder: projected gradient whose step size decays with ``k``.
 
     With ``decay=False`` the identical code records a stationary method, so the
     pair pins that the check fires on the varying coefficient and nothing else.
+    With ``with_next_state=False`` the same tape selects the unrolled path, where
+    a varying coefficient is generated as recorded rather than rejected.
     """
     n = qp.n
     t = 0.5
@@ -164,7 +171,7 @@ def _decaying_step_spec(qp, decay: bool):
     iterates = tuple(groups)
     return FomSpec(
         verifier=v,
-        next_state=stack(groups[0]),
+        next_state=stack(groups[0]) if with_next_state else None,
         name="decaying",
         primal_offset=0,
         primal_dim=n,
@@ -186,6 +193,219 @@ def test_gate_catches_a_non_stationary_custom_builder():
 def test_gate_passes_the_same_builder_held_stationary():
     ir = _extract(_decaying_step_spec(_admm_qp(), decay=False))
     assert len(ir.body) == 1
+
+
+# --- the three generation paths ---------------------------------------------
+
+
+@fom_builder("rolled")
+def _rolled_builder(qp, **_):
+    return _decaying_step_spec(qp, decay=False)
+
+
+@fom_builder("unrolled")
+def _unrolled_builder(qp, decay=True, **_):
+    return _decaying_step_spec(qp, decay=decay, with_next_state=False)
+
+
+@fom_builder("scheduled")
+def _scheduled_builder(qp, **_):
+    """Projected gradient whose relaxation is declared as a table, not recorded.
+
+    ``theta`` scales the whole linear operator, so every coefficient block is
+    affine in it — what :mod:`fomtools.codegen.extract_scheduled` recovers by
+    probing the build function at several values.
+    """
+    n = qp.n
+    t = 0.5
+    W = np.eye(n) - t * qp.P.toarray()
+    lb, ub = qp.bounds["q"]
+
+    def build(theta):
+        from fomtools.codegen.extract_scheduled import Recording
+
+        v = Verifier(method="simulator", obbt_solver=None)
+        q_e = v.add_param(n, lb=lb, ub=ub)
+        x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+        x_next = v.step.relu(theta * (W @ x - t * q_e))
+        return Recording(v, next_state=x_next, state=[x], params=[q_e])
+
+    return ScheduledFomSpec(
+        build=build,
+        schedules={"theta": lambda k: 1.0 - 0.5 / (k + 2.0)},
+        name="scheduled_pg",
+        primal_offset=0,
+        primal_dim=n,
+        dual_offset=0,
+        dual_dim=0,
+        param_copy=("q",),
+    )
+
+
+@pytest.fixture
+def captured_codegen(monkeypatch):
+    """Replace the code generator with real *extraction* plus a call recorder.
+
+    Runs the same three-way dispatch ``generate_code`` would (``extract_fom_ir``
+    is what it calls) without scaffolding a directory or invoking an agent, so a
+    test sees both which arguments the interface sent and what IR came back.
+    """
+    calls = []
+
+    def fake_generate_code(verifier, next_state=None, out_dir=None, **kw):
+        calls.append({"verifier": verifier, "next_state": next_state, **kw})
+        ir = extract_fom_ir(
+            verifier,
+            next_state,
+            config=kw.get("config"),
+            state=kw.get("state"),
+            params=kw.get("params"),
+            name=kw.get("name", "fom"),
+            schedules=kw.get("schedules"),
+            iterates=kw.get("iterates"),
+            param_values=kw.get("param_values"),
+        )
+        return SimpleNamespace(ir=ir, success=True, translate=SimpleNamespace(log=""))
+
+    monkeypatch.setattr(interface, "fomtools_generate_code", fake_generate_code)
+    return calls
+
+
+def _dispatch(spec, kind, tmp_path, max_iters=20):
+    return interface._run_codegen(
+        spec,
+        kind,
+        tmp_path,
+        CodegenConfig(termination=TerminationSpec(max_iters=max_iters)),
+        driver=None,
+    )
+
+
+def test_rolled_builder_generates_one_repeated_iteration(captured_codegen, tmp_path):
+    result = _dispatch(_rolled_builder(_admm_qp()), "rolled", tmp_path)
+
+    call = captured_codegen[0]
+    assert call["next_state"] is not None
+    assert call["iterates"] is not None, "the tape rides along as the stationarity check"
+    assert result.ir.unrolled is False
+    assert len(result.ir.body) == 1
+
+
+def test_unrolled_builder_generates_the_recorded_run(captured_codegen, tmp_path):
+    result = _dispatch(_unrolled_builder(_admm_qp()), "unrolled", tmp_path)
+
+    call = captured_codegen[0]
+    assert call["next_state"] is None, "no next_state is what selects the unrolled path"
+    assert len(call["iterates"]) == _GATE_ITERS
+    assert result.ir.unrolled is True
+    assert len(result.ir.body) == _GATE_ITERS
+
+
+def test_a_stationary_unrolled_recording_rolls_back_up(captured_codegen, tmp_path):
+    """Rolling is a size optimization generation verifies before applying."""
+    result = _dispatch(_unrolled_builder(_admm_qp(), decay=False), "unrolled", tmp_path)
+
+    assert result.ir.unrolled is False
+    assert len(result.ir.body) == 1
+    assert result.ir.termination.max_iters == _GATE_ITERS, "the recorded horizon is kept"
+
+
+def test_scheduled_builder_generates_one_block_plus_a_table(captured_codegen, tmp_path):
+    spec = _scheduled_builder(_admm_qp())
+    result = _dispatch(spec, "scheduled", tmp_path, max_iters=20)
+
+    call = captured_codegen[0]
+    assert call["verifier"] is spec.build, "the build function goes in, not a verifier"
+    assert call["schedules"] == spec.schedules
+    assert set(result.ir.schedules) == {"theta"}
+    assert len(result.ir.schedules["theta"]) == 20
+    assert result.ir.unrolled is False
+    assert len(result.ir.body) == 1, "one block whatever the horizon"
+
+
+# --- what the declared kind must agree with ---------------------------------
+
+
+def test_undecorated_builders_are_rolled():
+    assert fom_kind(lambda qp: None) == "rolled"
+    assert fom_kind("admm") == "rolled"
+    assert fom_kind(_scheduled_builder) == "scheduled"
+    assert fom_kind(_unrolled_builder) == "unrolled"
+
+
+def test_fom_builder_rejects_an_unknown_kind():
+    with pytest.raises(ValueError, match="unknown FOM kind"):
+        fom_builder("halfway")
+
+
+def test_scheduled_kind_requires_a_scheduled_spec():
+    with pytest.raises(TypeError, match="needs a ScheduledFomSpec"):
+        interface._check_spec_matches_kind(_rolled_builder(_admm_qp()), "scheduled")
+
+
+def test_a_scheduled_spec_must_declare_itself():
+    with pytest.raises(TypeError, match="@fom_builder"):
+        interface._check_spec_matches_kind(_scheduled_builder(_admm_qp()), "rolled")
+
+
+def test_rolled_kind_requires_a_next_state():
+    spec = _decaying_step_spec(_admm_qp(), decay=False, with_next_state=False)
+    with pytest.raises(ValueError, match="no next_state"):
+        interface._check_spec_matches_kind(spec, "rolled")
+
+
+def test_unrolled_kind_rejects_a_next_state():
+    """The two select different paths, so carrying both is ambiguous, not extra."""
+    spec = _decaying_step_spec(_admm_qp(), decay=True, with_next_state=True)
+    with pytest.raises(ValueError, match="also set next_state"):
+        interface._check_spec_matches_kind(spec, "unrolled")
+
+
+def test_unrolled_is_opt_in():
+    opts = interface.FomtoolsOptions(fom=_unrolled_builder)
+    with pytest.raises(ValueError, match="allow_unrolled=True"):
+        interface._check_unrolled_allowed(opts, CodegenConfig())
+
+    allowed = interface.FomtoolsOptions(fom=_unrolled_builder, allow_unrolled=True)
+    interface._check_unrolled_allowed(allowed, CodegenConfig())  # no raise
+
+
+def test_unrolled_rejects_tolerance_termination():
+    """A single pass has no per-iteration residual for cpg_set_solver_tol to act on."""
+    opts = interface.FomtoolsOptions(fom=_unrolled_builder, allow_unrolled=True)
+    config = CodegenConfig(
+        termination=TerminationSpec(kind=TerminationKind.INF_NORM_CHANGE, max_iters=50, tol=1e-9)
+    )
+    with pytest.raises(ValueError, match="cannot be combined with an unrolled FOM"):
+        interface._check_unrolled_allowed(opts, config)
+
+
+def test_rolled_path_still_accepts_tolerance_termination(captured_codegen, tmp_path):
+    """The guard is specific to the unrolled path; a rolled loop can still early-exit."""
+    config = CodegenConfig(
+        termination=TerminationSpec(kind=TerminationKind.INF_NORM_CHANGE, max_iters=50, tol=1e-9)
+    )
+    result = interface._run_codegen(
+        _rolled_builder(_admm_qp()), "rolled", tmp_path, config, driver=None
+    )
+    assert result.ir.termination.kind == TerminationKind.INF_NORM_CHANGE
+    assert result.ir.termination.tol == 1e-9
+
+
+@pytest.mark.parametrize(
+    "kind,schedules,unrolled",
+    [("rolled", {}, True), ("scheduled", {}, False), ("rolled", {"a": [1.0]}, False)],
+)
+def test_a_solver_of_the_wrong_shape_is_refused(kind, schedules, unrolled):
+    """Defensive: the settings and bridge are chosen from the declared kind."""
+    ir = SimpleNamespace(schedules=schedules, unrolled=unrolled)
+    with pytest.raises(RuntimeError, match="generation produced a"):
+        interface._check_ir_matches_kind(ir, kind)
+
+
+def test_an_unrolled_declaration_may_roll_up():
+    """The one mismatch that is expected, so it must not raise."""
+    interface._check_ir_matches_kind(SimpleNamespace(schedules={}, unrolled=False), "unrolled")
 
 
 # --- through the real front end ---------------------------------------------
