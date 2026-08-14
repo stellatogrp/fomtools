@@ -7,6 +7,9 @@ builders:
 
 ``admm``
     ADMM (KKT solve + projection). Default; handles any QP.
+``relaxed_admm``
+    The same, with an over-relaxation that varies with the iteration index —
+    the built-in that goes down the *scheduled* path.
 ``pdhg``
     PDHG / Chambolle-Pock (matrix-vector products only, no linear solve).
     Requires a zero quadratic term (LP).
@@ -58,6 +61,7 @@ from typing import Callable
 import numpy as np
 import scipy.sparse as spa
 
+from fomtools.codegen.extract_scheduled import Recording
 from fomtools.codegen.oracle import sample_param_values
 from fomtools.cvxpygen.qpdata import QPData
 from fomtools.linearexpression import LinearExpression, stack
@@ -191,6 +195,15 @@ PIECES = ("q", "b", "u_ineq")
 _GATE_ITERS = 3
 
 
+def _param_copy(qp: QPData) -> tuple[str, ...]:
+    """Which canonical pieces become runtime parameters, in FomParams order.
+
+    Available without recording anything, which the scheduled path needs: its
+    spec is built before the build function ever runs.
+    """
+    return tuple(piece for piece in PIECES if piece in qp.param_dependent)
+
+
 def _add_params(v: Verifier, qp: QPData) -> tuple[dict, tuple[str, ...]]:
     """Add runtime parameters for the parametric pieces; bake constants.
 
@@ -200,15 +213,16 @@ def _add_params(v: Verifier, qp: QPData) -> tuple[dict, tuple[str, ...]]:
     """
     values = {"q": qp.q, "b": qp.b, "u_ineq": qp.u_ineq}
     exprs: dict[str, LinearExpression | np.ndarray] = {}
-    param_copy: list[str] = []
     for piece in PIECES:
         if piece in qp.param_dependent:
             lb, ub = qp.bounds[piece]
             exprs[piece] = v.add_param(values[piece].size, lb=lb, ub=ub)
-            param_copy.append(piece)
         else:
             exprs[piece] = values[piece]
-    return exprs, tuple(param_copy)
+    # The add order above is PIECES order, which is what _param_copy reports;
+    # sharing it keeps the FomParams field order and the bridge's copies from
+    # drifting apart.
+    return exprs, _param_copy(qp)
 
 
 def _const_like(template: LinearExpression, value: np.ndarray) -> LinearExpression:
@@ -253,23 +267,12 @@ def _gate_param_values(verifier: Verifier, iterates: tuple, state: tuple, params
     )
 
 
-@fom_builder("rolled")
-def build_admm_qp(
-    qp: QPData,
-    *,
-    rho: float = 0.1,
-    sigma: float = 1e-6,
-    alpha: float = 1.6,
-    rho_eq_scale: float = 1e3,
-) -> FomSpec:
-    """One iteration of ADMM for the canonical QP (KKT solve + projection).
+def _admm_constants(qp: QPData, rho: float, sigma: float, rho_eq_scale: float) -> tuple:
+    """The fixed matrices one ADMM iteration needs: ``(R, Rinv, kkt)``.
 
-    State is ``(x, z, y)`` (primal, auxiliary, dual). The KKT matrix
-    ``[[P + sigma I, A'], [A, -diag(1/rho_vec)]]`` is constant, so its
-    factorization is computed at code-generation time; ``rho`` is boosted by
-    ``rho_eq_scale`` on equality rows (the parameter defaults follow OSQP).
-    The dual iterate ``y`` is exactly the dual of the canonical form, so
-    CVXPY's duals are recovered from it directly.
+    ``rho`` is boosted by ``rho_eq_scale`` on the equality rows (the defaults
+    follow OSQP). The KKT matrix does not depend on the CVXPY parameters, so its
+    factorization is computed once at code-generation time.
     """
     n, m, n_eq = qp.n, qp.m, qp.n_eq
     if m == 0:
@@ -277,18 +280,22 @@ def build_admm_qp(
 
     rho_vec = np.full(m, float(rho))
     rho_vec[:n_eq] *= float(rho_eq_scale)
-    rho_inv = 1.0 / rho_vec
-    Rinv = spa.diags(rho_inv)
-    R = spa.diags(rho_vec)
+    Rinv = spa.diags(1.0 / rho_vec)
     kkt = spa.bmat([[qp.P + sigma * spa.eye(n), qp.A.T], [qp.A, -Rinv]], format="csc")
+    return spa.diags(rho_vec), Rinv, kkt
 
-    v = Verifier(method="simulator", obbt_solver=None)
-    exprs, param_copy = _add_params(v, qp)
+
+def _admm_step(v: Verifier, qp: QPData, exprs: dict, consts: tuple, sigma: float, alpha: float):
+    """The ADMM operator ``T: (x, z, y) -> (x, z, y)``, recorded on ``v``.
+
+    Factored out so the plain and anchored builders drive exactly the same
+    operator — the anchored one is this ``T`` under a Halpern average, and any
+    difference between them would otherwise be a difference in the method rather
+    than in the acceleration.
+    """
+    n, m, n_eq = qp.n, qp.m, qp.n_eq
+    R, Rinv, kkt = consts
     q_e, b_e, u_e = exprs["q"], exprs["b"], exprs["u_ineq"]
-
-    x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
-    z = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
-    y = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
 
     def one_iteration(x, z, y):
         rhs = stack([sigma * x - q_e, z - Rinv @ y])
@@ -314,6 +321,38 @@ def build_admm_qp(
         y_next = y + R @ (alpha * z_tilde + (1.0 - alpha) * z - z_next)
         return x_next, z_next, y_next
 
+    return one_iteration
+
+
+@fom_builder("rolled")
+def build_admm_qp(
+    qp: QPData,
+    *,
+    rho: float = 0.1,
+    sigma: float = 1e-6,
+    alpha: float = 1.6,
+    rho_eq_scale: float = 1e3,
+) -> FomSpec:
+    """One iteration of ADMM for the canonical QP (KKT solve + projection).
+
+    State is ``(x, z, y)`` (primal, auxiliary, dual). The KKT matrix
+    ``[[P + sigma I, A'], [A, -diag(1/rho_vec)]]`` is constant, so its
+    factorization is computed at code-generation time; ``rho`` is boosted by
+    ``rho_eq_scale`` on equality rows (the parameter defaults follow OSQP).
+    The dual iterate ``y`` is exactly the dual of the canonical form, so
+    CVXPY's duals are recovered from it directly.
+    """
+    n, m = qp.n, qp.m
+    consts = _admm_constants(qp, rho, sigma, rho_eq_scale)
+
+    v = Verifier(method="simulator", obbt_solver=None)
+    exprs, param_copy = _add_params(v, qp)
+
+    x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    z = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
+    y = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
+
+    one_iteration = _admm_step(v, qp, exprs, consts, sigma, alpha)
     state = (x, z, y)
     next_state, iterates = _record_iterations(one_iteration, state)
     params = tuple(exprs[piece] for piece in param_copy)
@@ -330,6 +369,95 @@ def build_admm_qp(
         params=params,
         iterates=iterates,
         param_values=_gate_param_values(v, iterates, state, params),
+    )
+
+
+def _relaxation_ramp(start: float, final: float, ramp_iters: int) -> Callable[[int], float]:
+    """A relaxation that moves linearly from ``start`` to ``final``, then holds.
+
+    Indexed by the **0-based** loop counter, as the emitted accessor is.
+    """
+
+    def relaxation(k: int) -> float:
+        progress = 1.0 if ramp_iters <= 0 else min(1.0, k / float(ramp_iters))
+        return start + (final - start) * progress
+
+    return relaxation
+
+
+@fom_builder("scheduled")
+def build_relaxed_admm_qp(
+    qp: QPData,
+    *,
+    rho: float = 0.1,
+    sigma: float = 1e-6,
+    rho_eq_scale: float = 1e3,
+    alpha_start: float = 1.0,
+    alpha_final: float = 1.9,
+    ramp_iters: int = 50,
+) -> ScheduledFomSpec:
+    r"""ADMM whose over-relaxation ``alpha_k`` varies with the iteration index.
+
+    The operator is exactly :func:`build_admm_qp`'s; the only difference is that
+    its relaxation is a schedule instead of a constant, ramping linearly from
+    ``alpha_start`` to ``alpha_final`` over ``ramp_iters`` iterations and holding
+    there. Douglas-Rachford converges for any relaxation sequence inside
+    ``(0, 2)`` that stays away from the endpoints (Krasnoselskii-Mann with
+    ``sum_k alpha_k (2 - alpha_k) = inf``), which the defaults satisfy, so this
+    is safe on any QP the plain builder handles.
+
+    This is the built-in that exercises the *scheduled* path, and it is the
+    honest reason to reach for it: ``alpha_k`` enters every recorded expression
+    linearly, so extraction recovers each coefficient block as an affine
+    function of it and emits one block plus a table read at the loop counter.
+    The solver is the same size and carries the same three state slots as the
+    plain builder however long it runs, and the relaxation is *not* frozen at
+    whatever value the first iteration happened to use — which is what would
+    happen if a varying coefficient were recorded down the rolled path.
+
+    Ramping is a heuristic, not an acceleration guarantee: being conservative
+    while the active set is still moving and aggressive afterwards helps on some
+    problems and not others. Tune it, or pass ``alpha_start == alpha_final`` for
+    a constant relaxation.
+    """
+    for name, value in (("alpha_start", alpha_start), ("alpha_final", alpha_final)):
+        if not 0.0 < value < 2.0:
+            raise ValueError(
+                f"{name}={value} is outside (0, 2), where the relaxed ADMM iteration "
+                "is no longer guaranteed to converge"
+            )
+
+    n, m = qp.n, qp.m
+    consts = _admm_constants(qp, rho, sigma, rho_eq_scale)
+    param_copy = _param_copy(qp)
+
+    def build(relaxation):
+        v = Verifier(method="simulator", obbt_solver=None)
+        exprs, _ = _add_params(v, qp)
+
+        x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+        z = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
+        y = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
+
+        # The recorded relaxation is the probe scalar rather than a constant;
+        # everything else is the plain builder's iteration, unchanged.
+        tx, tz, ty = _admm_step(v, qp, exprs, consts, sigma, relaxation)(x, z, y)
+        return Recording(
+            v,
+            next_state=[tx, tz, ty],
+            state=[x, z, y],
+            params=[exprs[piece] for piece in param_copy],
+        )
+
+    return ScheduledFomSpec(
+        build=build,
+        schedules={"relaxation": _relaxation_ramp(alpha_start, alpha_final, ramp_iters)},
+        name="cvxpygen_relaxed_admm",
+        primal_offset=0,
+        primal_dim=n,
+        dual_offset=n + m,
+        dual_dim=m,
+        param_copy=param_copy,
     )
 
 
@@ -401,6 +529,7 @@ FomBuilder = Callable[..., BaseFomSpec]
 
 BUILDERS: dict[str, FomBuilder] = {
     "admm": build_admm_qp,
+    "relaxed_admm": build_relaxed_admm_qp,
     "pdhg": build_pdhg_lp,
 }
 
