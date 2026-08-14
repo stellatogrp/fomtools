@@ -215,6 +215,15 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
             state=list(spec.state),
             params=list(spec.params),
             name=spec.name,
+            # The recorded tape and the draw to replay it at, when the builder
+            # supplied them. This is what makes generation *check* that the
+            # recorded method is stationary instead of assuming it: extraction
+            # reads one iteration and repeats it, so a builder whose
+            # coefficients vary with the iteration index would otherwise be
+            # frozen at its first recorded value and silently generate a
+            # different algorithm.
+            iterates=list(spec.iterates) or None,
+            param_values=spec.param_values,
         )
         if not result.success:
             raise RuntimeError(

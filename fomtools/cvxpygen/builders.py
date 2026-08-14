@@ -30,6 +30,7 @@ from typing import Callable
 import numpy as np
 import scipy.sparse as spa
 
+from fomtools.codegen.oracle import sample_param_values
 from fomtools.cvxpygen.qpdata import QPData
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.verifier import Verifier
@@ -48,6 +49,15 @@ class FomSpec:
     ``state`` and ``params`` are the explicit leaf lists passed to
     ``extract_ir`` so that the state layout matches ``next_state`` (extraction
     would otherwise infer the ordering from leaf-discovery order).
+
+    ``iterates`` and ``param_values`` are what turn on code generation's
+    stationarity check: the recorded tape to replay the extracted iteration
+    against, and the parameter draw to replay it at. Extraction reads *one*
+    iteration and repeats it, so without them nothing would catch a builder
+    whose coefficients vary with the iteration index — the generated solver
+    would run a different algorithm than the one recorded. Both default to
+    empty for builders that supply no tape; generation then warns, as it does
+    for any unchecked extraction.
     """
 
     verifier: Verifier
@@ -60,10 +70,19 @@ class FomSpec:
     param_copy: tuple[str, ...]
     state: tuple[LinearExpression, ...]
     params: tuple[LinearExpression, ...]
+    iterates: tuple = ()
+    param_values: dict | None = None
 
 
 #: The canonical vector pieces a FOM consumes, in FomParams field order.
 PIECES = ("q", "b", "u_ineq")
+
+#: Iterations each built-in builder records so generation can check the method
+#: is stationary. One is not enough: a coefficient that varies with the
+#: iteration index can agree with a stationary method on the first iteration
+#: alone — that is exactly how FISTA's ``gamma_1 = 0`` makes a single recorded
+#: iteration indistinguishable from plain ISTA.
+_GATE_ITERS = 3
 
 
 def _add_params(v: Verifier, qp: QPData) -> tuple[dict, tuple[str, ...]]:
@@ -89,6 +108,43 @@ def _add_params(v: Verifier, qp: QPData) -> tuple[dict, tuple[str, ...]]:
 def _const_like(template: LinearExpression, value: np.ndarray) -> LinearExpression:
     """A constant vector as a LinearExpression (zero coefficients + offset)."""
     return 0.0 * template + value
+
+
+def _record_iterations(one_iteration: Callable, state: tuple) -> tuple:
+    """Record :data:`_GATE_ITERS` successive iterations of ``one_iteration``.
+
+    Returns ``(next_state, iterates)``: the iterate after exactly one iteration,
+    which is what the rolled extraction reads, and the tape it is checked
+    against. The tape holds the recorded iterations *only* — no leading initial
+    iterate. The rolled check reads it through
+    :func:`~fomtools.codegen.oracle.run_recorded_tape`, which takes every entry
+    as an iteration rather than recognizing the leading-initial-iterate
+    convention that :func:`~fomtools.codegen.extract.normalize_iterates`
+    implements for the unrolled path.
+
+    Recording past the first iteration costs a little simulator time at
+    generation and nothing in the emitted solver: extraction takes the
+    dependency cone of ``next_state``, so the later steps fall outside it.
+    """
+    groups: list[list[LinearExpression]] = []
+    current = tuple(state)
+    for _ in range(_GATE_ITERS):
+        current = tuple(one_iteration(*current))
+        groups.append(list(current))
+    return stack(groups[0]), tuple(groups)
+
+
+def _gate_param_values(verifier: Verifier, iterates: tuple, state: tuple, params: tuple) -> dict:
+    """The parameter draw the stationarity check replays the tape at.
+
+    A draw inside each declared box rather than its midpoint: the boxes here are
+    often symmetric, and a zero parameter makes a soft-threshold or projection
+    step trivial, hiding exactly the disagreement the check exists to find (see
+    :func:`~fomtools.codegen.oracle.sample_param_values`).
+    """
+    return sample_param_values(
+        verifier, list(iterates), state=list(state), params=list(params), seed=0
+    )
 
 
 def build_admm_qp(
@@ -127,29 +183,33 @@ def build_admm_qp(
     z = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
     y = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
 
-    rhs = stack([sigma * x - q_e, z - Rinv @ y])
-    sol = v.step.implicit_linear(rhs, output_mat=kkt)
-    x_tilde = sol[:n]
-    nu = sol[n : n + m]
+    def one_iteration(x, z, y):
+        rhs = stack([sigma * x - q_e, z - Rinv @ y])
+        sol = v.step.implicit_linear(rhs, output_mat=kkt)
+        x_tilde = sol[:n]
+        nu = sol[n : n + m]
 
-    z_tilde = z + Rinv @ (nu - y)
-    proj_arg = alpha * z_tilde + (1.0 - alpha) * z + Rinv @ y
+        z_tilde = z + Rinv @ (nu - y)
+        proj_arg = alpha * z_tilde + (1.0 - alpha) * z + Rinv @ y
 
-    # Projection onto the constraint set, row group by row group: equality rows
-    # project onto the point b; inequality rows onto (-inf, u].
-    parts: list[LinearExpression] = []
-    if n_eq > 0:
-        b_expr = b_e if isinstance(b_e, LinearExpression) else _const_like(proj_arg[:n_eq], b_e)
-        parts.append(b_expr)
-    if m - n_eq > 0:
-        w = proj_arg[n_eq:m]
-        parts.append(w - v.step.relu(w - u_e))
-    z_next = stack(parts)
+        # Projection onto the constraint set, row group by row group: equality
+        # rows project onto the point b; inequality rows onto (-inf, u].
+        parts: list[LinearExpression] = []
+        if n_eq > 0:
+            b_expr = b_e if isinstance(b_e, LinearExpression) else _const_like(proj_arg[:n_eq], b_e)
+            parts.append(b_expr)
+        if m - n_eq > 0:
+            w = proj_arg[n_eq:m]
+            parts.append(w - v.step.relu(w - u_e))
+        z_next = stack(parts)
 
-    x_next = alpha * x_tilde + (1.0 - alpha) * x
-    y_next = y + R @ (alpha * z_tilde + (1.0 - alpha) * z - z_next)
+        x_next = alpha * x_tilde + (1.0 - alpha) * x
+        y_next = y + R @ (alpha * z_tilde + (1.0 - alpha) * z - z_next)
+        return x_next, z_next, y_next
 
-    next_state = stack([x_next, z_next, y_next])
+    state = (x, z, y)
+    next_state, iterates = _record_iterations(one_iteration, state)
+    params = tuple(exprs[piece] for piece in param_copy)
     return FomSpec(
         verifier=v,
         next_state=next_state,
@@ -159,8 +219,10 @@ def build_admm_qp(
         dual_offset=n + m,
         dual_dim=m,
         param_copy=param_copy,
-        state=(x, z, y),
-        params=tuple(exprs[piece] for piece in param_copy),
+        state=state,
+        params=params,
+        iterates=iterates,
+        param_values=_gate_param_values(v, iterates, state, params),
     )
 
 
@@ -192,22 +254,25 @@ def build_pdhg_lp(qp: QPData, *, step_scale: float = 0.9) -> FomSpec:
     x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
     y = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
 
-    # Primal step: the prox of a linear objective is a shift.
-    x_next = x - tau * (q_e + qp.A.T @ y)
+    def one_iteration(x, y):
+        # Primal step: the prox of a linear objective is a shift.
+        x_next = x - tau * (q_e + qp.A.T @ y)
 
-    # Dual step via Moreau: y+ = v - sig * proj_[l,u](v / sig) with
-    # v = y + sig * A (2 x+ - x), split into equality / inequality rows.
-    v_arg = y + sig * (qp.A @ (2.0 * x_next - x))
-    parts: list[LinearExpression] = []
-    if n_eq > 0:
-        parts.append(v_arg[:n_eq] - sig * b_e)
-    if m - n_eq > 0:
-        v_in = v_arg[n_eq:m]
-        # proj onto (-inf, u]: w - relu(w - u)  =>  y+ = sig * relu(v/sig - u).
-        parts.append(sig * v.step.relu((1.0 / sig) * v_in - u_e))
-    y_next = stack(parts)
+        # Dual step via Moreau: y+ = v - sig * proj_[l,u](v / sig) with
+        # v = y + sig * A (2 x+ - x), split into equality / inequality rows.
+        v_arg = y + sig * (qp.A @ (2.0 * x_next - x))
+        parts: list[LinearExpression] = []
+        if n_eq > 0:
+            parts.append(v_arg[:n_eq] - sig * b_e)
+        if m - n_eq > 0:
+            v_in = v_arg[n_eq:m]
+            # proj onto (-inf, u]: w - relu(w - u) => y+ = sig * relu(v/sig - u).
+            parts.append(sig * v.step.relu((1.0 / sig) * v_in - u_e))
+        return x_next, stack(parts)
 
-    next_state = stack([x_next, y_next])
+    state = (x, y)
+    next_state, iterates = _record_iterations(one_iteration, state)
+    params = tuple(exprs[piece] for piece in param_copy)
     return FomSpec(
         verifier=v,
         next_state=next_state,
@@ -217,8 +282,10 @@ def build_pdhg_lp(qp: QPData, *, step_scale: float = 0.9) -> FomSpec:
         dual_offset=n,
         dual_dim=m,
         param_copy=param_copy,
-        state=(x, y),
-        params=tuple(exprs[piece] for piece in param_copy),
+        state=state,
+        params=params,
+        iterates=iterates,
+        param_values=_gate_param_values(v, iterates, state, params),
     )
 
 
