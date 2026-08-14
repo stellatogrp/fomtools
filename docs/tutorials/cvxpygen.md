@@ -70,14 +70,80 @@ Note: use a *relative* `code_dir` — CVXPYgen registers the wrapper by importin
   the KKT matrix is computed at generation time; each iteration is a
   triangular solve plus a projection. Works for any QP. Options (via
   `fom_options=...`): `rho`, `sigma`, `alpha`, `rho_eq_scale`.
+- `fom="relaxed_admm"`: the same operator with an over-relaxation that *varies
+  with the iteration index*, ramping from `alpha_start` to `alpha_final` over
+  `ramp_iters`. Generated down the scheduled path below. Ramping is a
+  heuristic, not an acceleration guarantee — it helps on some problems and not
+  others — but any sequence inside `(0, 2)` converges, and the solver is the
+  same size and carries the same state as the plain builder.
 - `fom="pdhg"`: PDHG / Chambolle–Pock. Matrix-vector products only — no
   factorization — for problems with a zero quadratic term (LPs). Option:
   `step_scale`.
-- **Custom**: pass any callable `f(qp, **fom_options) -> FomSpec`. It receives
+- **Custom**: pass any callable `f(qp, **fom_options) -> spec`. It receives
   a `fomtools.cvxpygen.qpdata.QPData` (canonical `P, q, A`, equality values
   `b`, inequality bounds `u_ineq`, and which pieces are parametric, with
-  propagated bounds) and records one iteration in a `Verifier` — see
-  `fomtools/cvxpygen/builders.py` for the two built-ins as templates.
+  propagated bounds) and records the method in a `Verifier` — see
+  `fomtools/cvxpygen/builders.py` for the built-ins as templates.
+
+## The three generation paths
+
+A builder declares which path it wants with `@fom_builder(...)`, mirroring the
+dispatch in [`generate_code`](codegen.md). Undecorated callables are `rolled`,
+so builders written against the earlier API keep working unchanged.
+
+| Path | Builder returns | Emits | Runtime settings |
+|---|---|---|---|
+| `rolled` (default) | `FomSpec` with `next_state` | one iteration, repeated `max_iters` times | `max_iter`, `tol`, `check_termination` |
+| `scheduled` | `ScheduledFomSpec` | one iteration plus a table per varying coefficient | same, with `max_iter` **capped** at the table length |
+| `unrolled` | `FomSpec` with `next_state=None` and `iterates` | the whole recorded run as one pass | none |
+
+**Rolled** is the stationary case: the builder records one iteration and the
+generated loop repeats it. Pass `iterates` (the successive recorded iterates)
+and `param_values` as well, and generation *checks* that repeating that one
+iteration really does reproduce the recording — both built-in stationary
+builders do, so a coefficient that secretly varied with `k` is caught rather
+than silently frozen at its first recorded value.
+
+**Scheduled** is for a coefficient that varies on purpose. The builder becomes a
+function of its varying scalars, extraction probes it at several values and
+recovers each coefficient block as an affine function of them, and the scalars
+are emitted as tables read at the loop counter. The solver stays one block long
+however far it runs. Two restrictions are worth knowing before you write one:
+the scalar must enter the recorded expressions **linearly**, and it may not
+scale a **constant offset** — so a method that pulls each iterate toward a fixed
+anchor cannot be expressed this way whenever a canonical constant (for instance
+a non-parametric equality right-hand side) reaches the state update.
+
+**Unrolled** generates the run exactly as recorded, which accepts arbitrary
+per-iteration coefficients, a step type that changes with the iteration, and
+anchored methods. It needs `allow_unrolled=True`, because the emitted program
+grows with the horizon — large for an embedded target — and the iteration count
+is fixed at generation time. Generation rolls the run back up automatically when
+repeating one iteration is *verified* to reproduce it, so writing a stationary
+method as a loop costs nothing.
+
+```python
+from fomtools.codegen.extract_scheduled import Recording
+from fomtools.cvxpygen.builders import ScheduledFomSpec, fom_builder
+
+@fom_builder("scheduled")
+def my_fom(qp, **options):
+    def build(step):                     # one keyword per schedule
+        ...                              # record one iteration using `step`
+        return Recording(v, next_state=..., state=..., params=...)
+
+    return ScheduledFomSpec(
+        build=build,
+        schedules={"step": lambda k: 1.0 / (k + 2.0)},   # 0-based counter
+        name="my_fom", primal_offset=0, primal_dim=qp.n,
+        dual_offset=qp.n + qp.m, dual_dim=qp.m,
+        param_copy=("q",),
+    )
+```
+
+`build_relaxed_admm_qp` in `fomtools/cvxpygen/builders.py` is the same thing
+filled in, and `tests/codegen/test_cvxpygen_scheduled.py` shows how to check
+such a builder against CVXPY without generating any C.
 
 ## Parameter bounds
 
@@ -100,34 +166,49 @@ out_qp/
 │       ├── src/fom_solver.c       # the verified FOM loop
 │       ├── src/fom_{data,ops,linsolve}.c
 │       ├── src/cpg_fom_bridge.c   # Canon_Params -> FomParams -> fom_solve
-│       └── test/                  # spec + verification harness
+│       ├── SPEC.md, spec.json, data.npz   # the IR the agent worked from
+│       └── test/                  # verification harness
 └── ...
 ```
 
 In C, `cpg_update_<param>(...)` then `cpg_solve()` runs the canonicalization
 update and the embedded FOM; results land in `CPG_Result` as with any CVXPYgen
-solver. `cpg_set_solver_max_iter(...)` and `cpg_set_solver_tol(...)` adjust
-the FOM termination at runtime; the check interval
-(`TerminationSpec(check_termination=...)`: check every N iterations,
-0 = disabled) is fixed at code-generation time.
+solver. The reported residuals are the OSQP-style
+`||Ax - clamp(Ax, l, u)||_inf` (primal) and `||Px + q + A'y||_inf` (dual),
+computed by the bridge from the canonical data and the returned solution.
 
-## Limitations (v1)
+### Runtime settings
+
+Which `cpg_set_solver_*` functions exist depends on the generation path, because
+a solver only advertises settings it can actually honor:
+
+- **Rolled**: `cpg_set_solver_max_iter`, `cpg_set_solver_tol` and
+  `cpg_set_solver_check_termination` (check every N iterations, 0 = disabled).
+  All three are read by the bridge on every solve, so they can be tuned without
+  regenerating.
+- **Scheduled**: the same three, except that `max_iter` is capped in the bridge
+  at the length of the coefficient tables. Past their end the emitted accessors
+  clamp to the last entry, which would freeze the coefficients rather than
+  continue the method, so raising `max_iter` beyond the generated horizon has no
+  effect instead of quietly running a different algorithm.
+- **Unrolled**: none. The body is the whole run executed once, so there is no
+  iteration count to bound, no per-iteration residual to compare against a
+  tolerance, and no interval to check at. CVXPYgen emits no `Canon_Settings`
+  struct at all for such a solver, and `CPG_Info.iter` reports the number of
+  iterations the straight-line body performs.
+
+## Limitations
 
 - Parameters may enter only the canonical **vectors**: the objective's linear
   term and constraint right-hand sides. Parameter-dependent `P`/`A` entries
   raise `NotImplementedError` (FOMTools bakes matrices into the generated
   code).
-- The FOM must be **stationary**: the builder behind `fom=` records one
-  iteration, which the generated loop then repeats. A coefficient that changed
-  with the iteration index would be frozen at its recorded value. The two
-  built-in builders (`admm`, `pdhg`) are stationary by construction — their step
-  sizes and relaxation factor are computed once, offline — and a custom builder
-  must be too. Schedules (see the [codegen tutorial](codegen.md)) are not yet
-  wired through this front end.
-- Embedded C target only (`Version.EMBEDDED`, `Backend.C`, `float64`).
+- Scheduled coefficients must enter the recorded expressions linearly and may
+  not scale a constant offset; see the three paths above.
+- Targets: the embedded C target and the large-scale OpenMP / CUDA targets, all
+  with `dtype='float64'` (the canonical CVXPYgen data is double precision).
 - One solver instance per binary (the bridge globals are unprefixed, as in
   CVXPYgen's statically-allocated backends).
-- The reported primal/dual residuals are both the FOM termination metric
-  `||x_k - x_{k-1}||_inf`, not primal/dual constraint-violation residuals.
 - Each `cpg_solve()` cold-starts the FOM from its initial state
-  (`fom_update_params` resets the iterate).
+  (`fom_update_params` resets the iterate), so an anchored method's anchor is
+  always the zero vector.
