@@ -6,20 +6,20 @@ whose quadratic program is solved by the ADMM iteration of the paper, equation
 instant, and nothing else changes between runs.  Too few, and the quadcopter
 loses the trajectory and flies away.
 
-The experiment this feeds is about *implementations*.  A NumPy iteration, an
-emitted C iteration, and an agent-optimized C iteration each buy a different
-number of iterations inside the same wall-clock budget, so the same controller
-flies cleanly, wobbles, or crashes depending only on how fast its inner loop
-runs.  This directory is the first stage: the problem, the algorithm, the
-simulation, and the pictures, calibrated by sweeping the iteration count
-directly.  Code generation comes later.
+The experiment is about *implementations*.  A NumPy iteration, an emitted C
+iteration, and an agent-optimized C iteration each buy a different number of
+iterations inside the same wall-clock budget, so the same controller flies
+cleanly, wobbles, or crashes depending only on how fast its inner loop runs.  The
+iteration count is swept directly first, to calibrate what the controller needs;
+then code generation supplies the three implementations and the budget decides
+how many each of them gets.
 
 The same control problem is posed two ways, one per subdirectory.
 
-| | variables | constraint rows | system matrix | per iteration |
+| | variables | constraint rows | system matrix | NumPy per iteration |
 |---|---:|---:|---|---:|
-| `condensed/` | 40 | 40 | dense, 100% filled | 6.3 us |
-| `uncondensed/` | 1240 | 1240 | sparse, 0.99% filled, factor 26739 | 36.5 us |
+| `condensed/` | 40 | 40 | dense, 100% filled | 6.06 us |
+| `uncondensed/` | 1240 | 1240 | sparse, 0.99% filled, factor 26739 | 37.39 us |
 
 **Condensed** eliminates the states through the dynamics, leaving a small dense
 program in the input moves alone, with the identity as its constraint matrix and
@@ -33,17 +33,24 @@ rather than of the controller.
 
 ## Running it
 
-Everything runs as a module from this directory.
+Everything runs as a module from this directory (`experiments/control/osqp`).
 
 ```
 python -m condensed.check_against_fomtools    # the controller is the recorded algorithm
-python -m condensed.run_budget_sweep          # flights, table, figures, animation
+python -m condensed.run_budget_sweep          # flights against the iteration count
 python -m uncondensed.check_against_fomtools
 python -m uncondensed.run_budget_sweep
 python -m compare                             # the two at equal wall-clock budgets
+
+FOMTOOLS_CODEGEN_AGENT=1 python -m condensed.generate     # emit both C solvers
+python -m condensed.calibrate                 # what one iteration costs, per implementation
+python -m condensed.run_implementations       # flights against the compute budget
 ```
 
-The two studies write to their own `out/`; `compare.py` writes to `out/` here.
+The last three take a `<study>.` prefix of either formulation.  Each study writes
+to its own `out/`; `compare.py` writes to `out/` here.  The generated solvers are
+reused on a later run while they still pass `make verify`, so the agent phases
+are paid for once.
 
 ## What the comparison says
 
@@ -140,26 +147,77 @@ and the iteration count stops mattering at all.
 | `common/simulate.py` | the `Controller` protocol, the closed loop, crash detection, timing |
 | `common/plots.py` | 3-D panels, the still comparison, the animation, error against time |
 | `common/sweep.py` | the budget sweep both studies run |
+| `common/csolver.py` | a generated C solver, built, timed, and callable |
+| `common/codegen_driver.py` | emits the translated and the optimized solver, keeping both |
 | `<study>/mpc.py` | that formulation's problem assembly |
 | `<study>/admm.py` | that formulation's iteration |
+| `common/recording.py` | parameter boxes and the recording container |
+| `common/study.py` | the code-generation pipeline both formulations run |
 | `<study>/controller.py` | the adapter the shared simulator flies |
+| `<study>/recording.py` | that formulation's iteration, recorded on a `Verifier` |
+| `<study>/study.py` | the adapter that makes it a `Study` |
+| `<study>/generate.py` | runs both agent phases |
+| `<study>/calibrate.py` | what one iteration costs, per implementation |
+| `<study>/run_implementations.py` | the three implementations at equal compute budgets |
 | `compare.py` | the two formulations at equal wall-clock budgets |
 
-## A note on code generation
+## Code generation
 
-The two formulations are not equally ready to be generated as C.  The condensed
-one confines the parameter to the linear cost, so its saturated-linear step has
-constant bounds, which is the only form `fomtools.codegen` accepts: its
-intermediate representation stores those bounds as names of constant arrays
-(`ir.py`, `ActivationOp.lower`), and `extract.py:_satlin_arrays` raises
-`NonStationaryFOMError` on a bound that is a `LinearExpression`.  The
-uncondensed one puts the measured state into the bounds, so a *deployed*
-uncondensed solver would need that extension.
+Both formulations are generated as C and flown, in three implementations of one
+algorithm: NumPy, the solver as first emitted, and the same solver after the
+optimization phase.  Every arm is checked against the others to 1e-10, and flown
+at a common iteration count they agree to 4e-10, so a difference between their
+flights is a difference in speed and nothing else.
 
-This does not affect the experiment.  The simulation supplies the bounds as
-numbers refreshed each instant, never as symbolic parameters, and
-`uncondensed/check_against_fomtools.py` records the iteration with the bounds
-frozen at one representative state, which is enough to establish that the
-hand-written controller, the recorded steps, and the extracted representation
-are the same map.  The restriction is worth knowing because §6.4 of the paper
-currently describes the uncondensed form.
+| | multiply-adds per iteration | NumPy | emitted C | optimized C | emission |
+|---|---:|---:|---:|---:|---:|
+| `condensed/` | 2080 | 6.06 us | 2.88 us | 2.67 us | **2.1x faster** |
+| `uncondensed/` | 65940 | 37.39 us | 71.92 us | 64.32 us | **1.9x slower** |
+
+**Emission pays exactly where the interpreter is the cost.**  The condensed
+iteration runs 2080 multiply-adds in 6.1 us, which is 0.3 G/s: hardly any of that
+is arithmetic, it is per-operation overhead on vectors of forty numbers, and
+removing it is what code generation does.  The uncondensed iteration runs 65940
+in 37 us, which is 1.8 G/s of compiled SuperLU and CSR kernels with nothing left
+to recover — its per-solve cost outside the loop measures 1.1 us.  Generated C
+would have to beat 1.8 G/s in scalar CSC loops merely to break even, and it does
+not: the emitted triangular solve takes 53.8 us where SuperLU takes 21.8, because
+the emitter writes a scalar loop and SuperLU works on dense blocks within
+supernodes.
+
+So the choice of formulation decides whether code generation helps at all.
+Eliminating the states buys a small dense program *and* the conditions under
+which emitting C pays; keeping them buys sparsity that NumPy already exploits.
+
+**In the condensed study that produces the experiment.**  Between a 0.6 and a
+1.0 ms budget the interpreted controller crashes the quadcopter and both
+generated solvers fly it:
+
+| budget | NumPy | emitted C | optimized C |
+|---:|---|---|---|
+| 0.60 ms | 99 it, crashed | 208 it, 1.92 m | 224 it, 1.29 m |
+| 0.80 ms | 132 it, **crashed** | 277 it, **0.73 m** | 299 it, **0.56 m** |
+| 1.00 ms | 165 it, crashed | 347 it, 0.24 m | 374 it, 0.16 m |
+
+**The optimization phase is capped on both, and not by the agent.**  It bought
+1.08x on the condensed program and 1.12x on the uncondensed one.  Both
+translation agents reported the same cause without being asked: 91% and 88% of
+runtime inside `fom_lin_solve_t1`, which lives in `fom_linsolve.c`, a
+deterministic file restored before every verify and therefore off limits.  Two
+problems thirty-one times apart in size, one with a dense 820-nnz factor and one
+with a sparse 18679-nnz factor, the same ceiling.  What limits the optimization
+phase on this family is the emitted linear solve rather than what the agent can
+find — the condensed agent wrote 397 lines and discovered that every coefficient
+block is a scalar multiple of the identity, for 8%.
+
+One formulation needs a rewrite to be generatable at all.  The uncondensed one
+puts the measured state into the constraint bounds, which `fomtools.codegen`
+cannot express — its intermediate representation stores saturated-linear bounds
+as names of constant arrays (`ir.py`, `ActivationOp.lower`), and
+`extract.py:_satlin_arrays` raises `NonStationaryFOMError` on a bound that is a
+`LinearExpression` — but the identity `sat_[l,u](y) = l + sat_[0,u-l](y-l)` moves
+the parameter into the expression the step is applied to, where it is accepted.
+The rewrite is exact and, in this program, nearly free: the width is constant on
+every row.  See `uncondensed/recording.py`.
+
+Details, profiles and the flights are in each study's own README.

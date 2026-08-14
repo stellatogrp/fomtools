@@ -210,12 +210,13 @@ def time_per_iteration(
     iterations: int = 500,
     repeats: int = 5,
 ) -> float:
-    """Median wall-clock cost of one ADMM iteration, in microseconds.
+    """Median wall-clock cost of one call to ``command``, divided by its iterations.
 
-    Measured through the controller's own solve at a representative state, so
-    it includes whatever linear algebra that formulation performs and nothing
-    else.  Converting a time budget into an iteration budget needs this number,
-    which is why it is recorded alongside every flight.
+    Includes the work every sampling instant does once — stacking the reference
+    window, forming the cost vector — amortized over the iteration count.  That
+    is the right number for a study that varies only the iteration count, since
+    the once-per-instant cost is the same in every row.  Comparing *different
+    implementations* needs :func:`us_per_iteration` instead, which excludes it.
     """
     state = initial_state(ref)
     controller.command(state, 0.0, 200)  # warm the caches and the BLAS threads
@@ -225,6 +226,93 @@ def time_per_iteration(
         controller.command(state, 0.0, iterations)
         samples.append((time.perf_counter() - start) * 1e6 / iterations)
     return float(statistics.median(samples))
+
+
+@dataclass
+class IterationCost:
+    """What one iteration costs, with the dispersion of the measurement.
+
+    Converts to ``float`` as the median, so it can be used in arithmetic
+    directly, while keeping the individual slopes for reporting.  Every number
+    this experiment quotes about speed comes from one of these, and the spread is
+    part of the number: a two-point slope on a shared machine is not stable to
+    better than a few percent, and a run that catches interference can be off by
+    a third.
+    """
+
+    samples: list[float]
+
+    @property
+    def us(self) -> float:
+        return float(statistics.median(self.samples))
+
+    @property
+    def spread_pct(self) -> float:
+        lo, hi = min(self.samples), max(self.samples)
+        return 100.0 * (hi - lo) / lo if lo > 0 else float("nan")
+
+    def __float__(self) -> float:
+        return self.us
+
+    def __format__(self, spec: str) -> str:
+        return format(self.us, spec)
+
+
+def slope_us(measure, low: int, high: int, trials: int = 5) -> IterationCost:
+    """Per-iteration cost as a two-point slope, repeated and taken as a median.
+
+    ``measure(k)`` returns the wall-clock microseconds of one solve at ``k``
+    iterations.  Differencing two counts removes everything that does not scale
+    with the count — parameter marshalling, a cold start, the once-per-instant
+    work a controller does — and leaves the loop by itself.
+
+    Both endpoints are exercised once and discarded before anything is recorded.
+    That warm-up is not optional: the first measurement in a fresh process pays
+    import, page-fault and thread-pool costs that no later one does, and left in
+    it lands about thirty percent high.
+    """
+    if high <= low:
+        raise ValueError("high must exceed low")
+    measure(low)
+    measure(high)  # warm both endpoints; discard
+    slopes = []
+    for _ in range(trials):
+        at_low = measure(low)
+        at_high = measure(high)
+        slopes.append((at_high - at_low) / (high - low))
+    return IterationCost(samples=slopes)
+
+
+def us_per_iteration(
+    controller: Controller,
+    ref: Reference,
+    low: int = 20,
+    high: int = 200,
+    repeats: int = 7,
+    trials: int = 5,
+) -> IterationCost:
+    """Microseconds per ADMM iteration for a Python controller.
+
+    A controller does more per sampling instant than iterate: it stacks the
+    reference window and forms the cost vector, and for the condensed program
+    that costs about as much as fifteen iterations do.  Charging the loop for it
+    would misreport what a compute budget buys, and would do so unequally, since
+    the generated solvers are timed on their loop alone.
+
+    This is the counterpart of :meth:`common.csolver.CSolver.us_per_iteration`,
+    deliberately the same measurement so the implementations are comparable.
+    """
+    state = initial_state(ref)
+
+    def measure(iterations: int) -> float:
+        samples = []
+        for _ in range(repeats):
+            start = time.perf_counter()
+            controller.command(state, 0.0, iterations)
+            samples.append((time.perf_counter() - start) * 1e6)
+        return statistics.median(samples)
+
+    return slope_us(measure, low, high, trials)
 
 
 def _crash_reason(x: np.ndarray) -> str | None:

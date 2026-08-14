@@ -186,12 +186,24 @@ def _titles(rollouts, labels):
     return [f"$K = {r.iterations}$" for r in rollouts]
 
 
+def _colors(rollouts, colors):
+    """One colour per rollout, defaulting to :data:`TRAIL_COLORS` by position.
+
+    A study that draws its rollouts somewhere other than a flight panel should
+    pass its own, so one run is one colour across every figure it appears in.
+    """
+    if colors is not None:
+        return list(colors)
+    return [TRAIL_COLORS[i % len(TRAIL_COLORS)] for i in range(len(rollouts))]
+
+
 def still_comparison(
     rollouts: list[Rollout],
     path: str | Path,
     labels: list[str] | None = None,
     frame: int | None = None,
     dpi: int = 300,
+    colors: list[str] | None = None,
 ) -> Path:
     """A single image with one panel per rollout, whole trajectories drawn."""
     path = Path(path)
@@ -202,7 +214,7 @@ def still_comparison(
         1, len(rollouts), figsize=(3.2 * len(rollouts), 3.4), subplot_kw={"projection": "3d"}
     )
     axes = np.atleast_1d(axes)
-    for ax, roll, title, color in zip(axes, rollouts, titles, TRAIL_COLORS):
+    for ax, roll, title, color in zip(axes, rollouts, titles, _colors(rollouts, colors)):
         end = roll.steps if frame is None else frame
         panel(
             ax,
@@ -231,6 +243,7 @@ def make_gif(
     frame_stride: int | None = None,
     dpi: int = 110,
     keep_frames: bool = False,
+    colors: list[str] | None = None,
 ) -> Path:
     """Animate the comparison, one panel per rollout.
 
@@ -241,6 +254,7 @@ def make_gif(
     path.parent.mkdir(parents=True, exist_ok=True)
     center, half = scene_bounds(rollouts[0].reference)
     titles = _titles(rollouts, labels)
+    trail_colors = _colors(rollouts, colors)
 
     total = max(r.steps for r in rollouts)
     if frame_stride is None:
@@ -259,7 +273,7 @@ def make_gif(
                 subplot_kw={"projection": "3d"},
             )
             axes = np.atleast_1d(axes)
-            for ax, roll, title, color in zip(axes, rollouts, titles, TRAIL_COLORS):
+            for ax, roll, title, color in zip(axes, rollouts, titles, trail_colors):
                 panel(ax, roll, f, center, half, color, title=title, show_vehicle=True)
             fig.subplots_adjust(wspace=0.02, left=0.01, right=0.99, top=0.94, bottom=0.06)
             frame_path = workdir / f"frame_{i:05d}.png"
@@ -297,12 +311,13 @@ def error_vs_time(
     path: str | Path,
     labels: list[str] | None = None,
     dpi: int = 300,
+    colors: list[str] | None = None,
 ) -> Path:
     """Tracking error against time, one curve per rollout, log scale."""
     path = Path(path)
     titles = _titles(rollouts, labels)
     fig, ax = plt.subplots(figsize=(5.4, 3.2))
-    for roll, title, color in zip(rollouts, titles, TRAIL_COLORS):
+    for roll, title, color in zip(rollouts, titles, _colors(rollouts, colors)):
         t = np.arange(1, roll.steps + 1) * roll.dt
         ax.semilogy(t, roll.errors, color=color, linewidth=1.5, label=title)
         if roll.crashed:
