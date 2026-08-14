@@ -1,9 +1,20 @@
 """Built-in example FOMs for the code-generation CLI and demos.
 
-Each builder returns a dict with at least ``verifier`` and ``next_state`` (the
-iterate after one iteration), plus a ``name``. These mirror the ISTA and
-Douglas-Rachford problems used throughout the test suite and use the
-``simulator`` backend so no MIP/SDP solver is required.
+Most builders return a dict with ``verifier`` and ``next_state`` (the iterate
+after one iteration) plus a ``name``, which generates a rolled solver. These
+mirror the ISTA and Douglas-Rachford problems used throughout the test suite and
+use the ``simulator`` backend so no MIP/SDP solver is required.
+
+Two builders show the other generation paths. :func:`fista_example` returns
+``iterates`` instead: a recorded *run*, generated as written, which is how a
+method whose coefficients change every iteration is handled without declaring
+anything. :func:`scheduled_example` returns a ``build`` function and its
+``schedules``, which trades that generality for a compact solver at a long
+horizon — one block plus a table rather than one block per iteration. See
+:mod:`fomtools.codegen.extract_unrolled` and :mod:`fomtools.codegen.extract_scheduled`.
+
+Algorithm coefficients are written out here rather than imported: they belong to
+the method being demonstrated, not to the code generator.
 """
 
 from __future__ import annotations
@@ -81,6 +92,129 @@ def ista_example(*, n: int = 2, m: int = 4, seed: int = 0, K: int = 3) -> dict:
         z = v.step.soft_threshold(At @ z + Bt @ b_param, lambd=lambd * t)
         iterates.append(z)
     return {"verifier": v, "next_state": iterates[1], "name": "ista"}
+
+
+def _lasso_instance(n: int, m: int, seed: int) -> dict:
+    """Shared data for the accelerated lasso examples.
+
+    A milder threshold than :func:`ista_example` uses: at ``lambda = 1`` this
+    instance has the all-zero solution and converges in a single step, which
+    would make acceleration indistinguishable from plain ISTA.
+    """
+    rng = np.random.default_rng(seed)
+    A = rng.normal(size=(m, n))
+    b = rng.normal(size=(m,))
+    lambd = 0.05
+    t = 1.0 / np.max(np.real(np.linalg.eigvals(A.T @ A)))
+    return {
+        "At": np.eye(n) - t * A.T @ A,
+        "Bt": t * A.T,
+        "lambd": lambd,
+        "t": t,
+        "z0": np.full(n, 2.0),
+        "n": n,
+        "m": m,
+        "b": b,
+    }
+
+
+def fista_example(*, n: int = 2, m: int = 4, seed: int = 0, K: int = 6) -> dict:
+    """Lasso FISTA, written as the loop a user would write to verify it.
+
+    The momentum coefficient changes every iteration, so this example returns
+    ``iterates`` -- the recorded run -- rather than a single ``next_state``.
+    Generation emits the run as written, one block per iteration, each carrying
+    its own coefficients. Nothing has to be declared and the momentum recurrence
+    is ordinary Python, evaluated while recording.
+
+    Contrast :func:`scheduled_example`, which is the same method declared as a
+    schedule to get one block plus a table instead.
+    """
+    d = _lasso_instance(n, m, seed)
+    At, Bt, z0 = d["At"], d["Bt"], d["z0"]
+    threshold = d["lambd"] * d["t"]
+
+    v = Verifier(method="simulator", obbt_solver=None)
+    b_param = v.add_param(m, lb=d["b"] - 1.0, ub=d["b"] + 1.0)
+    y0 = v.add_iterate(n, lb=z0, ub=z0)
+
+    y_prev, y_curr, beta = y0, y0, 1.0
+    iterates = []
+    for _ in range(K):
+        beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
+        gamma = (beta - 1.0) / beta_next
+        extrap = y_curr + gamma * (y_curr - y_prev)
+        y_next = v.step.soft_threshold(At @ extrap + Bt @ b_param, lambd=threshold)
+        y_prev, y_curr, beta = y_curr, y_next, beta_next
+        iterates.append(y_next)
+
+    return {
+        "verifier": v,
+        "iterates": iterates,
+        "param": b_param,
+        "name": "fista",
+        "data": {**d, "K": K},
+    }
+
+
+def scheduled_example(*, n: int = 2, m: int = 4, seed: int = 0) -> dict:
+    """The same accelerated lasso, declared as a schedule instead.
+
+    Returns a ``build`` function rather than a finished verifier, which is what
+    the scheduled path needs: the momentum coefficient stays a free variable so
+    extraction can probe the recording at several of its values and recover how
+    each coefficient depends on it (see :mod:`fomtools.codegen.extract_scheduled`). The
+    reward is one emitted block and a table of coefficients, whatever the horizon.
+
+    The state carries **two** iterates. Written over a single iterate, the
+    dependency cone of iteration ``k`` reaches back through every earlier step and
+    extraction returns the unrolled prefix rather than a repeatable body -- which
+    is the right answer for :func:`fista_example` and the wrong one here.
+    Declaring ``(y^{k-1}, y^k)`` as the state closes the cone after one step.
+    """
+    d = _lasso_instance(n, m, seed)
+    At, Bt, z0 = d["At"], d["Bt"], d["z0"]
+    threshold = d["lambd"] * d["t"]
+
+    def build(gamma):
+        from fomtools.codegen.extract_scheduled import Recording
+
+        v = Verifier(method="simulator", obbt_solver=None)
+        b_param = v.add_param(m, lb=d["b"] - 1.0, ub=d["b"] + 1.0)
+        y_prev = v.add_iterate(n, lb=z0, ub=z0)
+        y_curr = v.add_iterate(n, lb=z0, ub=z0)
+        extrap = y_curr + gamma * (y_curr - y_prev)
+        y_next = v.step.soft_threshold(At @ extrap + Bt @ b_param, lambd=threshold)
+        # The state shifts: (y_prev, y_curr) <- (y_curr, y_next).
+        return Recording(v, next_state=[y_curr, y_next], state=[y_prev, y_curr])
+
+    def momentum():
+        """FISTA's momentum in the 0-based index of the emitted loop.
+
+        From ``beta_0 = 1``, ``beta_{k+1} = (1 + sqrt(1 + 4 beta_k^2))/2``, giving
+        ``gamma_k = (beta_{k-1} - 1)/beta_k``. The textbook form is 1-based, so
+        the first value is 0 -- exactly the degeneracy that makes a
+        single-iteration recording of this method indistinguishable from ISTA,
+        which is why the coefficient has to be tabulated rather than read off one
+        recorded iteration. The closure caches its recurrence, so it must be
+        called with non-decreasing indices, as ``as_schedule`` does.
+        """
+        betas = [1.0]
+
+        def gamma(k: int) -> float:
+            while len(betas) <= k + 1:
+                last = betas[-1]
+                betas.append((1.0 + np.sqrt(1.0 + 4.0 * last * last)) / 2.0)
+            return (betas[k] - 1.0) / betas[k + 1]
+
+        return gamma
+
+    return {
+        "build": build,
+        "schedules": {"gamma": momentum()},
+        "name": "scheduled",
+        "data": d,
+    }
 
 
 def dr_example(*, n: int = 4, m: int = 3, seed: int = 5, K: int = 3) -> dict:
@@ -333,6 +467,8 @@ def indefinite_kkt_example(*, n: int = 4, seed: int = 4) -> dict:
 
 EXAMPLES = {
     "ista": ista_example,
+    "fista": fista_example,
+    "scheduled": scheduled_example,
     "dr": dr_example,
     "mpc": mpc_osqp_example,
     "cgqp": cg_qp_example,

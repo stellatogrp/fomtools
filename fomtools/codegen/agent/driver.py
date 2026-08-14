@@ -74,16 +74,63 @@ class AgentResult:
         Whether the verify command ultimately passed.
     log:
         Captured agent and verify output, concatenated across attempts.
+    agent_log:
+        Only the agent's own output, concatenated across attempts, with no
+        verify/build output and no harness commentary mixed in. Use this when
+        reading anything the agent *said* — notably
+        :func:`~fomtools.codegen.postprocess.extract_agent_notes`, which would
+        otherwise have to pick the agent's words out of compiler noise.
     turns_used:
         Number of attempts (or turns) consumed producing this result.
     artifacts:
         Paths to the files the agent produced or refined.
+    truncated:
+        Whether any attempt was cut short by its wall-clock budget. A truncated
+        attempt can still leave correct code on disk, so this is independent of
+        :attr:`success`; it means the agent had no chance to finish, and in
+        particular may never have written its summary.
     """
 
     success: bool
     log: str = ""
+    agent_log: str = ""
     turns_used: int = 0
     artifacts: list[Path] = field(default_factory=list)
+    truncated: bool = False
+
+
+def _decode_stream(stream) -> str:
+    """Decode a captured subprocess stream that may be bytes, str, or absent.
+
+    ``subprocess.run`` populates ``TimeoutExpired.stdout`` with whatever it
+    captured before killing the child, but skips the text decoding it would have
+    applied on the normal path — so the timeout branch sees ``bytes`` even under
+    ``text=True``.
+    """
+    if stream is None:
+        return ""
+    if isinstance(stream, bytes):
+        return stream.decode("utf-8", errors="replace")
+    return str(stream)
+
+
+def _redact_exception(exc: BaseException) -> str:
+    """Describe an exception without echoing anything it may carry.
+
+    ``subprocess`` exceptions keep the argument vector on ``.cmd``, and
+    ``str(exc)`` interpolates it — which for a coding agent means the entire
+    prompt, and the system prompt, land in the log. That is both a leak and a
+    hazard: the prompt asks the agent to print a summary, so a prompt echo makes
+    the log look as if the agent had answered. Report only the safe fields.
+    """
+    kind = type(exc).__name__
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return f"{kind}: the agent process exceeded its {exc.timeout}s budget"
+    if isinstance(exc, subprocess.CalledProcessError):
+        return f"{kind}: the agent process exited with status {exc.returncode}"
+    if getattr(exc, "cmd", None) is not None:
+        return f"{kind} (details withheld: the exception carries the command line)"
+    return f"{kind}: {str(exc)[:500]}"
 
 
 class AgentBackendError(RuntimeError):
@@ -134,6 +181,7 @@ def run_verify_loop(
     *,
     max_attempts: int = 5,
     max_turns: int = 16,
+    truncated_probe: Callable[[], bool] | None = None,
 ) -> AgentResult:
     """Drive a real coding backend against ``task.verify_cmd`` until it passes.
 
@@ -157,6 +205,11 @@ def run_verify_loop(
     max_turns:
         Per-attempt turn budget for the translation phase (the optimization
         phase uses ``task.max_turns`` instead).
+    truncated_probe:
+        Optional callable the backend supplies to report whether its last
+        attempt was cut short by a wall-clock budget. Its result is recorded on
+        :attr:`AgentResult.truncated`, so a caller can say so rather than
+        presenting a half-finished run as a complete one.
 
     Returns
     -------
@@ -171,6 +224,10 @@ def run_verify_loop(
         propagated rather than absorbed as a failed attempt.
     """
     log_parts: list[str] = []
+    # Only what the agent itself emitted. Kept apart from the build/verify output
+    # so that reading the agent's own words never means sifting through compiler
+    # noise — see AgentResult.agent_log.
+    agent_parts: list[str] = []
     prompt = task.instructions
 
     # Larger turn budget for the open-ended optimization phase.
@@ -190,8 +247,9 @@ def run_verify_loop(
             # make a non-functional backend look successful.
             raise
         except Exception as exc:  # noqa: BLE001 - surface as a failed attempt
-            agent_log = f"[agent invocation raised: {exc}]"
+            agent_log = f"[agent invocation raised: {_redact_exception(exc)}]"
         log_parts.append(agent_log)
+        agent_parts.append(agent_log)
 
         if task.restore_hook is not None:
             task.restore_hook()
@@ -204,8 +262,10 @@ def run_verify_loop(
             return AgentResult(
                 success=True,
                 log="".join(log_parts),
+                agent_log="".join(agent_parts),
                 turns_used=attempt + 1,
                 artifacts=[task.workdir / task.solver_rel_path],
+                truncated=bool(truncated_probe and truncated_probe()),
             )
 
         # Re-prompt with the failure.
@@ -213,11 +273,17 @@ def run_verify_loop(
             task.instructions
             + "\n\nThe verify command FAILED with this output:\n"
             + output[:4000]
-            +"..."
+            + "..."
             + output[-4000:]
             + "\nFix `"
             + task.solver_rel_path
             + "` and make it pass."
         )
 
-    return AgentResult(success=False, log="".join(log_parts), turns_used=max_attempts)
+    return AgentResult(
+        success=False,
+        log="".join(log_parts),
+        agent_log="".join(agent_parts),
+        turns_used=max_attempts,
+        truncated=bool(truncated_probe and truncated_probe()),
+    )

@@ -10,6 +10,7 @@ from fomtools.codegen.agent.driver import (
     AgentDriver,
     AgentResult,
     AgentTask,
+    _decode_stream,
     run_verify_loop,
 )
 
@@ -111,7 +112,6 @@ class SdkAgentDriver(AgentDriver):
         bypass_sandbox: bool = True,
         api_key: str | None = None,
         cli_timeout: int = 600,
-
     ):
         """Configure the backend, model, retry budget, sandbox, and authentication.
 
@@ -144,9 +144,10 @@ class SdkAgentDriver(AgentDriver):
             Explicit API key. When ``None`` it falls back to the
             :attr:`api_key_env` environment variable; when neither is set the
             backend uses the on-disk vendor login.
-        cli_timeout: int
-            Maximum number of seconds to wait before invoking the fallback mechanism that starts
-            the agent using the CLI.
+        cli_timeout : int, optional
+            Wall-clock budget in seconds for one CLI attempt, after which the
+            agent process is terminated. Used only when ``config`` carries no
+            budget of its own; see :meth:`_timeout_for_phase`.
         """
         self.config = config
         self.model = model
@@ -157,6 +158,22 @@ class SdkAgentDriver(AgentDriver):
         self.bypass_sandbox = bypass_sandbox
         self.api_key = api_key or os.environ.get(self.api_key_env)
         self.cli_timeout = cli_timeout
+        # Set by _run_cli when an attempt is cut short, so run() can report the
+        # truncation instead of leaving it to be inferred from the log.
+        self._truncated = False
+
+    def _timeout_for_phase(self, phase: str) -> int:
+        """Wall-clock budget for one attempt of ``phase``.
+
+        The optimization phase is open-ended — profile, rewrite, re-verify,
+        benchmark, repeat — so it gets a larger budget than the bounded
+        translation phase. An attempt killed mid-optimization loses the agent's
+        own summary, which is the artifact the optimization report is built from.
+        """
+        config = self.config
+        if phase == "B_optimize":
+            return int(getattr(config, "agent_optimize_timeout_s", None) or self.cli_timeout)
+        return int(getattr(config, "agent_timeout_s", None) or self.cli_timeout)
 
     def _child_env(self) -> dict[str, str] | None:
         """Process environment for the SDK/CLI, forcing API-key auth if we have one.
@@ -202,11 +219,13 @@ class SdkAgentDriver(AgentDriver):
             If the backend cannot authenticate or its CLI is unavailable;
             propagated from the retry loop rather than retried.
         """
+        self._truncated = False
         return run_verify_loop(
             task,
             lambda prompt, max_turns: self._invoke_agent(task, prompt, max_turns),
             max_attempts=self.max_attempts,
             max_turns=self.max_turns,
+            truncated_probe=lambda: self._truncated,
         )
 
     def _invoke_agent(self, task: AgentTask, prompt: str, max_turns: int) -> str:
@@ -238,9 +257,13 @@ class SdkAgentDriver(AgentDriver):
             except (ImportError, NotImplementedError):
                 pass  # fall back to CLI
         workdir = str(Path(task.workdir).resolve())
-        return self._invoke_cli(self._build_argv(workdir, prompt), workdir)
+        return self._invoke_cli(
+            self._build_argv(workdir, prompt),
+            workdir,
+            timeout=self._timeout_for_phase(task.phase),
+        )
 
-    def _invoke_cli(self, argv: list[str], workdir: str) -> str:
+    def _invoke_cli(self, argv: list[str], workdir: str, timeout: int | None = None) -> str:
         """Run one attempt by shelling out to the vendor CLI in headless mode.
 
         Executes ``argv`` in ``workdir`` with the child environment from
@@ -269,6 +292,7 @@ class SdkAgentDriver(AgentDriver):
             matching a known authentication-failure marker. Neither condition is
             recoverable by retrying.
         """
+        budget = self.cli_timeout if timeout is None else timeout
         try:
             proc = subprocess.run(
                 argv,
@@ -276,7 +300,7 @@ class SdkAgentDriver(AgentDriver):
                 capture_output=True,
                 text=True,
                 env=self._child_env(),
-                timeout=self.cli_timeout
+                timeout=budget,
             )
         except FileNotFoundError as exc:
             raise AgentBackendError(
@@ -285,6 +309,20 @@ class SdkAgentDriver(AgentDriver):
                 f"{self.api_key_env}, or select a different backend via "
                 "FOMTOOLS_CODEGEN_BACKEND."
             ) from exc
+        except subprocess.TimeoutExpired as exc:
+            # Keep whatever the agent had already emitted. Letting this propagate
+            # would (a) discard that output and (b) leak the whole argv — and with
+            # it the prompt — into the log via str(exc), which then poisons the
+            # summary extraction in fomtools.codegen.postprocess.
+            self._truncated = True
+            partial = _decode_stream(exc.stdout) + _decode_stream(exc.stderr)
+            return partial + (
+                f"\n[fomtools: the {self.label} CLI exceeded its {budget}s budget for this "
+                "attempt and was terminated; any output above is partial. Raise "
+                "CodegenConfig.agent_optimize_timeout_s (optimization) or "
+                "agent_timeout_s (translation) to give it longer.]\n"
+            )
+        self._truncated = False
         output = proc.stdout + proc.stderr
         # An auth failure is not a fixable task error — retrying would just burn
         # the attempt budget. Surface it immediately so run_verify_loop fails fast

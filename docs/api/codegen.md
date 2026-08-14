@@ -9,7 +9,11 @@ oracle until the generated code is numerically verified.
 
 ::: fomtools.codegen.CodegenConfig
 
+::: fomtools.codegen.extract_unrolled_ir
+
 ::: fomtools.codegen.extract_ir
+
+::: fomtools.codegen.extract_scheduled_ir
 
 ::: fomtools.codegen.FomIR
 

@@ -10,7 +10,7 @@ import pytest
 
 from fomtools.codegen import StubAgentDriver, generate_code
 from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
-from tests.codegen.conftest import build_ista
+from tests.codegen.conftest import build_ista, gate
 
 GOLDEN = Path(__file__).parent / "golden" / "ista" / "embedded_c" / "fom_solver.c"
 
@@ -25,6 +25,7 @@ def test_ista_stub_pipeline_verifies(tmp_path, requires_compiler):
         config=case["config"],
         driver=driver,
         name="ista",
+        **gate(case),
     )
     assert result.translate.success, result.translate.log
     assert "VERIFY OK" in result.translate.log
@@ -49,6 +50,7 @@ def test_stub_pipeline_inf_norm_change(tmp_path, requires_compiler):
         config=case["config"],
         driver=driver,
         name="ista",
+        **gate(case),
     )
     assert result.translate.success, result.translate.log
 
@@ -76,6 +78,7 @@ def test_failing_solver_reports_failure(tmp_path, requires_compiler):
         config=case["config"],
         driver=driver,
         name="ista",
+        **gate(case),
     )
     assert not result.translate.success
 
@@ -104,6 +107,7 @@ def test_restore_hook_reverts_agent_tampering(tmp_path, requires_compiler):
         config=case["config"],
         driver=TamperingStub(GOLDEN),
         name="ista",
+        **gate(case),
     )
     assert result.translate.success, result.translate.log
     assert "VERIFY OK" in result.translate.log

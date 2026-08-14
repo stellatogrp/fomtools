@@ -2,10 +2,16 @@
 
 import numpy as np
 import pytest
+import scipy.sparse as spa
 
+from fomtools.codegen.config import CodegenConfig, TerminationSpec
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.ir import ActivationKind, NonStationaryFOMError
+from fomtools.codegen.oracle import ReferenceOracle, run_recorded_tape
+from fomtools.verifier import Verifier
 from tests.codegen.conftest import build_dr, build_ista
+
+ONE_PASS = CodegenConfig(termination=TerminationSpec(max_iters=1))
 
 
 def test_ista_ir_structure():
@@ -77,3 +83,74 @@ def test_max_rhs_dim_covers_intermediates():
     case = build_dr()
     ir = extract_ir(case["verifier"], case["next_state"], config=case["config"])
     assert ir.max_rhs_dim >= ir.state_dim
+
+
+def test_identity_affine_is_a_copy_not_a_solve():
+    """``M w = rhs`` with ``M = I`` must not become a factorized solve.
+
+    ``IterateTrajectory`` materializes an iterate with exactly this step, so
+    factorizing it would cost a stored LDL^T plus two triangular solves per
+    iteration for what is a copy.
+    """
+    v = Verifier(method="simulator", obbt_solver=None)
+    x = v.add_param(3, lb=-np.ones(3), ub=np.ones(3))
+    z = v.add_iterate(3, lb=np.zeros(3), ub=np.zeros(3))
+    w = v.step.implicit_linear(z + x, output_mat=spa.eye(3))
+    out = v.step.relu(w)
+
+    ir = extract_ir(v, out, config=ONE_PASS)
+
+    assert ir.factorizations == {}
+    assert [s.solve for s in ir.body] == [None, None]
+    assert ir.body[0].activation.kind == ActivationKind.IDENTITY
+
+    xval = np.array([0.5, -0.25, 0.75])
+    truth = run_recorded_tape(v, [w, out], {x: xval})
+    got = ReferenceOracle(ir).solve(param_values={"p0": xval}, x0=truth[0]).solution
+    assert np.allclose(got, truth[-1], atol=1e-12)
+
+
+def test_a_nearly_identity_operator_is_still_solved():
+    """The identity check is exact: near-identity changes numerics, not codegen."""
+    almost = np.eye(3)
+    almost[1, 1] = 1.0 + 1e-9
+    v = Verifier(method="simulator", obbt_solver=None)
+    z = v.add_iterate(3, lb=np.zeros(3), ub=np.zeros(3))
+    out = v.step.implicit_linear(z, output_mat=almost)
+
+    ir = extract_ir(v, out, config=ONE_PASS)
+
+    assert list(ir.factorizations) == ["t0"]
+    assert ir.body[0].solve == "t0"
+
+
+def test_repeated_affine_operator_shares_one_factorization():
+    """Two solves against the same operator share a factorization, dense or sparse."""
+    mat = np.array([[2.0, 1.0], [1.0, 3.0]])
+    v = Verifier(method="simulator", obbt_solver=None)
+    x = v.add_param(2, lb=-np.ones(2), ub=np.ones(2))
+    z = v.add_iterate(2, lb=np.zeros(2), ub=np.zeros(2))
+    a = v.step.implicit_linear(z + x, output_mat=mat)
+    b = v.step.implicit_linear(a + x, output_mat=spa.csr_matrix(mat))
+
+    ir = extract_ir(v, b, config=ONE_PASS)
+
+    assert list(ir.factorizations) == ["t0"]
+    assert [s.solve for s in ir.body] == ["t0", "t0"]
+
+    xval = np.array([0.3, -0.7])
+    truth = run_recorded_tape(v, [a, b], {x: xval})
+    got = ReferenceOracle(ir).solve(param_values={"p0": xval}, x0=truth[0]).solution
+    assert np.allclose(got, truth[-1], atol=1e-12)
+
+
+def test_distinct_affine_operators_keep_separate_factorizations():
+    v = Verifier(method="simulator", obbt_solver=None)
+    z = v.add_iterate(2, lb=np.zeros(2), ub=np.zeros(2))
+    a = v.step.implicit_linear(z, output_mat=np.array([[2.0, 1.0], [1.0, 3.0]]))
+    b = v.step.implicit_linear(a, output_mat=np.array([[4.0, 0.0], [0.0, 5.0]]))
+
+    ir = extract_ir(v, b, config=ONE_PASS)
+
+    assert sorted(ir.factorizations) == ["t0", "t1"]
+    assert [s.solve for s in ir.body] == ["t0", "t1"]
