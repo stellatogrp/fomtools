@@ -55,8 +55,8 @@ def _spec(qp):
     )
 
 
-def _emit(tmp_path, qp, *, prefix="", has_quad_term=True):
-    emit_bridge(_spec(qp), qp, tmp_path, prefix, has_quad_term=has_quad_term)
+def _emit(tmp_path, qp, *, prefix="", has_quad_term=True, **kwargs):
+    emit_bridge(_spec(qp), qp, tmp_path, prefix, has_quad_term=has_quad_term, **kwargs)
     return (tmp_path / "src" / "cpg_fom_bridge.c").read_text()
 
 
@@ -88,6 +88,56 @@ def test_bridge_copies_runtime_check_termination(tmp_path):
     # max_iter / tol stay runtime-tunable too.
     assert "fom_work.settings.max_iter = (fom_int)Canon_Settings.max_iter;" in src
     assert "fom_work.settings.tol = (fom_float)Canon_Settings.tol;" in src
+
+
+def test_bridge_omits_settings_for_an_unrolled_solver(tmp_path):
+    """An unrolled body honors no runtime setting, so cvxpygen emits no struct.
+
+    With ``stgs`` empty the interface also turns off
+    ``stgs_requires_extra_struct_type``, so ``Canon_Settings`` — its type, its
+    instance and every ``cpg_set_solver_*`` — is absent from the generated code.
+    Naming any member here would then fail to compile.
+    """
+    src = _emit(tmp_path, _qp(), settings=())
+
+    assert "Canon_Settings" not in src
+    assert "fom_work.settings" not in src
+    assert "No runtime settings" in src
+
+
+def test_bridge_caps_max_iter_at_the_schedule_tables(tmp_path):
+    """Past the tables the accessors clamp, which would freeze the coefficients."""
+    src = _emit(tmp_path, _qp(), schedule_len=64)
+
+    assert (
+        "fom_work.settings.max_iter = (fom_int)(Canon_Settings.max_iter < 64 "
+        "? Canon_Settings.max_iter : 64);" in src
+    )
+    # The other two stay plain copies: a tolerance and a check interval mean the
+    # same thing however far the loop runs.
+    assert "fom_work.settings.tol = (fom_float)Canon_Settings.tol;" in src
+    assert "fom_work.settings.check_termination = (fom_int)Canon_Settings.check_termination;" in src
+
+
+def test_bridge_reports_the_recorded_iteration_count_when_unrolled(tmp_path):
+    """``solution.iter`` is 1 for a single pass, which is not what the run did."""
+    src = _emit(tmp_path, _qp(), settings=(), iter_count=12)
+
+    assert "fom_iter = 12;" in src
+    assert "fom_iter = (int)fom_work.solution.iter;" not in src
+
+
+def test_bridge_reports_the_loop_counter_by_default(tmp_path):
+    src = _emit(tmp_path, _qp())
+    assert "fom_iter = (int)fom_work.solution.iter;" in src
+
+
+def test_bridge_forwards_only_the_settings_it_is_given(tmp_path):
+    src = _emit(tmp_path, _qp(), settings=("tol",))
+
+    assert "fom_work.settings.tol = (fom_float)Canon_Settings.tol;" in src
+    assert "Canon_Settings.max_iter" not in src
+    assert "Canon_Settings.check_termination" not in src
 
 
 def test_bridge_lp_has_no_quadratic_term(tmp_path):

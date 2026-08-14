@@ -108,6 +108,30 @@ def _current_options() -> FomtoolsOptions:
     return _OPTIONS.get() or FomtoolsOptions()
 
 
+def _settings_for(kind: str, term) -> dict:
+    """The runtime settings a solver of this kind can actually honor.
+
+    A setting cvxpygen emits becomes a ``cpg_set_solver_<name>`` the caller can
+    turn at run time, so advertising one the solver ignores is worse than not
+    having it. An unrolled solver honors none of them: its body is the whole
+    recorded run executed once, with no loop counter to bound, no per-iteration
+    residual to compare against a tolerance, and nothing to check at an interval.
+
+    The rolled and scheduled paths keep all three. ``check_termination`` stays
+    runtime-tunable on both (the bridge copies it into the FomWorkspace each
+    solve), so the check interval can be tuned without regenerating; a scheduled
+    solver's ``max_iter`` is additionally capped in the bridge at the length of
+    its coefficient tables.
+    """
+    if kind == "unrolled":
+        return {}
+    return {
+        "max_iter": Setting(type="cpg_int", default=str(term.max_iters)),
+        "tol": Setting(type="cpg_float", default=repr(float(term.tol or 0.0))),
+        "check_termination": Setting(type="cpg_int", default=str(term.check_termination)),
+    }
+
+
 def _check_spec_matches_kind(spec, kind: str) -> None:
     """Reject a builder whose returned spec cannot go down the path it declared."""
     if kind == "scheduled":
@@ -164,6 +188,17 @@ def _check_unrolled_allowed(opts: "FomtoolsOptions", config: CodegenConfig) -> N
             "TerminationKind.MAX_ITERS, or a rolled builder, where the criterion is "
             "evaluated every iteration."
         )
+
+
+def _schedule_len(ir) -> int | None:
+    """How far this solver's coefficient tables reach, or ``None`` if it has none.
+
+    The shortest table is the binding one: past its end that accessor clamps and
+    its coefficient freezes, whatever the others still hold.
+    """
+    if not ir.schedules:
+        return None
+    return min(len(values) for values in ir.schedules.values())
 
 
 def _check_ir_matches_kind(ir, kind: str) -> None:
@@ -270,16 +305,19 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
 
     def __init__(self, data, p_prob, enable_settings):
         opts = _current_options()
-        term = opts.config.termination
+        # The settings struct is written before canonicalization reaches
+        # generate_code, so which settings exist has to come from what the
+        # builder *declares* rather than from the IR it will produce.
+        self._fom_kind = fom_kind(opts.fom)
         # Instance-level settings so defaults reflect the actual configuration.
-        # check_termination is runtime-tunable (the bridge copies it into the
-        # FomWorkspace each solve), so callers can change the inf-norm-change
-        # check interval via cpg_set_solver_check_termination without rebuilding.
-        self.stgs = {
-            "max_iter": Setting(type="cpg_int", default=str(term.max_iters)),
-            "tol": Setting(type="cpg_float", default=repr(float(term.tol or 0.0))),
-            "check_termination": Setting(type="cpg_int", default=str(term.check_termination)),
-        }
+        self.stgs = _settings_for(self._fom_kind, opts.config.termination)
+        if not self.stgs:
+            # cvxpygen emits `typedef struct { ... } Canon_Settings_t;` from
+            # these; with none left that is an empty struct, which is a GCC/Clang
+            # extension rather than ISO C. Turning the struct off instead drops
+            # the type, the instance and every setter, and nothing else in the
+            # generated code refers to them.
+            self.stgs_requires_extra_struct_type = False
         # Build sources follow the chosen target: OpenMP reuses the embedded C
         # files; CUDA emits .cu translation units. The bridge stays host C.
         self.cmake_sources = cmake_solver_sources(get_target(opts.config))
@@ -331,7 +369,21 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
 
         # The bridge's objective loop exists iff Canon_Params has a P member.
         has_quad_term = canon.parameter_canon.p.get("P") is not None
-        emit_bridge(spec, qp, solver_code_dir, prefix, has_quad_term=has_quad_term)
+        emit_bridge(
+            spec,
+            qp,
+            solver_code_dir,
+            prefix,
+            has_quad_term=has_quad_term,
+            # Exactly the members cvxpygen emitted: these come from the same
+            # declared kind that chose self.stgs, so the bridge never names a
+            # struct member that does not exist.
+            settings=tuple(self.stgs),
+            schedule_len=_schedule_len(result.ir),
+            # An unrolled body runs its loop once, so solution.iter is 1 rather
+            # than the number of iterations the emitted run performs.
+            iter_count=len(spec.iterates) if result.ir.unrolled else None,
+        )
         write_solver_cmake_stub(solver_code_dir)
 
         license_src = Path(__file__).resolve().parents[2] / "LICENSE"

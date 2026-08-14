@@ -408,6 +408,105 @@ def test_an_unrolled_declaration_may_roll_up():
     interface._check_ir_matches_kind(SimpleNamespace(schedules={}, unrolled=False), "unrolled")
 
 
+# --- the runtime settings each kind can honestly expose ----------------------
+
+
+def _canonicalize_with(fom, problem, **option_kwargs):
+    """Canonicalize through the real FOMTOOLS interface, returning the instance.
+
+    Stops short of code generation: this is what cvxpygen does *before* it ever
+    reaches ``generate_code``, which is exactly when the settings struct is
+    fixed — and therefore why the settings surface cannot be inferred from the
+    IR that generation later produces.
+    """
+    from cvxpygen.canonicalizer import Canonicalizer
+
+    interface.register()
+    options = interface.FomtoolsOptions(fom=fom, **option_kwargs)
+    with interface.pending_options(options):
+        _, iface = Canonicalizer(solver="FOMTOOLS").canonicalize(problem)
+    return iface
+
+
+def _qp_problem():
+    rng = np.random.default_rng(0)
+    n, m_eq = 4, 2
+    A = rng.standard_normal((m_eq, n))
+    q = cp.Parameter(n, name="q")
+    q.value = 0.1 * rng.standard_normal(n)
+    x = cp.Variable(n, name="x")
+    return cp.Problem(
+        cp.Minimize(0.5 * cp.sum_squares(x) + q @ x),
+        [A @ x == A @ rng.uniform(-0.3, 0.3, size=n), x <= 1.0, -1.0 <= x],
+    )
+
+
+@pytest.mark.parametrize("kind", ["rolled", "scheduled"])
+def test_looping_solvers_expose_all_three_settings(kind):
+    term = CodegenConfig(termination=TerminationSpec(max_iters=250)).termination
+    stgs = interface._settings_for(kind, term)
+
+    assert set(stgs) == {"max_iter", "tol", "check_termination"}
+    assert stgs["max_iter"].default == "250"
+
+
+def test_an_unrolled_solver_exposes_no_settings():
+    """None of the three mean anything for a body that is the whole run."""
+    assert interface._settings_for("unrolled", CodegenConfig().termination) == {}
+
+
+def test_the_interface_drops_the_settings_struct_when_there_are_none():
+    """An empty Canon_Settings_t would be an empty struct — not ISO C.
+
+    cvxpygen guards the struct's typedef, instance and prototype behind
+    ``stgs_requires_extra_struct_type`` and derives every ``cpg_set_solver_*``
+    from the settings themselves, so turning the flag off removes all of them.
+    """
+    iface = _canonicalize_with(_unrolled_builder, _qp_problem(), allow_unrolled=True)
+
+    assert iface.stgs == {}
+    assert iface.stgs_requires_extra_struct_type is False
+
+
+def test_the_interface_keeps_the_settings_struct_for_a_looping_solver():
+    iface = _canonicalize_with("admm", _qp_problem())
+
+    assert set(iface.stgs) == {"max_iter", "tol", "check_termination"}
+    assert iface.stgs_requires_extra_struct_type is True
+
+
+def test_the_settings_flag_does_not_leak_between_runs():
+    """It is set per instance, so an unrolled run must not disarm the next one."""
+    _canonicalize_with(_unrolled_builder, _qp_problem(), allow_unrolled=True)
+    iface = _canonicalize_with("admm", _qp_problem())
+
+    assert iface.stgs_requires_extra_struct_type is True
+
+
+def test_schedule_length_is_the_shortest_table():
+    """The binding table is the first one whose accessor starts clamping."""
+    ir = SimpleNamespace(schedules={"a": np.zeros(64), "b": np.zeros(40)})
+    assert interface._schedule_len(ir) == 40
+    assert interface._schedule_len(SimpleNamespace(schedules={})) is None
+
+
+def test_a_table_shorter_than_the_horizon_is_refused(captured_codegen, tmp_path):
+    """Generating past the tables would freeze the coefficients mid-schedule."""
+    spec = _scheduled_builder(_admm_qp())
+    short = ScheduledFomSpec(
+        build=spec.build,
+        schedules={"theta": [0.9] * 5},
+        name=spec.name,
+        primal_offset=0,
+        primal_dim=spec.primal_dim,
+        dual_offset=0,
+        dual_dim=0,
+        param_copy=spec.param_copy,
+    )
+    with pytest.raises(ValueError, match="entries but the generated loop"):
+        _dispatch(short, "scheduled", tmp_path, max_iters=20)
+
+
 # --- through the real front end ---------------------------------------------
 
 
