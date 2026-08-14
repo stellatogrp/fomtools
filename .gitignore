@@ -385,5 +385,5 @@ fomtools.project
 __marimo__/
 *.npz
 # Generated experiment artifacts
-experiments/*/out/
+experiments/**/out/
 .ruff_cache/
