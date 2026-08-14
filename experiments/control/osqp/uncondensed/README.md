@@ -122,9 +122,9 @@ algorithm that is generated are the same object.
 
 What comes out: two body steps over a state of dimension 2480, two parameters
 (the 1240-long cost and the 12-long measured state), 15 coefficient blocks
-holding 28582 entries, and an LDL^T factorization holding 18679 — fewer than the
+holding 28422 applied entries, and an LDL^T factorization holding 18679 — fewer than the
 26739 of the SuperLU factor NumPy uses, because it is a symmetric factorization
-under a fill-reducing ordering.  **65940 multiply-adds per iteration.**
+under a fill-reducing ordering.  **65780 multiply-adds per iteration.**
 
 ### It is slower than NumPy, and the reason is specific
 

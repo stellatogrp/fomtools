@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
+
 from common.quadcopter import N_INPUT, N_STATE, POS, VEL
 from common.reference import Reference
 

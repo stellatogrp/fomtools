@@ -20,13 +20,21 @@ from __future__ import annotations
 
 import argparse
 import csv
+import sys
 from pathlib import Path
 
-import matplotlib
+# Same shim as ``condensed/__init__.py``; this module is not inside a package, so
+# nothing else puts the shared ``common`` package on the path for it.
+_shared = str(Path(__file__).resolve().parents[1])
+if _shared not in sys.path:
+    sys.path.append(_shared)
+
+import matplotlib  # noqa: E402
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
+
 from common import plots  # noqa: E402
 from common.reference import figure_eight  # noqa: E402
 from common.simulate import closed_loop, initial_state, time_per_iteration  # noqa: E402

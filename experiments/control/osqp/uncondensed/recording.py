@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import numpy as np
 import scipy.sparse as sp
+
 from common.quadcopter import N_STATE
 from common.recording import ParameterBox, ParameterBoxes, Recording, box_around
 from uncondensed.mpc import UncondensedProblem

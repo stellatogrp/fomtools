@@ -19,6 +19,7 @@ alike.
 from __future__ import annotations
 
 import numpy as np
+
 from common.recording import ParameterBox, ParameterBoxes, Recording, box_around
 from condensed.mpc import MpcProblem
 

@@ -14,6 +14,7 @@ import csv
 from pathlib import Path
 
 import numpy as np
+
 from common import plots
 from common.reference import figure_eight
 from common.simulate import Controller, Rollout, closed_loop, time_per_iteration

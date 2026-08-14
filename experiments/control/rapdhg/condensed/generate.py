@@ -1,0 +1,42 @@
+"""Generate both C solvers for the rAPDHG controller.
+
+The translation phase produces ``out/codegen/emitted``; that directory is copied
+and the optimization phase runs on the copy, producing ``out/codegen/optimized``.
+Keeping both is the point: they are two of the three implementations the budget
+study compares, and they descend from the same translation, so the difference
+between them is what the optimization phase did rather than two unrelated agent
+runs.
+
+Unlike the ADMM study, the iteration count here is *not* free at run time.  The
+coefficients are tables sized at generation time, so ``--max-iters`` is a
+ceiling on every flight; ``common.study`` refuses to fly past it rather than let
+the emitted accessor clamp and freeze the schedule.
+
+    python -m condensed.generate            # generate whatever is missing
+    python -m condensed.generate --force    # regenerate both from scratch
+
+Needs ``FOMTOOLS_CODEGEN_AGENT=1``.  Afterwards
+``python -m condensed.run_implementations`` flies them.
+"""
+
+from __future__ import annotations
+
+import argparse
+
+from common import study as pipeline
+from condensed.study import MAX_ITERS, build
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--force", action="store_true", help="regenerate rather than reuse")
+    parser.add_argument("--max-iters", type=int, default=MAX_ITERS)
+    args = parser.parse_args()
+
+    s = build(force_boxes=args.force, max_iters=args.max_iters)
+    print(s.numpy_controller.describe())
+    pipeline.generate(s, force=args.force, max_iters=args.max_iters)
+
+
+if __name__ == "__main__":
+    main()

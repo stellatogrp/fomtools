@@ -90,6 +90,10 @@ markers = [
 target-version = "py312"
 line-length = 100
 exclude = ["build", "docs", "*__init__.py"]
+# Each control study runs as a module from its own directory and imports the
+# `common` package one level up.  Both roots have to be first-party or import
+# sorting splits them into separate blocks.
+src = [".", "experiments/control", "experiments/control/osqp", "experiments/control/rapdhg"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]

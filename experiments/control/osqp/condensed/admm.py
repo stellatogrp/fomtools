@@ -26,6 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+
 from condensed.mpc import MpcProblem
 
 
@@ -109,8 +110,9 @@ def solve_exact(problem: MpcProblem, q: np.ndarray) -> np.ndarray:
 
     Used only to check the iteration, never inside the closed loop.
     """
-    import osqp
     import scipy.sparse as sp
+
+    import osqp
 
     n = problem.n
     prob = osqp.OSQP()

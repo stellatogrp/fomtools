@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+
 from common.simulate import IterationCost, slope_us
 
 #: Compiler flags for ``make lib``.  The generated Makefile builds the library at

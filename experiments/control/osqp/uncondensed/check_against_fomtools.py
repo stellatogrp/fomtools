@@ -18,6 +18,7 @@ object.
 from __future__ import annotations
 
 import numpy as np
+
 from common import study as pipeline
 from uncondensed import admm
 from uncondensed.study import OUT, build

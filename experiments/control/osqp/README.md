@@ -34,6 +34,9 @@ rather than of the controller.
 ## Running it
 
 Everything runs as a module from this directory (`experiments/control/osqp`).
+The plant, the simulator, the plots, and the code-generation pipeline live one
+level up in `../common`, shared with the `rapdhg` study; each study package puts
+that directory on the path itself, so no environment variable is needed.
 
 ```
 python -m condensed.check_against_fomtools    # the controller is the recorded algorithm
@@ -101,7 +104,7 @@ arbitrary input sequence.
 **Plant.**  The hover linearization of a quadcopter from the OSQP documentation,
 twelve states and four rotor thrusts, taken verbatim from the verification
 experiments in `mip_algo_verify` so that both analyze the same vehicle.  It is
-published at a 0.1 s sampling period; `common/quadcopter.py` recovers the
+published at a 0.1 s sampling period; `../common/quadcopter.py` recovers the
 underlying continuous-time model and re-discretizes at 10 ms.  Every eigenvalue
 is real and positive, so the matrix logarithm is real and the recovery is exact
 to machine precision.  The plant and the controller's prediction model are the
@@ -142,17 +145,17 @@ and the iteration count stops mattering at all.
 
 | file | contents |
 |---|---|
-| `common/quadcopter.py` | the model, its cost and constraint data, re-discretization |
-| `common/reference.py` | the figure eight, and a random B-spline generator |
-| `common/simulate.py` | the `Controller` protocol, the closed loop, crash detection, timing |
-| `common/plots.py` | 3-D panels, the still comparison, the animation, error against time |
-| `common/sweep.py` | the budget sweep both studies run |
-| `common/csolver.py` | a generated C solver, built, timed, and callable |
-| `common/codegen_driver.py` | emits the translated and the optimized solver, keeping both |
+| `../common/quadcopter.py` | the model, its cost and constraint data, re-discretization |
+| `../common/reference.py` | the figure eight, and a random B-spline generator |
+| `../common/simulate.py` | the `Controller` protocol, the closed loop, crash detection, timing |
+| `../common/plots.py` | 3-D panels, the still comparison, the animation, error against time |
+| `../common/sweep.py` | the budget sweep both studies run |
+| `../common/csolver.py` | a generated C solver, built, timed, and callable |
+| `../common/codegen_driver.py` | emits the translated and the optimized solver, keeping both |
 | `<study>/mpc.py` | that formulation's problem assembly |
 | `<study>/admm.py` | that formulation's iteration |
-| `common/recording.py` | parameter boxes and the recording container |
-| `common/study.py` | the code-generation pipeline both formulations run |
+| `../common/recording.py` | parameter boxes and the recording container |
+| `../common/study.py` | the code-generation pipeline both formulations run |
 | `<study>/controller.py` | the adapter the shared simulator flies |
 | `<study>/recording.py` | that formulation's iteration, recorded on a `Verifier` |
 | `<study>/study.py` | the adapter that makes it a `Study` |
@@ -171,13 +174,21 @@ flights is a difference in speed and nothing else.
 
 | | multiply-adds per iteration | NumPy | emitted C | optimized C | emission |
 |---|---:|---:|---:|---:|---:|
-| `condensed/` | 2080 | 6.06 us | 2.88 us | 2.67 us | **2.1x faster** |
-| `uncondensed/` | 65940 | 37.39 us | 71.92 us | 64.32 us | **1.9x slower** |
+| `condensed/` | 2000 | 6.06 us | 2.88 us | 2.67 us | **2.1x faster** |
+| `uncondensed/` | 65780 | 37.39 us | 71.92 us | 64.32 us | **1.9x slower** |
+
+The optimization phase is the disappointing column, and the reason is the same
+in both rows: 91% and 88% of the emitted runtime sits inside `fom_lin_solve_t1`
+in `fom_linsolve.c`, a deterministic file restored before every verification and
+therefore not the agent's to edit.  That is a property of the *algorithm*, not of
+the generator.  The `../rapdhg` study next door runs a matrix-free method on this
+same condensed program, where the emitted iteration contains no linear solve at
+all, and the optimization phase there buys **17.9x** instead of 1.08x.
 
 **Emission pays exactly where the interpreter is the cost.**  The condensed
-iteration runs 2080 multiply-adds in 6.1 us, which is 0.3 G/s: hardly any of that
+iteration runs 2000 multiply-adds in 6.1 us, which is 0.3 G/s: hardly any of that
 is arithmetic, it is per-operation overhead on vectors of forty numbers, and
-removing it is what code generation does.  The uncondensed iteration runs 65940
+removing it is what code generation does.  The uncondensed iteration runs 65780
 in 37 us, which is 1.8 G/s of compiled SuperLU and CSR kernels with nothing left
 to recover — its per-solve cost outside the loop measures 1.1 us.  Generated C
 would have to beat 1.8 G/s in scalar CSC loops merely to break even, and it does

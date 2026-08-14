@@ -67,6 +67,54 @@ def figure_eight(
     return ref
 
 
+def quasi_periodic(
+    period: float = 2.25,
+    amplitude: float = 1.0,
+    climb: float = 0.35,
+    altitude: float = 1.2,
+    ratio: float = 1.6180339887498949,
+) -> Reference:
+    """A Lissajous curve whose axes are incommensurate, so it never repeats.
+
+    The figure eight closes after one period, which makes every lap identical and
+    lets the tracking error settle into a pattern tied to that period.  Giving
+    the lateral axis an irrational multiple of the longitudinal frequency -- the
+    golden ratio, the hardest to approximate by a fraction -- breaks that: the
+    horizontal path never retraces itself and slowly fills a box, while the
+    altitude drifts on a third, slower incommensurate cycle.
+
+    The result is visibly less regular while staying analytic, so the velocity is
+    the exact derivative of the position rather than a finite difference of it.
+    That matters here: the stage cost penalizes linear velocity, so a reference
+    whose velocity disagrees with its position makes the cost fight the path.
+
+    The defaults keep the speed within a few percent of the figure eight's, so
+    the two are comparably demanding, and hold the altitude between 0.85 and
+    1.55 m, well clear of the ground.
+    """
+    w = 2.0 * np.pi / period
+    lateral = 0.6 * amplitude
+
+    def ref(t: float) -> tuple[np.ndarray, np.ndarray]:
+        pos = np.array(
+            [
+                amplitude * np.sin(w * t),
+                lateral * np.sin(ratio * w * t),
+                altitude + climb * np.sin(w * t / ratio),
+            ]
+        )
+        vel = np.array(
+            [
+                amplitude * w * np.cos(w * t),
+                lateral * ratio * w * np.cos(ratio * w * t),
+                climb * (w / ratio) * np.cos(w * t / ratio),
+            ]
+        )
+        return pos, vel
+
+    return ref
+
+
 def bspline_waypoints(
     duration: float,
     num_waypoints: int = 6,

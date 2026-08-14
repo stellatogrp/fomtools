@@ -82,9 +82,9 @@ quadcopter at all.
 Nothing has to be rewritten to generate this formulation: the bounds are already
 constant and the parameter is already confined to the linear cost, which is the
 shape extraction accepts.  What comes out is two body steps over a state of
-dimension 80, one 40-long parameter, nine coefficient blocks holding 440 entries,
-and a dense LDL^T factorization holding 820 — **2080 multiply-adds per
-iteration**, against 65940 for the uncondensed program.
+dimension 80, one 40-long parameter, nine coefficient blocks holding 360 applied entries,
+and a dense LDL^T factorization holding 820 — **2000 multiply-adds per
+iteration**, against 65780 for the uncondensed program.
 
 ### Emission pays here
 
@@ -99,10 +99,10 @@ flown for eight seconds at a common count their trajectories differ by 4e-10, so
 this is one algorithm in three implementations and nothing else.
 
 Emission is worth 2.1x, where on the uncondensed program it *cost* a factor of
-two.  The reason is where the time goes.  NumPy runs 2080 multiply-adds in 6.1 us,
+two.  The reason is where the time goes.  NumPy runs 2000 multiply-adds in 6.1 us,
 which is 0.3 G/s: almost none of that is arithmetic, it is per-operation
 interpreter overhead on vectors of forty numbers, and removing it is what code
-generation does.  The uncondensed iteration runs 65940 in 37 us, which is 1.8 G/s
+generation does.  The uncondensed iteration runs 65780 in 37 us, which is 1.8 G/s
 of already-compiled sparse kernels with nothing left to recover.
 
 ### Flights against the compute budget

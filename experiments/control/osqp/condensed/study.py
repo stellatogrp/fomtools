@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+
 from common.quadcopter import N_INPUT, U_MAX, U_MIN
 from common.recording import ParameterBoxes
 from common.reference import figure_eight

@@ -107,3 +107,42 @@ class Recording:
     def param_values(self, boxes: ParameterBoxes) -> dict:
         """Representative parameter values keyed by *leaf*, as the checks expect."""
         return {leaf: box.mid for leaf, box in zip(self.params, boxes.boxes)}
+
+
+@dataclass
+class ScheduledRecording:
+    """A recording whose coefficients vary with the iteration index.
+
+    The stationary path above records one iteration and rolls it into a loop,
+    which bakes every coefficient in as a constant.  A method whose coefficients
+    change with ``k`` needs the other path: the recording is a *function* of its
+    scalars, extraction probes it at several values, fits each coefficient block
+    as an affine function of them, and emits the scalars as tables read at the
+    loop counter.
+
+    A restart is such a method.  It is a coefficient that is nonzero on every
+    K-th iteration, so the restart period never enters the size of the emitted
+    code -- only the numbers in the tables.
+
+    Attributes
+    ----------
+    build:
+        Callable taking one keyword per entry of :attr:`schedules` and returning
+        a ``fomtools.codegen.extract_scheduled.Recording``.  Every scalar must
+        enter the recorded expressions *linearly*; a product of two of them
+        cannot be fitted and is rejected at extraction.
+    schedules:
+        One table per scalar, indexed by the 0-based iteration counter.
+    """
+
+    build: object  # Callable[..., fomtools.codegen.extract_scheduled.Recording]
+    schedules: dict
+
+    @property
+    def max_iters(self) -> int:
+        """The longest loop these tables can drive.
+
+        Beyond it the emitted accessor clamps to the last entry, which is safe
+        but is no longer the algorithm, so nothing should run past this.
+        """
+        return min(len(v) for v in self.schedules.values())

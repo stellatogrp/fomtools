@@ -25,6 +25,7 @@ import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+
 from common.simulate import Rollout  # noqa: E402
 
 REFERENCE_COLOR = "black"

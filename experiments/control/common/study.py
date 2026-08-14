@@ -24,9 +24,10 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
+
 from common import codegen_driver, plots  # noqa: E402
 from common.csolver import CSolver  # noqa: E402
-from common.recording import ParameterBoxes, Recording  # noqa: E402
+from common.recording import ParameterBoxes, Recording, ScheduledRecording  # noqa: E402
 from common.reference import Reference  # noqa: E402
 from common.simulate import (  # noqa: E402
     Command,
@@ -68,7 +69,10 @@ class Study:
     problem: object
     ref: Reference
     out: Path
-    recording: Recording
+    #: Either a stationary :class:`~common.recording.Recording`, or a
+    #: :class:`~common.recording.ScheduledRecording` for a method whose
+    #: coefficients vary with the iteration index.
+    recording: Recording | ScheduledRecording
     boxes: ParameterBoxes
     numpy_controller: Controller
 
@@ -79,6 +83,13 @@ class Study:
     #: The NumPy controller's state vector after a given number of iterations at
     #: the representative parameters, for the equivalence check.
     numpy_solution: Callable[[int], np.ndarray]
+
+    #: Absolute agreement the generated solver must reach against the reference
+    #: oracle during ``make verify``.  ``None`` keeps the generator's default.
+    #: Raise it only when the iterates are large at the sampled parameters, and
+    #: see :func:`common.codegen_driver.config_for` for why that is not the same
+    #: as weakening the check.
+    tol_verify: float | None = None
 
     ir: object = field(default=None, repr=False)
 
@@ -121,6 +132,15 @@ class GeneratedController:
                 f"but this program needs {got}"
             )
 
+        # A scheduled solver reads its coefficients from tables sized at
+        # generation time.  Past the end the emitted accessor clamps to the last
+        # entry, which is memory safe but freezes the schedule, so the solver
+        # would quietly stop running the method it was generated for.  A fixed
+        # coefficient has no such horizon.
+        self.max_iterations = (
+            solver.default_max_iter if isinstance(study.recording, ScheduledRecording) else None
+        )
+
     def describe(self) -> str:
         return (
             f"{self.label}: state dimension {self.solver.state_dim}, "
@@ -128,6 +148,13 @@ class GeneratedController:
         )
 
     def command(self, state: np.ndarray, t: float, iterations: int) -> Command:
+        if self.max_iterations is not None and iterations > self.max_iterations:
+            raise ValueError(
+                f"{self.label} was generated with schedule tables covering "
+                f"{self.max_iterations} iterations but {iterations} were requested; past "
+                f"that the emitted accessor clamps and the coefficients freeze. "
+                f"Regenerate with a larger max_iters, or lower the budget."
+            )
         solution = self.solver.solve(iterations=iterations, **self.study.params_at(state, t))
         u, raw = self.study.first_input(solution)
         return Command(
@@ -145,18 +172,32 @@ class GeneratedController:
 
 def describe_ir(ir) -> str:
     """What was extracted, and how much arithmetic one iteration of it is."""
-    matrix_nnz = sum(int(np.count_nonzero(np.abs(m.array) > 1e-12)) for m in ir.matrices.values())
+    # Count only what the emitted matvecs actually touch: a block reached by no
+    # term is never applied, and the C emitter drops entries below 1e-12, which
+    # is where the near-zero base blocks of a schedule fit end up.
+    applied = {
+        t.matrix for op in [s.linear_op for s in ir.body] + [ir.state_update] for t in op.terms
+    }
+    matrix_nnz = sum(
+        int(np.count_nonzero(np.abs(ir.matrices[n].array) > 1e-12)) for n in sorted(applied)
+    )
     factor_nnz = sum(f.nnz for f in ir.factorizations.values())
     methods = ", ".join(f"{n}: {f.method}" for n, f in ir.factorizations.items()) or "none"
-    return "\n".join(
-        [
-            f"extracted iteration:  {len(ir.body)} steps, state dimension {ir.state_dim}",
-            f"parameters:           {', '.join(f'{p.name} ({p.dim})' for p in ir.params)}",
-            f"coefficient blocks:   {len(ir.matrices)}, {matrix_nnz} stored entries",
-            f"factorization:        {methods}, {factor_nnz} stored entries",
-            f"work per iteration:   {matrix_nnz + 2 * factor_nnz} multiply-adds",
-        ]
-    )
+    lines = [
+        f"extracted iteration:  {len(ir.body)} steps, state dimension {ir.state_dim}",
+        f"parameters:           {', '.join(f'{p.name} ({p.dim})' for p in ir.params)}",
+        f"coefficient blocks:   {len(ir.matrices)}, {matrix_nnz} applied entries",
+        f"factorization:        {methods}, {factor_nnz} stored entries",
+        f"work per iteration:   {matrix_nnz + 2 * factor_nnz} multiply-adds",
+    ]
+    if ir.schedules:
+        length = min(len(v) for v in ir.schedules.values())
+        lines.insert(
+            2,
+            f"schedules:            {len(ir.schedules)} tables of {length} "
+            f"({', '.join(sorted(ir.schedules))})",
+        )
+    return "\n".join(lines)
 
 
 def check_recording(study: Study, horizon: int, tol: float = 1e-9) -> object:
@@ -174,6 +215,13 @@ def check_recording(study: Study, horizon: int, tol: float = 1e-9) -> object:
     Extraction runs with the recorded iterates supplied, so ``check_stationary``
     also confirms that repeating one iteration reproduces the recording.
 
+    A scheduled recording has no single recorded tape to replay, so step 2 does
+    not apply to it: its build function is probed at synthetic scalars, and the
+    check that the fit is right is the held-out probe inside
+    ``extract_scheduled_ir``, which raises rather than returning a wrong IR.
+    Steps 1 and 3 still run, and the study's own check script is where the
+    recorded recurrence is compared against the algorithm as the paper writes it.
+
     Returns the IR; raises :class:`SystemExit` if anything disagrees.
     """
     from fomtools.codegen import ReferenceOracle
@@ -181,19 +229,25 @@ def check_recording(study: Study, horizon: int, tol: float = 1e-9) -> object:
 
     rec, boxes = study.recording, study.boxes
     reference = study.numpy_solution(horizon)
+    scheduled = isinstance(rec, ScheduledRecording)
 
-    faithful = run_faithful(
-        rec.verifier,
-        rec.next_state,
-        rec.param_values(boxes),
-        n_iters=horizon,
-        state=rec.state,
-        params=rec.params,
-    )
-    err_faithful = float(np.max(np.abs(faithful[-1] - reference)))
+    err_faithful = None
+    if not scheduled:
+        faithful = run_faithful(
+            rec.verifier,
+            rec.next_state,
+            rec.param_values(boxes),
+            n_iters=horizon,
+            state=rec.state,
+            params=rec.params,
+        )
+        err_faithful = float(np.max(np.abs(faithful[-1] - reference)))
 
     ir = codegen_driver.extract(
-        rec, boxes, config=codegen_driver.config_for(horizon), name=f"mpc_{study.name}"
+        rec,
+        boxes,
+        config=codegen_driver.config_for(horizon, study.tol_verify),
+        name=f"mpc_{study.name}",
     )
     study.ir = ir
     oracle = ReferenceOracle(ir).solve(param_values=boxes.named_values())
@@ -201,14 +255,15 @@ def check_recording(study: Study, horizon: int, tol: float = 1e-9) -> object:
 
     print()
     print(describe_ir(ir))
-    print(f"\n  NumPy vs recorded steps      {err_faithful:.3e}")
+    print()
+    if err_faithful is not None:
+        print(f"  NumPy vs recorded steps      {err_faithful:.3e}")
     print(f"  NumPy vs extracted iteration {err_oracle:.3e}")
 
-    failures = [
-        name
-        for name, err in (("recorded steps", err_faithful), ("extracted iteration", err_oracle))
-        if not err < tol
-    ]
+    checked = [("extracted iteration", err_oracle)]
+    if err_faithful is not None:
+        checked.insert(0, ("recorded steps", err_faithful))
+    failures = [name for name, err in checked if not err < tol]
     if failures:
         raise SystemExit(f"FAILED: disagreement with {', '.join(failures)}")
     return ir
@@ -233,7 +288,9 @@ def check_equivalence(study: Study, solver: CSolver, label: str, verbose: bool =
 
 def generate(study: Study, force: bool = False, max_iters: int | None = None) -> None:
     """Emit both C solvers and check them against the NumPy controller."""
-    config = codegen_driver.config_for(max_iters or codegen_driver.DEFAULT_MAX_ITERS)
+    config = codegen_driver.config_for(
+        max_iters or codegen_driver.DEFAULT_MAX_ITERS, study.tol_verify
+    )
     ir, emitted = codegen_driver.translate(
         study.recording,
         study.boxes,
@@ -277,7 +334,9 @@ def generate(study: Study, force: bool = False, max_iters: int | None = None) ->
 
 def calibrate(study: Study, force: bool = False, max_iters: int | None = None) -> None:
     """Translate only, then report what one iteration costs in each implementation."""
-    config = codegen_driver.config_for(max_iters or codegen_driver.DEFAULT_MAX_ITERS)
+    config = codegen_driver.config_for(
+        max_iters or codegen_driver.DEFAULT_MAX_ITERS, study.tol_verify
+    )
     ir, emitted = codegen_driver.translate(
         study.recording,
         study.boxes,
@@ -330,11 +389,32 @@ class Arm:
         return max(1, int(budget_us / self.us_per_iteration))
 
 
+#: Slope endpoints for timing an arm, in iterations.  The default 20-to-200 is
+#: too short once an iteration is fast: at 0.13 us the whole 200-iteration leg is
+#: 26 us, comparable to the per-solve marshalling the slope exists to cancel, and
+#: the measurement comes back with tens of percent of spread.  A longer leg fixes
+#: it -- the same solver measures 0.19 us +/- 41% at 20-to-200 and 0.133 us
+#: +/- 1.3% at 64-to-512.  This is not cosmetic: every arm's measured cost is
+#: what converts a budget into an iteration count, so a noisy measurement
+#: silently hands the fastest arm a smaller budget than it earned.
+SLOPE_LOW = 64
+SLOPE_HIGH = 512
+
+
 def build_arms(study: Study, only: list[str] | None = None) -> list[Arm]:
     """The three implementations, each timed the same way: as a slope in the loop count."""
     values = study.boxes.named_values()
+    high = SLOPE_HIGH
+    if isinstance(study.recording, ScheduledRecording):
+        # Never slope past the schedule tables: beyond them the coefficients
+        # freeze, so the far endpoint would be timing a different computation.
+        high = min(high, study.recording.max_iters)
     arms = [
-        Arm("NumPy", study.numpy_controller, us_per_iteration(study.numpy_controller, study.ref))
+        Arm(
+            "NumPy",
+            study.numpy_controller,
+            us_per_iteration(study.numpy_controller, study.ref, low=SLOPE_LOW, high=high),
+        )
     ]  # timed by the same two-point slope as the generated solvers
     for name, directory in (("emitted C", study.emitted), ("optimized C", study.optimized)):
         if not (directory / "src" / "fom_solver.c").exists():
@@ -342,7 +422,13 @@ def build_arms(study: Study, only: list[str] | None = None) -> list[Arm]:
             continue
         solver = CSolver(directory)
         arms.append(
-            Arm(name, GeneratedController(study, solver, name), solver.us_per_iteration(values))
+            Arm(
+                name,
+                GeneratedController(study, solver, name),
+                solver.us_per_iteration(
+                    values, low=SLOPE_LOW, high=high, repeats=15, solves=40, trials=9
+                ),
+            )
         )
     if only:
         arms = [a for a in arms if a.name in only]
