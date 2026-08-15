@@ -3,7 +3,7 @@
 A single :class:`CliAgentDriver` drives every prompt-in/files-out CLI backend
 (the example Cursor spec and any user-registered agent); the per-tool differences
 live in
-:class:`~fomtools.codegen.agent.specs.CliAgentSpec`. This is the agent-agnostic
+:class:`~fomtools.codegen.agent.cli_specs.CliAgentSpec`. This is the agent-agnostic
 core: the authoritative verify/retry loop is shared via
 :func:`~fomtools.codegen.agent.driver.run_verify_loop`, and authentication is
 forced to API-key mode when a key is available (the key is forwarded into the
@@ -18,14 +18,15 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
+from fomtools.codegen.agent.cli_specs import SYSTEM_PROMPT, CliAgentSpec
 from fomtools.codegen.agent.driver import (
     AgentBackendError,
     AgentDriver,
     AgentResult,
     AgentTask,
+    _decode_stream,
     run_verify_loop,
 )
-from fomtools.codegen.agent.specs import SYSTEM_PROMPT, CliAgentSpec
 
 
 class CliAgentDriver(AgentDriver):
@@ -193,14 +194,27 @@ class CliAgentDriver(AgentDriver):
         # relative to their own cwd, so a relative path applied as both --cd and
         # the subprocess cwd would be doubled.
         workdir = str(Path(task.workdir).resolve())
+        self._truncated = False
         return run_verify_loop(
             task,
             lambda prompt, max_turns: self._invoke_agent(
-                self._build_argv(workdir, prompt), workdir
+                self._build_argv(workdir, prompt), workdir, timeout=self._timeout_for(task.phase)
             ),
             max_attempts=self.max_attempts,
             max_turns=self.max_turns,
+            truncated_probe=lambda: self._truncated,
         )
+
+    def _timeout_for(self, phase: str) -> int | None:
+        """Wall-clock budget for one attempt, from the codegen config if present.
+
+        Returns ``None`` to run unbounded, preserving this driver's historical
+        behaviour when no config supplies a budget.
+        """
+        config = getattr(self, "config", None)
+        key = "agent_optimize_timeout_s" if phase == "B_optimize" else "agent_timeout_s"
+        value = getattr(config, key, None)
+        return int(value) if value else None
 
     def _build_argv(self, workdir: str, prompt: str) -> list[str]:
         """Assemble the full CLI argument vector for one invocation.
@@ -237,7 +251,9 @@ class CliAgentDriver(AgentDriver):
         argv += [spec.prompt_arg, full_prompt] if spec.prompt_arg else [full_prompt]
         return argv
 
-    def _invoke_agent(self, argv: list[str], workdir: str | Path) -> str:
+    def _invoke_agent(
+        self, argv: list[str], workdir: str | Path, timeout: int | None = None
+    ) -> str:
         """Run one agent attempt by shelling out to the CLI.
 
         Executes ``argv`` in ``workdir`` with the child environment from
@@ -271,11 +287,25 @@ class CliAgentDriver(AgentDriver):
                 capture_output=True,
                 text=True,
                 env=self._child_env(),
+                timeout=timeout,
             )
         except FileNotFoundError as exc:  # binary vanished after preflight
             raise AgentBackendError(
                 f"{self.spec.display_name or self.spec.name} CLI {self.bin!r} not found: {exc}"
             ) from exc
+        except subprocess.TimeoutExpired as exc:
+            # Keep the partial output and say so. Propagating would discard it and
+            # leak the argv (hence the prompt) into the log via str(exc).
+            self._truncated = True
+            name = self.spec.display_name or self.spec.name
+            return (
+                _decode_stream(exc.stdout)
+                + _decode_stream(exc.stderr)
+                + (
+                    f"\n[fomtools: the {name} CLI exceeded its {timeout}s budget for this attempt "
+                    "and was terminated; any output above is partial.]\n"
+                )
+            )
         output = proc.stdout + proc.stderr
         # An auth failure is not a fixable task error — retrying would just burn
         # the attempt budget. Surface it immediately so run_verify_loop fails fast

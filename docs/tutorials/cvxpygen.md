@@ -122,6 +122,13 @@ the FOM termination at runtime; the check interval
   term and constraint right-hand sides. Parameter-dependent `P`/`A` entries
   raise `NotImplementedError` (FOMTools bakes matrices into the generated
   code).
+- The FOM must be **stationary**: the builder behind `fom=` records one
+  iteration, which the generated loop then repeats. A coefficient that changed
+  with the iteration index would be frozen at its recorded value. The two
+  built-in builders (`admm`, `pdhg`) are stationary by construction — their step
+  sizes and relaxation factor are computed once, offline — and a custom builder
+  must be too. Schedules (see the [codegen tutorial](codegen.md)) are not yet
+  wired through this front end.
 - Embedded C target only (`Version.EMBEDDED`, `Backend.C`, `float64`).
 - One solver instance per binary (the bridge globals are unprefixed, as in
   CVXPYgen's statically-allocated backends).

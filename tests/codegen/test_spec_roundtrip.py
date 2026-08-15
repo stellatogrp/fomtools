@@ -1,5 +1,8 @@
 """Tests that FomIR serialization is lossless."""
 
+import json
+from dataclasses import replace
+
 import numpy as np
 
 from fomtools.codegen import spec
@@ -11,6 +14,7 @@ from tests.codegen.conftest import build_dr, build_ista, build_spd_cg
 def _assert_ir_equal(a, b):
     assert a.name == b.name
     assert a.dtype == b.dtype
+    assert a.unrolled == b.unrolled
     assert a.state.dim == b.state.dim
     assert a.state.slots == b.state.slots
     assert np.allclose(a.state.init, b.state.init)
@@ -75,6 +79,32 @@ def test_cg_factorization_roundtrip(tmp_path):
     r1 = ReferenceOracle(ir).solve(param_values={"p0": qval})
     r2 = ReferenceOracle(loaded).solve(param_values={"p0": qval})
     assert np.allclose(r1.solution, r2.solution)
+
+
+def test_unrolled_flag_roundtrips(tmp_path):
+    case = build_ista()
+    ir = extract_ir(case["verifier"], case["next_state"], config=case["config"])
+    ir = replace(ir, unrolled=True)
+    spec.save(ir, tmp_path)
+    loaded = spec.load(tmp_path)
+    assert loaded.unrolled is True
+    _assert_ir_equal(ir, loaded)
+
+
+def test_spec_written_before_unrolled_emission_still_loads(tmp_path):
+    """A spec.json with no ``unrolled`` key loads as a rolled IR."""
+    case = build_ista()
+    ir = extract_ir(case["verifier"], case["next_state"], config=case["config"])
+    spec.save(ir, tmp_path)
+
+    path = tmp_path / "spec.json"
+    payload = json.loads(path.read_text())
+    del payload["unrolled"]
+    path.write_text(json.dumps(payload))
+
+    loaded = spec.load(tmp_path)
+    assert loaded.unrolled is False
+    _assert_ir_equal(ir, loaded)
 
 
 def test_markdown_renders(tmp_path):

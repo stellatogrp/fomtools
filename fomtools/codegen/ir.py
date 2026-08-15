@@ -38,7 +38,50 @@ from fomtools.codegen.factorize import Factorization
 
 class NonStationaryFOMError(ValueError):
     """Raised when the recorded steps cannot be rolled into a single repeating
-    iteration body (and ``allow_unroll`` was not requested)."""
+    iteration body.
+
+    A coefficient that varies with the iteration index is *not* in itself a
+    reason to raise: declare it as a :mod:`~fomtools.codegen.schedule` and it
+    lowers to a table read at the loop counter. This error means the recording
+    cannot be rolled at all — the body changes shape between iterations, or a
+    varying quantity reaches somewhere a table cannot (see
+    :class:`ScheduleFitError`).
+    """
+
+
+class ScheduleFitError(NonStationaryFOMError):
+    """Raised when a declared schedule does not explain how a coefficient varies.
+
+    Extraction probes the recording at several values of each schedule scalar and
+    recovers a base/slope pair per coefficient block, assuming the dependence is
+    affine (which it is whenever the scalar enters the recorded
+    ``LinearExpression`` linearly). This error means the recovered fit failed to
+    predict a held-out probe, so the emitted table would not reproduce the
+    method.
+    """
+
+
+class UnrolledBlowupError(NonStationaryFOMError):
+    """Raised when an unrolled recording would emit a quadratic number of terms.
+
+    Unrolled extraction expresses each iterate in terms of leaves and earlier
+    temporaries. When the recorded loop carries its iterate through a *non-leaf*
+    expression -- ``z = z + ut - u``, as in Douglas-Rachford and ADMM -- every
+    block reaches back through all earlier temporaries and the operation count
+    grows with the square of the iteration count. Materializing each iterate as
+    its own variable restores linear growth; see
+    :class:`fomtools.iteratetrajectory.IterateTrajectory`.
+    """
+
+
+class UnrolledFidelityError(NonStationaryFOMError):
+    """Raised when an unrolled IR does not reproduce the recorded tape.
+
+    Unlike :class:`NonStationaryFOMError`, this is not something a recording can
+    provoke by being iteration-varying: an unrolled body gives every iteration
+    its own coefficients, so it should reproduce the tape exactly whatever the
+    method does. Raising means extraction and the tape disagree.
+    """
 
 
 class ActivationKind(str, Enum):
@@ -92,10 +135,16 @@ class Term:
     """One ``matrix @ source`` summand of a :class:`LinearOp`.
 
     ``source`` is one of ``"state"``, ``"param:<name>"`` or ``"tmp:<name>"``.
+
+    When :attr:`scale` is set, the summand is multiplied by that schedule's value
+    at the current iteration, i.e. ``schedules[scale][k] * (matrix @ source)``. A
+    coefficient block that varies with ``k`` is emitted as two terms: an unscaled
+    base and a scaled slope.
     """
 
     source: str
     matrix: str  # name into FomIR.matrices
+    scale: str | None = None  # name into FomIR.schedules, or None for a fixed term
 
 
 @dataclass(frozen=True)
@@ -193,26 +242,42 @@ class StateSpec:
 
 @dataclass(frozen=True)
 class FomIR:
-    """Complete single-iteration IR for a stationary first-order method.
+    """Complete IR for one repeatable iteration, or for a whole unrolled run.
 
     Attributes
     ----------
     params:
         Solve-time parameter vectors.
     state:
-        Loop-carried state layout + initial value.
+        Loop-carried state layout + initial value. For an unrolled IR this is
+        the solver's *input*: the initial iterates, plus any earlier iterate the
+        method keeps referring to (a Halpern anchor, say).
     body:
-        Ordered iteration-body steps producing temporaries.
+        Ordered iteration-body steps producing temporaries. For an unrolled IR
+        this is the whole run as one straight-line program, in dependency order.
     state_update:
-        Linear op producing the next state from current state + temporaries.
+        Linear op producing the next state from current state + temporaries. For
+        an unrolled IR it produces the final answer.
     termination:
         Loop termination criterion.
     matrices:
         All named coefficient/const blocks referenced by the ops.
+    schedules:
+        Iteration-varying scalars referenced by :attr:`Term.scale`, each a table
+        of at least ``termination.max_iters`` values indexed by the 0-based
+        iteration counter. Empty for a fully stationary method. Mutually
+        exclusive with :attr:`unrolled`: both express iteration-varying
+        coefficients, and they do it in incompatible ways.
     dtype:
         Numeric dtype string (``"float64"`` / ``"float32"``).
     name:
         Human-friendly FOM name (used for fixtures / file naming).
+    unrolled:
+        Whether :attr:`body` is a whole run rather than one repeatable
+        iteration. An unrolled body is executed **once**, so
+        ``termination.max_iters`` is 1 and no residual-based early exit applies;
+        each iteration carries its own coefficient blocks, which is what lets a
+        recording use arbitrary per-iteration steps.
     """
 
     params: tuple[ParamSpec, ...]
@@ -222,12 +287,35 @@ class FomIR:
     termination: TerminationSpec
     matrices: dict[str, MatrixData]
     factorizations: dict[str, Factorization] = field(default_factory=dict)
+    schedules: dict[str, np.ndarray] = field(default_factory=dict)
     dtype: str = "float64"
     name: str = "fom"
+    unrolled: bool = False
+
+    def __post_init__(self):
+        # Enforced here rather than left to "whichever extraction function you
+        # happened to call": the two representations answer the same question
+        # differently, and an IR holding both would make the emitted spec
+        # self-contradictory -- "executed once, ignore max_iter" next to a table
+        # indexed by a loop counter that no longer exists.
+        if self.unrolled and self.schedules:
+            raise ValueError(
+                "an IR cannot be both unrolled and scheduled: an unrolled body already "
+                "carries its own coefficients per iteration, so the schedule(s) "
+                f"{sorted(self.schedules)} would be tabulated over a loop that is not "
+                "emitted. Extract the run with extract_unrolled_ir (arbitrary variation, "
+                "size grows with the horizon) or declare the variation with "
+                "extract_scheduled_ir (compact, affine dependence only)."
+            )
 
     @property
     def state_dim(self) -> int:
         return self.state.dim
+
+    @property
+    def is_scheduled(self) -> bool:
+        """Whether any coefficient varies with the iteration index."""
+        return bool(self.schedules)
 
     @property
     def max_rhs_dim(self) -> int:

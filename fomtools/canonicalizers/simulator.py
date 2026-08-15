@@ -646,7 +646,16 @@ class Simulator(Canonicalizer):
 
             elif var_type == "param":
                 if samples is not None:
+                    samples = np.asarray(samples)
                     self.param_to_samples[_var] = cp.array(samples, dtype=cp.float32)
+                    if not has_bounds:
+                        _var.lb = np.min(samples, axis=0)
+                        _var.ub = np.max(samples, axis=0)
+                elif has_bounds and np.array_equal(lb, ub):
+                    # A user parameter pinned by equal bounds represents a
+                    # constant value. Store that value so symbolic expressions
+                    # involving the parameter evaluate correctly per sample.
+                    self.iterate_to_samples[_var] = cp.array(lb, dtype=cp.float32)
                 else:
                     # Step output — register as iterate with zero init so
                     # subsequent steps can reference it via the value table.

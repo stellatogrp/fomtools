@@ -9,8 +9,9 @@ is numerically verified.
 
 ## Defining the FOM
 
-Build the algorithm exactly as you would for verification, and keep a handle on
-the iterate produced after **one** iteration (`next_state`):
+Write the algorithm as a loop, exactly as you would to verify it, and keep the
+iterate sequence. An [`iterate_trajectory`](#accumulating-methods) is the tidiest
+way to hold it, but any list works:
 
 ```python
 import numpy as np
@@ -23,18 +24,116 @@ b = rng.normal(size=(m,))
 t = 1.0 / np.max(np.real(np.linalg.eigvals(A.T @ A)))
 At = np.eye(n) - t * A.T @ A
 Bt = t * A.T
+K = 200
 
 vp = Verifier(method="simulator", obbt_solver=None)
 b_param = vp.add_param(m, lb=b - 1.0, ub=b + 1.0)
-z = vp.add_iterate(n, lb=2, ub=2)
 
-next_state = vp.step.soft_threshold(At @ z + Bt @ b_param, lambd=t)  # one iteration
-for _ in range(4):  # a few more, for context (optional)
-    z = next_state
-    next_state = vp.step.soft_threshold(At @ z + Bt @ b_param, lambd=t)
+z = vp.iterate_trajectory(K + 1)
+z[0] = vp.add_iterate(n, lb=2, ub=2)
+for k in range(1, K + 1):
+    z[k] = vp.step.soft_threshold(At @ z[k - 1] + Bt @ b_param, lambd=t)
 ```
 
+Verify it however you normally would, then hand the same object to `codegen`:
+
+```python
+result = vp.codegen("out/ista", iterates=z, name="ista")
+```
+
+There is nothing to restructure: the program you generate from is the program you
+verified. Each iteration carries its own coefficients, so the recording may do
+whatever it likes with the iteration index — a decaying step size, momentum, a
+step whose *type* changes with `k`, or a reference to an earlier iterate held
+across the whole run, as in a Halpern anchor.
+
+### Rolling back up
+
+Generating the run literally would emit `K` blocks, which for a method that does
+the same thing every iteration is wasteful. So before unrolling anything,
+extraction pulls out iteration one on its own and asks whether repeating it
+reproduces the recording. When it does, that compact IR is what gets emitted —
+one block, whatever `K` was:
+
+```python
+result = vp.codegen("out/ista", iterates=z)
+result.ir.unrolled     # False: the run rolled back up
+len(result.ir.body)    # 1
+```
+
+Rolling changes the artifact and never the computation. The rolled solver keeps
+the **recorded** horizon rather than any horizon you configure, and the check that
+decides to roll is the proof it was safe: it replays the recorded tape and
+compares it against the rolled loop, iteration by iteration, over several
+parameter draws. Pass `roll=False` to emit the unrolled body regardless.
+
+`result.ir.unrolled` tells you which you got.
+
+### Generating from a single iteration instead
+
+If you would rather supply one stationary iteration and choose the loop count
+yourself, `codegen_rolled` does that:
+
+```python
+next_state = z[1]
+result = vp.codegen_rolled(
+    "out/ista", next_state,
+    iterates=[z[k] for k in range(1, K + 1)],   # optional, but see below
+    param_values={b_param: b},                  # any value in the parameter set
+)
+```
+
+Here the iteration **must** be stationary, because extraction reads it once and
+emits a loop that repeats it. A coefficient that changes with the iteration index
+would be frozen at whatever value the recorded iteration happened to use, and the
+generated solver would run a different algorithm than the one you verified.
+Passing `iterates` and `param_values` has that checked rather than assumed; omit
+them and you get a warning, because nothing else in the pipeline can catch the
+mistake — the reference oracle is itself a rolled loop, so it agrees with a
+wrongly rolled iteration by construction.
+
+`codegen` needs no such argument: it generates the recording itself, and gates the
+result against the tape using parameter values it draws from the declared box.
+
+## Accumulating methods
+
+Douglas–Rachford and ADMM carry their iterate through an expression rather than a
+step output:
+
+```python
+for k in range(1, K + 1):
+    u = vp.step.implicit_linear(z[k - 1] - q, output_mat=kkt)
+    ut = vp.step.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
+    z[k] = z[k - 1] + ut - u        # not a step output
+```
+
+Written that way, each iterate references every leaf the previous one did plus the
+new step outputs, so the expression grows down the trajectory — leaf support runs
+3, 5, 7, 9, … — and generating the run would need a number of matrix-vector
+products that grows with the *square* of the iteration count.
+
+`iterate_trajectory` handles this for you. Its default `collapse_expr="auto"`
+notices the growth after two consecutive increases and keeps each subsequent
+iterate as its own variable, which restores linear growth. A method that merely
+*refers* to an earlier iterate — a Halpern anchor — holds its support flat instead,
+so it is left alone. Nothing to configure either way.
+
+Forcing `collapse_expr=True` opts out of that, and generating the resulting
+recording raises `UnrolledBlowupError` with the measured counts rather than
+emitting a solver nobody wants. (A stationary accumulating method is unaffected
+either way: it rolls back up before size matters.)
+
 ## Generating the solver
+
+```python
+result = vp.codegen("out/ista", iterates=z, name="ista")
+assert result.success
+```
+
+### Stopping early on a tolerance
+
+A solver that exits once the iterate stops moving is a property of the *rolled*
+form, so it comes from `codegen_rolled`:
 
 ```python
 from fomtools.codegen import CodegenConfig, TerminationKind, TerminationSpec
@@ -43,9 +142,14 @@ config = CodegenConfig(
     termination=TerminationSpec(kind=TerminationKind.INF_NORM_CHANGE, max_iters=2000, tol=1e-6),
 )
 
-result = vp.codegen("out/ista", next_state=next_state, config=config, name="ista")
+result = vp.codegen_rolled("out/ista", next_state=next_state, config=config, name="ista")
 assert result.success
 ```
+
+Generating from a recorded run runs that run, so there is no horizon to stop short
+of and `codegen` rejects a tolerance-based criterion rather than quietly ignoring
+it. Reach for `codegen_rolled` when you want a stopping rule, or `codegen` when
+you want the algorithm you recorded.
 
 `TerminationSpec` also takes `check_termination` (named after OSQP's setting):
 the residual is computed and tested only every `check_termination` iterations,
@@ -104,7 +208,7 @@ optimization phase:
 
 ```python
 result = vp.codegen(
-    "out/ista", next_state=next_state, config=config, name="ista",
+    "out/ista", iterates=z, name="ista",
     run_phase_b=True, profile=True,
 )
 print(result.timing.summary())
@@ -180,6 +284,129 @@ sparse — and dense only when the matrix genuinely is. Together these make the
 to recover structure): on the MPC example the un-optimized C solver already runs
 ~29× faster than the NumPy reference.
 
+## Iteration-varying coefficients
+
+Accelerated methods use a coefficient that changes every iteration: FISTA's
+momentum `γ_k = (β_{k-1} - 1)/β_k`, Nesterov's `(k-1)/(k+2)`, a Halpern anchor
+weight. Verification handles these for free — the tape is unrolled, so each
+iteration just gets its own number.
+
+Generating the recorded run keeps that property, so **nothing special is needed**.
+Write the coefficient in Python, where the rest of your algorithm already lives:
+
+```python
+vp = Verifier(method="simulator", obbt_solver=None)
+b_param = vp.add_param(m, lb=b - 1.0, ub=b + 1.0)
+y0 = vp.add_iterate(n, lb=2, ub=2)
+
+y_prev, y_curr, beta = y0, y0, 1.0
+iterates = []
+for _ in range(K):
+    beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
+    gamma = (beta - 1.0) / beta_next          # ordinary Python, evaluated while recording
+    extrap = y_curr + gamma * (y_curr - y_prev)
+    y_next = vp.step.soft_threshold(At @ extrap + Bt @ b_param, lambd=t)
+    y_prev, y_curr, beta = y_curr, y_next, beta_next
+    iterates.append(y_next)
+
+vp.codegen("out/fista", iterates=iterates, name="fista")
+```
+
+Because the momentum genuinely varies, this run will not roll back up: each
+iteration keeps its own coefficient blocks. The cost is one emitted block per
+iteration, which is fine at a horizon of tens and impractical at a horizon of
+hundreds.
+
+A **schedule** buys back the compact loop. You declare which scalars vary,
+FOMTools tabulates them at generation time, and the emitted loop reads the table
+at its counter — one block total whatever the horizon, still division-free and
+with no `libm` call. Two things differ: you supply the recording as a *function*
+of the schedule scalars rather than a finished tape, and the state carries both
+iterates the method needs:
+
+```python
+import numpy as np
+from fomtools.codegen import CodegenConfig, Recording, TerminationSpec, generate_code
+from fomtools.verifier import Verifier
+
+def momentum(k):
+    """FISTA's γ in the 0-based index of the emitted loop.
+
+    Note the `k + 1`: γ_0 is the coefficient the *first* iteration applies, and it
+    is 0. Stopping one step short is the easy mistake, and it silently shifts the
+    whole schedule.
+    """
+    beta = 1.0
+    for _ in range(k + 1):
+        beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
+        gamma, beta = (beta - 1.0) / beta_next, beta_next
+    return gamma
+
+def build(gamma):
+    vp = Verifier(method="simulator", obbt_solver=None)
+    b_param = vp.add_param(m, lb=b - 1.0, ub=b + 1.0)
+    y_prev = vp.add_iterate(n, lb=2, ub=2)
+    y_curr = vp.add_iterate(n, lb=2, ub=2)
+    extrap = y_curr + gamma * (y_curr - y_prev)
+    y_next = vp.step.soft_threshold(At @ extrap + Bt @ b_param, lambd=t)
+    # the state shifts: (y_prev, y_curr) <- (y_curr, y_next)
+    return Recording(vp, next_state=[y_curr, y_next], state=[y_prev, y_curr])
+
+generate_code(
+    build, None, "out/fista",
+    schedules={"gamma": momentum},
+    config=CodegenConfig(termination=TerminationSpec(max_iters=200)),
+)
+```
+
+A schedule is a callable of the **0-based** loop index, a sequence, or a
+`Schedule`. Textbook formulas are written in 1-based `k`, so shifting them is your
+job: what a coefficient *is* belongs to the method, not to the code generator, and
+nothing in the package knows any particular one. `as_schedule` calls a callable
+with increasing indices, so a coefficient defined by a recurrence may cache it.
+
+### Why a build function
+
+A schedule scalar enters the recorded expression linearly, so every extracted
+coefficient block is *affine* in it: `M(γ) = M₀ + γ M₁`. FOMTools evaluates
+`build` at a few values of `γ`, recovers `M₀` and `M₁` by finite differences, and
+holds one probe back to check the fit. The generated code then computes
+`M₀ @ state + γ_k * (M₁ @ state)`, one extra matrix-vector product per varying
+term.
+
+That validation is what makes this safe rather than merely convenient. If a
+coefficient does *not* depend affinely on the scalar — a product of two
+schedules, or a scalar used inside a nonlinearity — the held-out probe fails and
+you get a `ScheduleFitError` instead of a wrong solver.
+
+### Declaring the state
+
+Written over a single iterate, the dependency cone of iteration `k` reaches back
+through every earlier step, so extraction returns the unrolled prefix rather than
+a repeatable body. On the `codegen` path that is the intended answer. On the
+scheduled and `codegen_rolled` paths it is not what you asked for, and a longer
+body is still a valid body, so declaring `state=[y_prev, y_curr]` closes the cone
+after one step. Worth remembering for any method that looks back more than one
+iterate.
+
+### What is not supported
+
+The varying quantity has to be a linear-operator coefficient. These each raise a
+clear error rather than lowering something wrong:
+
+- a **factorized system matrix** that varies (an ADMM `ρ` that changes with `k`),
+  since the factorization is computed once at generation time;
+- a varying **activation scalar** — a soft-threshold level or a saturated-linear
+  bound that changes with `k`;
+- a varying **constant offset**;
+- a scalar the build function ignores, which is nearly always a typo in its
+  keyword name.
+
+The table is sized to `max_iters`. Raising `settings.max_iter` past that at
+runtime holds the last value rather than reading off the end; the generated
+accessor `fom_sched_<name>(it)` clamps, and the static checker rejects any solver
+body that indexes `FOM_SCHED_*` directly.
+
 ## Targets
 
 `CodegenConfig` selects what to emit:
@@ -194,9 +421,11 @@ to recover structure): on the MPC example the un-optimized C solver already runs
 ## CLI
 
 ```
-fomtools-codegen --example ista --out out/ista --driver agent
-fomtools-codegen --example dr   --out out/dr   --scaffold-only
-fomtools-codegen --example mpc  --out out/mpc  --driver agent   # OSQP MPC, larger
+fomtools-codegen --example ista      --out out/ista  --driver agent
+fomtools-codegen --example dr        --out out/dr    --scaffold-only
+fomtools-codegen --example mpc       --out out/mpc   --driver agent   # OSQP MPC, larger
+fomtools-codegen --example fista     --out out/fista --scaffold-only  # a recorded run
+fomtools-codegen --example scheduled --out out/sched --scaffold-only  # a declared coefficient
 ```
 
 The built-in `mpc` example is a model-predictive-control QP solved with **OSQP's
@@ -206,7 +435,24 @@ recombinations. It is the largest built-in example (state dimension in the
 hundreds), so it is a good showcase for the Python-vs-C and the optimization-loop
 speedups.
 
+`fista` and `scheduled` are the same accelerated lasso reached the two ways.
+`fista` records it as an ordinary loop, so scaffolding it shows an unrolled
+`SPEC.md`: one block per recorded iteration, `FOM_UNROLLED 1`, and no table.
+`scheduled` declares the momentum instead, so it shows a single block, the
+`FOM_SCHED_gamma` table in `fom_data.c`, and the clamping accessor. Scaffolding
+both side by side is the quickest way to see what declaring a coefficient buys.
+
 `--scaffold-only` emits everything except the solver body (useful to inspect the
-spec and data before invoking the agent). A custom FOM can be supplied with
-`--module mymodule.py`, where the module defines `build_fom()` returning a dict
-with `verifier` and `next_state`.
+spec and data before invoking the agent). `--no-roll` keeps a recorded run
+unrolled even when it could be rolled back up.
+
+A custom FOM can be supplied with `--module mymodule.py`, where the module defines
+`build_fom()` returning a dict. Which key you provide selects the path:
+
+| keys | generates |
+|---|---|
+| `verifier`, `iterates` | the whole recorded run, rolled back up when that is verified to be equivalent |
+| `verifier`, `next_state` | a rolled solver from one stationary iteration |
+| `build`, `schedules` | a rolled solver with tabulated iteration-varying coefficients |
+
+`name`, `state` and `params` are optional in all three.

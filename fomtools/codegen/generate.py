@@ -17,6 +17,7 @@ Flow:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from fomtools.codegen.harness import (
     time_python_oracle,
 )
 from fomtools.codegen.ir import FomIR
+from fomtools.codegen.oracle import check_stationary
 from fomtools.codegen.postprocess import (
     extract_agent_notes,
     unified_solver_diff,
@@ -95,10 +97,125 @@ def optimization_is_faster(
     return c_phase_b <= c_phase_a * tol
 
 
+def _write_agent_transcripts(out_dir: Path, translate, optimize) -> None:
+    """Persist each phase's raw agent output next to the generated solver.
+
+    The optimization report keeps only a bounded excerpt, so without this the
+    agent's full reasoning exists nowhere after the process exits. Best-effort:
+    failing to write a transcript must never fail a successful generation.
+    """
+    for name, result in (("a_translate", translate), ("b_optimize", optimize)):
+        if result is None or not getattr(result, "agent_log", ""):
+            continue
+        try:
+            (out_dir / f"agent_phase_{name}.log").write_text(result.agent_log)
+        except OSError:
+            pass
+
+
+def _gate_stationarity(ir, verifier, iterates, param_values, state, params) -> None:
+    """Check the rolled IR against the recorded tape, or warn that nothing did.
+
+    Extraction reads a single iteration and repeats it, which silently produces
+    the wrong algorithm when the recording is not stationary. This is the only
+    check that can catch that, and it needs the recorded iterates to compare
+    against, so it stays opt-in — but its absence is worth saying out loud.
+    """
+    if iterates is None:
+        warnings.warn(
+            # Not "generate_code() did not ...": the CLI reaches this gate too,
+            # including from --scaffold-only, where nothing is generated at all.
+            "this extraction did not check that the recorded method is stationary. "
+            "Extraction reads one iteration and repeats it, so a coefficient that "
+            "changes with the iteration index would be frozen at its recorded value "
+            "and the generated solver would run a different algorithm. Pass "
+            "iterates= (the successive recorded iterate expressions) and "
+            "param_values= to check, or schedules= to declare the variation.",
+            UserWarning,
+            # Two frames intervene on both paths in: generate_code or the CLI's
+            # _extract_fom, then extract_fom_ir, then here.
+            stacklevel=4,
+        )
+        return
+    if param_values is None:
+        raise ValueError("iterates= requires param_values= (keyed by parameter leaf).")
+    check_stationary(ir, verifier, iterates, param_values, state=state, params=params)
+
+
+def extract_fom_ir(
+    verifier,
+    next_state=None,
+    config: CodegenConfig | None = None,
+    state=None,
+    params=None,
+    name: str = "fom",
+    schedules: dict | None = None,
+    iterates=None,
+    param_values: dict | None = None,
+    roll: bool = True,
+) -> FomIR:
+    """Extract an IR by whichever of the three paths the arguments select.
+
+    The dispatch, and the stationarity gate that goes with the rolled path, live
+    here rather than inside :func:`generate_code` so that every caller reaching
+    for an IR gets the same one. The CLI used to reimplement this branch for its
+    ``--scaffold-only`` mode and drifted: it skipped the gate, so previewing a
+    method whose coefficients vary with ``k`` reported nothing while the full run
+    on the same input failed.
+
+    See :func:`generate_code` for what each argument selects and means.
+    """
+    config = config or CodegenConfig()
+
+    if schedules:
+        from fomtools.codegen.extract_scheduled import extract_scheduled_ir
+
+        if not callable(verifier):
+            raise TypeError(
+                "schedules= requires a build function as the first argument: a "
+                "callable taking one keyword per schedule and returning a "
+                "codegen.Recording."
+            )
+        return extract_scheduled_ir(verifier, schedules, config=config, name=name)
+
+    if callable(verifier):
+        raise TypeError(
+            "a build function was passed but no schedules=; call generate_code "
+            "with (verifier, next_state) for a stationary method, or with "
+            "iterates= to generate the whole recorded run."
+        )
+
+    if next_state is None:
+        # Unrolled: generate the run the user recorded. Rolls back up when
+        # repeating one iteration is verified to reproduce it.
+        from fomtools.codegen.extract_unrolled import extract_unrolled_ir
+
+        if iterates is None:
+            raise TypeError(
+                "generate_code needs either iterates= (the iterate sequence your loop "
+                "produced, generating that whole run) or next_state= (the iterate after "
+                "one iteration, generating a rolled solver that repeats it)."
+            )
+        return extract_unrolled_ir(
+            verifier,
+            iterates,
+            config=config,
+            name=name,
+            state=state,
+            params=params,
+            roll=roll,
+            param_values=param_values,
+        )
+
+    ir = extract_ir(verifier, next_state, state=state, params=params, config=config, name=name)
+    _gate_stationarity(ir, verifier, iterates, param_values, state, params)
+    return ir
+
+
 def generate_code(
     verifier,
-    next_state,
-    out_dir: str | Path,
+    next_state=None,
+    out_dir: str | Path = None,
     config: CodegenConfig | None = None,
     driver: AgentDriver | None = None,
     state=None,
@@ -106,13 +223,37 @@ def generate_code(
     name: str = "fom",
     run_phase_b: bool = False,
     profile: bool = False,
+    schedules: dict | None = None,
+    iterates=None,
+    param_values: dict | None = None,
+    roll: bool = True,
 ) -> CodegenResult:
     """Generate a low-level solver for the FOM recorded in ``verifier``.
+
+    Three ways in, selected by what you pass:
+
+    * ``iterates=`` with no ``next_state`` generates the **whole recorded run**,
+      straight from the loop you wrote to verify with. This accepts arbitrary
+      per-iteration coefficients and step types, and anchored methods. It rolls
+      the run back up when repeating one iteration is verified to reproduce it,
+      so a stationary method costs nothing here. See
+      :func:`~fomtools.codegen.extract_unrolled.extract_unrolled_ir`.
+    * ``next_state=`` generates a **rolled** solver from one stationary
+      iteration, repeated ``config.termination.max_iters`` times.
+    * a *build function* plus ``schedules=`` generates a rolled solver whose
+      declared coefficients are tabulated and read at the loop counter. See
+      :func:`~fomtools.codegen.extract_scheduled.extract_scheduled_ir`.
 
     Parameters
     ----------
     verifier, next_state, state, params:
         Forwarded to :func:`fomtools.codegen.extract.extract_ir`.
+
+        For a method with an iteration-varying coefficient, pass a *build
+        function* as ``verifier`` and its ``schedules`` instead: the function
+        records one iteration as a function of the schedule scalars and returns a
+        :class:`~fomtools.codegen.extract_scheduled.Recording`. See
+        :func:`~fomtools.codegen.extract_scheduled.extract_scheduled_ir`.
     out_dir:
         Directory to emit the solver into.
     config:
@@ -128,11 +269,44 @@ def generate_code(
     profile:
         Collect before/after timing + a profiling breakdown (needs a C
         compiler). Always skipped silently when no compiler is available.
+    schedules:
+        Iteration-varying scalars, mapping name to a callable of the 0-based
+        iteration index, a sequence, or a
+        :class:`~fomtools.codegen.schedule.Schedule`. Selects the scheduled
+        extraction path.
+    iterates:
+        The successive recorded iterate expressions, or an
+        :class:`~fomtools.iteratetrajectory.IterateTrajectory`.
+
+        Passed *without* ``next_state`` this selects the unrolled path and is the
+        run to generate. Passed *with* ``next_state`` it instead checks the rolled
+        IR against the recorded tape before anything is emitted, failing if the
+        recording is not stationary — strongly recommended there, since without it
+        nothing detects a method whose coefficients vary with ``k``.
+    param_values:
+        Parameter values, keyed by parameter *leaf*, used for whichever check the
+        chosen path runs. Optional on the unrolled path, which draws its own.
+    roll:
+        Unrolled path only: emit the compact rolled IR when repeating one
+        iteration is verified to reproduce the recording. Pass ``False`` to unroll
+        regardless.
     """
     config = config or CodegenConfig()
     out_dir = Path(out_dir)
 
-    ir = extract_ir(verifier, next_state, state=state, params=params, config=config, name=name)
+    ir = extract_fom_ir(
+        verifier,
+        next_state,
+        config=config,
+        state=state,
+        params=params,
+        name=name,
+        schedules=schedules,
+        iterates=iterates,
+        param_values=param_values,
+        roll=roll,
+    )
+
     target = scaffold(ir, out_dir, config)
 
     if driver is None:
@@ -191,7 +365,7 @@ def generate_code(
             verify_cmd=target.verify_command(),
             instructions=phase_b_instructions(ir, target),
             phase="B_optimize",
-            max_turns=60,
+            max_turns=config.agent_optimize_max_turns,
             bench_cmd=["make", "bench"],
             restore_hook=restore_deterministic_files,
         )
@@ -245,8 +419,10 @@ def generate_code(
         optimize = AgentResult(
             success=kept,
             log=optimize.log + ("\n" + "\n".join(notes) if notes else ""),
+            agent_log=optimize.agent_log,
             turns_used=optimize.turns_used,
             artifacts=[solver_path],
+            truncated=optimize.truncated,
         )
 
         # Record exactly what changed (diff phase A -> final) + the agent's notes.
@@ -254,13 +430,32 @@ def generate_code(
         optimization_diff = unified_solver_diff(
             phase_a_source, final_source, target.solver_source_path()
         )
+        # The agent's own output only: the combined log interleaves compiler and
+        # verify output, and carries the pipeline's bracketed notes appended above.
+        agent_notes = extract_agent_notes(optimize.agent_log)
+        caveats = []
+        if optimize.truncated:
+            caveats.append(
+                "The agent was terminated at its wall-clock budget before it finished, so it "
+                "may never have written a summary. The timing and diff below are still sound: "
+                "the solver on disk was re-verified and benchmarked. Raise "
+                "`CodegenConfig.agent_optimize_timeout_s` to give it longer."
+            )
+        if not agent_notes.strip():
+            caveats.append(
+                "No agent summary was recovered from this run, so the 'Agent notes' section "
+                "is absent rather than empty-by-choice."
+            )
         optimizations_md = write_optimization_report(
             out_dir,
             timing_summary=timing.summary() if timing is not None else "",
             diff=optimization_diff,
-            agent_notes=extract_agent_notes(optimize.log),
+            agent_notes=agent_notes,
             optimize_succeeded=optimize.success,
+            caveats=caveats,
         )
+    # Always persist the raw agent output, phase B or not.
+    _write_agent_transcripts(out_dir, translate, optimize)
 
     # Always emit a clean, marker-free production copy of the final solver.
     production_path = None

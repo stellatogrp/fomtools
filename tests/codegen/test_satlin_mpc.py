@@ -18,7 +18,7 @@ from fomtools.codegen.harness import build_lib
 from fomtools.codegen.ir import ActivationKind
 from fomtools.codegen.oracle import run_faithful
 from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
-from tests.codegen.conftest import boxqp_reference, build_boxqp
+from tests.codegen.conftest import boxqp_reference, build_boxqp, gate
 
 BOXQP_GOLDEN = Path(__file__).parent / "golden" / "boxqp" / "embedded_c" / "fom_solver.c"
 
@@ -64,6 +64,7 @@ def test_boxqp_pipeline_and_wrapper(tmp_path, requires_compiler):
         config=case["config"],
         driver=StubAgentDriver(BOXQP_GOLDEN),
         name="boxqp",
+        **gate(case),
     )
     assert result.translate.success, result.translate.log
     assert "VERIFY OK" in result.translate.log

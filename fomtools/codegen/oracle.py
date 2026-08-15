@@ -1,6 +1,6 @@
 """Reference numerical execution of a FOM, used as ground truth.
 
-Two evaluators live here:
+Three evaluators live here:
 
 * :class:`ReferenceOracle` runs the **rolled** loop directly from a
   :class:`~fomtools.codegen.ir.FomIR`. This is the truth that emitted C code is
@@ -8,20 +8,35 @@ Two evaluators live here:
 * :func:`run_faithful` runs the same loop straight from the ``Verifier``'s step
   objects (solving the affine system rather than reusing its folded inverse).
   Agreement between the two validates that IR extraction preserved the algorithm.
+* :func:`run_recorded_tape` replays the verifier's **unrolled** tape once, in
+  recorded order. Unlike the other two it is not rolled, so it is the only thing
+  here that can disagree with a wrongly-rolled IR — which makes it the ground
+  truth behind :func:`check_stationary`.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
+from fomtools.codegen.config import TerminationKind, TerminationSpec
 from fomtools.codegen.extract import (
+    _as_list,
     _eval_step_fresh,
     eval_expr,
+    fresh_leaf_of,
+    normalize_iterates,
     resolve_structure,
 )
-from fomtools.codegen.ir import ActivationKind, ActivationOp, FomIR, LinearOp
+from fomtools.codegen.ir import (
+    ActivationKind,
+    ActivationOp,
+    FomIR,
+    LinearOp,
+    NonStationaryFOMError,
+    UnrolledFidelityError,
+)
 
 
 @dataclass
@@ -55,14 +70,19 @@ class ReferenceOracle:
     def __init__(self, ir: FomIR):
         self.ir = ir
 
-    def _eval_linop(self, lin: LinearOp, sources: dict[str, np.ndarray]) -> np.ndarray:
+    def _eval_linop(self, lin: LinearOp, sources: dict[str, np.ndarray], it: int = 0) -> np.ndarray:
         if lin.const is not None:
             out = self.ir.matrices[lin.const].array.astype(float).reshape(-1).copy()
         else:
             out = np.zeros(lin.out_dim)
         for term in lin.terms:
             mat = self.ir.matrices[term.matrix].array
-            out = out + np.asarray(mat @ sources[term.source]).reshape(-1)
+            contrib = np.asarray(mat @ sources[term.source]).reshape(-1)
+            if term.scale is not None:
+                # Scheduled term: the emitted C reads the same table at the same
+                # 0-based loop counter.
+                contrib = self.ir.schedules[term.scale][it] * contrib
+            out = out + contrib
         return out
 
     def solve(
@@ -103,7 +123,7 @@ class ReferenceOracle:
         iters = 0
         for it in range(term.max_iters):
             for step in ir.body:
-                lin_val = self._eval_linop(step.linear_op, sources)
+                lin_val = self._eval_linop(step.linear_op, sources, it)
                 if step.solve is not None:
                     # Affine step: solve M x = rhs via the factorization (the
                     # inverse is never formed), matching the emitted C exactly.
@@ -111,7 +131,7 @@ class ReferenceOracle:
                 else:
                     val = _apply_activation(step.activation, lin_val, ir)
                 sources[f"tmp:{step.name}"] = val
-            new_state = self._eval_linop(ir.state_update, sources)
+            new_state = self._eval_linop(ir.state_update, sources, it)
             residual = float(np.max(np.abs(new_state - state))) if new_state.size else 0.0
             state = new_state
             sources["state"] = state
@@ -179,3 +199,215 @@ def run_faithful(
         trajectory.append(state_vec.copy())
 
     return trajectory
+
+
+def _state_vector(state_leaves, x0=None) -> tuple[np.ndarray, list]:
+    """Initial state vector and ``(leaf, offset, dim)`` slots for a leaf list."""
+    slots = []
+    offset = 0
+    for leaf in state_leaves:
+        slots.append((leaf, offset, leaf.ndim))
+        offset += leaf.ndim
+    if x0 is not None:
+        return np.asarray(x0, dtype=float).copy(), slots
+    vec = np.zeros(offset)
+    for leaf, off, dim in slots:
+        lb = np.asarray(leaf.lb, dtype=float).reshape(-1)
+        ub = np.asarray(leaf.ub, dtype=float).reshape(-1)
+        fixed = np.isfinite(lb) & np.isfinite(ub) & np.isclose(lb, ub)
+        vec[off : off + dim] = np.where(fixed, lb, 0.0)
+    return vec, slots
+
+
+def run_recorded_tape(
+    verifier,
+    iterates,
+    param_values: dict,
+    state=None,
+    params=None,
+    x0: np.ndarray | None = None,
+) -> list[np.ndarray]:
+    """Replay the verifier's whole recorded tape once, in recorded order.
+
+    This is the algorithm the user actually wrote. Every other evaluator here is
+    rolled — it repeats a single extracted iteration — so all of them agree with
+    a wrongly-rolled IR by construction. This one does not, which is what makes
+    it usable as ground truth.
+
+    Parameters
+    ----------
+    verifier:
+        The ``Verifier`` holding the recorded steps.
+    iterates:
+        The successive iterate expressions, one per recorded iteration, in order.
+        Each entry has the same shape as ``next_state``: an expression or a list
+        of them.
+    param_values:
+        Maps each parameter *leaf* to its value vector.
+    state, params:
+        Optional explicit leaf lists, as for :func:`run_faithful`.
+    x0:
+        Optional initial state; defaults to the fixed values of the state leaves.
+
+    Returns
+    -------
+    list of ndarray
+        The state trajectory, including the initial state, of length
+        ``len(iterates) + 1``.
+    """
+    iterate_groups = [_as_list(g) for g in iterates]
+    if not iterate_groups:
+        raise ValueError("iterates must contain at least one recorded iteration")
+
+    _, _, _, state_leaves, param_leaves = resolve_structure(
+        verifier, iterate_groups[0], state, params
+    )
+    state_vec, slots = _state_vector(state_leaves, x0)
+
+    values: dict = {}
+    for leaf, off, dim in slots:
+        values[leaf] = state_vec[off : off + dim]
+    for leaf in param_leaves:
+        values[leaf] = np.asarray(param_values[leaf], dtype=float).reshape(-1)
+
+    # Evaluate the tape once, in recorded order. Each step's inputs are either
+    # external leaves or fresh leaves of earlier steps, so one forward pass is
+    # enough.
+    for step in verifier.steps:
+        values[fresh_leaf_of(step)] = _eval_step_fresh(step, values)
+
+    trajectory = [state_vec.copy()]
+    for group in iterate_groups:
+        pieces = [eval_expr(e, values) for e in group]
+        trajectory.append(np.concatenate(pieces) if pieces else np.zeros(0))
+    return trajectory
+
+
+def check_stationary(
+    ir: FomIR,
+    verifier,
+    iterates,
+    param_values: dict,
+    state=None,
+    params=None,
+    tol: float = 1e-9,
+) -> None:
+    """Verify that the rolled IR reproduces the recorded tape.
+
+    Extraction reads one iteration and repeats it. That is only faithful if the
+    algorithm really is stationary, or if whatever varies was declared as a
+    schedule. This compares the rolled trajectory against
+    :func:`run_recorded_tape` over the recorded horizon and raises if they part
+    company.
+
+    Raises
+    ------
+    NonStationaryFOMError
+        If the two trajectories differ by more than ``tol`` at any recorded
+        iteration.
+    """
+    truth = run_recorded_tape(verifier, iterates, param_values, state=state, params=params)
+    n_iters = len(truth) - 1
+
+    named = {}
+    _, _, _, _, param_leaves = resolve_structure(verifier, _as_list(iterates[0]), state, params)
+    for i, leaf in enumerate(param_leaves):
+        named[f"p{i}"] = np.asarray(param_values[leaf], dtype=float).reshape(-1)
+
+    # Run exactly the recorded horizon with early exit disabled, so the
+    # comparison is iteration-for-iteration.
+    probe_ir = replace(
+        ir,
+        termination=TerminationSpec(
+            kind=TerminationKind.MAX_ITERS,
+            max_iters=n_iters,
+            check_termination=ir.termination.check_termination,
+        ),
+    )
+    rolled = ReferenceOracle(probe_ir).solve(param_values=named, x0=truth[0]).trajectory
+
+    for k in range(1, n_iters + 1):
+        err = float(np.max(np.abs(rolled[k] - truth[k]))) if truth[k].size else 0.0
+        if err > tol:
+            raise NonStationaryFOMError(
+                f"the extracted iteration does not reproduce the recorded algorithm: "
+                f"they first diverge at iteration {k} of {n_iters}, by {err:.3e} "
+                f"(tolerance {tol:.1e}).\n"
+                "The recorded method is not stationary — a coefficient changes with the "
+                "iteration index. Declare it as a schedule and generate through "
+                "extract_scheduled_ir()/generate_code(build, schedules=...), which "
+                "tabulates it and reads the table at the loop counter."
+            )
+
+
+def sample_param_values(verifier, iterates, state=None, params=None, seed: int = 0) -> dict:
+    """A deterministic parameter draw keyed by parameter *leaf*.
+
+    Mirrors what the emitted verify harness does: uniform inside the declared box,
+    with an infinite bound standing in as -1 / +1. A draw rather than the box
+    midpoint, because the midpoint of a symmetric box is zero, which would make a
+    soft-threshold step trivially zero and hide exactly the errors worth catching.
+    """
+    groups = normalize_iterates(verifier, iterates)
+    _, _, _, _, param_leaves = resolve_structure(verifier, groups[-1], state, params)
+    rng = np.random.default_rng(seed)
+    values = {}
+    for leaf in param_leaves:
+        lb = np.asarray(leaf.lb, dtype=float).reshape(-1)
+        ub = np.asarray(leaf.ub, dtype=float).reshape(-1)
+        values[leaf] = rng.uniform(
+            np.where(np.isfinite(lb), lb, -1.0), np.where(np.isfinite(ub), ub, 1.0)
+        )
+    return values
+
+
+def check_unrolled(
+    ir: FomIR,
+    verifier,
+    iterates,
+    param_values: dict | None = None,
+    state=None,
+    params=None,
+    tol: float = 1e-9,
+) -> None:
+    """Verify that an unrolled IR reproduces the recorded tape.
+
+    The unrolled body is the whole run, so only its *final* state is comparable
+    with the tape; the intermediate iterates are temporaries rather than states.
+
+    Unlike :func:`check_stationary`, this needs nothing from the caller:
+    ``param_values`` defaults to :func:`sample_param_values`. That is why the
+    unrolled path can gate itself unconditionally where the rolled path has to
+    warn when it was given no data to check with.
+
+    Raises
+    ------
+    UnrolledFidelityError
+        If the final states differ by more than ``tol``.
+    """
+    groups = normalize_iterates(verifier, iterates)
+    if param_values is None:
+        param_values = sample_param_values(verifier, groups, state=state, params=params)
+
+    truth = run_recorded_tape(verifier, groups, param_values, state=state, params=params)
+
+    _, _, _, _, param_leaves = resolve_structure(verifier, groups[-1], state, params)
+    named = {
+        f"p{i}": np.asarray(param_values[leaf], dtype=float).reshape(-1)
+        for i, leaf in enumerate(param_leaves)
+    }
+
+    # Execute the body exactly once, whatever termination the caller configured:
+    # an unrolled body is a single pass by construction.
+    probe_ir = replace(ir, termination=TerminationSpec(kind=TerminationKind.MAX_ITERS, max_iters=1))
+    got = ReferenceOracle(probe_ir).solve(param_values=named, x0=truth[0]).solution
+
+    err = float(np.max(np.abs(got - truth[-1]))) if truth[-1].size else 0.0
+    if err > tol:
+        raise UnrolledFidelityError(
+            f"the unrolled body does not reproduce the recorded tape: the final state "
+            f"differs by {err:.3e} over {len(truth) - 1} recorded iteration(s) "
+            f"(tolerance {tol:.1e}).\n"
+            "An unrolled body gives every iteration its own coefficients, so this is "
+            "not a limitation of the recording. Please report it with the recording."
+        )
