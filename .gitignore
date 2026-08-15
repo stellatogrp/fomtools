@@ -384,3 +384,4 @@ fomtools.project
 .entropy/
 __marimo__/
 *.npz
+.vscode/
