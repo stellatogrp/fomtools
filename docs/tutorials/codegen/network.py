@@ -16,6 +16,7 @@ def _():
 
     import marimo as mo
     import numpy as np
+    from scipy.optimize import linprog
 
     start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
     for candidate in (start, *start.parents):
@@ -30,10 +31,10 @@ def _():
 
     examples_dir = repo_root / "examples"
 
-    from docs.tutorials.helper_functions.lasso import (
-        ista_step,
-        make_lasso_data,
-        solve_ista_numpy,
+    from docs.tutorials.helper_functions.network import (
+        make_network_data,
+        pdhg_step,
+        solve_pdhg_numpy,
     )
     from fomtools.codegen import CodegenConfig, TerminationSpec
     from fomtools.codegen.agent import make_agent_driver
@@ -55,13 +56,14 @@ def _():
         agent_available,
         examples_dir,
         find_compiler,
-        ista_step,
+        linprog,
         make_agent_driver,
-        make_lasso_data,
+        make_network_data,
         mo,
         np,
+        pdhg_step,
         recorded_timings,
-        solve_ista_numpy,
+        solve_pdhg_numpy,
         statistics,
         textwrap,
         time,
@@ -71,27 +73,14 @@ def _():
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-    # Lasso: Python vs Codegen
+    # Network Flow: Python vs Codegen
 
-    In this tutorial we benchmark iterative soft-thresholding for the Lasso problem:
+    In this tutorial we benchmark a small capacitated network-flow problem.
+    There are supply nodes, demand nodes, edge capacities, and linear edge costs.
 
-    \[
-    \begin{array}{ll}
-    \text{minimize} & (1/2)\lVert Ds - x \rVert_2^2 + \lambda \lVert s \rVert_1,
-    \end{array}
-    \]
-
-    where \(D \in \mathbb{R}^{p \times n}\), \(s \in \mathbb{R}^n\), and \(x\) is the parameter.
-    The method is
-
-    \[
-    s^{k+1} =
-    \mathbf{soft}_{\lambda\eta}\left(s^k - \eta D^\top(Ds^k - x)\right).
-    \]
-
+    The solver uses a primal-dual projected update: each iteration clips the flow to the capacity box, projects one dual variable to be nonnegative, and updates the demand-side dual variable.
     We compare a direct NumPy implementation with the verified generated C solver.
-    The problem construction, ISTA step, and NumPy reference solver are shared with the [Lasso verification tutorial](lasso_verification.html).
-    The generated C is timed after code generation, then timed again after the C-editing optimization pass.
+    The problem construction, PDHG step, and NumPy reference solver are shared with the [network verification tutorial](../verification/network.html).
     """)
     )
     return
@@ -100,44 +89,86 @@ def _(mo, textwrap):
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-    We generate a small sparse dictionary \(D\), sample sparse signals, and use those samples to define the range of possible inputs \(x\).
-    Both implementations run the same update rule for the same number of iterations.
+    We generate a complete bipartite graph from supply nodes to demand nodes.
+    The starting flow is computed once by solving the linear program at the lower-demand endpoint.
+    Both implementations then run the same fixed iteration map.
     """)
     )
     return
 
 
 @app.cell
-def _(examples_dir, make_lasso_data, np):
-    p, n, lambd = 3, 4, 1e-1
-    num_star = 200
-    D, x_lb, x_ub, _, eta, lambd = make_lasso_data(
-        p=p, n=n, lambd=lambd, num_signals=num_star, seed=0
+def _(examples_dir, linprog, make_network_data, np):
+    n_supply, n_demand = 3, 2
+    A_supply, A_demand, supply_capacity, edge_capacity, edge_cost = make_network_data(
+        n_supply=n_supply, n_demand=n_demand, data_seed=2, complete=True
     )
+    n_edges = A_supply.shape[1]
+    x_lb = -7.0 * np.ones(n_demand)
+    x_ub = -6.0 * np.ones(n_demand)
     x_mid = 0.5 * (x_lb + x_ub)
 
-    K = 200
-    s0 = np.zeros(n)
+    initial_flow = linprog(
+        c=edge_cost,
+        A_ub=A_supply,
+        b_ub=supply_capacity,
+        A_eq=A_demand,
+        b_eq=x_lb,
+        bounds=[(0.0, float(capacity)) for capacity in edge_capacity],
+        method="highs",
+    )
+    if not initial_flow.success:
+        raise RuntimeError(initial_flow.message)
 
-    out_dir = examples_dir / "_codegen_speedups" / "lasso_codegen_speedup"
-    return D, K, eta, lambd, n, out_dir, p, s0, x_lb, x_mid, x_ub
+    z0 = initial_flow.x
+    v0 = np.zeros(n_supply)
+    w0 = np.zeros(n_demand)
+    L = float(np.linalg.norm(np.hstack([A_supply.T, A_demand.T]), 2))
+    eta = 0.5 / L
+    K = 200
+    out_dir = examples_dir / "_codegen_speedups" / "network_codegen_speedup"
+    return (
+        A_demand,
+        A_supply,
+        K,
+        edge_capacity,
+        edge_cost,
+        eta,
+        n_demand,
+        n_edges,
+        n_supply,
+        out_dir,
+        supply_capacity,
+        v0,
+        w0,
+        x_lb,
+        x_mid,
+        x_ub,
+        z0,
+    )
 
 
 @app.cell
 def _(
+    A_demand,
+    A_supply,
     CodegenConfig,
-    D,
     K,
     TerminationSpec,
     Verifier,
+    edge_capacity,
+    edge_cost,
     eta,
-    ista_step,
-    lambd,
-    n,
-    p,
-    s0,
+    n_demand,
+    n_edges,
+    n_supply,
+    pdhg_step,
+    supply_capacity,
+    v0,
+    w0,
     x_lb,
     x_ub,
+    z0,
 ):
     verifier = Verifier(
         method="mip",
@@ -146,31 +177,75 @@ def _(
         params={"output_flag": False},
     )
 
-    x_param = verifier.add_param(p, lb=x_lb, ub=x_ub)
-    s = verifier.add_iterate(n, lb=s0, ub=s0)
-    next_s, _, _, _ = ista_step(
-        verifier, D, eta, lambd, s, s, x_param, 1.0, k=1, momentum=False
+    x_param = verifier.add_param(n_demand, lb=x_lb, ub=x_ub)
+    z = verifier.add_iterate(n_edges, lb=z0, ub=z0)
+    v = verifier.add_iterate(n_supply, lb=v0, ub=v0)
+    w = verifier.add_iterate(n_demand, lb=w0, ub=w0)
+    z_next, v_next, w_next, _ = pdhg_step(
+        verifier,
+        A_supply,
+        A_demand,
+        eta,
+        z,
+        v,
+        w,
+        x_param,
+        edge_capacity,
+        edge_cost,
+        supply_capacity,
+        k=1,
+        momentum=False,
     )
 
     config = CodegenConfig(
         termination=TerminationSpec(max_iters=K),
         num_verify_samples=4,
     )
-    return config, next_s, s, verifier, x_param
+    next_state = [z_next, v_next, w_next]
+    s_state = [z, v, w]
+    params = [x_param]
+    return config, next_state, params, s_state, verifier
 
 
 @app.cell
-def _(D, K, eta, lambd, s0, solve_ista_numpy, statistics, time, x_mid):
-    def python_lasso_solve():
-        return solve_ista_numpy(D, eta, lambd, s0, x_mid, max_iters=K)
+def _(
+    A_demand,
+    A_supply,
+    K,
+    edge_capacity,
+    edge_cost,
+    eta,
+    solve_pdhg_numpy,
+    statistics,
+    supply_capacity,
+    time,
+    v0,
+    w0,
+    x_mid,
+    z0,
+):
+    def network_solve():
+        return solve_pdhg_numpy(
+            A_supply,
+            A_demand,
+            eta,
+            edge_capacity,
+            edge_cost,
+            supply_capacity,
+            z0,
+            v0,
+            w0,
+            x_mid,
+            max_iters=K,
+        )
 
     for _ in range(3):
-        python_lasso_solve()
+        network_solve()
 
     python_times = []
     for _ in range(40):
         t0 = time.perf_counter()
-        python_lasso_solve()
+        network_solve()
         python_times.append((time.perf_counter() - t0) * 1.0e6)
 
     python_us = statistics.median(python_times)
@@ -183,19 +258,19 @@ def _(
     config,
     find_compiler,
     make_agent_driver,
-    next_s,
+    next_state,
     out_dir,
+    params,
     python_us,
     recorded_timings,
-    s,
+    s_state,
     verifier,
-    x_param,
 ):
     if not agent_available:
         # Show the recorded row as published. The live python_us measured just
         # above is deliberately NOT reused here: pairing this machine's Python
         # time with another machine's C time would invent a cross-machine ratio.
-        _rec = recorded_timings["examples"]["lasso"]
+        _rec = recorded_timings["examples"]["network"]
         table_python_us = _rec["python_us"]
         codegen_us = _rec["c_initial_us"]
         iteration_us = _rec["c_final_us"]
@@ -215,12 +290,12 @@ def _(
     else:
         result = verifier.codegen_rolled(
             out_dir,
-            next_state=next_s,
+            next_state=next_state,
             config=config,
             driver=make_agent_driver(config=config),
-            state=[s],
-            params=[x_param],
-            name="lasso_codegen_speedup",
+            state=s_state,
+            params=params,
+            name="network_codegen_speedup",
             run_phase_b=True,
             profile=True,
         )
@@ -286,7 +361,7 @@ def _(
     > this build, since a docs build has no coding-agent backend and its timings would in any case
     > come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
     > to generate, verify and re-time the solver on your own machine. Every example's recorded
-    > numbers are collected in the [code generation speedup results](codegen_speedup_results.md).
+    > numbers are collected in the [code generation speedup results](speedup_results/).
     """
     summary = mo.md(f"""
     ## Timing summary

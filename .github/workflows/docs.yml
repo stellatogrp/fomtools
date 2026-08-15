@@ -55,12 +55,17 @@ jobs:
         env:
           GRB_LICENSE_FILE: ${{ github.workspace }}/gurobi.lic
         run: |
-          for file in docs/tutorials/*.py; do
+          # Listed explicitly rather than globbed recursively: docs/tutorials
+          # also holds helper_functions/, which are plain modules and not
+          # marimo notebooks, so `**/*.py` would try to export them and fail.
+          for file in docs/tutorials/cvxpygen_mpc.py \
+                      docs/tutorials/verification/*.py \
+                      docs/tutorials/codegen/*.py; do
             marimo export html "$file" -o "${file%.py}.html"
           done
 
       - name: Verify html generation
-        run: ls docs/tutorials
+        run: ls -R docs/tutorials
 
       - name: Configure Git Credentials
         run: |

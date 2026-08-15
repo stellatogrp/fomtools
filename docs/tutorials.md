@@ -7,11 +7,11 @@ These tutorials show many different ways to use FOMTools:
 These notebooks verify the performance of first-order methods on five example
 problems.
 
-* [Lasso](tutorials/lasso_verification.html)
-* [Optimal control](tutorials/control_verification.html)
-* [Network flow](tutorials/network_verification.html)
-* [Nonnegative least squares](tutorials/nnls_verification.html)
-* [Portfolio](tutorials/portfolio_verification.html)
+* [Lasso](tutorials/verification/lasso.html)
+* [Optimal control](tutorials/verification/control.html)
+* [Network flow](tutorials/verification/network.html)
+* [Nonnegative least squares](tutorials/verification/nnls.html)
+* [Portfolio](tutorials/verification/portfolio.html)
 
 ### Code generation
 
@@ -22,14 +22,14 @@ how FOMTools turns a verified first-order method into an embedded C solver.
 
 Each of these notebooks builds a FOM, generates an embedded C solver for it, and
 times the generated solver against direct Python. The
-[summary table](tutorials/codegen_speedup_results.md) collects the results of all
+[summary table](tutorials/codegen/speedup_results.md) collects the results of all
 five side by side.
 
-* [Lasso](tutorials/lasso_codegen.html)
-* [Optimal control](tutorials/control_codegen.html)
-* [Network flow](tutorials/network_codegen.html)
-* [Nonnegative least squares](tutorials/nnls_codegen.html)
-* [Portfolio](tutorials/portfolio_codegen.html)
+* [Lasso](tutorials/codegen/lasso.html)
+* [Optimal control](tutorials/codegen/control.html)
+* [Network flow](tutorials/codegen/network.html)
+* [Nonnegative least squares](tutorials/codegen/nnls.html)
+* [Portfolio](tutorials/codegen/portfolio.html)
 
 ### CVXPYgen integration
 

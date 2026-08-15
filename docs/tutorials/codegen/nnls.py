@@ -7,15 +7,13 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import json
+    import marimo as mo
+    import numpy as np
     import os
     import statistics
     import sys
-    import textwrap
     import time
     from pathlib import Path
-
-    import marimo as mo
-    import numpy as np
 
     start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
     for candidate in (start, *start.parents):
@@ -30,15 +28,15 @@ def _():
 
     examples_dir = repo_root / "examples"
 
-    from docs.tutorials.helper_functions.portfolio import (
-        admm_step,
-        make_portfolio_data,
-        solve_admm_numpy,
-    )
     from fomtools.codegen import CodegenConfig, TerminationSpec
     from fomtools.codegen.agent import make_agent_driver
     from fomtools.codegen.harness import find_compiler
     from fomtools.verifier import Verifier
+    from docs.tutorials.helper_functions.nnls import (
+        make_nnls_matrix,
+        pgd_step,
+        solve_pgd_numpy,
+    )
 
     # Generating a verified solver needs a real coding-agent backend. When it
     # isn't configured (e.g. a headless docs build), the timing cells below fall
@@ -52,76 +50,47 @@ def _():
         CodegenConfig,
         TerminationSpec,
         Verifier,
-        admm_step,
         agent_available,
         examples_dir,
         find_compiler,
         make_agent_driver,
-        make_portfolio_data,
+        make_nnls_matrix,
         mo,
         np,
+        pgd_step,
         recorded_timings,
-        solve_admm_numpy,
+        solve_pgd_numpy,
         statistics,
-        textwrap,
         time,
     )
 
 
 @app.cell(hide_code=True)
-def _(mo, textwrap):
-    mo.md(textwrap.dedent(r"""
-    # Portfolio: Python vs Codegen
+def _(mo):
+    mo.md(r"""
+    # NNLS: Verified Code Generation
 
-    In this tutorial we benchmark a small mean-variance portfolio problem.
-    The portfolio weights must satisfy lower bounds, upper bounds, and a budget equality.
-
-    The solver uses the alternating direction method of multipliers: each iteration clips an auxiliary variable to the constraint box, solves a small linear system, and updates the auxiliary variable.
-    We compare a direct NumPy implementation with the verified generated C solver.
-    The problem construction, ADMM step, and NumPy reference solver are shared with the [portfolio verification tutorial](portfolio_verification.html).
+    This notebook benchmarks direct NumPy projected gradient descent against
+    its verified generated C solver. The problem construction and iteration
+    map are shared with the [NNLS verification tutorial](../verification/nnls.html).
     """)
-    )
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo, textwrap):
-    mo.md(textwrap.dedent(r"""
-    We generate a positive definite covariance matrix and a vector of expected returns.
-    Both implementations start from the same fixed vectors and run the same update rule for the same number of iterations.
-    """)
-    )
     return
 
 
 @app.cell
-def _(examples_dir, make_portfolio_data, np):
-    n = 4
-    covariance, expected_return, A, lower, upper = make_portfolio_data(
-        n=n, seed=0, position_limit=0.6
-    )
+def _(examples_dir, make_nnls_matrix, np):
+    m, n = 5, 3
+    A = make_nnls_matrix(m=m, n=n)
+    x_lb = np.zeros(m)
+    x_ub = 0.25 * np.ones(m)
+    x_mid = 0.5 * (x_lb + x_ub)
 
-    sigma = 1e-4
-    rho = 1.0
-    lhs = covariance + sigma * np.eye(n) + rho * A.T @ A
-    x0 = np.zeros(n)
-    v0 = 0.5 * np.ones(n + 1)
+    z0 = 5.05 * np.ones(n)
+    L = float(np.linalg.eigvalsh(A.T @ A)[-1])
+    eta = 1.0 / L
     K = 200
-    out_dir = examples_dir / "_codegen_speedups" / "portfolio_codegen_speedup"
-    return (
-        A,
-        K,
-        expected_return,
-        lhs,
-        lower,
-        n,
-        out_dir,
-        rho,
-        sigma,
-        upper,
-        v0,
-        x0,
-    )
+    out_dir = examples_dir / "_codegen_speedups" / "nnls_codegen_speedup"
+    return A, K, eta, m, n, out_dir, x_lb, x_mid, x_ub, z0
 
 
 @app.cell
@@ -131,16 +100,13 @@ def _(
     K,
     TerminationSpec,
     Verifier,
-    admm_step,
-    expected_return,
-    lhs,
-    lower,
+    eta,
+    m,
     n,
-    rho,
-    sigma,
-    upper,
-    v0,
-    x0,
+    pgd_step,
+    x_lb,
+    x_ub,
+    z0,
 ):
     verifier = Verifier(
         method="mip",
@@ -149,58 +115,34 @@ def _(
         params={"output_flag": False},
     )
 
-    x = verifier.add_iterate(n, lb=x0, ub=x0)
-    v = verifier.add_iterate(n + 1, lb=v0, ub=v0)
-    x_next, v_next, _ = admm_step(
-        verifier, A, lower, upper, expected_return, rho, sigma, x, v, lhs
+    x_param = verifier.add_param(m, lb=x_lb, ub=x_ub)
+    z = verifier.add_iterate(n, lb=z0, ub=z0)
+    z_next, _, _ = pgd_step(
+        verifier, A, eta, z, z, x_param, k=1, momentum=False,
     )
 
     config = CodegenConfig(
         termination=TerminationSpec(max_iters=K),
         num_verify_samples=4,
     )
-    next_state = [x_next, v_next]
-    s_state = [x, v]
-    return config, next_state, s_state, verifier
+    next_state = z_next
+    s_state = [z]
+    params = [x_param]
+    return config, next_state, params, s_state, verifier
 
 
 @app.cell
-def _(
-    A,
-    K,
-    expected_return,
-    lhs,
-    lower,
-    rho,
-    sigma,
-    solve_admm_numpy,
-    statistics,
-    time,
-    upper,
-    v0,
-    x0,
-):
-    def portfolio_solve():
-        return solve_admm_numpy(
-            A,
-            lower,
-            upper,
-            expected_return,
-            rho,
-            sigma,
-            lhs,
-            x0,
-            v0,
-            max_iters=K,
-        )
+def _(A, K, eta, solve_pgd_numpy, statistics, time, x_mid, z0):
+    def nnls_solve():
+        return solve_pgd_numpy(A, eta, z0, x_mid, max_iters=K)
 
     for _ in range(3):
-        portfolio_solve()
+        nnls_solve()
 
     python_times = []
     for _ in range(40):
         t0 = time.perf_counter()
-        portfolio_solve()
+        nnls_solve()
         python_times.append((time.perf_counter() - t0) * 1.0e6)
 
     python_us = statistics.median(python_times)
@@ -215,6 +157,7 @@ def _(
     make_agent_driver,
     next_state,
     out_dir,
+    params,
     python_us,
     recorded_timings,
     s_state,
@@ -224,7 +167,7 @@ def _(
         # Show the recorded row as published. The live python_us measured just
         # above is deliberately NOT reused here: pairing this machine's Python
         # time with another machine's C time would invent a cross-machine ratio.
-        _rec = recorded_timings["examples"]["portfolio"]
+        _rec = recorded_timings["examples"]["nnls"]
         table_python_us = _rec["python_us"]
         codegen_us = _rec["c_initial_us"]
         iteration_us = _rec["c_final_us"]
@@ -248,7 +191,8 @@ def _(
             config=config,
             driver=make_agent_driver(config=config),
             state=s_state,
-            name="portfolio_codegen_speedup",
+            params=params,
+            name="nnls_codegen_speedup",
             run_phase_b=True,
             profile=True,
         )
@@ -314,7 +258,7 @@ def _(
     > this build, since a docs build has no coding-agent backend and its timings would in any case
     > come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
     > to generate, verify and re-time the solver on your own machine. Every example's recorded
-    > numbers are collected in the [code generation speedup results](codegen_speedup_results.md).
+    > numbers are collected in the [code generation speedup results](speedup_results/).
     """
     summary = mo.md(f"""
     ## Timing summary
@@ -333,6 +277,11 @@ def _(
     {_footer}"""
     )
     summary
+    return
+
+
+@app.cell
+def _():
     return
 
 
