@@ -12,7 +12,7 @@ from fomtools.solvers.mip_solver import MIPSolver
 
 class HiGHSSolver(MIPSolver):
     def __init__(self, solver_params=None):
-        # Variable to keep track of number of highs variable created
+        # Variable to keep track of the number of HiGHS variables created.
         self._var_counter = -1
         self.model = hp.Highs()
         super().__init__(solver_params)
@@ -51,7 +51,7 @@ class HiGHSSolver(MIPSolver):
 
         This method creates a HiGHS model in which all integrality
         constraints are relaxed to continuous domains and optimizes
-        it. It then clears any cached ``relaxed_model`` property by
+        it. It then clears any cached ``relaxed_model`` property
         so that future accesses re-expose the freshly computed
         object.
         """
@@ -68,14 +68,14 @@ class HiGHSSolver(MIPSolver):
 
     def add_var(self, var: LinearExpression, lb: float = -np.inf, ub: float = np.inf):
         """
-        Create and register a list of HiGHS variable corresponding to the
+        Create and register a list of HiGHS variables corresponding to the
         given ``LinearExpression``.
 
-        This method creates a list of  HiGHS variables using  ``hp.Highs().addIntegral``
+        This method creates a list of HiGHS variables using ``hp.Highs().addIntegral``
         or ``hp.Highs().addVariable`` to create one or more decision variables whose
-        shape matches that of provided ``LinearExpression``. It also records
+        shape matches that of the provided ``LinearExpression``. It also records
         the mapping between the ``LinearExpression`` object and its associated list of
-        HiGHS variable for subsequent reference. The created variable(s) are of specified
+        HiGHS variables for subsequent reference. The created variable(s) have the specified
         bounds and types.
 
         Parameters
@@ -113,7 +113,7 @@ class HiGHSSolver(MIPSolver):
         self, expression: LinearExpression
     ) -> np.ndarray[hp.highs.highs_linear_expression]:
         r"""
-        Convert a ``LinearExpression`` into a list of HiGHS  ``highs_linear_expression``.
+        Convert a ``LinearExpression`` into a list of HiGHS ``highs_linear_expression`` objects.
 
         Given a ``LinearExpression`` object with a decomposition of the form
         ``expression.decomposition_dict = {key_1: matrix_1, ..., key_n: matrix_n}``,
@@ -125,19 +125,19 @@ class HiGHSSolver(MIPSolver):
             \sum_{i}^{N} matrix_i @ variable_i
         $$
 
-        The resulting object is a numpy arary of HiGHS linear expressions with the same
-        dimensinoality as the input ``expression``, the elements of which can be
+        The resulting object is a NumPy array of HiGHS linear expressions with the same
+        dimensionality as the input ``expression``, the elements of which can be
         used in model constraints or objective functions.
 
         Parameters
         ----------
         expression: LinearExpression
-            The LinearExpression object to be converted into its corresponding Gurobi form.
+            The LinearExpression object to be converted into its corresponding HiGHS form.
 
         Returns
         -------
         np.ndarray[hp.highs.highs_linear_expression]
-            An array of HiGHS linear expression corresponding to the input ``expression``,
+            An array of HiGHS linear expressions corresponding to the input ``expression``,
             representing its solver-side linear form.
         """
         highs_var = np.zeros(expression.ndim)
@@ -180,7 +180,7 @@ class HiGHSSolver(MIPSolver):
         ----------
         expression: LinearExpression
             A ``LinearExpression`` object registered with the solver whose
-            underlying variables bound are to be updated.
+            underlying variable bounds are to be updated.
 
             lb: float or np.ndarray
             New lower bound(s).
@@ -199,7 +199,7 @@ class HiGHSSolver(MIPSolver):
         Parameters
         ----------
         constraint: Constraint | hp.highs.highs_linear_expression
-            A HiGHS constraint expression compatible. Typical form includes
+            A compatible HiGHS constraint expression. Typical forms include
             comparisons like ``lhs == rhs``, ``lhs <= rhs``, where ``lhs``,
             and ``rhs`` are of type ``LinearExpression`` or ``hp.highs.highs_linear_expression``.
 
@@ -210,7 +210,7 @@ class HiGHSSolver(MIPSolver):
         try:
             self.model.addConstr(constraint)
         except AttributeError:
-            # Expression on the right hand side of the constraint object is always 0
+            # Expression on the right-hand side of the constraint object is always 0.
             for i, _lhs in enumerate(self.expression_to_solver(constraint.lhs)):
                 match constraint.operator:
                     case "=":
@@ -225,7 +225,7 @@ class HiGHSSolver(MIPSolver):
         Parameters
         ----------
         expression: LinearExpression or 0
-            A ``LinearExpression`` object registered with the solver repesenting the
+            A ``LinearExpression`` object registered with the solver representing the
             optimization objective, or 0 if setting a zero objective.
 
         sense: {"minimize", "maximize"}
@@ -339,9 +339,9 @@ class HiGHSSolver(MIPSolver):
         Returns
         -------
         Tuple[list[hp.highs.highs_var], np.ndarray]
-            A list of HiGHS variable formed by stacking the individual
+            A list of HiGHS variables formed by stacking the individual
             ``hp.highs.highs_var`` objects corresponding to each element of
-            the input ``LinearExpression``, and a numpy array containing
+            the input ``LinearExpression``, and a NumPy array containing
             the current value of those stacked variables.
         """
         # If no relaxed model currently exists, build and solve it first.
