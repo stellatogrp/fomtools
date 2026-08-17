@@ -65,7 +65,7 @@ class _ActivationStep:
 # single stacked linear solve. These build the ``activation(batch) -> out``
 # closures consumed by ``Simulator.register_subproblem_step``: batched solver-free
 # projections (simplex / ℓ1-ball / ℓ∞-norm), Condat's O(n) total-variation
-# algorithm, and per-sample parametrized cvxpy solves (polyhedral projection,
+    # algorithm, and per-sample parameterized cvxpy solves (polyhedral projection,
 # inequality QP/LP). ``batch`` is the assembled input ``(N, d)`` and ``out`` is
 # ``(N, n)``.
 # ----------------------------------------------------------------------------
@@ -315,7 +315,7 @@ def polyhedral_activation(A: np.ndarray, b, n: int, m: int, b_is_param: bool):
     r"""
     Activation projecting each sample onto ``{u : A u <= b}`` with cvxpy.
 
-    Builds a single parametrized (DPP) projection problem and solves it per sample.
+    Builds a single parameterized (DPP) projection problem and solves it per sample.
     The input batch has the point in its first ``n`` columns; when ``b`` is a
     parameter (``b_is_param``), the next ``m`` columns carry the per-sample ``b``.
 
@@ -366,7 +366,7 @@ def qp_activation(P, A, C, n: int, p: int, m: int, is_lp: bool):
     r"""
     Activation solving a QP/LP per sample with cvxpy.
 
-    Builds a single parametrized (DPP) problem ``minimize 0.5 x^T P x + q^T x s.t.
+    Builds a single parameterized (DPP) problem ``minimize 0.5 x^T P x + q^T x s.t.
     A x = b, C x <= d`` (the quadratic term is dropped when ``is_lp``) and solves it
     per sample. The input batch stacks the present parametric blocks in the order
     ``[q (n) | b (p) | d (m)]``.
@@ -489,7 +489,7 @@ class Simulator(Canonicalizer):
     @staticmethod
     def _sparse_to_cp(matrix: np.ndarray | spa.spmatrix) -> cp.ndarray | csp.csr_matrix:
         """
-        Convert a NumPy or SciPy sparse matrix to a CuPY array
+        Convert a NumPy or SciPy sparse matrix to a CuPy array
         or cupyx CSR sparse matrix, respectively.
 
         Parameters
@@ -500,7 +500,8 @@ class Simulator(Canonicalizer):
         Returns
         -------
         cp.ndarray | cupyx.scipy.sparse.csr_matrix
-             A CuPy array containing the same data as the input matrix.
+            A CuPy array or cupyx CSR sparse matrix containing the same data as
+            the input matrix.
         """
         if spa.issparse(matrix):
             return csp.csr_matrix(matrix)
@@ -528,7 +529,7 @@ class Simulator(Canonicalizer):
         -------
         dict[str, list[tuple[LinearExpression, cp.ndarray | csp.csr_matrix]]]
             A dictionary mapping term categories (e.g., iterate or parameter
-            terms) to lists of tuples (leaf, coeff_jax), where leaf identifies
+            terms) to lists of tuples (leaf, coeff_cp), where leaf identifies
             the variable and coeff_cp is the corresponding coefficient
             represented as CuPy arrays or cupyx CSR matrices.
 
@@ -631,7 +632,7 @@ class Simulator(Canonicalizer):
 
             if has_bounds and has_samples:
                 warnings.warn(
-                    f"Bounds and samples both are provided for the {var_type}, bounds will be ignored."
+                    f"Both bounds and samples are provided for the {var_type}; bounds will be ignored."
                 )
 
             if var_type == "iterate":
@@ -782,7 +783,7 @@ class Simulator(Canonicalizer):
         the concatenated arrays.
 
         Iterate initial values are concatenated into a single vector ``z0``.
-        Parameter samples are concatenated along axis 1 into ``q_samples``.
+        Parameter samples are concatenated along axis 1 into ``p_samples``.
         The returned slice dictionaries allow reconstruction or indexing of
         the individual variables within these packed arrays.
 
@@ -798,7 +799,7 @@ class Simulator(Canonicalizer):
                 - ``z_slices`` maps to a dictionary mapping each iterate identifier (leaf)
                     to a slice indicating its location within z0.
                 - ``p_slices`` maps to a dictionary mapping each parameter identifier (leaf) to a
-                    slice indicating its location within the second dimension of q_samples."
+                    slice indicating its location within the second dimension of ``p_samples``.
 
         """
 
@@ -933,7 +934,7 @@ class Simulator(Canonicalizer):
         Parameters
         ----------
         z_stacked: cp.ndarray
-            Concatenation of all iterate variables, with shape. Individual iterate
+            Concatenation of all iterate variables. Individual iterate
             values are retrieved using slices stored in ``simulation_data["z_slices"]``.
 
         p_stacked: cp.ndarray
@@ -942,7 +943,7 @@ class Simulator(Canonicalizer):
 
         coeffs: dict[str, list[tuple[LinearExpression, cp.ndarray | csp.csr_matrix]]]
             A dictionary mapping term categories (e.g., iterate or parameter
-            terms) to lists of tuples (leaf, coeff_jax), where leaf identifies
+            terms) to lists of tuples (leaf, coeff_cp), where leaf identifies
             the variable and coeff_cp is the corresponding coefficient
             represented as CuPy arrays or cupyx CSR matrices.
 
@@ -956,7 +957,7 @@ class Simulator(Canonicalizer):
                 - ``z_slices`` maps to a dictionary mapping each iterate identifier (leaf)
                     to a slice indicating its location within z0.
                 - ``p_slices`` maps to a dictionary mapping each parameter identifier (leaf) to a
-                    slice indicating its location within the second dimension of q_samples.
+                    slice indicating its location within the second dimension of ``p_samples``.
 
         Returns
         -------
@@ -1296,7 +1297,7 @@ class Simulator(Canonicalizer):
             Confidence parameter for the risk bound.
 
         epsilon: float, optional
-            Tolerance level defining the 0-1 error.
+            Tolerance level defining the 0–1 error.
 
         device: str, optional
             Device to run the simulation on (``None``, ``"cpu"``, or ``"gpu"``).

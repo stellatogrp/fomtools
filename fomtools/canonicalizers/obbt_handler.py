@@ -188,7 +188,7 @@ class OBBTHandler(Canonicalizer):
     # ------------------------------------------------------------------
 
     def _add_binary_free(self, constraints: List[Constraint]) -> None:
-        """Check the constraints are binary-free, then add them to the LP."""
+        """Check that the constraints are binary-free, then add them to the LP."""
         if not all(is_binary_free(c) for c in constraints):
             raise ValueError("OBBT handler received a constraint involving a binary variable")
         self.add_constraints(constraints)
