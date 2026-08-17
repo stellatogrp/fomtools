@@ -57,7 +57,7 @@ matrix-free methods on large problems, where a single iteration is cheap
 relative to a pass over the state.
 
 This requires a coding agent. Enable the real Claude Agent SDK driver with
-`FOMTOOLS_CODEGEN_AGENT=1` (needs authentication), or pass an explicit driver
+`FOMTOOLS_CODEGEN_AGENT=1` (requires authentication), or pass an explicit driver
 (for example a `StubAgentDriver` wrapping a known-good source) for fully
 deterministic, offline runs.
 
@@ -111,7 +111,7 @@ print(result.timing.summary())
 ```
 
 After Phase A verifies, the orchestrator records a baseline (Python reference
-time, the initial generated-C time, and a profiling breakdown). Then the agent
+time, the initial generated C time, and a profiling breakdown). Then the agent
 runs a loop: **profile → optimize the hottest region → `make verify` (correctness
 is re-checked every round) → `make bench` → repeat** until gains level off. A
 change that breaks verification is never kept, and if the whole phase leaves the
@@ -151,7 +151,7 @@ When Phase B runs, two extra artifacts are written:
   changed. Also available programmatically as `result.optimization_diff`.
 - `release/fom_solver.c` — a **production copy with the profiling markers and
   the `fom_profile.h` include stripped**. The markers are already no-ops outside
-  `make profile`, so this is behaviour- and performance-identical; it is just a
+  `make profile`, so this is behavior- and performance-identical; it is just a
   clean, dependency-free source for embedding. Build it with `make release`
   (which links the shared library from `release/`), or drop it in for
   `src/fom_solver.c`.
@@ -188,7 +188,7 @@ to recover structure): on the MPC example the un-optimized C solver already runs
   dynamic allocation, division-free (matrix inverses are folded into the
   coefficients offline). The default.
 - **Large-scale** (`version="large_scale"`): multithreaded CPU (`backend="openmp"`)
-  or GPU (`backend="cuda"`). These are generated and compile-checked; run
+  or GPU (`backend="cuda"`). These are generated and compile-checked; runtime
   verification of the CUDA backend requires a GPU.
 
 ## CLI
