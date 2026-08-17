@@ -32,7 +32,7 @@ class SoftThreshold(Step):
     ub : np.ndarray
         Upper bounds on the INPUT (arg), before soft-thresholding is applied.
     relax_binary_vars : bool
-        If true, binary decision variables associated with the operator
+        If True, binary decision variables associated with the operator
         are relaxed to take continuous values.
     lambd : float
         The threshold ($\lambda$) controlling shrinkage. Must be non-negative.
@@ -64,7 +64,7 @@ class SoftThreshold(Step):
         Returns
         -------
         np.ndarray
-            A new array representing obtained by applying the soft-thresholding
+            A new array obtained by applying the soft-thresholding
             operator element-wise. Values with magnitude less than `self.lambd`
             are mapped to zero, while others are shrunk toward zero by
             `self.lambd`.
@@ -75,7 +75,7 @@ class SoftThreshold(Step):
     def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
         """
         Update the bounds of the left-hand side after applying
-        soft-thresholding operator.
+        the soft-thresholding operator.
 
         Parameters
         ----------

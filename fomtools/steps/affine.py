@@ -18,7 +18,7 @@ class Affine(Step):
     where $M \in \mathbf{R}^{ d \times d }$ is an invertible matrix and
     $B \in \mathbf{R}^{d \times (p+d)}$.
 
-    Can also be constructed via ``weight`` and optional ``bias`` to represent
+    It can also be constructed via ``weight`` and optional ``bias`` to represent
     the explicit transform $w = W \cdot \text{arg} + b$, where ``arg`` is the
     input expression. In this form ``output_mat`` is set to identity internally.
 
@@ -33,7 +33,7 @@ class Affine(Step):
     ub: np.ndarray
         Upper bounds on the INPUT (arg), before the affine transform.
     relax_binary_vars: bool
-        If true, binary decision variables associated with the operator
+        If True, binary decision variables associated with the operator
         are relaxed to take continuous values.
     output_mat: np.matrix
         Coefficient matrix on the left-hand side of the operator equation.
@@ -58,7 +58,7 @@ class Affine(Step):
         self.output_mat = output_mat
         self.lb, self.ub = self.arg.bound_propagation()
         # from_int defaults lb/ub to scalars; force array form so subsequent
-        # steps' bound_propagation() doesn't hit sparse @ scalar NaN errors.
+        # steps' bound_propagation() does not hit sparse @ scalar NaN errors.
         ndim = self.arg.ndim
         self.output.update_bounds(np.full(ndim, -np.inf), np.full(ndim, np.inf))
 
@@ -70,16 +70,17 @@ class Affine(Step):
         self.sync_output_bounds()
 
     def sync_output_bounds(self) -> None:
-        """Propagate current input bounds to output via output_mat_inverse."""
+        """Propagate current input bounds to output via ``output_mat_inverse``."""
         out_lb, out_ub = self.output_mat_inverse.bound_propagation()
         self.output.update_bounds(lb=out_lb, ub=out_ub)
 
     @cached_property
     def output_mat_inverse(self) -> LinearExpression:
         r"""
-        Return a `LinearExpression` formed by applying $A^{-1}$ (with $A=$ `self.output_mat`) to each
-        RHS component $b_k$—i.e., solving $A x_k = b_k$ for all $k$.
-        Supports both dense and sparse output_mat.
+        Return a `LinearExpression` formed by applying $A^{-1}$, where $A$ is
+        ``self.output_mat``, to each right-hand-side component $b_k$—i.e.,
+        solving $A x_k = b_k$ for all $k$.
+        Supports both dense and sparse ``output_mat``.
         """
 
         def _to_dense(b):
