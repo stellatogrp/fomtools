@@ -50,6 +50,7 @@ class Verifier(object):
         solver="gurobi",
         obbt_solver="gurobi",
         params=None,
+        obbt_params=None,
         rlt_cuts=False,
         triangle_cuts=False,
         ineq_product_cuts=True,
@@ -77,6 +78,12 @@ class Verifier(object):
             ``None``.
         params : dict, optional
             Solver-specific parameters forwarded to the canonicalizer.
+        obbt_params : dict, optional
+            Solver-specific parameters for the OBBT bound-tightening solver
+            (e.g. ``{"OutputFlag": 0}`` to silence Gurobi's per-subproblem log).
+            When omitted, ``params`` is reused if ``obbt_solver`` is the same
+            backend as ``solver``; otherwise the OBBT solver runs with its
+            defaults.
         rlt_cuts : bool, default False
             SDP-only: when True, add RLT cuts between cone-mate index
             pairs (paper §4.5 eq 18). No effect for ``method != "sdp"``.
@@ -139,7 +146,14 @@ class Verifier(object):
             cross_cut=cross_cut,
             subgrad_mono_cut=subgrad_mono_cut,
         )
-        self.obbt_handler = OBBTHandler(solver=obbt_solver) if obbt_solver else None
+        # Share the construction-time params with the OBBT solver when it is the
+        # same backend as the main solver; otherwise the params may not be valid
+        # for it (e.g. Gurobi OBBT under an SDP method).
+        if obbt_params is None and obbt_solver and self._same_backend(solver, obbt_solver):
+            obbt_params = params
+        self.obbt_handler = (
+            OBBTHandler(solver=obbt_solver, solver_params=obbt_params) if obbt_solver else None
+        )
         self.use_obbt_handler = True if obbt_solver else False
         if self.obbt_handler is not None:
             self.canonicalizer.obbt_handler = self.obbt_handler
@@ -193,6 +207,32 @@ class Verifier(object):
             )
 
         return summary_statistics[item]
+
+    _SOLVER_ALIASES = {"grb": "gurobi"}
+
+    @classmethod
+    def _same_backend(cls, solver: str, obbt_solver: str) -> bool:
+        """
+        Return whether two solver identifiers refer to the same backend.
+
+        Parameters
+        ----------
+        solver : str
+            Case-insensitive solver identifier.
+        obbt_solver : str
+            Case-insensitive solver identifier used for OBBT.
+
+        Returns
+        -------
+        bool
+            True when both names (after alias resolution) select the same solver.
+        """
+
+        def norm(name):
+            key = name.lower()
+            return cls._SOLVER_ALIASES.get(key, key)
+
+        return norm(solver) == norm(obbt_solver)
 
     @staticmethod
     def _get_canonicalizer(

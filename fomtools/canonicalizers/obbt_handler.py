@@ -27,7 +27,7 @@ class OBBTHandler(Canonicalizer):
         (e.g., ``gurobi.Gurobi()``).
     """
 
-    def __init__(self, solver: str):
+    def __init__(self, solver: str, solver_params: dict = None):
         """
         Initialize an instance of :class:`OBBTHandler`.
 
@@ -38,8 +38,12 @@ class OBBTHandler(Canonicalizer):
             values (and common aliases) include:
             - ``"gurobi"``, ``"grb"``
             - ``"highs"``
+        solver_params : dict or None, optional
+            Key-value pairs applied to the OBBT solver (e.g. ``OutputFlag``,
+            ``TimeLimit``). Without these the bound-tightening solves run with
+            solver defaults, which for Gurobi means a full log per subproblem.
         """
-        super().__init__(solver=solver)
+        super().__init__(solver_params=solver_params, solver=solver)
 
     def add_var(self, var: LinearExpression) -> None:
         """
