@@ -17,7 +17,7 @@ class Quadratic(ProxableFunction):
     $$
 
     with $Q \in \mathbb{R}^{n \times n}$ positive semidefinite. The linear
-    term ``q`` may be numeric data or a :class:`LinearExpression`
+    term ``q`` may be numeric data or a ``LinearExpression``
     parameter — the verification-side lowering treats both uniformly via
     ``LinearExpression`` arithmetic.
 
@@ -29,8 +29,8 @@ class Quadratic(ProxableFunction):
         (I + \gamma Q)\, u \;=\; \text{arg} - \gamma q,
     $$
 
-    which is a single linear system. The :meth:`prox` numpy reference
-    uses :func:`numpy.linalg.solve`; the verification-side lowering posts
+    which is a single linear system. The ``prox`` numpy reference
+    uses ``numpy.linalg.solve``; the verification-side lowering posts
     the equality directly and lets the solver handle it — no inverse or
     pseudoinverse is formed.
     """
@@ -86,7 +86,7 @@ class Quadratic(ProxableFunction):
         Raises
         ------
         TypeError
-            If ``self.q`` is a :class:`LinearExpression`.
+            If ``self.q`` is a ``LinearExpression``.
         """
         if hasattr(self.q, "decomposition_dict"):
             raise TypeError(
@@ -100,7 +100,7 @@ class Quadratic(ProxableFunction):
         Compute the proximal point.
 
         Solves $(I + \gamma Q)\, u = \text{arg} - \gamma q$ via
-        :func:`numpy.linalg.solve`.
+        ``numpy.linalg.solve``.
 
         Parameters
         ----------
@@ -142,7 +142,7 @@ class Quadratic(ProxableFunction):
         Raises
         ------
         TypeError
-            If ``self.q`` is a :class:`LinearExpression`.
+            If ``self.q`` is a ``LinearExpression``.
         """
         if hasattr(self.q, "decomposition_dict"):
             raise TypeError(

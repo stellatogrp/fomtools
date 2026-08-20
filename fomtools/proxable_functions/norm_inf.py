@@ -6,11 +6,11 @@ from fomtools.proxable_functions import ProxableFunction
 
 class NormInf(ProxableFunction):
     r"""
-    Proximal operator of the scaled :math:`\ell_\infty` norm
-    :math:`f(x) = \lambda \|x\|_\infty`.
+    Proximal operator of the scaled $\ell_\infty$ norm
+    $f(x) = \lambda \|x\|_\infty$.
 
     By Moreau decomposition the prox is dual to projection onto the
-    :math:`\ell_1`-ball:
+    $\ell_1$-ball:
 
     $$
         \operatorname{prox}_{\gamma\lambda\|\cdot\|_\infty}(v)
@@ -23,7 +23,7 @@ class NormInf(ProxableFunction):
     Parameters
     ----------
     lambd : float or LinearExpression
-        Non-negative scalar weight (the :math:`\ell_\infty` norm is not separable, so a
+        Non-negative scalar weight (the $\ell_\infty$ norm is not separable, so a
         single scalar), or a dim-1 ``LinearExpression`` parameter.
     dual_ub : None, float, or np.ndarray, optional
         Upper bound forwarded to the underlying ℓ1-ball projection's dual (the prox is
@@ -49,12 +49,12 @@ class NormInf(ProxableFunction):
         return float(self.lambd)
 
     def eval(self, x: np.ndarray) -> float:
-        r"""Evaluate :math:`f(x) = \lambda \|x\|_\infty`."""
+        r"""Evaluate $f(x) = \lambda \|x\|_\infty$."""
         return self._lambd_value() * float(np.max(np.abs(np.asarray(x, dtype=float))))
 
     def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Compute :math:`\operatorname{prox}_{\gamma \lambda \|\cdot\|_\infty}(\text{arg})`.
+        Compute $\operatorname{prox}_{\gamma \lambda \|\cdot\|_\infty}(\text{arg})$.
 
         Solved directly from the defining problem (an independent reference, not via the
         Moreau identity used for the verification lowering).

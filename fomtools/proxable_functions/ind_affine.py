@@ -19,7 +19,7 @@ class IndAffine(ProxableFunction):
 
     The matrix $A \in \mathbb{R}^{m \times n}$ is assumed to have full
     row rank (so $AA^\top$ is invertible and the projection is uniquely
-    defined). ``b`` may be numeric data or a :class:`LinearExpression`
+    defined). ``b`` may be numeric data or a ``LinearExpression``
     parameter — both flow through the verification-side lowering
     uniformly.
 
@@ -38,7 +38,7 @@ class IndAffine(ProxableFunction):
 
     independent of $\gamma$. Eliminating $u$ gives the small-system
     closed form $\nu = (AA^\top)^{-1}(Av - b)$, $u = v - A^\top \nu$
-    used by the numpy :meth:`prox` reference. The verification model
+    used by the numpy ``prox`` reference. The verification model
     posts the two KKT rows as linear equalities and never forms
     $(AA^\top)^{-1}$.
     """
@@ -89,7 +89,7 @@ class IndAffine(ProxableFunction):
         Raises
         ------
         TypeError
-            If ``self.b`` is a :class:`LinearExpression`.
+            If ``self.b`` is a ``LinearExpression``.
         """
         if hasattr(self.b, "decomposition_dict"):
             raise TypeError(
@@ -130,7 +130,7 @@ class IndAffine(ProxableFunction):
         Raises
         ------
         TypeError
-            If ``self.b`` is a :class:`LinearExpression`.
+            If ``self.b`` is a ``LinearExpression``.
         """
         if hasattr(self.b, "decomposition_dict"):
             raise TypeError(

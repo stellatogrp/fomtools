@@ -25,7 +25,7 @@ class SoftNonNegative(ProxableFunction):
     - $\alpha \to 0^+$: the penalty on the negative orthant grows
       unboundedly and $f$ becomes the indicator $I_{\mathbb{R}_+^n}(x)$;
       the prox recovers the standard
-      :class:`fomtools.steps.relu.Relu` activation.
+      ``fomtools.steps.relu.Relu`` activation.
 
     Notes
     -----

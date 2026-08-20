@@ -22,7 +22,7 @@ class IndBox(ProxableFunction):
     ``LinearExpression``s, the symbolic lowering treats them as
     parameters and uses their interval bounds for satlin propagation.
 
-    The numpy reference methods :meth:`eval` and :meth:`prox` are
+    The numpy reference methods ``eval`` and ``prox`` are
     numeric-only; passing a ``LinearExpression`` for ``l`` or ``u`` is
     supported solely by the verification-side lowering.
     """
@@ -57,7 +57,7 @@ class IndBox(ProxableFunction):
         Raises
         ------
         TypeError
-            If either ``self.l`` or ``self.u`` is a :class:`LinearExpression`.
+            If either ``self.l`` or ``self.u`` is a ``LinearExpression``.
         """
         if hasattr(self.l, "decomposition_dict") or hasattr(self.u, "decomposition_dict"):
             raise TypeError(
@@ -95,7 +95,7 @@ class IndBox(ProxableFunction):
         Raises
         ------
         TypeError
-            If either ``self.l`` or ``self.u`` is a :class:`LinearExpression`.
+            If either ``self.l`` or ``self.u`` is a ``LinearExpression``.
         """
         if hasattr(self.l, "decomposition_dict") or hasattr(self.u, "decomposition_dict"):
             raise TypeError(

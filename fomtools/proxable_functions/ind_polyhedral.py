@@ -6,16 +6,16 @@ from fomtools.proxable_functions import ProxableFunction
 
 class IndPolyhedral(ProxableFunction):
     r"""
-    Indicator of the polyhedron :math:`\mathcal{P} = \{u : Au \le b\}`.
+    Indicator of the polyhedron $\mathcal{P} = \{u : Au \le b\}$.
 
-    The proximal operator is the Euclidean projection onto :math:`\mathcal{P}`,
+    The proximal operator is the Euclidean projection onto $\mathcal{P}$,
 
     $$
         \operatorname{prox}_{\gamma\,\mathbb{I}_{\mathcal P}}(x)
         = \arg\min_{u}\; \tfrac12\|u - x\|_2^2 \quad\text{s.t.}\quad Au \le b,
     $$
 
-    which is independent of :math:`\gamma`. The verification-side lowering
+    which is independent of $\gamma$. The verification-side lowering
     (``prox_indpolyhedral`` in the step decomposer) encodes the KKT system
 
     $$
@@ -23,7 +23,7 @@ class IndPolyhedral(ProxableFunction):
     $$
 
     using the complementarity primitive. The MIP big-M encoding of the
-    complementarity needs a finite upper bound on the dual :math:`\lambda`;
+    complementarity needs a finite upper bound on the dual $\lambda$;
     supply it via ``dual_ub`` (OBBT tightens it further when enabled).
 
     Parameters
@@ -34,8 +34,8 @@ class IndPolyhedral(ProxableFunction):
         Constraint right-hand side. Scalars/arrays are stored as a length-``m``
         vector; a ``LinearExpression`` of dim ``m`` is kept as a parameter.
     dual_ub : None, float, or np.ndarray, optional
-        Upper bound(s) on the dual variable :math:`\lambda \ge 0`. ``None``
-        leaves :math:`\lambda` unbounded above (relies on OBBT; the MIP encoding
+        Upper bound(s) on the dual variable $\lambda \ge 0$. ``None``
+        leaves $\lambda$ unbounded above (relies on OBBT; the MIP encoding
         raises if it cannot infer a finite bound).
     """
 

@@ -33,7 +33,7 @@ class HingeLoss(ProxableFunction):
         \operatorname{prox}_{\gamma g}(v) = v + \mathrm{satlin}(1 - v;\, 0,\, \gamma).
     $$
 
-    Labels are not part of this class — see :class:`LabeledHingeLoss`
+    Labels are not part of this class — see ``LabeledHingeLoss``
     for the labeled variant $g_y(x) = \sum_i \max(0, 1 - y_i x_i)$.
     """
 

@@ -7,10 +7,10 @@ from fomtools.proxable_functions import ProxableFunction
 class IndSimplex(ProxableFunction):
     r"""
     Indicator of the (scaled probability) simplex
-    :math:`\{u : u \ge 0,\ \mathbf{1}^\top u = a\}`.
+    $\{u : u \ge 0,\ \mathbf{1}^\top u = a\}$.
 
     The proximal operator is the Euclidean projection onto the simplex, independent of
-    :math:`\gamma`. The verification-side lowering (``prox_indsimplex``) uses the KKT
+    $\gamma$. The verification-side lowering (``prox_indsimplex``) uses the KKT
     system of the mixed polyhedron ``{u >= 0, 1^T u = a}`` via the shared polyhedral-KKT
     helper.
 

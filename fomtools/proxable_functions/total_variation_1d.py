@@ -13,8 +13,8 @@ _SHORT_SIGNAL_MSG = (
 
 def diff_matrix(n: int) -> np.ndarray:
     r"""
-    First-difference operator :math:`D \in \mathbb{R}^{(n-1) \times n}`,
-    with :math:`(Dx)_i = x_{i+1} - x_i`.
+    First-difference operator $D \in \mathbb{R}^{(n-1) \times n}$,
+    with $(Dx)_i = x_{i+1} - x_i$.
     """
     D = np.zeros((n - 1, n))
     rows = np.arange(n - 1)
@@ -26,7 +26,7 @@ def diff_matrix(n: int) -> np.ndarray:
 class TotalVariation1D(ProxableFunction):
     r"""
     Proximal operator of the 1-D total-variation penalty
-    :math:`f(x) = \lambda \|Dx\|_1 = \lambda \sum_i |x_{i+1} - x_i|`.
+    $f(x) = \lambda \|Dx\|_1 = \lambda \sum_i |x_{i+1} - x_i|$.
 
     The prox is the 1-D fused-lasso signal approximator
 
@@ -59,13 +59,13 @@ class TotalVariation1D(ProxableFunction):
         return float(self.lambd)
 
     def eval(self, x: np.ndarray) -> float:
-        r"""Evaluate :math:`f(x) = \lambda \sum_i |x_{i+1} - x_i|`."""
+        r"""Evaluate $f(x) = \lambda \sum_i |x_{i+1} - x_i|$."""
         x = np.asarray(x, dtype=float)
         return self._lambd_value() * float(np.sum(np.abs(np.diff(x))))
 
     def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Compute :math:`\operatorname{prox}_{\gamma \lambda \|D\cdot\|_1}(\text{arg})`.
+        Compute $\operatorname{prox}_{\gamma \lambda \|D\cdot\|_1}(\text{arg})$.
 
         Parameters
         ----------

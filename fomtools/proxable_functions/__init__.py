@@ -23,3 +23,31 @@ from fomtools.proxable_functions.sq_l2_norm import SqL2Norm
 from fomtools.proxable_functions.sum_negative import SumNegative
 from fomtools.proxable_functions.sum_positive import SumPositive
 from fomtools.proxable_functions.total_variation_1d import TotalVariation1D
+
+__all__ = [
+    "ProxableFunction",
+    "ElasticNet",
+    "HingeLoss",
+    "HuberLoss",
+    "IndAffine",
+    "IndBallL1",
+    "IndBallLinf",
+    "IndBox",
+    "IndHalfSpace",
+    "IndNonNegative",
+    "IndNonPositive",
+    "IndPoint",
+    "IndPolyhedral",
+    "IndSimplex",
+    "LabeledHingeLoss",
+    "LeastSquares",
+    "Linear",
+    "NormInf",
+    "NormL1",
+    "Quadratic",
+    "SoftNonNegative",
+    "SqL2Norm",
+    "SumNegative",
+    "SumPositive",
+    "TotalVariation1D",
+]

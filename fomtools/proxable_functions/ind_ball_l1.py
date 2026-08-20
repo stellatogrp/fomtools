@@ -6,10 +6,10 @@ from fomtools.proxable_functions import ProxableFunction
 
 class IndBallL1(ProxableFunction):
     r"""
-    Indicator of the :math:`\ell_1`-ball :math:`\{u : \|u\|_1 \le r\}`.
+    Indicator of the $\ell_1$-ball $\{u : \|u\|_1 \le r\}$.
 
     The proximal operator is the Euclidean projection onto the ball, independent of
-    :math:`\gamma`. The verification-side lowering (``prox_indballl1`` in the step
+    $\gamma$. The verification-side lowering (``prox_indballl1`` in the step
     decomposer) uses the lifted KKT system of
 
     $$

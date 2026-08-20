@@ -23,13 +23,13 @@ class LeastSquares(Quadratic):
                \;+\; \tfrac{1}{2}\|b\|^2,
     $$
 
-    so the prox is identical to :class:`Quadratic` with
+    so the prox is identical to ``Quadratic`` with
     $Q = A^\top A$ and $q = -A^\top b$ — the constant $\tfrac{1}{2}\|b\|^2$
     drops out of $\arg\min$. The gradient $A^\top(Ax - b)$ equals
-    $Qx + q$, so it is inherited as well. Only :meth:`eval` is overridden,
+    $Qx + q$, so it is inherited as well. Only ``eval`` is overridden,
     to add back the $\tfrac{1}{2}\|b\|^2$ constant.
 
-    ``b`` may be numeric data or a :class:`LinearExpression` parameter —
+    ``b`` may be numeric data or a ``LinearExpression`` parameter —
     the constructor computes ``q = -A.T @ b`` uniformly via
     ``LinearExpression.__rmatmul__``.
     """
@@ -62,7 +62,7 @@ class LeastSquares(Quadratic):
         r"""
         Evaluate $f(x) = \tfrac{1}{2}\|Ax - b\|_2^2$.
 
-        Numeric ``A`` and ``b`` only (matches :meth:`Quadratic.eval`
+        Numeric ``A`` and ``b`` only (matches ``Quadratic.eval``
         numeric-only precedent — ``LinearExpression`` ``b`` is supported
         for the verification-side lowering but not for this numpy
         reference).
@@ -80,7 +80,7 @@ class LeastSquares(Quadratic):
         Raises
         ------
         TypeError
-            If ``self.b`` is a :class:`LinearExpression`.
+            If ``self.b`` is a ``LinearExpression``.
         """
         if hasattr(self.b, "decomposition_dict"):
             raise TypeError(

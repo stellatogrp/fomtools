@@ -14,7 +14,7 @@ class LabeledHingeLoss(ProxableFunction):
     $$
 
     with labels $y \in \{-1, +1\}^n$ fixed at construction time. For
-    $y = \mathbf{1}$ this reduces to the standard :class:`HingeLoss`;
+    $y = \mathbf{1}$ this reduces to the standard ``HingeLoss``;
     for $y = -\mathbf{1}$ the residual direction flips.
 
     Notes

@@ -1,3 +1,3 @@
 ## Proxable Functions
 
-::: fomtools.proxable_functions.NormL1
+::: fomtools.proxable_functions

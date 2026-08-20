@@ -13,7 +13,7 @@ class SumNegative(ProxableFunction):
         f(x) = \sum_i \max(0, -x_i),
     $$
 
-    the mirror image of :class:`SumPositive` under $x \mapsto -x$. It
+    the mirror image of ``SumPositive`` under $x \mapsto -x$. It
     penalizes only the negative coordinates and leaves non-negative ones
     untouched.
 
@@ -38,7 +38,7 @@ class SumNegative(ProxableFunction):
 
     Equivalently, $\operatorname{prox}_{\gamma f}(v)
     = -\operatorname{prox}_{\gamma f_+}(-v)$ where $f_+$ is
-    :class:`SumPositive`.
+    ``SumPositive``.
     """
 
     def __init__(self):
