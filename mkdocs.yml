@@ -2,6 +2,7 @@ site_name: FOM Tools
 nav:
   - Home: index.md
   - Installation: installation.md
+  - User guide: user_guide.md
   - API and modules: api.md
   - Tutorials: tutorials.md
 theme:
