@@ -35,7 +35,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           # Pin the same uv that generates uv.lock locally, so CI reads the
           # lockfile instead of silently falling back to a fresh resolution.
