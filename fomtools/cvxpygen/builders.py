@@ -116,6 +116,19 @@ class FomSpec(BaseFomSpec):
     generated solver would run a different algorithm than the one recorded. Both
     default to empty for builders that supply no tape; generation then warns, as
     it does for any unchecked extraction.
+
+    On the unrolled path ``iterates`` is the run itself, and either convention
+    works: the recorded iterations alone, or those with the *initial* iterate
+    kept in slot 0, as an
+    :class:`~fomtools.iteratetrajectory.IterateTrajectory` holds them.
+    :func:`~fomtools.codegen.extract.normalize_iterates` recognizes a leading
+    initial iterate structurally — an entry referencing no recorded step output
+    — and drops it, so the emitted run and the iteration count reported through
+    ``solver_stats`` both follow the recorded iterations either way. The rolled
+    stationarity check is stricter: it replays the tape through
+    :func:`~fomtools.codegen.oracle.run_recorded_tape`, which reads every entry
+    as an iteration, so a tape passed alongside ``next_state`` must hold the
+    recorded iterations only.
     """
 
     verifier: Verifier
@@ -543,5 +556,6 @@ def resolve_builder(fom: str | FomBuilder) -> FomBuilder:
     except KeyError:
         raise ValueError(
             f"unknown FOM {fom!r}; built-in choices: {sorted(BUILDERS)} "
-            "(or pass a callable qp -> FomSpec)"
+            "(or pass a callable qp -> FomSpec for the rolled/unrolled paths, "
+            "qp -> ScheduledFomSpec for the scheduled one)"
         ) from None

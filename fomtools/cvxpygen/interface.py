@@ -34,6 +34,7 @@ from cvxpygen.solvers import QPCanonMixin, SolverInterface
 
 from fomtools.codegen.agent.driver import AgentDriver
 from fomtools.codegen.config import Backend, CodegenConfig, TerminationKind, Version
+from fomtools.codegen.extract import normalize_iterates
 from fomtools.codegen.generate import CodegenResult
 from fomtools.codegen.generate import generate_code as fomtools_generate_code
 from fomtools.codegen.targets import get_target
@@ -169,7 +170,13 @@ def _check_spec_matches_kind(spec, kind: str) -> None:
 
 
 def _check_unrolled_allowed(opts: "FomtoolsOptions", config: CodegenConfig) -> None:
-    """Gate the unrolled path: it is opt-in, and its horizon is baked in."""
+    """Gate the unrolled path: it is opt-in, and its horizon is baked in.
+
+    The termination check below is enforced again downstream by
+    ``extract_unrolled_ir``. Deliberately so, not dead code: repeating it here
+    rejects the combination with a cvxpygen-specific message, naming
+    ``cpg_set_solver_tol``, before canonicalization or any codegen work runs.
+    """
     if not opts.allow_unrolled:
         raise ValueError(
             "this FOM generates an unrolled solver — the whole recorded run emitted as "
@@ -199,6 +206,19 @@ def _schedule_len(ir) -> int | None:
     if not ir.schedules:
         return None
     return min(len(values) for values in ir.schedules.values())
+
+
+def _unrolled_iter_count(spec) -> int:
+    """How many iterations the unrolled body emitted from ``spec`` performs.
+
+    Not ``len(spec.iterates)``: extraction normalizes the recorded sequence
+    first, dropping a leading entry that is the *initial* iterate rather than an
+    iteration's result (an ``IterateTrajectory`` keeps one in slot 0, hand-built
+    lists go both ways). Both conventions are accepted, so the count reported to
+    the caller has to come from the same normalization the extractor applied,
+    or a builder that recorded its starting point would over-report by one.
+    """
+    return len(normalize_iterates(spec.verifier, spec.iterates))
 
 
 def _check_ir_matches_kind(ir, kind: str) -> None:
@@ -381,8 +401,10 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
             settings=tuple(self.stgs),
             schedule_len=_schedule_len(result.ir),
             # An unrolled body runs its loop once, so solution.iter is 1 rather
-            # than the number of iterations the emitted run performs.
-            iter_count=len(spec.iterates) if result.ir.unrolled else None,
+            # than the number of iterations the emitted run performs. That count
+            # is the normalized one, not len(spec.iterates): see
+            # _unrolled_iter_count.
+            iter_count=_unrolled_iter_count(spec) if result.ir.unrolled else None,
         )
         write_solver_cmake_stub(solver_code_dir)
 

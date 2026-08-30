@@ -120,7 +120,11 @@ anchored methods. It needs `allow_unrolled=True`, because the emitted program
 grows with the horizon — large for an embedded target — and the iteration count
 is fixed at generation time. Generation rolls the run back up automatically when
 repeating one iteration is *verified* to reproduce it, so writing a stationary
-method as a loop costs nothing.
+method as a loop costs nothing. Record `iterates` either way you like: the
+recorded iterations alone, or those with the initial iterate kept in slot 0, as
+an `IterateTrajectory` holds them. A leading initial iterate is recognized and
+dropped, so the emitted run and the iteration count reported through
+`solver_stats` are the recorded iterations in both cases.
 
 ```python
 from fomtools.codegen.extract_scheduled import Recording

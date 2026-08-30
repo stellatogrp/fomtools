@@ -10,6 +10,7 @@ of being silently frozen at its first recorded value.
 """
 
 import warnings
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -488,6 +489,26 @@ def test_schedule_length_is_the_shortest_table():
     ir = SimpleNamespace(schedules={"a": np.zeros(64), "b": np.zeros(40)})
     assert interface._schedule_len(ir) == 40
     assert interface._schedule_len(SimpleNamespace(schedules={})) is None
+
+
+def test_unrolled_iteration_count_is_the_recorded_iterations():
+    """The bridge reports what the emitted run performs, not the tape length."""
+    spec = _decaying_step_spec(_admm_qp(), decay=True, with_next_state=False)
+    assert interface._unrolled_iter_count(spec) == _GATE_ITERS
+
+
+def test_a_leading_initial_iterate_is_not_counted_as_an_iteration():
+    """An IterateTrajectory keeps the starting point in slot 0; it ran nothing.
+
+    Extraction drops that entry before generating, so counting the tape verbatim
+    would bake ``_GATE_ITERS + 1`` into the emitted ``fom_iter`` for a builder
+    that recorded where it started.
+    """
+    spec = _decaying_step_spec(_admm_qp(), decay=True, with_next_state=False)
+    with_initial = replace(spec, iterates=((spec.state[0],), *spec.iterates))
+
+    assert len(with_initial.iterates) == _GATE_ITERS + 1
+    assert interface._unrolled_iter_count(with_initial) == _GATE_ITERS
 
 
 def test_a_table_shorter_than_the_horizon_is_refused(captured_codegen, tmp_path):
