@@ -33,6 +33,7 @@ def generate_solver(
     driver: AgentDriver | None = None,
     param_bounds: dict | None = None,
     bound_margin: float = 1.0,
+    allow_unrolled: bool = False,
     prefix: str = "",
     wrapper: bool = True,
     enable_settings: tuple[str, ...] = (),
@@ -52,12 +53,21 @@ def generate_solver(
     code_dir:
         Output directory (cvxpygen layout).
     fom:
-        Built-in FOM name (``"admm"`` — default, any QP — or ``"pdhg"`` — LPs,
-        factorization-free) or a custom builder callable
-        ``f(qp: QPData, **fom_options) -> FomSpec``.
+        Built-in FOM name — ``"admm"`` (default, any QP), ``"relaxed_admm"``
+        (the same with an iteration-varying over-relaxation, generated down the
+        scheduled path) or ``"pdhg"`` (LPs, factorization-free) — or a custom
+        builder callable ``f(qp: QPData, **fom_options) -> FomSpec``.
+
+        A custom builder may target any of the three generation paths by
+        declaring it with :func:`~fomtools.cvxpygen.builders.fom_builder`:
+        ``"rolled"`` (the default — one stationary iteration, repeated),
+        ``"scheduled"`` (varying coefficients declared and tabulated, returning a
+        :class:`~fomtools.cvxpygen.builders.ScheduledFomSpec`), or ``"unrolled"``
+        (the whole recorded run, which also needs ``allow_unrolled=True``).
     fom_options:
         Extra keyword arguments forwarded to the FOM builder (e.g. ``rho``,
-        ``alpha`` for ADMM; ``step_scale`` for PDHG).
+        ``alpha`` for ADMM; ``alpha_start``, ``alpha_final``, ``ramp_iters``
+        for the relaxed variant; ``step_scale`` for PDHG).
     config:
         fomtools :class:`~fomtools.codegen.config.CodegenConfig`; supplies the
         termination criterion (``max_iters``/``tol``/``check_termination``)
@@ -70,7 +80,12 @@ def generate_solver(
         emits ``.cu`` translation units and needs a CUDA-enabled toolchain / GPU.
         ``max_iter``, ``tol`` and ``check_termination`` are emitted as runtime
         cvxpygen settings (tune them via ``cpg_set_solver_*`` without
-        regenerating).
+        regenerating) for a rolled or scheduled FOM — a scheduled one caps
+        ``max_iter`` at the length of its coefficient tables, past which the
+        emitted accessors would clamp and freeze the coefficients. An unrolled
+        FOM exposes no runtime settings: its body is the whole run executed
+        once, so there is no iteration count, tolerance or check interval to
+        act on.
     driver:
         fomtools coding-agent driver. ``None`` uses the default (the Claude
         agent when ``FOMTOOLS_CODEGEN_AGENT=1`` is set; otherwise an error
@@ -79,6 +94,12 @@ def generate_solver(
         Mapping from CVXPY ``Parameter`` objects (or names) to ``(lb, ub)``
         used for verification sampling. Parameters without bounds fall back to
         their current value ``+/- bound_margin`` with a warning.
+    allow_unrolled:
+        Accept a FOM that generates the whole recorded run as one straight-line
+        pass. Opt-in because the emitted program grows with the horizon — large
+        for an embedded target — and because the iteration count is then fixed at
+        code-generation time, so ``cpg_set_solver_max_iter`` no longer applies.
+        Ignored by rolled and scheduled builders.
     prefix, wrapper, enable_settings:
         Forwarded to ``cvxpygen.cpg.generate_code``. ``wrapper=True`` compiles
         the Python extension module so ``problem.solve(method='CPG')`` works.
@@ -98,6 +119,7 @@ def generate_solver(
         driver=driver,
         param_bounds=param_bounds,
         bound_margin=bound_margin,
+        allow_unrolled=allow_unrolled,
     )
     with pending_options(options):
         cpg.generate_code(
