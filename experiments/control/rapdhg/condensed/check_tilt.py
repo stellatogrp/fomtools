@@ -84,7 +84,9 @@ def main() -> None:
 
     problem = build_mpc()
     unbounded = build_mpc(tilt_limit=None)
-    print(f"bounded program: m = {problem.m}, ||G|| = {problem.norm_g:.3f}; limit {LIMIT_DEG:.0f} deg\n")
+    print(
+        f"bounded program: m = {problem.m}, ||G|| = {problem.norm_g:.3f}; limit {LIMIT_DEG:.0f} deg\n"
+    )
     header = f"{'reference':9s}{'period':>7s}  {'arm':<16s}{'steady m':>9s}{'max tilt':>9s}{'>limit':>7s}{'med KKT':>9s}"
     print(header)
     rows = []
@@ -92,8 +94,10 @@ def main() -> None:
     for period in args.periods:
         for name, make in REFERENCES.items():
             ref = make(period)
-            arms = [("exact, unbounded", ExactController(unbounded, ref), 1),
-                    ("exact, bounded", ExactController(problem, ref), 1)]
+            arms = [
+                ("exact, unbounded", ExactController(unbounded, ref), 1),
+                ("exact, bounded", ExactController(problem, ref), 1),
+            ]
             controller = RapdhgController(problem, ref, max_iterations=max(ITERATIONS))
             arms += [(f"NumPy {it} it", controller, it) for it in ITERATIONS]
             ok_kkt = ok_exact = None
@@ -103,15 +107,25 @@ def main() -> None:
                 tilt = tilt_deg(roll)
                 kkt = float(np.median(roll.residuals)) if "NumPy" in label else float("nan")
                 over = float(np.mean(tilt > LIMIT_DEG + 0.5))
-                rows.append({
-                    "reference": name, "period_s": period, "arm": label, "iterations": its,
-                    "crashed": int(roll.crashed), "steady_error_m": round(roll.steady_error(), 4),
-                    "max_tilt_deg": round(float(tilt.max()), 2), "over_limit_frac": round(over, 3),
-                    "median_relkkt": kkt,
-                })
+                rows.append(
+                    {
+                        "reference": name,
+                        "period_s": period,
+                        "arm": label,
+                        "iterations": its,
+                        "crashed": int(roll.crashed),
+                        "steady_error_m": round(roll.steady_error(), 4),
+                        "max_tilt_deg": round(float(tilt.max()), 2),
+                        "over_limit_frac": round(over, 3),
+                        "median_relkkt": kkt,
+                    }
+                )
                 flag = " CRASHED" if roll.crashed else ""
-                print(f"{name:9s}{period:7.2f}  {label:<16s}{roll.steady_error():9.3f}{tilt.max():9.1f}"
-                      f"{over:7.2f}{kkt:9.1e}{flag}   ({time.time() - t0:.0f}s)", flush=True)
+                print(
+                    f"{name:9s}{period:7.2f}  {label:<16s}{roll.steady_error():9.3f}{tilt.max():9.1f}"
+                    f"{over:7.2f}{kkt:9.1e}{flag}   ({time.time() - t0:.0f}s)",
+                    flush=True,
+                )
                 if label == "exact, bounded":
                     ok_exact = tilt.max() <= LIMIT_DEG + 1.0 and not roll.crashed
                 if its == PICK_ITERATIONS and "NumPy" in label:
@@ -127,9 +141,12 @@ def main() -> None:
         writer.writerows(rows)
     print("wrote", path)
 
-    passing = sorted({p for (_, p), ok in verdict.items() if ok
-                      and all(verdict[(r, p)] for r in REFERENCES)})
-    print("\nperiods on which the bounded controller converges on both references:", passing or "none")
+    passing = sorted(
+        {p for (_, p), ok in verdict.items() if ok and all(verdict[(r, p)] for r in REFERENCES)}
+    )
+    print(
+        "\nperiods on which the bounded controller converges on both references:", passing or "none"
+    )
     if passing:
         print(f"recommended REFERENCE_PERIOD = {passing[0]} (the most demanding that passes)")
 

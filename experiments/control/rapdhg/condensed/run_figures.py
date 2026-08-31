@@ -44,13 +44,17 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--reference", choices=sorted(REFERENCES), default="quasi")
     p.add_argument("--budget", type=float, default=40.0, help="compute budget in microseconds")
     p.add_argument(
-        "--period", type=float, default=REFERENCE_PERIOD,
+        "--period",
+        type=float,
+        default=REFERENCE_PERIOD,
         help="period of the reference in seconds (ignored by the spline)",
     )
     p.add_argument("--duration", type=float, default=8.0, help="flight length in seconds")
     p.add_argument("--fps", type=int, default=20)
     p.add_argument(
-        "--frame-stride", type=int, default=None,
+        "--frame-stride",
+        type=int,
+        default=None,
         help="simulation steps per animation frame; default plays in real time at --fps",
     )
     p.add_argument("--dpi", type=int, default=100, help="resolution of the animation frames")

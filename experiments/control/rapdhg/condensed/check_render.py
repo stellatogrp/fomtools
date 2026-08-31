@@ -79,7 +79,9 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="check_render_") as tmp:
         tmp = Path(tmp)
         stride = 40
-        gif = plots.make_gif([roll, roll], tmp / "check.gif", ["a", "b"], fps=20, frame_stride=stride)
+        gif = plots.make_gif(
+            [roll, roll], tmp / "check.gif", ["a", "b"], fps=20, frame_stride=stride
+        )
         still = plots.still_comparison([roll], tmp / "check.pdf", ["a"])
         with Image.open(gif) as im:
             frames = im.n_frames

@@ -90,7 +90,9 @@ def main() -> None:
     converged = rapdhg.solve(problem, q, CONVERGED, h=h)
     x_exact = rapdhg.solve_exact(problem, q, h=h)
     upper, lower = problem.state_rhs(x_mid)
-    tilt_slack = float(min(np.min(upper - problem.C @ x_exact), np.min(lower + problem.C @ x_exact)))
+    tilt_slack = float(
+        min(np.min(upper - problem.C @ x_exact), np.min(lower + problem.C @ x_exact))
+    )
     obj = lambda x: 0.5 * x @ problem.P @ x + q @ x  # noqa: E731
     gap = (obj(converged.x) - obj(x_exact)) / max(abs(obj(x_exact)), 1.0)
 
@@ -101,7 +103,9 @@ def main() -> None:
         f"  relative KKT error at {CONVERGED}   "
         f"{rapdhg.relkkt(problem, q, converged.x, converged.y, h=h):.3e}"
     )
-    print(f"  tilt slack of the Clarabel solution  {tilt_slack:+.3e} rad (>= 0 means within the bound)")
+    print(
+        f"  tilt slack of the Clarabel solution  {tilt_slack:+.3e} rad (>= 0 means within the bound)"
+    )
     print(
         f"  widest iterate seen             {reach:.4g} (saturation binds at {MATERIALIZE_BOUND:.0g})"
     )

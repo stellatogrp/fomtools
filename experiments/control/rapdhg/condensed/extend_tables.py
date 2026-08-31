@@ -18,13 +18,12 @@ from __future__ import annotations
 
 import argparse
 
-from fomtools.codegen.emit import scaffold
-from fomtools.codegen.harness import build_and_verify
-
 from common import codegen_driver
 from common import study as pipeline
 from common.csolver import CSolver
 from condensed.study import MAX_ITERS, build
+from fomtools.codegen.emit import scaffold
+from fomtools.codegen.harness import build_and_verify
 
 
 def main() -> None:
@@ -34,7 +33,9 @@ def main() -> None:
 
     study = build(max_iters=args.max_iters)
     config = codegen_driver.config_for(args.max_iters, study.tol_verify)
-    ir = codegen_driver.extract(study.recording, study.boxes, config=config, name=f"mpc_{study.name}")
+    ir = codegen_driver.extract(
+        study.recording, study.boxes, config=config, name=f"mpc_{study.name}"
+    )
 
     failures = []
     for label, directory in (("emitted C", study.emitted), ("optimized C", study.optimized)):
@@ -43,10 +44,14 @@ def main() -> None:
             continue
         solver_src = (directory / "src" / "fom_solver.c").read_text()
         target = scaffold(ir, directory, config)
-        assert (directory / "src" / "fom_solver.c").read_text() == solver_src, "scaffold touched the solver"
+        assert (directory / "src" / "fom_solver.c").read_text() == solver_src, (
+            "scaffold touched the solver"
+        )
         result = build_and_verify(directory, target)
-        print(f"{label}: tables extended to {args.max_iters}; make verify "
-              f"{'passed' if result.success else 'FAILED'}")
+        print(
+            f"{label}: tables extended to {args.max_iters}; make verify "
+            f"{'passed' if result.success else 'FAILED'}"
+        )
         if not result.success:
             failures.append(label)
             print(result.output[-2000:])

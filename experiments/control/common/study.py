@@ -469,7 +469,9 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--no-gif", action="store_true")
     p.add_argument("--fps", type=int, default=20)
     p.add_argument(
-        "--frame-stride", type=int, default=None,
+        "--frame-stride",
+        type=int,
+        default=None,
         help="simulation steps per animation frame; default plays in real time at --fps",
     )
     p.add_argument("--cross-check-iterations", type=int, default=200)

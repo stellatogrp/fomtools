@@ -56,6 +56,7 @@ def budget_title(budget_us: float) -> str:
     """The figure-level header naming the compute budget the panes were flown at."""
     return rf"Iterations per {budget_us:g}\,$\mu$s Time Budget"
 
+
 # ----------------------------------------------------------------------------
 # Visual constants -- tweak here, not in the drawing code below.
 # ----------------------------------------------------------------------------
@@ -128,21 +129,23 @@ def _box_faces(center: np.ndarray, R: np.ndarray, size: tuple[float, float, floa
     return [corners_world[idx] for idx in faces_idx]
 
 
-def _disk(center_local: np.ndarray, R: np.ndarray, world_origin: np.ndarray,
-          radius: float, n: int = 24) -> np.ndarray:
+def _disk(
+    center_local: np.ndarray, R: np.ndarray, world_origin: np.ndarray, radius: float, n: int = 24
+) -> np.ndarray:
     """Disk in body-XY plane around `center_local`, transformed to world."""
     theta = np.linspace(0.0, 2 * np.pi, n, endpoint=False)
     pts_local = np.stack(
-        [center_local[0] + radius * np.cos(theta),
-         center_local[1] + radius * np.sin(theta),
-         np.full_like(theta, center_local[2])],
+        [
+            center_local[0] + radius * np.cos(theta),
+            center_local[1] + radius * np.sin(theta),
+            np.full_like(theta, center_local[2]),
+        ],
         axis=1,
     )
     return (R @ pts_local.T).T + world_origin
 
 
-def draw_quadcopter(ax, position: np.ndarray, R: np.ndarray, scale: float,
-                    blade_phase: float):
+def draw_quadcopter(ax, position: np.ndarray, R: np.ndarray, scale: float, blade_phase: float):
     """Draw a stylized quadcopter at `position` with rotation `R`.
 
     Returns the list of artists added so caller can clear them next frame.
@@ -204,9 +207,12 @@ def draw_quadcopter(ax, position: np.ndarray, R: np.ndarray, scale: float,
         corners_body = (R_arm_local @ corners_arm.T).T + arm_center_local
         corners_world = (R @ corners_body.T).T + position
         faces_idx = [
-            [0, 1, 2, 3], [4, 5, 6, 7],
-            [0, 1, 5, 4], [2, 3, 7, 6],
-            [1, 2, 6, 5], [0, 3, 7, 4],
+            [0, 1, 2, 3],
+            [4, 5, 6, 7],
+            [0, 1, 5, 4],
+            [2, 3, 7, 6],
+            [1, 2, 6, 5],
+            [0, 3, 7, 4],
         ]
         arm_faces = [corners_world[idx] for idx in faces_idx]
         arm_poly = Poly3DCollection(
@@ -283,8 +289,9 @@ def draw_quadcopter(ax, position: np.ndarray, R: np.ndarray, scale: float,
     return artists
 
 
-def draw_shadow(ax, position: np.ndarray, R: np.ndarray, scale: float,
-                z_floor: float, alpha: float = 0.28):
+def draw_shadow(
+    ax, position: np.ndarray, R: np.ndarray, scale: float, z_floor: float, alpha: float = 0.28
+):
     """Quadcopter-shaped shadow on the floor plane below the body.
 
     Projects the body footprint and the four rotor disks straight down (light
@@ -352,9 +359,15 @@ def draw_shadow(ax, position: np.ndarray, R: np.ndarray, scale: float,
     return artists
 
 
-def draw_trail(ax, positions: np.ndarray, color: str, n_segments: int = 40,
-               max_alpha: float = 0.95, base_lw: float = 2.4,
-               min_alpha: float = 0.0):
+def draw_trail(
+    ax,
+    positions: np.ndarray,
+    color: str,
+    n_segments: int = 40,
+    max_alpha: float = 0.95,
+    base_lw: float = 2.4,
+    min_alpha: float = 0.0,
+):
     """Recent positions as a polyline with alpha gradient (older = fainter).
 
     `min_alpha` floors the fade so the oldest segments stay visible; use it
@@ -370,8 +383,13 @@ def draw_trail(ax, positions: np.ndarray, color: str, n_segments: int = 40,
         seg = positions[idx_start:idx_end]
         a = min_alpha + (max_alpha - min_alpha) * (1.0 - j / seg_count) ** 1.4
         (line,) = ax.plot(
-            seg[:, 0], seg[:, 1], seg[:, 2],
-            color=color, linewidth=base_lw, alpha=a, solid_capstyle="round",
+            seg[:, 0],
+            seg[:, 1],
+            seg[:, 2],
+            color=color,
+            linewidth=base_lw,
+            alpha=a,
+            solid_capstyle="round",
             zorder=5,
         )
         artists.append(line)
@@ -403,13 +421,23 @@ def draw_floor(ax, x_lim, y_lim, z_floor):
     ys = np.linspace(y_lim[0], y_lim[1], n_grid + 1)
     for x in xs:
         ax.plot(
-            [x, x], [y_lim[0], y_lim[1]], [z_floor, z_floor],
-            color=FLOOR_GRID_COLOR, linewidth=0.5, alpha=0.65, zorder=1,
+            [x, x],
+            [y_lim[0], y_lim[1]],
+            [z_floor, z_floor],
+            color=FLOOR_GRID_COLOR,
+            linewidth=0.5,
+            alpha=0.65,
+            zorder=1,
         )
     for y in ys:
         ax.plot(
-            [x_lim[0], x_lim[1]], [y, y], [z_floor, z_floor],
-            color=FLOOR_GRID_COLOR, linewidth=0.5, alpha=0.65, zorder=1,
+            [x_lim[0], x_lim[1]],
+            [y, y],
+            [z_floor, z_floor],
+            color=FLOOR_GRID_COLOR,
+            linewidth=0.5,
+            alpha=0.65,
+            zorder=1,
         )
 
 
@@ -417,9 +445,7 @@ def _setup_axes(ax, x_lim, y_lim, z_lim, title, label_color=TEXT_COLOR, title_y=
     ax.set_xlim(x_lim)
     ax.set_ylim(y_lim)
     ax.set_zlim(z_lim)
-    ax.set_box_aspect(
-        (x_lim[1] - x_lim[0], y_lim[1] - y_lim[0], z_lim[1] - z_lim[0])
-    )
+    ax.set_box_aspect((x_lim[1] - x_lim[0], y_lim[1] - y_lim[0], z_lim[1] - z_lim[0]))
     ax.set_xticks([])
     ax.set_yticks([])
     ax.set_zticks([])
@@ -529,8 +555,14 @@ def render_pane(
 
     ref = rollout.reference
     ax.plot(
-        ref[:, 0], ref[:, 1], ref[:, 2],
-        color=REF_COLOR, linewidth=1.0, linestyle=(0, (4, 3)), alpha=0.55, zorder=3,
+        ref[:, 0],
+        ref[:, 1],
+        ref[:, 2],
+        color=REF_COLOR,
+        linewidth=1.0,
+        linestyle=(0, (4, 3)),
+        alpha=0.55,
+        zorder=3,
     )
 
     last = min(frame, rollout.steps)
@@ -542,8 +574,14 @@ def render_pane(
         # single opaque polyline: the overlapping alpha-graded segments of
         # draw_trail bead up at the joints, which shows in static images
         ax.plot(
-            trail[:, 0], trail[:, 1], trail[:, 2],
-            color=trail_color, linewidth=2.4, alpha=0.95, solid_capstyle="round", zorder=5,
+            trail[:, 0],
+            trail[:, 1],
+            trail[:, 2],
+            color=trail_color,
+            linewidth=2.4,
+            alpha=0.95,
+            solid_capstyle="round",
+            zorder=5,
         )
     else:
         # Thin from the newest point backwards so the trail always ends at
@@ -559,9 +597,14 @@ def render_pane(
 
     if hud:
         ax.text2D(
-            0.5, 0.10, hud,
-            transform=ax.transAxes, fontsize=13,
-            color=CRASH_COLOR if ended else TEXT_COLOR, ha="center", va="bottom",
+            0.5,
+            0.10,
+            hud,
+            transform=ax.transAxes,
+            fontsize=13,
+            color=CRASH_COLOR if ended else TEXT_COLOR,
+            ha="center",
+            va="bottom",
             bbox=dict(boxstyle="round,pad=0.36", fc=ERR_BAR_BG, ec="none", alpha=0.9),
         )
 
@@ -596,10 +639,16 @@ def _autocrop_pngs(frame_paths, pad: int = 6):
     for p in frame_paths:
         with Image.open(p) as img:
             bbox = _content_box(img)
-        union = list(bbox) if union is None else [
-            min(union[0], bbox[0]), min(union[1], bbox[1]),
-            max(union[2], bbox[2]), max(union[3], bbox[3]),
-        ]
+        union = (
+            list(bbox)
+            if union is None
+            else [
+                min(union[0], bbox[0]),
+                min(union[1], bbox[1]),
+                max(union[2], bbox[2]),
+                max(union[3], bbox[3]),
+            ]
+        )
     with Image.open(frame_paths[0]) as img0:
         W, H = img0.size
     crop_box = (
@@ -673,15 +722,29 @@ def make_compare_gif(
                         nrows, ncols, j + 1, projection="3d", computed_zorder=False
                     )
                     render_pane(
-                        ax, roll, f, bounds, labels[j],
-                        scale=scale, trail_color=colors[j], trail_segments=trail_segments,
-                        blade_phase=k * blade_per_frame, elev=camera_elev, azim=azim,
-                        hud=frame_hud(roll, f, show_tilt), trail_thin=frame_stride,
+                        ax,
+                        roll,
+                        f,
+                        bounds,
+                        labels[j],
+                        scale=scale,
+                        trail_color=colors[j],
+                        trail_segments=trail_segments,
+                        blade_phase=k * blade_per_frame,
+                        elev=camera_elev,
+                        azim=azim,
+                        hud=frame_hud(roll, f, show_tilt),
+                        trail_thin=frame_stride,
                     )
                 fig.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=0.92, wspace=0.0)
                 fig.text(
-                    0.99, 0.93, f"time = {t:5.2f} s",
-                    ha="right", va="top", fontsize=13, color=TEXT_COLOR,
+                    0.99,
+                    0.93,
+                    f"time = {t:5.2f} s",
+                    ha="right",
+                    va="top",
+                    fontsize=13,
+                    color=TEXT_COLOR,
                     bbox=dict(boxstyle="round,pad=0.36", fc=ERR_BAR_BG, ec="none", alpha=0.85),
                 )
                 frame_path = workdir / f"frame_{k:05d}.png"
@@ -745,11 +808,23 @@ def make_compare_still(
             f = roll.steps if frame is None else min(frame, roll.steps)
             ax = fig.add_subplot(nrows, ncols, j + 1, projection="3d", computed_zorder=False)
             render_pane(
-                ax, roll, f, bounds, labels[j],
-                scale=scale, trail_color=colors[j], trail_segments=roll.steps,
-                blade_phase=0.0, elev=camera_elev, azim=camera_azim,
+                ax,
+                roll,
+                f,
+                bounds,
+                labels[j],
+                scale=scale,
+                trail_color=colors[j],
+                trail_segments=roll.steps,
+                blade_phase=0.0,
+                elev=camera_elev,
+                azim=camera_azim,
                 hud=(
-                    (summary_hud(roll, show_tilt) if frame is None else frame_hud(roll, f, show_tilt))
+                    (
+                        summary_hud(roll, show_tilt)
+                        if frame is None
+                        else frame_hud(roll, f, show_tilt)
+                    )
                     if show_hud
                     else None
                 ),
