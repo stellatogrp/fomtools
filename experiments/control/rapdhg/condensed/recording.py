@@ -33,11 +33,13 @@ iteration, ``Q @ xmd``, would be emitted three times.  With it, the emitted
 iteration applies ``Q`` exactly once.  ``check_against_fomtools.py`` asserts the
 saturation never binds, so it changes the arithmetic not at all.
 
-*The right-hand side is a parameter, not a constant.*  The dual step needs
-``tau_k * h``, and a scheduled constant offset is rejected -- only matrix
-coefficients can carry a schedule.  Declaring ``h`` as a parameter over a
-degenerate box turns it into a scheduled coefficient on a parameter, which is
-allowed.  It is the same number either way.
+*The right-hand side is a parameter.*  The dual step needs ``tau_k * h``, and a
+scheduled constant offset is rejected -- only matrix coefficients can carry a
+schedule -- so ``h`` is declared as a parameter, which turns it into a scheduled
+coefficient on a parameter, which is allowed.  With the tilt bound it is a
+genuine parameter anyway: the thrust rows of ``h`` are constant, but the tilt
+rows are the limit less the free response from the measured state, and they
+move every sampling instant.
 """
 
 from __future__ import annotations
@@ -64,11 +66,11 @@ def parameter_boxes(
     iterations: int = 4096,
     margin: float = 0.05,
 ) -> ParameterBoxes:
-    """Fly once, well converged, and take the box of costs that flight visits.
+    """Fly once, well converged, and take the boxes of parameters that flight visits.
 
-    The second box is degenerate: the right-hand side ``h`` is fixed by the
-    thrust limits and never moves.  It is a parameter only because a schedule
-    cannot scale a constant offset.
+    Two boxes: the linear cost ``q`` and the right-hand side ``h``.  The thrust
+    rows of ``h`` never move, so that box is degenerate on them; the tilt rows
+    follow the measured state, so on those it has width.
     """
     from common.simulate import closed_loop
     from condensed.controller import RapdhgController
@@ -81,12 +83,14 @@ def parameter_boxes(
             for k in range(roll.steps)
         ]
     )
+    rhs = np.vstack([problem.rhs(roll.states[k]) for k in range(roll.steps)])
     lb, ub = box_around(costs, margin)
+    rhs_lb, rhs_ub = box_around(rhs, margin)
     mid = roll.steps // 2
     return ParameterBoxes(
         boxes=[
             ParameterBox(name="p0", lb=lb, ub=ub, mid=costs[mid]),
-            ParameterBox(name="p1", lb=problem.h.copy(), ub=problem.h.copy(), mid=problem.h.copy()),
+            ParameterBox(name="p1", lb=rhs_lb, ub=rhs_ub, mid=rhs[mid]),
         ],
         state=roll.states[mid],
     )

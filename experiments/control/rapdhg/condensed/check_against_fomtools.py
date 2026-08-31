@@ -14,7 +14,8 @@ Four things have to line up before any of the timings mean anything.
    clipped it would silently change the algorithm.
 4. The converged iterate solves the quadratic program, checked against Clarabel,
    which takes the one-sided inequality form directly and so checks the
-   reformulation of ``mpc.py`` as well as the iteration.
+   reformulation of ``mpc.py`` as well as the iteration; and that solution
+   respects the tilt rows, which checks the sign of the state constraint.
 
     python -m condensed.check_against_fomtools
 """
@@ -46,13 +47,16 @@ def main() -> None:
     study = build()
     problem = study.problem
     q = study.boxes["p0"].mid
+    h = study.boxes["p1"].mid
+    x_mid = study.boxes.state
 
     print(f"K = {problem.restart}, w = {problem.primal_weight}")
     print(f"||Q|| = {problem.norm_q:.6g}, ||G|| = {problem.norm_g:.6g}")
 
     # 0. the structural products the NumPy arm uses are the stored matrix.
     #    They are what keeps the NumPy arm from being charged 3200 multiply-adds
-    #    for a product the generated C emits sparse and does in 80.
+    #    for a product the generated C emits sparse and does in 80.  The tilt
+    #    rows are a real product either way, so agreement is to round-off.
     rng = np.random.default_rng(0)
     probe_x = rng.normal(size=problem.n)
     probe_y = rng.normal(size=problem.m)
@@ -65,8 +69,8 @@ def main() -> None:
     tables = rapdhg.schedule_tables(problem, max(CROSS_COUNTS) + 1)
     worst_form = 0.0
     for count in CROSS_COUNTS:
-        flat = rapdhg.solve(problem, q, count, tables=tables)
-        x_paper, y_paper = rapdhg.solve_as_written(problem, q, count)
+        flat = rapdhg.solve(problem, q, count, tables=tables, h=h)
+        x_paper, y_paper = rapdhg.solve_as_written(problem, q, count, h=h)
         worst_form = max(
             worst_form,
             float(np.max(np.abs(flat.x - x_paper))),
@@ -79,12 +83,14 @@ def main() -> None:
     # 3. the materializing saturation never binds.
     reach = 0.0
     for count in (1, 8, 64, 512, pipeline.CHECK_ITERATIONS[-1]):
-        result = rapdhg.solve(problem, q, count)
+        result = rapdhg.solve(problem, q, count, h=h)
         reach = max(reach, float(np.max(np.abs(result.x))))
 
     # 4. the converged iterate solves the program.
-    converged = rapdhg.solve(problem, q, CONVERGED)
-    x_exact = rapdhg.solve_exact(problem, q)
+    converged = rapdhg.solve(problem, q, CONVERGED, h=h)
+    x_exact = rapdhg.solve_exact(problem, q, h=h)
+    upper, lower = problem.state_rhs(x_mid)
+    tilt_slack = float(min(np.min(upper - problem.C @ x_exact), np.min(lower + problem.C @ x_exact)))
     obj = lambda x: 0.5 * x @ problem.P @ x + q @ x  # noqa: E731
     gap = (obj(converged.x) - obj(x_exact)) / max(abs(obj(x_exact)), 1.0)
 
@@ -92,15 +98,19 @@ def main() -> None:
     print(f"  flat recurrence vs Algorithm 1  {worst_form:.3e}")
     print(f"  converged rAPDHG vs Clarabel    {gap:+.3e} relative objective gap")
     print(
-        f"  relative KKT error at {CONVERGED}   {rapdhg.relkkt(problem, q, converged.x, converged.y):.3e}"
+        f"  relative KKT error at {CONVERGED}   "
+        f"{rapdhg.relkkt(problem, q, converged.x, converged.y, h=h):.3e}"
     )
+    print(f"  tilt slack of the Clarabel solution  {tilt_slack:+.3e} rad (>= 0 means within the bound)")
     print(
         f"  widest iterate seen             {reach:.4g} (saturation binds at {MATERIALIZE_BOUND:.0g})"
     )
 
     failures = []
-    if not err_structure == 0.0:
+    if not err_structure < 1e-12:
         failures.append("the structural G products are not the stored matrix")
+    if not tilt_slack > -1e-8:
+        failures.append("the Clarabel solution violates the tilt rows")
     if not worst_form < 1e-9:
         failures.append("the flat recurrence is not the algorithm the paper writes")
     if not abs(gap) < 1e-6:

@@ -27,11 +27,13 @@ nothing left in `fom_linsolve.c` for the runtime to hide in.
 | | multiply-adds per iteration | NumPy | emitted C | optimized C | emission | optimization |
 |---|---:|---:|---:|---:|---:|---:|
 | `osqp/condensed` (ADMM) | 2000 | 6.06 us | 2.88 us | 2.67 us | 2.1x | **1.08x** |
-| `rapdhg/condensed` | 2680 | 10.02 us | 2.37 us | 0.13 us | 4.2x | **17.9x** |
+| `rapdhg/condensed` | 4240 | 13.26 us | 2.87 us | 0.144 us | 4.6x | **19.9x** |
 
-The optimization phase went from 1.08x to 17.9x on the same control problem,
-the same generator, and the same agent budget. The only thing that changed is
-whether the iteration contains a linear solve.
+The optimization phase went from 1.08x to 19.9x on the same plant, the same
+generator, and the same agent budget. The only thing that changed is whether
+the iteration contains a linear solve. (The rAPDHG program also carries a tilt
+bound the ADMM one does not, which is why its iteration is larger; the earlier,
+unbounded run of this study gave 4.2x and 17.9x, the same picture.)
 
 That is the answer to the question the `osqp` study left open. Its ceiling was
 not the agent and not the generator; it was that 91% of the runtime sat in a
@@ -39,26 +41,33 @@ file the agent is not allowed to edit. Remove the linear solve and the whole
 iteration moves into `src/fom_solver.c`, where it can be worked on.
 
 The gain is not free, and the honest accounting is in `condensed/README.md`:
-rAPDHG needs more iterations than ADMM for the same accuracy, and a good part
-of the 17.9x is dispatch overhead that phase A carries and phase B removes —
-overhead that existed in the ADMM study too and was simply invisible behind a
-linear solve that cost more than all of it.
+rAPDHG needs more iterations than ADMM for the same accuracy, a good part of
+the 19.9x is dispatch overhead that phase A carries and phase B removes, and
+this run's agent reassociated the arithmetic where the earlier one kept it bit
+exact.
 
 ## The formulation
 
 The paper poses `minimize (1/2) x'Qx + c'x subject to Ax <= b`, a one-sided
 inequality with a nonnegative dual. The condensed program carries the two-sided
-thrust box `lo <= z <= hi`, so it is stacked:
+thrust box `lo <= z <= hi` and, in this study, a bound of 30 degrees on the two
+tilt angles at the end of every input block, `-e <= F x + C z <= e`. Both are
+stacked one-sided:
 
-    G = [ I ; -I ],    h = [ hi ; -lo ]
+    G = [ I ; -I ; C ; -C ],    h(x) = [ hi ; -lo ; e - F x ; e + F x ]
 
-Note the sign: the lower bound is the one that flips, and `G z <= h` is `z <= hi`
-together with `-z <= -lo`. Clarabel solves the stacked form directly, so
-`check_against_fomtools.py` checks the reformulation and the iteration at once.
+Note the sign: the lower bounds are the ones that flip, and `G z <= h` is
+`z <= hi` together with `-z <= -lo` and the two tilt rows. The right-hand side
+moves with the measured state, so the generated solver takes two parameters per
+sampling instant, the linear cost and `h`. Clarabel solves the stacked form
+directly, so `check_against_fomtools.py` checks the reformulation and the
+iteration at once.
 
-Everything else — the plant, the cost, the reference, the move blocking, the
-sampling period — is shared with the `osqp` study through `../common/condensed_qp.py`,
-so the two studies provably fly the same control problem.
+The plant, the cost, the reference, the move blocking, and the sampling period
+are shared with the `osqp` study through `../common/condensed_qp.py`; the tilt
+bound is an opt-in of that module which the `osqp` study does not take, so it
+still generates from the published unbounded program. `condensed/README.md`
+says why the bound is there and what it costs a first-order method.
 
 ## Layout
 
@@ -69,8 +78,11 @@ rapdhg/
 │   ├── rapdhg.py                  the iteration, both as the paper writes it
 │   │                              and as the flat recurrence that is recorded
 │   ├── recording.py               that recurrence on a Verifier, plus the tables
+│   ├── check_tilt.py              which reference the tilt-bounded controller can fly
 │   ├── tuning.py                  choosing K and the primal weight, by flying them
+│   ├── extend_tables.py           lengthening the schedule tables without an agent
 │   ├── run_figures.py             the three arms on a non-repeating trajectory
+│   ├── check_render.py            the drawn quadcopter points where it accelerates
 │   ├── study.py                   the adapter that makes it a common.study.Study
 │   ├── controller.py              the adapter the shared simulator flies
 │   ├── check_against_fomtools.py  the controller is the recorded algorithm
@@ -85,23 +97,26 @@ The plant, the simulator, the plots, and the code-generation pipeline live one
 level up in `../common`, shared with the `osqp` study.
 
 ```
+python -m condensed.check_tilt                # which reference the bounded controller can fly
 python -m condensed.tuning                    # choose the restart period and primal weight
 python -m condensed.check_against_fomtools    # the controller is the recorded algorithm
-python -m condensed.generate                  # both C solvers (needs FOMTOOLS_CODEGEN_AGENT=1)
+python -m condensed.generate --max-iters 512  # both C solvers (needs FOMTOOLS_CODEGEN_AGENT=1)
+python -m condensed.extend_tables             # lengthen the schedule tables, no agent
 python -m condensed.run_implementations       # the three arms at equal wall-clock budgets
 python -m condensed.run_figures               # the same three on a non-repeating path
 ```
 
-Two reference trajectories are used, and the difference between them turns out
-to matter. The **figure eight** closes after 2.25 s, so every lap is identical;
-that makes a steady-state error meaningful, and it also lets the closed loop
-resonate with the lap — at one particular solve accuracy the best arm's tracking
-error jumps by half and then recovers. The **quasi-periodic** path is the same
-Lissajous construction with the axes set to an irrational frequency ratio (the
-golden ratio), so it never repeats and slowly fills a box instead of retracing
-one curve, at matched speed and extent. `condensed/README.md` gives both in
-closed form and shows the arms separating more widely, and monotonically, on the
-second.
+Two reference trajectories are used, both at a 4.0 s period. The **figure
+eight** closes after one period, so every lap is identical; that makes a
+steady-state error meaningful, and it also lets the closed loop resonate with
+the lap. The **quasi-periodic** path is the same Lissajous construction with the
+axes set to an irrational frequency ratio (the golden ratio), so it never repeats
+and slowly fills a box instead of retracing one curve. The period is set by the
+tilt bound: at the original 2.25 s the paths ask for 40 to 75 degrees of tilt,
+which a 30-degree vehicle cannot deliver and a first-order solver cannot even
+be made to refuse within a controller's budget; at 4.0 s the demand peaks at
+the limit. `condensed/README.md` gives both paths in closed form and the
+measurements behind the period.
 
 ## Why there is no `uncondensed/`
 

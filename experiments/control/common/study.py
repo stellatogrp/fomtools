@@ -27,6 +27,7 @@ import numpy as np  # noqa: E402
 
 from common import codegen_driver, plots  # noqa: E402
 from common.csolver import CSolver  # noqa: E402
+from common.quadcopter import TILT_LIMIT  # noqa: E402
 from common.recording import ParameterBoxes, Recording, ScheduledRecording  # noqa: E402
 from common.reference import Reference  # noqa: E402
 from common.simulate import (  # noqa: E402
@@ -58,6 +59,9 @@ BUDGETS_US = (100.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 6000.0, 8000.0, 10_00
 #: One colour per implementation, shared by the flight panels, the error curve,
 #: and the budget plot.  Ordered by how well each tracks, so the figures read the
 #: same way the table does.
+#: The tilt bound the flights are reported against, in degrees.
+TILT_LIMIT_DEG = float(np.degrees(TILT_LIMIT))
+
 COLORS = {"NumPy": "#1b7837", "optimized C": "#e08214", "emitted C": "#c0392b"}
 
 
@@ -464,6 +468,10 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--only", nargs="+", help="restrict to these implementations")
     p.add_argument("--no-gif", action="store_true")
     p.add_argument("--fps", type=int, default=20)
+    p.add_argument(
+        "--frame-stride", type=int, default=None,
+        help="simulation steps per animation frame; default plays in real time at --fps",
+    )
     p.add_argument("--cross-check-iterations", type=int, default=200)
     return p
 
@@ -510,10 +518,16 @@ def run_implementations(study: Study, args) -> None:
                     "mean_error_m": round(roll.mean_error, 6),
                     "max_error_m": round(roll.max_error, 6),
                     "saturation_rate": round(roll.saturation_rate, 4),
+                    "max_tilt_deg": round(roll.max_tilt_deg, 2),
+                    "tilt_over_limit_pct": round(100 * roll.tilt_exceedance(TILT_LIMIT_DEG), 2),
                 }
             )
             status = "CRASHED" if roll.crashed else f"{roll.steady_error():7.3f} m"
-            print(f"  {arm.name:<14s} {budget / 1000:5.2f} ms -> {k:6d} iterations   {status}")
+            print(
+                f"  {arm.name:<14s} {budget / 1000:5.2f} ms -> {k:6d} iterations   {status}"
+                f"   max tilt {roll.max_tilt_deg:4.1f} deg"
+                f"   over limit {100 * roll.tilt_exceedance(TILT_LIMIT_DEG):4.1f}%"
+            )
 
     out = study.out
     out.mkdir(parents=True, exist_ok=True)
@@ -527,7 +541,11 @@ def run_implementations(study: Study, args) -> None:
     print(
         "wrote",
         plots.still_comparison(
-            chosen, out / "implementations_flight.pdf", labels=labels, colors=colors
+            chosen,
+            out / "implementations_flight.pdf",
+            labels=labels,
+            colors=colors,
+            suptitle=plots.budget_title(figure_budget),
         ),
     )
     print(
@@ -540,7 +558,12 @@ def run_implementations(study: Study, args) -> None:
         print(
             "wrote",
             plots.make_gif(
-                chosen, out / "implementations.gif", labels=labels, colors=colors, fps=args.fps
+                chosen,
+                out / "implementations.gif",
+                labels=labels,
+                colors=colors,
+                fps=args.fps,
+                frame_stride=args.frame_stride,
             ),
         )
 

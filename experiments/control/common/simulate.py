@@ -35,8 +35,9 @@ GROUND = 0.0
 FLIGHT_VOLUME = 20.0
 
 #: Seconds discarded from the front of a flight before the steady-state
-#: tracking error is measured.  The quadcopter starts at the origin and the
-#: reference starts a metre above it, so the flight opens with a climb.
+#: tracking error is measured.  The quadcopter starts on the reference but
+#: level and with the solver cold, so the first moments are a transient;
+#: started from the origin instead, the flight opens with a climb.
 SETTLE = 2.0
 
 
@@ -95,7 +96,7 @@ class Rollout:
 
     @property
     def mean_error(self) -> float:
-        """Mean error over the whole flight, capture transient included."""
+        """Mean error over the whole flight, opening transient included."""
         return float(np.mean(self.errors)) if self.steps else float("nan")
 
     @property
@@ -103,16 +104,29 @@ class Rollout:
         return float(np.max(self.errors)) if self.steps else float("nan")
 
     def steady_error(self, settle: float = SETTLE) -> float:
-        """Mean error after the capture transient.
+        """Mean error after the opening transient.
 
-        The flight starts at the origin while the reference starts a metre up,
-        so the first seconds are a climb whose error swamps everything after it.
+        The first seconds of a flight are the controller settling onto the curve
+        (or, from the origin, a climb whose error swamps everything after it).
         This is the number that says how well the quadcopter holds the curve.
         """
         first = int(round(settle / self.dt))
         if self.steps <= first:
             return float("nan")
         return float(np.mean(self.errors[first:]))
+
+    @property
+    def tilt_deg(self) -> np.ndarray:
+        """The larger of the two tilt angles at every instant, in degrees."""
+        return np.degrees(np.max(np.abs(self.states[:, 0:2]), axis=1))
+
+    @property
+    def max_tilt_deg(self) -> float:
+        return float(np.max(self.tilt_deg))
+
+    def tilt_exceedance(self, limit_deg: float, slack_deg: float = 0.5) -> float:
+        """Fraction of instants at which the tilt exceeds ``limit_deg`` by more than ``slack_deg``."""
+        return float(np.mean(self.tilt_deg > limit_deg + slack_deg))
 
     @property
     def saturation_rate(self) -> float:
@@ -128,16 +142,19 @@ class Rollout:
         return (
             f"K={self.iterations:<6d} steady {self.steady_error():7.3f} m  "
             f"whole {self.mean_error:7.3f} m  max {self.max_error:7.3f} m  "
-            f"saturated {100 * self.saturation_rate:5.1f}%"
+            f"saturated {100 * self.saturation_rate:5.1f}%  "
+            f"max tilt {self.max_tilt_deg:4.1f} deg"
         )
 
 
-def initial_state(ref: Reference, on_reference: bool = False) -> np.ndarray:
+def initial_state(ref: Reference, on_reference: bool = True) -> np.ndarray:
     """The state the flight starts from.
 
-    By default the quadcopter starts at the origin, hovering.  The reference
-    begins elsewhere, so the flight opens with a capture transient, which is the
-    part of the trajectory that a poorly converged solve handles worst.
+    By default the quadcopter starts on the reference, at its position and
+    velocity at time zero and level, as the learning-to-warm-start flights do.
+    With ``on_reference=False`` it starts at the origin, hovering, and the
+    flight opens with a capture climb: a violent manoeuvre that says more about
+    the takeoff than about how well the controller holds the curve.
     """
     x = np.zeros(N_STATE)
     if on_reference:
@@ -152,7 +169,7 @@ def closed_loop(
     ref: Reference,
     iterations: int,
     duration: float = 8.0,
-    on_reference: bool = False,
+    on_reference: bool = True,
 ) -> Rollout:
     """Fly the quadcopter for ``duration`` seconds at ``iterations`` per solve."""
     dt = controller.dt

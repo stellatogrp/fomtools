@@ -8,6 +8,14 @@ box-constrained quadratic program in the input sequence alone,
 
 where ``z`` collects the (blocked) input moves, the bounds are the constant
 rotor-thrust box, and the parameter enters only through the linear cost.
+Given a ``tilt_limit`` it also carries the state constraint
+
+    -e <= F x + C z <= e,
+
+the two tilt angles at the end of every input block bounded by the limit,
+with ``F x`` the free response from the measured state and ``C z`` the forced
+one.  Those rows make the right-hand side depend on the state, so the
+parameter then enters through the constraint as well.
 
 Two devices keep the program small without shortening the horizon.  The states
 are eliminated, and the input is held constant over blocks of consecutive
@@ -32,7 +40,7 @@ problem rather than two that merely look alike.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -67,6 +75,12 @@ class CondensedQP:
     lo: np.ndarray  # lower thrust bound, stacked over blocks
     hi: np.ndarray  # upper thrust bound, stacked over blocks
 
+    #: State-constraint rows, empty unless ``build_qp`` was given a
+    #: ``tilt_limit``: ``C z <= e - F x`` and ``-C z <= e + F x``.
+    C: np.ndarray = field(default_factory=lambda: np.zeros((0, 0)))
+    F: np.ndarray = field(default_factory=lambda: np.zeros((0, N_STATE)))
+    e: np.ndarray = field(default_factory=lambda: np.zeros(0))
+
     @property
     def n(self) -> int:
         """Number of optimization variables."""
@@ -76,6 +90,19 @@ class CondensedQP:
     def num_blocks(self) -> int:
         """Number of independent input moves."""
         return self.n // N_INPUT
+
+    @property
+    def num_state_rows(self) -> int:
+        """Number of one-sided state-constraint rows (before the sign flip)."""
+        return int(self.e.size)
+
+    def state_rhs(self, state: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Right-hand sides of the state rows at the measured ``state``.
+
+        Returns ``(upper, lower)`` with ``C z <= upper`` and ``-C z <= lower``.
+        """
+        shift = self.F @ state
+        return self.e - shift, self.e + shift
 
     @property
     def lookahead(self) -> float:
@@ -153,6 +180,7 @@ def build_qp(
     lookahead: float = 1.0,
     block: int = 10,
     input_weight: float = 1.0,
+    tilt_limit: float | None = None,
 ) -> CondensedQP:
     """Assemble the condensed MPC program.
 
@@ -170,6 +198,11 @@ def build_qp(
         insensitive to it over two decades, because the thrust box rather than
         the input penalty is what limits the flight; lowering it only worsens
         the conditioning of ``P``.
+    tilt_limit:
+        Bound on the two tilt angles, in radians, imposed on the predicted
+        state at the end of every input block (``TILT_LIMIT`` restores the
+        OSQP example's box).  ``None`` leaves the states unconstrained, which
+        is what the ``osqp`` study generates from.
     """
     horizon = int(round(lookahead / dt))
     if horizon < 2:
@@ -192,6 +225,18 @@ def build_qp(
     P = 0.5 * (P + P.T)  # symmetrize away the round-off of the products
 
     num_blocks = P.shape[0] // N_INPUT
+
+    if tilt_limit is None:
+        C = np.zeros((0, num_blocks * N_INPUT))
+        F = np.zeros((0, N_STATE))
+        e = np.zeros(0)
+    else:
+        # The last predicted state of every block, x_block, x_2block, ...;
+        # ``S_x``/``S_v`` stack x_1 .. x_horizon, so x_t sits at row t - 1.
+        stages = range(block - 1, horizon, block)
+        rows = [t * N_STATE + i for t in stages for i in (0, 1)]
+        C, F, e = s_v[rows], s_x[rows], np.full(len(rows), float(tilt_limit))
+
     return CondensedQP(
         dt=dt,
         horizon=horizon,
@@ -203,4 +248,7 @@ def build_qp(
         Gr=weighted,
         lo=np.tile(U_MIN, num_blocks),
         hi=np.tile(U_MAX, num_blocks),
+        C=C,
+        F=F,
+        e=e,
     )

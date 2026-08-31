@@ -139,15 +139,19 @@ def solve(
     iterations: int,
     tables: dict[str, np.ndarray] | None = None,
     residual: bool = False,
+    h: np.ndarray | None = None,
 ) -> RapdhgResult:
     """Run ``iterations`` rAPDHG steps as the flat six-slot recurrence.
 
     The initial iterate is the origin in every slot, matching the cold start the
     generated solver performs on every parameter update.  ``xmd`` starts at zero
-    consistently: at ``k = 0`` it equals ``x``, which is also zero.
+    consistently: at ``k = 0`` it equals ``x``, which is also zero.  ``h`` is
+    the right-hand side at this instant (``problem.rhs(state)``); it defaults
+    to the problem's hover value.
     """
     n, m = problem.n, problem.m
-    Q, h = problem.P, problem.h
+    Q = problem.P
+    h = problem.h if h is None else h
     apply_g, apply_gt = problem.apply_g, problem.apply_gt
     if tables is None:
         tables = schedule_tables(problem, iterations)
@@ -188,12 +192,12 @@ def solve(
         x_prev=x_prev,
         xmd=xmd,
         iterations=iterations,
-        residual=relkkt(problem, q, x, y) if residual else None,
+        residual=relkkt(problem, q, x, y, h=h) if residual else None,
     )
 
 
 def solve_as_written(
-    problem: RapdhgProblem, q: np.ndarray, iterations: int
+    problem: RapdhgProblem, q: np.ndarray, iterations: int, h: np.ndarray | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
     """Algorithm 1 transcribed from the paper, as a nested loop.
 
@@ -202,7 +206,8 @@ def solve_as_written(
     reference for what the flat recurrence is supposed to be.
     """
     n, m = problem.n, problem.m
-    Q, h = problem.P, problem.h
+    Q = problem.P
+    h = problem.h if h is None else h
     K = problem.restart
 
     x0 = np.zeros(n)
@@ -229,7 +234,13 @@ def solve_as_written(
     return xbar, ybar
 
 
-def relkkt(problem: RapdhgProblem, q: np.ndarray, x: np.ndarray, y: np.ndarray) -> float:
+def relkkt(
+    problem: RapdhgProblem,
+    q: np.ndarray,
+    x: np.ndarray,
+    y: np.ndarray,
+    h: np.ndarray | None = None,
+) -> float:
     """The relative KKT error of Section 5 of the paper.
 
     The maximum of the relative primal residual, dual residual, and duality gap.
@@ -239,7 +250,7 @@ def relkkt(problem: RapdhgProblem, q: np.ndarray, x: np.ndarray, y: np.ndarray) 
     Qx = problem.P @ x
     Gx = problem.apply_g(x)
     Gty = problem.apply_gt(y)
-    h = problem.h
+    h = problem.h if h is None else h
 
     r_primal = np.abs(np.maximum(Gx - h, 0.0)).max() / (
         1.0 + max(np.abs(Gx).max(), np.abs(h).max())
@@ -253,7 +264,7 @@ def relkkt(problem: RapdhgProblem, q: np.ndarray, x: np.ndarray, y: np.ndarray) 
     return float(max(r_primal, r_dual, r_gap))
 
 
-def solve_exact(problem: RapdhgProblem, q: np.ndarray) -> np.ndarray:
+def solve_exact(problem: RapdhgProblem, q: np.ndarray, h: np.ndarray | None = None) -> np.ndarray:
     """Solve the same program to high accuracy with Clarabel.
 
     Clarabel takes the one-sided form directly, so this checks the reformulation
@@ -268,12 +279,13 @@ def solve_exact(problem: RapdhgProblem, q: np.ndarray) -> np.ndarray:
     settings.tol_gap_abs = 1e-12
     settings.tol_gap_rel = 1e-12
     settings.tol_feas = 1e-12
+    h = problem.h if h is None else h
 
     solution = clarabel.DefaultSolver(
         sp.triu(sp.csc_matrix(problem.P)).tocsc(),
         q,
         sp.csc_matrix(problem.G),
-        problem.h,
+        h,
         [clarabel.NonnegativeConeT(problem.m)],
         settings,
     ).solve()

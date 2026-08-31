@@ -45,10 +45,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-from common.reference import bspline_waypoints, figure_eight  # noqa: E402
+from common.reference import bspline_waypoints, figure_eight, quasi_periodic  # noqa: E402
 from common.simulate import closed_loop  # noqa: E402
 from condensed.controller import RapdhgController  # noqa: E402
 from condensed.mpc import build_mpc  # noqa: E402
+from condensed.study import REFERENCE_PERIOD  # noqa: E402
 
 OUT = Path(__file__).parent / "out"
 
@@ -78,7 +79,8 @@ def parser() -> argparse.ArgumentParser:
         "--references",
         type=int,
         default=3,
-        help="trajectories to average over; one figure eight plus random B-splines",
+        help="trajectories to average over; the figure eight and the quasi-periodic path "
+        "at the study's period, plus random B-splines",
     )
     return p
 
@@ -139,14 +141,18 @@ def references(count: int, duration: float) -> list[tuple[str, object]]:
     configurations is only a few percent, which is well inside what a single
     reference decides by chance, so the figure eight is joined by random
     B-spline paths -- the generator ``common.reference`` provides for exactly
-    this.  The figure eight stays first because it is what the reported flights
-    use, and it is much the most demanding of them; the splines are there to
-    stop one path deciding the answer, not to set the difficulty.
+    this.  The figure eight and the quasi-periodic path come first, at the
+    period the study reports on, because they are what the reported flights
+    use and the figure eight is the most demanding of them; the splines are
+    there to stop one path deciding the answer, not to set the difficulty.
 
     Seeds whose path leaves the flyable region are skipped, so the sweep never
     scores a configuration on a reference no controller could follow.
     """
-    refs: list[tuple[str, object]] = [("figure8", figure_eight())]
+    refs: list[tuple[str, object]] = [
+        ("figure8", figure_eight(period=REFERENCE_PERIOD)),
+        ("quasi", quasi_periodic(period=REFERENCE_PERIOD)),
+    ]
     times = np.linspace(0.0, duration, 400)
     seed = 0
     while len(refs) < count:

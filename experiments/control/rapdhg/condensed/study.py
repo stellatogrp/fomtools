@@ -34,9 +34,11 @@ OUT = Path(__file__).parent / "out"
 #:
 #: The size is set by the budget grid in ``run_implementations.py``: no arm may
 #: reach this ceiling, because an arm that capped here would be reported as
-#: slower than it is.  At 0.13 us an iteration the optimized solver would reach
-#: 2048 in 272 us, so the grid stops well below that.
-MAX_ITERS = 2048
+#: slower than it is.  With the tilt bound the controller needs a few thousand
+#: iterations to respect it on the figure eight, so the grid runs to 2.5 ms;
+#: at 0.13 us an iteration the optimized solver reaches about 19,000 there,
+#: and the tables are extended to 32768 after generation.
+MAX_ITERS = 32768
 
 #: Absolute agreement required of the generated solver during ``make verify``,
 #: raised from the generator's 1e-6 default.  Not a weakening of the check: the
@@ -57,6 +59,12 @@ MAX_ITERS = 2048
 #: ``common.study.check_equivalence`` compares against NumPy at the
 #: representative mid-flight parameters, where the iterates are of order one.
 TOL_VERIFY = 1e-4
+
+
+#: Period of the reference the study is generated and reported on, in seconds.
+#: Chosen by ``check_tilt``: the most demanding period on which the tilt-bounded
+#: controller still converges within a controller's budget.
+REFERENCE_PERIOD = 4.0
 
 
 def load_boxes(problem, ref, force: bool = False) -> ParameterBoxes:
@@ -87,7 +95,7 @@ def build(
     built with while being flown against another.
     """
     problem = build_mpc(**kwargs)
-    ref = figure_eight() if reference is None else reference
+    ref = figure_eight(period=REFERENCE_PERIOD) if reference is None else reference
     boxes = load_boxes(problem, ref, force=force_boxes)
 
     tables = rapdhg.schedule_tables(problem, max_iters)
@@ -95,7 +103,7 @@ def build(
     def params_at(state, t):
         return {
             "p0": problem.linear_cost(state, problem.reference_window(ref, t)),
-            "p1": problem.h,
+            "p1": problem.rhs(state),
         }
 
     def first_input(solution):
@@ -105,7 +113,9 @@ def build(
         return np.clip(raw, U_MIN, U_MAX), raw
 
     def numpy_solution(iterations):
-        return rapdhg.solve(problem, boxes["p0"].mid, iterations, tables=tables).state
+        return rapdhg.solve(
+            problem, boxes["p0"].mid, iterations, tables=tables, h=boxes["p1"].mid
+        ).state
 
     return Study(
         name="rapdhg_condensed",

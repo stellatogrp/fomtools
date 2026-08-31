@@ -21,10 +21,19 @@ lower bound is the one that flips.  The paper's ``A`` and ``b`` are called ``G``
 and ``h`` here because ``A`` is already the discrete-time state matrix of the
 plant, inherited from :class:`~common.condensed_qp.CondensedQP`.
 
-``G`` is stored densely and is never actually multiplied by: every product with
-it is a sign flip and a copy.  It exists because the recording needs a matrix to
-hand to code generation, which discovers the structure for itself -- the
-emitted blocks come out sparse.
+The tilt bound stacks underneath in the same way,
+
+    G = [ I ; -I ; C ; -C ],    h(x) = [ hi ; -lo ; e - F x ; e + F x ],
+
+and it is what makes the right-hand side a genuine parameter: the thrust rows
+of ``h`` are constant, the tilt rows move with the measured state.
+
+``G`` is stored densely, but the products with it are applied by structure:
+the box rows are a copy and a sign flip, and only the tilt rows cost a real
+matrix-vector product, one ``2 num_blocks`` by ``n`` block each way.  The
+dense matrix exists because the recording needs one to hand to code
+generation, which discovers the structure for itself and emits the box rows
+sparse.
 
 Two derived scalars complete the data.  ``norm_q`` and ``norm_g`` are the
 spectral norms the step sizes of Theorem 1 are scaled by; both are properties of
@@ -36,28 +45,32 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
+from scipy.linalg import svdvals
 
 from common.condensed_qp import CondensedQP, build_qp
+from common.quadcopter import TILT_LIMIT
 
 #: Restart period, in inner iterations.  Chosen by ``tuning.py`` against how the
 #: closed loop flies at a fixed iteration count, not against how fast one solve
 #: converges; the two disagree, and the README has the sweep.
 #:
 #: The trade-off is real in both directions.  Too short and the method barely
-#: accelerates -- at K = 8 the momentum coefficient never exceeds 5, and tracking
-#: is 27% worse across the budget range.  Too long and a truncated solve stops
-#: improving monotonically with its budget: at K = 64 the flight crashes at some
-#: iteration counts and not at larger or smaller ones, which is unusable however
-#: good the asymptotics.  Thirty-two accelerates properly and stays well behaved.
-DEFAULT_RESTART = 32
+#: accelerates; too long and a truncated solve stops improving monotonically
+#: with its budget.  On the tilt-bounded program, flown from the reference,
+#: K = 128 is marginally the most accurate (0.027 m typical against 0.028) but
+#: tracks worse at two budgets than at the one below them, by up to 1.35x;
+#: K = 64 is as accurate to within four percent and never regresses.
+DEFAULT_RESTART = 64
 
 #: Primal weight.  Multiplies the dual step and divides the primal one, which
 #: leaves Lemma 1's condition (3) with slack ``(w - 1) ||Q|| / beta_k``, so any
 #: value at or above one stays inside the paper's guarantee.
 #:
-#: It is what makes the chosen restart period safe: at K = 32 the worst
-#: regression as the budget grows is 4.4x at w = 1 and 1.38x at w = 2.
-DEFAULT_PRIMAL_WEIGHT = 2.0
+#: One is the floor of that range and is the best of the swept values here at
+#: every restart period: the tilt rows raise ``||G||`` from ``sqrt(2)`` to about
+#: nine, which already shrinks the primal step relative to the dual one, and a
+#: larger weight slows the primal further for no gain in how the bound is kept.
+DEFAULT_PRIMAL_WEIGHT = 1.0
 
 
 @dataclass
@@ -77,8 +90,19 @@ class RapdhgProblem(CondensedQP):
 
     @property
     def m(self) -> int:
-        """Number of inequality rows, twice the number of variables."""
+        """Number of inequality rows: two per variable, plus two per tilt row."""
         return self.G.shape[0]
+
+    def rhs(self, state: np.ndarray) -> np.ndarray:
+        """The right-hand side ``h`` at the measured ``state``.
+
+        The thrust rows never move; the tilt rows are the limit less the free
+        response from ``state``, so this is evaluated once per sampling instant,
+        alongside the linear cost, and handed to the solver as its second
+        parameter.
+        """
+        upper, lower = self.state_rhs(state)
+        return np.concatenate([self.hi, -self.lo, upper, lower])
 
     def apply_g(self, v: np.ndarray) -> np.ndarray:
         """``G @ v``, using the structure rather than the stored matrix.
@@ -90,12 +114,19 @@ class RapdhgProblem(CondensedQP):
         the generated C on a difference in what the two were asked to compute
         rather than on how fast they compute it.
         """
-        return np.concatenate([v, -v])
+        if self.num_state_rows == 0:
+            return np.concatenate([v, -v])
+        cv = self.C @ v
+        return np.concatenate([v, -v, cv, -cv])
 
     def apply_gt(self, y: np.ndarray) -> np.ndarray:
-        """``G' @ y``, likewise: the difference of the two halves."""
-        n = self.n
-        return y[:n] - y[n:]
+        """``G' @ y``, likewise: the difference of the box halves, plus ``C'`` on
+        the difference of the tilt halves."""
+        n, k = self.n, self.num_state_rows
+        out = y[:n] - y[n : 2 * n]
+        if k:
+            out = out + self.C.T @ (y[2 * n : 2 * n + k] - y[2 * n + k : 2 * n + 2 * k])
+        return out
 
 
 def build_mpc(
@@ -105,16 +136,21 @@ def build_mpc(
     input_weight: float = 1.0,
     restart: int = DEFAULT_RESTART,
     primal_weight: float = DEFAULT_PRIMAL_WEIGHT,
+    tilt_limit: float | None = TILT_LIMIT,
 ) -> RapdhgProblem:
     """Assemble the condensed program and put it in one-sided inequality form.
 
     Parameters mirror ``common.condensed_qp.build_qp`` with two additions,
-    ``restart`` and ``primal_weight``, which are the algorithm's two knobs.
+    ``restart`` and ``primal_weight``, which are the algorithm's two knobs.  The
+    tilt bound is on by default here, unlike in ``build_qp``: this study flies
+    the bounded model, the ``osqp`` study the published unbounded one.
     """
-    qp = build_qp(dt=dt, lookahead=lookahead, block=block, input_weight=input_weight)
+    qp = build_qp(
+        dt=dt, lookahead=lookahead, block=block, input_weight=input_weight, tilt_limit=tilt_limit
+    )
     n = qp.n
     identity = np.eye(n)
-    G = np.vstack([identity, -identity])
+    G = np.vstack([identity, -identity, qp.C, -qp.C])
     return RapdhgProblem(
         dt=qp.dt,
         horizon=qp.horizon,
@@ -126,12 +162,15 @@ def build_mpc(
         Gr=qp.Gr,
         lo=qp.lo,
         hi=qp.hi,
+        C=qp.C,
+        F=qp.F,
+        e=qp.e,
         restart=restart,
         primal_weight=primal_weight,
         G=G,
-        h=np.concatenate([qp.hi, -qp.lo]),
+        # ``h`` at the hover state; the controller re-evaluates ``rhs`` per instant.
+        h=np.concatenate([qp.hi, -qp.lo, qp.e, qp.e]),
         norm_q=float(np.linalg.norm(qp.P, 2)),
-        # ||[I; -I]|| = sqrt(2) exactly; computed rather than asserted so that a
-        # future constraint matrix does not silently keep this value.
-        norm_g=float(np.linalg.norm(G, 2)),
+        # sqrt(2) for the box alone; the tilt rows raise it (about 9 here).
+        norm_g=float(svdvals(G)[0]),
     )

@@ -36,20 +36,20 @@ from condensed.study import MAX_ITERS, build
 #: direction drops a budget and being wrong in the other direction stops a run.
 FLOOR_US_PER_ITERATION = 0.11
 
-#: Compute budgets per sampling instant, in microseconds.  Two orders of
-#: magnitude below the ADMM study's grid, and that is the result rather than a
-#: setting: at 0.13 us an iteration the optimized solver is converged inside a
-#: hundred microseconds, and a grid running to a millisecond would show three
-#: flat lines.
+#: Compute budgets per sampling instant, in microseconds.  The grid spans two
+#: regimes.  Tracking alone is settled within a few hundred microseconds by
+#: every arm; respecting the tilt bound is not.  The bound's multipliers are
+#: built by dual steps, and on the figure eight the controller needs a few
+#: thousand iterations before the flight stays inside it.  At 0.13 us an
+#: iteration that is a few hundred microseconds; at 10 us it is longer than
+#: the 10 ms sampling period.  So the grid runs to 2.5 ms, a quarter of the
+#: period, which is where the arms separate on the constraint rather than on
+#: the tracking error.
 #:
 #: The floor is set by the slowest arm rather than the fastest.  NumPy costs
 #: 10 us an iteration, so anything under about 25 us buys it a single iteration
-#: and three budgets in a row report the same flight.  Starting at 25 us gives
-#: every arm at least two.
-#:
-#: The sampling period is still 10 ms.  What this study measures is how small a
-#: slice of it the solver needs, and for the optimized arm that is one percent.
-BUDGETS_US = (25.0, 40.0, 63.0, 100.0, 160.0)
+#: and several budgets in a row report the same flight.
+BUDGETS_US = (25.0, 63.0, 160.0, 400.0, 1000.0, 2500.0)
 
 
 def affordable(budgets, max_iters: int) -> list[float]:
@@ -74,7 +74,7 @@ def affordable(budgets, max_iters: int) -> list[float]:
 def main() -> None:
     parser = pipeline.parser()
     parser.description = __doc__
-    parser.set_defaults(budgets=list(BUDGETS_US), figure_budget=63.0)
+    parser.set_defaults(budgets=list(BUDGETS_US), figure_budget=40.0)
     args = parser.parse_args()
     args.budgets = affordable(args.budgets, MAX_ITERS)
     pipeline.run_implementations(build(), args)

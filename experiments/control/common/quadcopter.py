@@ -14,7 +14,12 @@ documented upstream but is unambiguous from the structure of the matrices:
 ``B_DYN`` drives coordinate 5 equally from all four rotors (collective thrust
 -> altitude), coordinate 2 antisymmetrically (differential torque -> yaw), and
 ``A_DYN`` integrates coordinates 9:12 into 3:6 (velocity -> position) while
-coupling 0:2 into 3:6 (tilt -> horizontal motion).
+coupling 0:2 into 3:6 (tilt -> horizontal motion).  Within that block,
+coordinate 0 drives ``x`` (``A_DYN[3, 0] > 0``) and coordinate 1 drives ``y``
+with the opposite sign (``A_DYN[4, 1] < 0``), so coordinate 0 is the
+pitch-like angle (rotation about the body ``y`` axis) and coordinate 1 the
+roll-like angle, whatever the letters above suggest; the renderer relies on
+this.
 
 The input is the vector of four rotor thrusts expressed as deviations from the
 hover equilibrium ``U_HOVER``, so the origin of the state-input space is the
@@ -92,6 +97,12 @@ R_INPUT = 0.1 * np.eye(N_INPUT)
 
 #: Multiplier applied to ``Q_STAGE`` at the end of the horizon.
 TERMINAL_FACTOR = 10.0
+
+#: Bound on the two tilt angles, in radians.  The OSQP example's state box puts
+#: ``+-pi/6`` on the first two coordinates (``xmin``/``xmax``) and nothing on
+#: the rest.  A hover linearization is only meaningful near it: left free, the
+#: tracking controller flies the linear model at 60 to 70 degrees of tilt.
+TILT_LIMIT = np.pi / 6
 
 
 def continuous_model() -> tuple[np.ndarray, np.ndarray]:

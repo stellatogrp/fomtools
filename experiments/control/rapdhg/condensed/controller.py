@@ -15,9 +15,10 @@ class RapdhgController:
     """Solves the condensed program with rAPDHG and applies the first input move.
 
     The measured state and the reference window are folded into the linear cost
-    before the iteration starts, so the parameter reaches the solver only as
-    ``q``.  That is the property the generated solver relies on, and it is why
-    the condensed formulation is the one this study generates from.
+    ``q`` and the constraint right-hand side ``h`` before the iteration starts,
+    so the parameter reaches the solver only as those two vectors.  That is the
+    property the generated solver relies on, and it is why the condensed
+    formulation is the one this study generates from.
 
     The schedule tables are built once, for the largest iteration count the
     controller will be asked for, and sliced per solve.  Rebuilding them inside
@@ -44,7 +45,13 @@ class RapdhgController:
             f"iteration:         matrix free; one {p.n} x {p.n} product per step, "
             f"no linear solve\n"
             f"rAPDHG parameters: K = {p.restart}, w = {p.primal_weight}, "
-            f"||Q|| = {p.norm_q:.4g}, ||G|| = {p.norm_g:.4g}"
+            f"||Q|| = {p.norm_q:.4g}, ||G|| = {p.norm_g:.4g}\n"
+            + (
+                f"state constraints: |tilt| <= {np.degrees(p.e[0]):.0f} deg at the end of "
+                f"each block, {2 * p.num_state_rows} rows"
+                if p.num_state_rows
+                else "state constraints: none"
+            )
         )
 
     def command(self, state: np.ndarray, t: float, iterations: int) -> Command:
@@ -54,11 +61,12 @@ class RapdhgController:
                 f"{self.max_iterations}; raise max_iterations"
             )
         q = self.problem.linear_cost(state, self.problem.reference_window(self.ref, t))
-        result = rapdhg.solve(self.problem, q, iterations, tables=self.tables)
+        h = self.problem.rhs(state)
+        result = rapdhg.solve(self.problem, q, iterations, tables=self.tables, h=h)
         u = self.problem.first_input(result.x)
         return Command(
             u=u,
-            residual=rapdhg.relkkt(self.problem, q, result.x, result.y),
+            residual=rapdhg.relkkt(self.problem, q, result.x, result.y, h=h),
             saturated=bool(np.any(np.abs(result.x[:N_INPUT] - u) > 1e-9)),
         )
 
