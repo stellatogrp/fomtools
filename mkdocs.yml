@@ -3,7 +3,16 @@ nav:
   - Home: index.md
   - Installation: installation.md
   - User guide: user_guide.md
-  - API and modules: api.md
+  - API and modules:
+      - Overview: api.md
+      - Verifier: api/verifier.md
+      - Linear expressions: api/linearexpression.md
+      - Constraints: api/constraint.md
+      - Step operators: api/steps.md
+      - Canonicalizers: api/canonicalizer.md
+      - Solvers: api/solvers.md
+      - Proxable functions: api/proxablefunctions.md
+      - Code generation: api/codegen.md
   - Tutorials: tutorials.md
 theme:
   name: material
@@ -35,19 +44,31 @@ plugins:
           options:
             docstring_style: numpy
             docstring_section_style: table
-            heading_level: 1
+            heading_level: 2
             show_root_heading: true
             show_root_full_path: false
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            line_length: 60
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
 
             merge_init_into_class: false
             docstring_options:
               ignore_init_summary: true
 
 markdown_extensions:
+  - toc:
+      permalink: true
+      toc_depth: 3
   - pymdownx.superfences
   - pymdownx.arithmatex:
       generic: true
       smart_dollar: true
+
+extra_css:
+  - stylesheets/extra.css
 
 extra_javascript:
   - javascripts/mathjax.js
