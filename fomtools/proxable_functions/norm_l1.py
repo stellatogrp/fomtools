@@ -93,8 +93,18 @@ class NormL1(ProxableFunction):
         r"""
         Compute a subgradient of the weighted $\ell_1$ norm at ``x``.
 
-        Returns the sign of ``x`` element-wise; at ``x_i = 0`` returns
-        ``0`` (an element of the subdifferential).
+        Per coordinate,
+
+        $$
+            g_i = \begin{cases}
+                1   & x_i > 0 \\
+                0   & x_i = 0 \\
+                -1  & x_i < 0.
+            \end{cases}
+        $$
+
+        At $x_i = 0$ this returns $0$, an element of the
+        subdifferential.
 
         Parameters
         ----------

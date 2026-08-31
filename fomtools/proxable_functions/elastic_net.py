@@ -91,9 +91,18 @@ class ElasticNet(ProxableFunction):
         r"""
         Compute a subgradient of $f$ at $x$.
 
-        Returns $2\beta x + \alpha \operatorname{sign}(x)$, with
-        $\operatorname{sign}(0) = 0$ selecting the canonical
-        subgradient at zero for the $\ell_1$ part.
+        Per coordinate,
+
+        $$
+            g_i = 2\beta x_i + \alpha \begin{cases}
+                1   & x_i > 0 \\
+                0   & x_i = 0 \\
+                -1  & x_i < 0,
+            \end{cases}
+        $$
+
+        where the value $0$ at $x_i = 0$ is the canonical choice of
+        subgradient for the $\ell_1$ part.
 
         Parameters
         ----------

@@ -68,7 +68,15 @@ class LabeledHingeLoss(ProxableFunction):
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""
-        Subgradient: $-y_i$ where $y_i x_i < 1$, $0$ where $y_i x_i \ge 1$.
+        Subgradient, per coordinate:
+
+        $$
+            g_i = \begin{cases}
+                -y_i    & y_i x_i < 1 \\
+                0       & y_i x_i \geq 1.
+            \end{cases}
+        $$
+
         At $y_i x_i = 1$ the canonical choice $0$ is returned.
         """
         return -self.y * (self.y * x < 1).astype(float)

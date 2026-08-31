@@ -118,9 +118,16 @@ class HuberLoss(ProxableFunction):
         r"""
         Compute the gradient of $f$ at $x$.
 
-        Per coordinate, $h'(x_i) = x_i$ for $|x_i| \leq \delta$ and
-        $h'(x_i) = \delta\,\operatorname{sign}(x_i)$ otherwise. The two
-        branches join smoothly at $|x_i| = \delta$ (both evaluate to
+        Per coordinate,
+
+        $$
+            h'(x_i) = \begin{cases}
+                x_i                                     & |x_i| \leq \delta \\
+                \delta\,\operatorname{sign}(x_i)         & |x_i| > \delta.
+            \end{cases}
+        $$
+
+        The two branches join smoothly at $|x_i| = \delta$ (both evaluate to
         $\delta\,\operatorname{sign}(x_i)$), so $f$ is $C^1$ and there
         is no subgradient ambiguity.
 

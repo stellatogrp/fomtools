@@ -66,7 +66,15 @@ class HingeLoss(ProxableFunction):
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""
-        Subgradient: $-1$ where $x_i < 1$, $0$ where $x_i \ge 1$.
+        Subgradient, per coordinate:
+
+        $$
+            g_i = \begin{cases}
+                -1  & x_i < 1 \\
+                0   & x_i \geq 1.
+            \end{cases}
+        $$
+
         At $x_i = 1$ the canonical choice $0 \in [-1, 0]$ is returned.
         """
         return -(x < 1).astype(float)

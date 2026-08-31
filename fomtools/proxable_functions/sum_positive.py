@@ -80,9 +80,17 @@ class SumPositive(ProxableFunction):
         r"""
         Compute a subgradient of $f$ at $x$.
 
-        Returns the indicator $1\{x_i > 0\}$ element-wise; at
-        $x_i = 0$ returns $0$ (an element of the subdifferential
-        $[0, 1]$).
+        Per coordinate,
+
+        $$
+            g_i = \begin{cases}
+                1   & x_i > 0 \\
+                0   & x_i \leq 0.
+            \end{cases}
+        $$
+
+        At $x_i = 0$ this returns $0$, an element of the
+        subdifferential $[0, 1]$.
 
         Parameters
         ----------
