@@ -127,6 +127,7 @@ class Verifier(object):
             for ``method != "sdp"``.
         """
         self.theory_func = theory_func
+        self.method = method.lower()
         self.iterates = []
         self.params = []
         self.steps = []
@@ -519,6 +520,49 @@ class Verifier(object):
             whose decomposition references the leaves of the input parameters.
         """
         return stack(param_list)
+
+    def iterate_trajectory(self, length: int, collapse_expr="auto"):
+        """Create a backend-aware iterate trajectory of ``length`` slots.
+
+        Returns an :class:`~fomtools.iteratetrajectory.IterateTrajectory` that
+        behaves like a fixed-length list of iterates. Assigning a collapsed
+        affine expression (``z[k] = M @ z[k - 1] + c``) is handled per backend:
+        for MIP/simulator the expression stays collapsed (no new variable), and
+        for SDP a fresh leaf linked by an equality is minted so the moment
+        matrix stays sparse (smaller PSD cones).
+
+        ``'auto'`` also stops collapsing once the assignments are seen to
+        *accumulate* -- ``z[k] = z[k - 1] + ut - u``, as in Douglas-Rachford and
+        ADMM, where each slot would otherwise reference every leaf the previous
+        one did. That growth is what makes such a method expensive to generate
+        code from, so keeping each iterate as its own variable is what lets
+        :func:`~fomtools.codegen.extract_unrolled.extract_unrolled_ir` handle it. See
+        :class:`~fomtools.iteratetrajectory.IterateTrajectory` for details.
+
+        Parameters
+        ----------
+        length : int
+            Number of slots (e.g. ``K + 1`` for ``K`` steps).
+        collapse_expr : {'auto', True, False}, default 'auto'
+            Trajectory-level default collapse policy. ``'auto'`` collapses on
+            MIP/simulator, keeps a separate leaf on SDP, and keeps a separate leaf
+            once the assignments accumulate.
+
+        Returns
+        -------
+        IterateTrajectory
+            A list-like trajectory bound to this verifier.
+
+        Examples
+        --------
+        >>> z = verifier.iterate_trajectory(K + 1)
+        >>> z[0] = verifier.add_iterate(n, lb=z0, ub=z0)
+        >>> for k in range(1, K + 1):
+        ...     z[k] = verifier.step.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x))
+        """
+        from fomtools.iteratetrajectory import IterateTrajectory
+
+        return IterateTrajectory(self, length, collapse_expr)
 
     def add_constraint(self, constr: Constraint):
         """
@@ -1216,6 +1260,72 @@ class Verifier(object):
     def codegen(
         self,
         out_dir,
+        iterates=None,
+        config=None,
+        driver=None,
+        state=None,
+        params=None,
+        name="fom",
+        run_phase_b=False,
+        profile=False,
+        roll=True,
+        param_values=None,
+    ):
+        """Generate a low-level solver for the run recorded on this verifier.
+
+        Takes the iterate sequence your loop produced -- the same program you
+        verified with, no restructuring:
+
+        >>> z = verifier.iterate_trajectory(K + 1)
+        >>> z[0] = verifier.add_iterate(n, lb=z0, ub=z0)
+        >>> for k in range(1, K + 1):
+        ...     z[k] = verifier.step.soft_threshold(...)
+        >>> verifier.solve()
+        >>> verifier.codegen("out/", iterates=z)
+
+        Arbitrary per-iteration coefficients, a step type that changes with the
+        iteration, and methods that hold a reference to an earlier iterate (a
+        Halpern anchor) all work, because each iteration carries its own
+        coefficient blocks. When repeating one iteration is *verified* to
+        reproduce the recording, the compact rolled solver is emitted instead, so
+        writing a stationary method as a loop costs nothing; pass ``roll=False``
+        to unroll regardless.
+
+        The result is checked against the recorded tape before anything is
+        emitted, drawing its own parameter values, so no extra arguments are
+        needed to gate it.
+
+        Thin delegate to :func:`fomtools.codegen.generate_code`; see that function
+        for the remaining parameter semantics. To generate a rolled solver from a
+        single stationary iteration instead, use :meth:`codegen_rolled`.
+
+        Returns
+        -------
+        CodegenResult
+            The IR, output directory, target, and agent results.
+            ``result.ir.unrolled`` says whether the run was rolled back up.
+        """
+        from fomtools.codegen import generate_code
+
+        return generate_code(
+            self,
+            None,
+            out_dir,
+            config=config,
+            driver=driver,
+            state=state,
+            params=params,
+            name=name,
+            run_phase_b=run_phase_b,
+            profile=profile,
+            iterates=iterates,
+            param_values=param_values,
+            roll=roll,
+        )
+
+    def codegen_rolled(
+        self,
+        out_dir,
         next_state,
         config=None,
         driver=None,
@@ -1224,12 +1334,29 @@ class Verifier(object):
         name="fom",
         run_phase_b=False,
         profile=False,
+        iterates=None,
+        param_values=None,
     ):
-        """Generate a low-level solver for the FOM recorded on this verifier.
+        """Generate a rolled solver from one stationary iteration.
 
         Thin delegate to :func:`fomtools.codegen.generate_code`. See that
         function for parameter semantics. ``next_state`` is the iterate
-        ``LinearExpression`` produced after exactly one iteration.
+        ``LinearExpression`` produced after exactly one iteration, and the
+        generated loop repeats it ``config.termination.max_iters`` times -- so
+        unlike :meth:`codegen`, the horizon is yours to choose rather than the
+        one you recorded.
+
+        Pass ``iterates`` (the successive recorded iterate expressions) and
+        ``param_values`` to have the extracted iteration checked against the
+        recorded tape before anything is emitted. Without them nothing verifies
+        that the method is stationary, so a coefficient that varies with the
+        iteration index would be frozen at its recorded value. :meth:`codegen`
+        needs no such argument, since it generates the recording itself.
+
+        A method that *does* vary with the iteration index can go through
+        :func:`fomtools.codegen.generate_code` with ``schedules=``, which
+        tabulates the declared coefficients but needs the recording as a build
+        function; or through :meth:`codegen`, which takes the finished tape.
 
         Returns
         -------
@@ -1249,6 +1376,8 @@ class Verifier(object):
             name=name,
             run_phase_b=run_phase_b,
             profile=profile,
+            iterates=iterates,
+            param_values=param_values,
         )
 
     def get_solution_value(self, iterate: LinearExpression) -> np.ndarray:

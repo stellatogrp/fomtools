@@ -1,12 +1,12 @@
 """Coding-agent drivers for code generation.
 
 Code generation is **agent-agnostic**: any prompt-in/files-out CLI agent is
-supported via a declarative :class:`~fomtools.codegen.agent.specs.CliAgentSpec`
+supported via a declarative :class:`~fomtools.codegen.agent.cli_specs.CliAgentSpec`
 driven by the generic :class:`~fomtools.codegen.agent.cli_driver.CliAgentDriver`.
 An example spec for ``cursor`` ships in ``agents.yaml``; users add their own
 agents with no code changes — at runtime via
-:func:`~fomtools.codegen.agent.specs.register_agent` or declaratively via a YAML
-config (see :func:`~fomtools.codegen.agent.specs.load_user_specs`). ``claude``,
+:func:`~fomtools.codegen.agent.cli_specs.register_agent` or declaratively via a YAML
+config (see :func:`~fomtools.codegen.agent.cli_specs.load_user_specs`). ``claude``,
 ``codex``, and ``pi`` (https://pi.dev) are served by dedicated drivers
 (:class:`~fomtools.codegen.agent.claude_sdk.ClaudeAgentDriver`,
 :class:`~fomtools.codegen.agent.codex_sdk.CodexAgentDriver`,
@@ -26,7 +26,7 @@ from fomtools.codegen.agent.driver import (
     AgentResult,
     AgentTask,
 )
-from fomtools.codegen.agent.specs import (
+from fomtools.codegen.agent.cli_specs import (
     CliAgentSpec,
     available_specs,
     register_agent,
@@ -34,7 +34,7 @@ from fomtools.codegen.agent.specs import (
 from fomtools.codegen.agent.stub import StubAgentDriver
 from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
 from fomtools.codegen.agent.cli_driver import CliAgentDriver
-from fomtools.codegen.agent.specs import get_spec
+from fomtools.codegen.agent.cli_specs import get_spec
 from fomtools.codegen.agent.codex_sdk import CodexAgentDriver
 from fomtools.codegen.agent.pidev_sdk import PiDevAgentDriver
 

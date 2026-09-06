@@ -10,7 +10,7 @@ from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.harness import build_lib
 from fomtools.codegen.oracle import run_faithful
 from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
-from tests.codegen.conftest import build_pdhg_lp, pdhg_lp_reference
+from tests.codegen.conftest import build_pdhg_lp, gate, pdhg_lp_reference
 
 GOLDEN = Path(__file__).parent / "golden" / "pdhg_lp" / "embedded_c" / "fom_solver.c"
 
@@ -61,6 +61,7 @@ def test_pdhg_stub_pipeline_verifies(tmp_path, requires_compiler):
         config=case["config"],
         driver=StubAgentDriver(GOLDEN),
         name="pdhg_lp",
+        **gate(case),
     )
     assert result.translate.success, result.translate.log
     assert "VERIFY OK" in result.translate.log
@@ -75,6 +76,7 @@ def test_pdhg_wrapper_matches_oracle(tmp_path, requires_compiler):
         config=case["config"],
         driver=StubAgentDriver(GOLDEN),
         name="pdhg_lp",
+        **gate(case),
     )
     assert result.translate.success, result.translate.log
 

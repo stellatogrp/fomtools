@@ -19,8 +19,24 @@ from fomtools.codegen.config import (
     TerminationSpec,
     Version,
 )
+from fomtools.codegen.examples import fista_example, scheduled_example
 from fomtools.linearexpression import stack
 from fomtools.verifier import Verifier
+
+
+def gate(case):
+    """Kwargs that turn on ``generate_code``'s stationarity check for a fixture.
+
+    Every builder here records several iterations and exposes them as
+    ``case["iterates"]`` (entry 0 is the initial iterate), plus its single
+    parameter leaf as ``case["param"]``. Passing these makes ``generate_code``
+    replay the recorded tape and compare it against the rolled IR before
+    emitting anything, which is what catches a non-stationary recording.
+    """
+    leaf = case["param"]
+    lb = np.asarray(leaf.lb, dtype=float).reshape(-1)
+    ub = np.asarray(leaf.ub, dtype=float).reshape(-1)
+    return dict(iterates=case["iterates"][1:], param_values={leaf: 0.5 * (lb + ub)})
 
 
 def importorskip_cvxpygen():
@@ -88,6 +104,90 @@ def build_ista(*, K=5, seed=0, n=2, m=4, max_iters=200, tol=None, dtype="float64
         data=data,
         name="ista",
     )
+
+
+# --------------------------------------------------------------------------
+# Accelerated lasso, both ways: recorded as a run, and declared as a schedule
+# --------------------------------------------------------------------------
+def build_fista_run(*, seed=0, n=2, m=4, K=6, dtype="float64"):
+    """FISTA recorded as the loop a user writes, for the recorded-run path.
+
+    One iterate leaf and the momentum recurrence in ordinary Python, so nothing
+    is declared. The horizon comes from the recording, which is why there is no
+    ``max_iters`` argument here.
+    """
+    ex = fista_example(n=n, m=m, seed=seed, K=K)
+    return dict(
+        verifier=ex["verifier"],
+        iterates=ex["iterates"],
+        param=ex["param"],
+        config=CodegenConfig(dtype=dtype),
+        data=ex["data"],
+        name="fista",
+    )
+
+
+def build_scheduled(*, seed=0, n=2, m=4, max_iters=200, tol=None, dtype="float64"):
+    """The same accelerated lasso declared as a schedule: a build function plus it.
+
+    Unlike the stationary builders this returns no ``verifier``: the momentum
+    coefficient must stay free so extraction can probe the recording at several
+    of its values. The state carries two iterates, which is what keeps the
+    dependency cone of one iteration from reaching back through the whole tape.
+    """
+    ex = scheduled_example(n=n, m=m, seed=seed)
+    kind = TerminationKind.INF_NORM_CHANGE if tol is not None else TerminationKind.MAX_ITERS
+    config = CodegenConfig(
+        termination=TerminationSpec(kind=kind, max_iters=max_iters, tol=tol),
+        dtype=dtype,
+    )
+    return dict(
+        build=ex["build"],
+        schedules=ex["schedules"],
+        config=config,
+        data=ex["data"],
+        name="scheduled",
+    )
+
+
+def fista_reference(data, b_val, n_iters, momentum=True, tol=None):
+    """Pure-NumPy trajectory of the accelerated lasso, over the two-slot state.
+
+    Matches what the *scheduled* IR carries, ``concatenate([y_prev, y])``. With
+    ``momentum=False`` this is plain ISTA over the same data, which is what the
+    generated solver degenerates to if the momentum is lost — so tests can assert
+    the two are genuinely different.
+    """
+    At, Bt, t, lambd, z0 = data["At"], data["Bt"], data["t"], data["lambd"], data["z0"]
+    y_prev = np.asarray(z0, dtype=float).copy()
+    y = np.asarray(z0, dtype=float).copy()
+    beta = 1.0
+    traj = [np.concatenate([y_prev, y])]
+    for _ in range(n_iters):
+        beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
+        gamma = (beta - 1.0) / beta_next if momentum else 0.0
+        extrap = y + gamma * (y - y_prev)
+        r = At @ extrap + Bt @ b_val
+        y_next = np.sign(r) * np.maximum(np.abs(r) - lambd * t, 0.0)
+        state = np.concatenate([y, y_next])
+        resid = np.max(np.abs(state - traj[-1]))
+        y_prev, y, beta = y, y_next, beta_next
+        traj.append(state)
+        if tol is not None and resid <= tol:
+            break
+    return traj
+
+
+def fista_loop_reference(data, b_val, n_iters, momentum=True):
+    """The plain iterate sequence, for the one-slot *recorded run*.
+
+    Derived from :func:`fista_reference` rather than repeating the recurrence: the
+    two-slot entries are ``concatenate([y_prev, y])``, so the iterates the natural
+    loop records are their second halves, minus the initial state.
+    """
+    n = data["n"]
+    traj = fista_reference(data, b_val, n_iters, momentum=momentum)
+    return [state[n:] for state in traj[1:]]
 
 
 def ista_reference(data, b_val, x0, n_iters, tol=None):
@@ -387,3 +487,121 @@ def cvxpygen_canonicalize(problem):
     from cvxpygen.canonicalizer import Canonicalizer
 
     return Canonicalizer(solver="OSQP").canonicalize(problem)
+
+
+# --------------------------------------------------------------------------
+# Loops written the way a user writes them to verify: a plain Python loop over
+# verifier.step.*, with no restructuring for code generation. Consumed by the
+# recorded-run (unrolled) codegen tests.
+# --------------------------------------------------------------------------
+def _lasso_data(m=6, n=10, seed=0):
+    rng = np.random.default_rng(seed)
+    dmat = rng.normal(size=(m, n)) / np.sqrt(m)
+    eta = 1.0 / np.max(np.linalg.eigvalsh(dmat.T @ dmat))
+    return {
+        "m": m,
+        "n": n,
+        "at": np.eye(n) - eta * dmat.T @ dmat,
+        "bt": eta * dmat.T,
+        "lambd": 0.05 * eta,
+    }
+
+
+def build_ista_loop(steps=8, trajectory=False, include_initial=False):
+    """A stationary loop, written as a loop rather than as one iteration."""
+    d = _lasso_data()
+    v = Verifier(method="simulator", obbt_solver=None)
+    x = v.add_param(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
+    z0 = v.add_iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
+
+    if trajectory:
+        traj = v.iterate_trajectory(steps + 1)
+        traj[0] = z0
+        for k in range(1, steps + 1):
+            traj[k] = v.step.soft_threshold(d["at"] @ traj[k - 1] + d["bt"] @ x, lambd=d["lambd"])
+        return v, traj, x, d
+
+    z, iterates = z0, [z0] if include_initial else []
+    for _ in range(steps):
+        z = v.step.soft_threshold(d["at"] @ z + d["bt"] @ x, lambd=d["lambd"])
+        iterates.append(z)
+    return v, iterates, x, d
+
+
+def build_fista_loop(steps=8, momentum=True):
+    """FISTA written the natural way: one iterate leaf, momentum in Python.
+
+    With ``momentum=False`` the same code records plain ISTA, which is what a
+    wrongly rolled FISTA degenerates to. Tests that need both use the toggle so
+    the two recordings differ in exactly one place.
+    """
+    d = _lasso_data()
+    v = Verifier(method="simulator", obbt_solver=None)
+    x = v.add_param(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
+    s = v.add_iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
+
+    y_prev, y_curr, beta, iterates = s, s, 1.0, []
+    for _ in range(steps):
+        beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
+        gamma = (beta - 1.0) / beta_next if momentum else 0.0
+        extrap = y_curr + gamma * (y_curr - y_prev)
+        y_next = v.step.soft_threshold(d["at"] @ extrap + d["bt"] @ x, lambd=d["lambd"])
+        y_prev, y_curr, beta = y_curr, y_next, beta_next
+        iterates.append(y_next)
+    return v, iterates, x, d
+
+
+def build_halpern_loop(steps=8):
+    """An anchored method: every iteration refers back to ``z_0``."""
+    d = _lasso_data()
+    v = Verifier(method="simulator", obbt_solver=None)
+    x = v.add_param(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
+    z0 = v.add_iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
+
+    z, iterates = z0, []
+    for k in range(steps):
+        alpha = 1.0 / (k + 2.0)
+        tz = v.step.soft_threshold(d["at"] @ z + d["bt"] @ x, lambd=d["lambd"])
+        z = alpha * z0 + (1.0 - alpha) * tz
+        iterates.append(z)
+    return v, iterates, x, d
+
+
+def build_mixed_step_loop(steps=8):
+    """The step *type* changes with the iteration index."""
+    d = _lasso_data()
+    v = Verifier(method="simulator", obbt_solver=None)
+    x = v.add_param(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
+    z = v.add_iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
+
+    iterates = []
+    for k in range(steps):
+        arg = d["at"] @ z + d["bt"] @ x
+        z = v.step.relu(arg) if k % 2 else v.step.soft_threshold(arg, lambd=0.01 * (k + 1))
+        iterates.append(z)
+    return v, iterates, x, d
+
+
+def build_dr_loop(steps=20, collapse_expr="auto", relaxation=None):
+    """Douglas-Rachford: the iterate is carried through a non-leaf accumulation.
+
+    ``relaxation`` takes the 0-based iteration index and returns that iteration's
+    relaxation weight. Pass one to make the recording genuinely non-stationary, so
+    it cannot be rolled back up.
+    """
+    rng = np.random.default_rng(0)
+    n, m = 8, 4
+    amat = rng.normal(size=(m, n))
+    kkt = np.block([[np.eye(n), amat.T], [amat, -np.eye(m)]])
+    dim = n + m
+
+    v = Verifier(method="simulator", obbt_solver=None)
+    q = v.add_param(dim, lb=-np.ones(dim), ub=np.ones(dim))
+    z = v.iterate_trajectory(steps + 1, collapse_expr=collapse_expr)
+    z[0] = v.add_iterate(dim, lb=np.zeros(dim), ub=np.zeros(dim))
+    for k in range(1, steps + 1):
+        u = v.step.implicit_linear(z[k - 1] - q, output_mat=kkt)
+        ut = v.step.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
+        theta = 1.0 if relaxation is None else relaxation(k - 1)
+        z[k] = z[k - 1] + theta * (ut - u)
+    return v, z, q

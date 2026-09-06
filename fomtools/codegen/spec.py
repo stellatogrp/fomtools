@@ -31,7 +31,7 @@ from fomtools.codegen.ir import (
 def _linop_to_dict(lin: LinearOp) -> dict:
     return {
         "out_dim": lin.out_dim,
-        "terms": [{"source": t.source, "matrix": t.matrix} for t in lin.terms],
+        "terms": [{"source": t.source, "matrix": t.matrix, "scale": t.scale} for t in lin.terms],
         "const": lin.const,
     }
 
@@ -70,6 +70,7 @@ def ir_to_dict(ir: FomIR) -> dict:
     return {
         "name": ir.name,
         "dtype": ir.dtype,
+        "unrolled": ir.unrolled,
         "factorizations": {name: _fac_meta(fac) for name, fac in ir.factorizations.items()},
         "termination": {
             "kind": ir.termination.kind.value,
@@ -88,6 +89,7 @@ def ir_to_dict(ir: FomIR) -> dict:
             name: {"shape": list(md.shape), "sparse": md.sparse_pattern is not None}
             for name, md in ir.matrices.items()
         },
+        "schedules": {name: {"len": int(len(values))} for name, values in ir.schedules.items()},
     }
 
 
@@ -107,6 +109,8 @@ def save(ir: FomIR, directory: str | Path) -> tuple[Path, Path]:
             rows, cols = md.sparse_pattern
             arrays[f"sp_rows::{name}"] = np.asarray(rows)
             arrays[f"sp_cols::{name}"] = np.asarray(cols)
+    for name, values in ir.schedules.items():
+        arrays[f"sched::{name}"] = np.asarray(values, dtype=float)
     arrays["state_init"] = ir.state.init
     for p in ir.params:
         arrays[f"param_lb::{p.name}"] = p.lb
@@ -207,8 +211,11 @@ def load(directory: str | Path) -> FomIR:
         termination=term,
         matrices=matrices,
         factorizations=factorizations,
+        schedules={name: npz[f"sched::{name}"] for name in spec.get("schedules", {})},
         dtype=spec["dtype"],
         name=spec["name"],
+        # Defaulted so spec directories written before unrolled emission load.
+        unrolled=spec.get("unrolled", False),
     )
 
 
@@ -233,7 +240,9 @@ def _load_csc(npz, prefix: str) -> CSC:
 def _dict_to_linop(d: dict) -> LinearOp:
     return LinearOp(
         out_dim=d["out_dim"],
-        terms=tuple(Term(source=t["source"], matrix=t["matrix"]) for t in d["terms"]),
+        terms=tuple(
+            Term(source=t["source"], matrix=t["matrix"], scale=t.get("scale")) for t in d["terms"]
+        ),
         const=d["const"],
     )
 
@@ -259,10 +268,15 @@ def _dict_to_step(d: dict) -> IterationStep:
 
 def render_markdown(ir: FomIR) -> str:
     """Render a human-readable specification for the coding agent."""
+    headline = (
+        "The whole run of a first-order method, to be implemented as a single pass."
+        if ir.unrolled
+        else "One iteration of a first-order method, to be implemented as a fixed loop."
+    )
     lines = [
         f"# FOM specification: `{ir.name}`",
         "",
-        "One iteration of a first-order method, to be implemented as a fixed loop.",
+        headline,
         "",
         f"- dtype: `{ir.dtype}`",
         f"- state dimension: {ir.state.dim}",
@@ -270,8 +284,33 @@ def render_markdown(ir: FomIR) -> str:
         f"(max_iters={ir.termination.max_iters}, tol={ir.termination.tol}, "
         f"check_termination={ir.termination.check_termination})",
         "",
-        "## Parameters (supplied at solve time)",
     ]
+    if ir.unrolled:
+        lines += [
+            "## This specification is unrolled",
+            "",
+            "The steps below are **not** one iteration to repeat. They are the entire",
+            "recorded run, already in dependency order, and each carries its own",
+            "coefficient blocks because the method does something different on each",
+            "iteration. So:",
+            "",
+            "- Do **not** write a loop over iterations. Execute the steps once, in the",
+            "  order given, then apply the state update to produce the answer.",
+            "- Ignore `work->settings.max_iter`. `FOM_MAX_ITER` is 1 and",
+            "  `FOM_UNROLLED` is 1 in `fom_workspace.h`; running the body more than once",
+            "  would run the algorithm more than once. The verify harness raises",
+            "  `max_iter` and requires the answer not to change.",
+            "- There is no residual-based early exit: with a single pass there is no",
+            "  previous iterate to compare against. Report `FOM_MAX_ITER_REACHED`.",
+            "",
+            "Repeated blocks are shared rather than duplicated, so several steps may name",
+            "the same matrix. Where consecutive steps do turn out to be identical you may",
+            "implement them with a loop if that is faster, provided the generated code",
+            "still verifies -- that is an implementation choice, not a change to this",
+            "specification.",
+            "",
+        ]
+    lines += ["## Parameters (supplied at solve time)"]
     for p in ir.params:
         lines.append(f"- `{p.name}`: dimension {p.dim}")
     if not ir.params:
@@ -281,7 +320,23 @@ def render_markdown(ir: FomIR) -> str:
     for slot_name, dim in ir.state.slots:
         lines.append(f"- `{slot_name}`: dimension {dim}")
 
-    lines += ["", "## Iteration body", ""]
+    if ir.schedules:
+        lines += ["", "## Iteration-varying coefficients", ""]
+        lines.append("Some terms below are scaled by a coefficient that changes with the")
+        lines.append("iteration. Each is tabulated in `fom_data.c`, one value per iteration,")
+        lines.append("and read through the accessor declared in `fom_data.h`:")
+        lines.append("")
+        for name, values in sorted(ir.schedules.items()):
+            head = ", ".join(f"{v:.6g}" for v in values[:4])
+            lines.append(f"- `fom_sched_{name}(it)` — {len(values)} values, starting {head}, ...")
+        lines.append("")
+        lines.append("`it` is the **0-based** loop counter. Always call the accessor rather")
+        lines.append("than indexing `FOM_SCHED_*` directly: the loop bound is the runtime")
+        lines.append("`work->settings.max_iter`, which a caller may raise above the table")
+        lines.append("length, and the accessor clamps. Hoist the value into a local at the")
+        lines.append("top of each iteration; it does not change within one iteration.")
+
+    lines += ["", "## Body (executed once, in order)" if ir.unrolled else "## Iteration body", ""]
     lines.append("Each step computes `tmp = activation(linear_op)`, except affine")
     lines.append("steps which *solve* `M tmp = linear_op`. Always call the provided")
     lines.append("`fom_lin_solve_<name>` routine in `fom_linsolve.c`; never form or use")
@@ -313,11 +368,20 @@ def render_markdown(ir: FomIR) -> str:
             lines.append(f"- activation = {_activation_str(step.activation)}")
         lines.append("")
 
-    lines.append("## State update")
-    lines.append(f"- `state <- {_linop_str(ir.state_update)}`")
-    lines.append("")
-    lines.append("Residual = `max_abs(new_state - state)`.")
-    lines.append("")
+    if ir.unrolled:
+        lines.append("## Final state (the answer)")
+        lines.append(f"- `state <- {_linop_str(ir.state_update)}`")
+        lines.append("")
+        lines.append("Apply this once, after the steps above, and report")
+        lines.append("`FOM_MAX_ITER_REACHED` with `iter = 1`. The residual is")
+        lines.append("`max_abs(new_state - state)` as usual, but nothing terminates on it.")
+        lines.append("")
+    else:
+        lines.append("## State update")
+        lines.append(f"- `state <- {_linop_str(ir.state_update)}`")
+        lines.append("")
+        lines.append("Residual = `max_abs(new_state - state)`.")
+        lines.append("")
     if ir.termination.kind == TerminationKind.INF_NORM_CHANGE and ir.termination.check_termination:
         lines.append(
             "Termination: evaluate the residual and exit early (status `FOM_SOLVED`) only "
@@ -340,7 +404,10 @@ def _linop_str(lin: LinearOp) -> str:
     if lin.const is not None:
         parts.append(lin.const)
     for t in lin.terms:
-        parts.append(f"{t.matrix} @ {t.source}")
+        if t.scale is None:
+            parts.append(f"{t.matrix} @ {t.source}")
+        else:
+            parts.append(f"fom_sched_{t.scale}(it) * ({t.matrix} @ {t.source})")
     body = " + ".join(parts) if parts else "0"
     return body
 

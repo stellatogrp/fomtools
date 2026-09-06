@@ -13,7 +13,7 @@ from fomtools.codegen import ReferenceOracle, StubAgentDriver, generate_code
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.oracle import run_faithful
 from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
-from tests.codegen.conftest import build_indefinite_kkt
+from tests.codegen.conftest import build_indefinite_kkt, gate
 
 GOLDEN = Path(__file__).parent / "golden" / "indef_kkt" / "embedded_c" / "fom_solver.c"
 
@@ -56,6 +56,7 @@ def test_indefinite_kkt_pipeline_verifies(tmp_path, requires_compiler):
         config=case["config"],
         driver=StubAgentDriver(GOLDEN),
         name="indef_kkt",
+        **gate(case),
     )
     assert result.translate.success, result.translate.log
     assert "VERIFY OK" in result.translate.log

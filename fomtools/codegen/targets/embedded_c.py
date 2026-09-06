@@ -176,6 +176,10 @@ class EmbeddedCTarget(TargetDescriptor):
             f"#define FOM_CHECK_TERMINATION {max(term.check_termination, 1)}",
             f"#define FOM_NUM_PARAMS {len(ir.params)}",
             f"#define FOM_MAX_VEC_DIM {ir.max_rhs_dim}",
+            # 1 when the body is the whole recorded run rather than one
+            # repeatable iteration, so it must be executed exactly once and
+            # settings.max_iter must not gate it.
+            f"#define FOM_UNROLLED {1 if ir.unrolled else 0}",
             "",
             "#define FOM_SOLVED 0",
             "#define FOM_MAX_ITER_REACHED 1",
@@ -281,6 +285,25 @@ class EmbeddedCTarget(TargetDescriptor):
             "extern const fom_float FOM_STATE_INIT[FOM_STATE_DIM];",
             "",
         ]
+        # Iteration-varying coefficients, tabulated at generation time and read at
+        # the 0-based loop counter. Tabulating keeps the iteration division-free
+        # and free of any libm call.
+        for sched in sorted(ir.schedules):
+            upper = sched.upper()
+            lines.append(f"/* Schedule {sched}: one value per iteration, indexed by the")
+            lines.append("   0-based loop counter. Read it through the accessor below, which")
+            lines.append("   cannot run off the end: the loop bound is the runtime")
+            lines.append("   settings.max_iter, which a caller may raise above FOM_MAX_ITER.")
+            lines.append("   Past the table the last value is held. */")
+            lines.append(f"#define FOM_SCHED_{upper}_LEN {len(ir.schedules[sched])}")
+            lines.append(_c_extern(f"FOM_SCHED_{sched}"))
+            lines.append(f"static inline fom_float fom_sched_{sched}(fom_int it) {{")
+            lines.append(
+                f"    return FOM_SCHED_{sched}[(it < FOM_SCHED_{upper}_LEN) "
+                f"? it : (FOM_SCHED_{upper}_LEN - 1)];"
+            )
+            lines.append("}")
+            lines.append("")
         csr = {n for n in _matvec_matrix_names(ir) if _is_csr(ir.matrices[n])}
         for name, md in ir.matrices.items():
             if name in csr:
@@ -319,6 +342,9 @@ class EmbeddedCTarget(TargetDescriptor):
         lines = ['#include "fom_data.h"', ""]
         lines.append(_c_array("FOM_STATE_INIT", ir.state.init, storage="const"))
         lines.append("")
+        for sched in sorted(ir.schedules):
+            lines.append(_c_array(f"FOM_SCHED_{sched}", ir.schedules[sched], storage="const"))
+            lines.append("")
         for name, md in ir.matrices.items():
             if name in csr:
                 continue  # emitted as CSR in fom_ops.c
@@ -642,15 +668,52 @@ class EmbeddedCTarget(TargetDescriptor):
         lines += ["", "#endif /* FOM_VERIFY_DATA_H */", ""]
         return "\n".join(lines)
 
+    def _verify_update_block(self, ir: FomIR, sample: str, indent: str) -> str:
+        """Copy one verify sample's parameter values into ``params``."""
+        return "\n".join(
+            f"{indent}for (j = 0; j < FOM_PARAM_{p.name.upper()}_DIM; ++j)\n"
+            f"{indent}    params.{p.name}[j] = FOM_VERIFY_{p.name.upper()}[{sample}][j];"
+            for p in ir.params
+        )
+
+    def _verify_single_pass(self, ir: FomIR) -> list[str]:
+        """Check that an unrolled body ignores ``settings.max_iter``.
+
+        The body is the whole recorded run, so raising the iteration budget must
+        not change the answer. A body that wrapped itself in the usual
+        ``for (it = 0; it < work->settings.max_iter; ++it)`` would pass every
+        other check -- the default budget is 1 -- and then silently run the
+        algorithm several times over for any caller who raised it.
+        """
+        if not ir.unrolled:
+            return []
+        return [
+            "",
+            "    /* FOM_UNROLLED: the body is the whole run, executed once. */",
+            "    settings.max_iter = FOM_MAX_ITER + 3;",
+            "    fom_setup(&work, &settings);",
+            self._verify_update_block(ir, "0", "    "),
+            "    fom_update_params(&work, &params);",
+            "    fom_solve(&work);",
+            "    {",
+            "        fom_float err = 0.0;",
+            "        for (j = 0; j < FOM_STATE_DIM; ++j) {",
+            "            fom_float d = work.solution.x[j] - FOM_VERIFY_EXPECTED[0][j];",
+            "            if (d < 0) d = -d;",
+            "            if (d > err) err = d;",
+            "        }",
+            "        if (err > tol) {",
+            '            printf("VERIFY FAILED: raising max_iter changed the answer by "',
+            '                   "%.3e; an unrolled body must execute exactly once\\n",',
+            "                   (double)err);",
+            "            return 1;",
+            "        }",
+            "    }",
+        ]
+
     def _verify_main(self, ir: FomIR) -> str:
         tol = self.config.tol_verify
-        update_params = []
-        for p in ir.params:
-            update_params.append(
-                f"        for (j = 0; j < FOM_PARAM_{p.name.upper()}_DIM; ++j)\n"
-                f"            params.{p.name}[j] = FOM_VERIFY_{p.name.upper()}[s][j];"
-            )
-        update_block = "\n".join(update_params)
+        update_block = self._verify_update_block(ir, "s", "        ")
         return "\n".join(
             [
                 "#include <stdio.h>",
@@ -692,6 +755,8 @@ class EmbeddedCTarget(TargetDescriptor):
                 '        printf("VERIFY FAILED: %d/%d samples exceed tol\\n", failures, FOM_NUM_SAMPLES);',
                 "        return 1;",
                 "    }",
+                *self._verify_single_pass(ir),
+                "",
                 '    printf("VERIFY OK\\n");',
                 "    return 0;",
                 "}",
@@ -934,10 +999,25 @@ class EmbeddedCTarget(TargetDescriptor):
                 "/* work.solution.x holds the solution */",
                 "```",
                 "",
-                "`src/fom_solver.c` implements the iteration; all numeric data lives in",
+                (
+                    "`src/fom_solver.c` implements the recorded run as a single pass"
+                    if ir.unrolled
+                    else "`src/fom_solver.c` implements the iteration"
+                )
+                + "; all numeric data lives in",
                 "`src/fom_data.c`. The algorithm is specified in `SPEC.md`.",
                 "",
             ]
+            + (
+                [
+                    "Each iteration of this method differs, so the body is unrolled:",
+                    f"`fom_solve` runs it once ({len(ir.body)} steps) and",
+                    "`settings.max_iter` does not apply.",
+                    "",
+                ]
+                if ir.unrolled
+                else []
+            )
         )
 
     # -- static checks -----------------------------------------------------
@@ -953,5 +1033,14 @@ class EmbeddedCTarget(TargetDescriptor):
                 violations.append(
                     "division operator '/' found; embedded target must be division-free"
                 )
+        # Schedule tables must be read through the generated accessor, which
+        # clamps the index. The loop bound is the runtime settings.max_iter, so
+        # indexing the table directly can read past its end.
+        for match in re.finditer(r"\bFOM_SCHED_(\w+?)\s*\[", code):
+            violations.append(
+                f"schedule table 'FOM_SCHED_{match.group(1)}' is indexed directly; "
+                f"use the generated accessor fom_sched_{match.group(1).lower()}(it), "
+                "which clamps the index"
+            )
         # crude VLA guard: array decl with a non-numeric, non-macro size token
         return violations

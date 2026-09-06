@@ -11,7 +11,7 @@ import numpy as np
 
 from fomtools.codegen import ReferenceOracle, StubAgentDriver, generate_code
 from fomtools.codegen.harness import build_lib
-from tests.codegen.conftest import build_ista
+from tests.codegen.conftest import build_ista, gate
 
 GOLDEN = Path(__file__).parent / "golden" / "ista" / "embedded_c" / "fom_solver.c"
 
@@ -34,6 +34,7 @@ def test_wrapper_matches_oracle(tmp_path, requires_compiler):
         config=case["config"],
         driver=StubAgentDriver(GOLDEN),
         name="ista",
+        **gate(case),
     )
     assert result.translate.success, result.translate.log
 
@@ -59,6 +60,7 @@ def test_wrapper_param_validation(tmp_path, requires_compiler):
         config=case["config"],
         driver=StubAgentDriver(GOLDEN),
         name="ista",
+        **gate(case),
     )
     build_lib(tmp_path)
     wrapper = _load_wrapper(tmp_path)
