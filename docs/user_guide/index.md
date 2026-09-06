@@ -3,7 +3,7 @@
 This guide walks through the core components of FOMTools: linear expressions, steps,
 proxable functions, objectives, and the fixed-point encoding.
 
-## [Architecture overview](api/index.md)
+## [Architecture overview](../api/index.md)
 
 The user writes the first-order method as a sequence of operations on expression objects
 that represent iterates and parameters, and that the package maintains internally as affine
@@ -14,7 +14,7 @@ the verification problem into MIP, SDP, or simulator form, and dispatches to the
 solver. The same specification also drives a code generation path, which emits standalone
 solver code for embedded and parallel targets.
 
-## [Workflow walkthrough](api/verifier.md)
+## [Workflow walkthrough](../api/verifier.md)
 
 We illustrate the user experience on the FISTA example. We import the package, set up the
 problem data, create a `Verifier` object, declare the problem parameter `x` and the initial
@@ -60,7 +60,7 @@ an affine combination of the leaf iterates `s[k+1]` and `s[k]`, which is the aut
 substitution that eliminates the auxiliary momentum sequence without any manual algebra. The
 code reads almost identically to a concrete implementation of FISTA.
 
-## [Linear expressions](api/linearexpression.md)
+## [Linear expressions](../api/linearexpression.md)
 
 Internally, FOMTools represents every quantity in the verification problem as an affine
 combination `Ay + b` of a stacked vector `y` of leaf variables. A leaf is an expression that
@@ -93,7 +93,7 @@ constraints can also be imposed on any expression through the `==`, `<=`, and `>
 operators, as above, which is useful for encoding structure in the parameter set such as a
 probability simplex.
 
-## [Steps](api/steps.md)
+## [Steps](../api/steps.md)
 
 A step is a primitive operator that maps an affine input to a possibly PWA output, and is
 the unit at which the package interfaces with each backend. Affine steps, such as gradient
@@ -120,7 +120,7 @@ s_next = VP.step.soft_threshold(s - eta * grad, lambd=lambd * eta)
 s_next = VP.step.satlin(s - eta * grad, lb=l, ub=u)
 ```
 
-## [Proxable functions](api/proxablefunctions.md)
+## [Proxable functions](../api/proxablefunctions.md)
 
 A proxable function in FOMTools is a convex function `f` whose proximal operator the
 package can encode exactly, for a step size `gamma > 0`. The library covers 24 functions.
@@ -148,7 +148,7 @@ z_next = VP.project(Box(l, u), z - eta * grad)
 Both entry points return an expression, so a proximal gradient step is a single line of user
 code and the decomposition into steps stays hidden.
 
-## [Objectives](api/verifier.md#fomtools.Verifier.set_objective_norm)
+## [Objectives](../api/verifier.md#fomtools.Verifier.set_objective_norm)
 
 The verification problem maximizes a norm of an arbitrary expression, so custom performance
 metrics can go beyond the standard fixed-point residual `‖s^{k+1} - s^k‖`, including scaled
@@ -169,7 +169,7 @@ The list interface stacks both residual vectors and maximizes the ℓ∞-norm of
 dual residual involves the problem parameter `x`, which is permitted because the objective
 operates on arbitrary expressions.
 
-## [Fixed-point encoding](api/verifier.md#fomtools.Verifier.fixed_point)
+## [Fixed-point encoding](../api/verifier.md#fomtools.Verifier.fixed_point)
 
 Distance-to-optimality metrics require the verification problem to encode an optimal
 solution `z*` of the parametric problem. For first-order methods with contractive operators,
@@ -195,7 +195,36 @@ expression then enters the objective, as above, which maximizes the distance bet
 declared parameter set; they can be overestimated, but the tightness of both the MIP
 formulation and the SDP relaxation depends on reasonable estimates.
 
-## [Implementation notes](api/canonicalizer.md)
+## [Code generation](../api/codegen.md)
+
+The same specification that drives verification also drives code generation, so a method
+that has been verified needs no restructuring to be compiled: the program generated from is
+the program verified. The user records the algorithm exactly as above, keeps the iterate
+sequence, and passes it to
+[`codegen`](../api/verifier.md#fomtools.Verifier.codegen), which extracts an
+intermediate representation of the run, hands the resulting specification to an LLM coding
+agent, and iterates the generated code against a Python reference oracle until it is
+numerically verified. The emitted directory is a self-contained C project — an
+OSQP-style ABI, all numeric data, a `Makefile`, and a small `ctypes` wrapper.
+
+```python
+# the same trajectory that was verified, now compiled
+result = VP.codegen("out/fista", iterates=s, name="fista")
+assert result.success
+```
+
+Generating the run literally would emit one block per iteration, so before unrolling
+anything the extractor pulls out a single iteration and asks whether repeating it reproduces
+the recording; when it does, the compact loop is what gets emitted, and the check that
+decides to roll is itself the proof that rolling was safe. Iteration-varying coefficients,
+such as the FISTA momentum above, are handled without any special syntax, since the recorded
+tape simply gives each iteration its own number. Affine operators are factorized once at
+generation time rather than inverted, and structured matrices are emitted as sparse
+operations, so the generated solver is fast before any optimization pass runs. The
+[code generation guide](codegen.md) covers rolling, tabulated coefficient schedules,
+termination criteria, and the emitted project layout in full.
+
+## [Implementation notes](../api/canonicalizer.md)
 
 The package separates the user-facing front end — expressions, steps, objectives, and the
 fixed-point encoding — from the back-end canonicalizers and solvers. All canonicalizers

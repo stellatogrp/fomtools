@@ -2,7 +2,9 @@ site_name: FOM Tools
 nav:
   - Home: index.md
   - Installation: installation.md
-  - User guide: user_guide.md
+  - User guide:
+      - user_guide/index.md
+      - Code generation guide: user_guide/codegen.md
   - API and modules:
       - api/index.md
       - Verifier: api/verifier.md

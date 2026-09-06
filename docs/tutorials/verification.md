@@ -20,4 +20,5 @@ for a worst-case bound.
   problem with box bounds and a budget constraint, solved by ADMM.
 
 Once a method is verified, the [code generation](codegen.md) tutorial shows how
-to turn the same `Verifier` object into an embedded C solver.
+to turn the same `Verifier` object into an embedded C solver, and the
+[code generation guide](../user_guide/codegen.md) documents that pipeline in full.
