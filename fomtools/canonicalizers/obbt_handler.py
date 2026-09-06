@@ -27,6 +27,21 @@ class OBBTHandler(Canonicalizer):
         (e.g., ``gurobi.Gurobi()``).
     """
 
+    # Bound tightening solves one LP per expression element per sense, so the
+    # solver's own logging is pure noise by default. These are merged *under*
+    # the caller's ``solver_params``, so an explicit setting always wins. Keyed
+    # by the backend identifiers accepted by ``Canonicalizer._get_solver``;
+    # an unrecognized name gets no defaults (its option names are unknown).
+    # One option per backend on purpose: also defaulting Gurobi's
+    # ``LogToConsole`` / HiGHS' ``log_to_console`` would keep the log
+    # suppressed even for a caller who explicitly asks for it back through the
+    # master output switch.
+    _QUIET_DEFAULTS: ClassVar[dict] = {
+        "gurobi": {"OutputFlag": 0},
+        "grb": {"OutputFlag": 0},
+        "highs": {"output_flag": False},
+    }
+
     def __init__(self, solver: str, solver_params: dict = None):
         """
         Initialize an instance of :class:`OBBTHandler`.
@@ -40,10 +55,13 @@ class OBBTHandler(Canonicalizer):
             - ``"highs"``
         solver_params : dict or None, optional
             Key-value pairs applied to the OBBT solver (e.g. ``OutputFlag``,
-            ``TimeLimit``). Without these the bound-tightening solves run with
-            solver defaults, which for Gurobi means a full log per subproblem.
+            ``TimeLimit``). The bound-tightening solves are silenced by default
+            (see ``_QUIET_DEFAULTS``); pass the backend's own output option
+            (``{"OutputFlag": 1}`` for Gurobi, ``{"output_flag": True}`` for
+            HiGHS) to get a log per subproblem back.
         """
-        super().__init__(solver_params=solver_params, solver=solver)
+        defaults = self._QUIET_DEFAULTS.get(solver.lower(), {})
+        super().__init__(solver_params={**defaults, **(solver_params or {})}, solver=solver)
 
     def add_var(self, var: LinearExpression) -> None:
         """

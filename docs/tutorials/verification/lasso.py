@@ -6,6 +6,8 @@ app = marimo.App(width="medium")
 
 @app.cell(hide_code=True)
 def _():
+    import contextlib
+    import io
     import sys
     from pathlib import Path
 
@@ -37,6 +39,19 @@ def _():
         'OutputFlag': 0,
         'LogToConsole': 0,
     }
+
+    # Gurobi prints a license banner through sys.stdout the first time its
+    # default environment starts, before any OutputFlag can apply. Start the
+    # environment here, in this hidden cell, with stdout swallowed so the
+    # banner never lands in a visible cell.
+    try:
+        import gurobipy as _gp
+    except ImportError:
+        pass
+    else:
+        with contextlib.redirect_stdout(io.StringIO()):
+            _gp.Model()
+
     return (
         estimate_lasso_pepit_radius,
         ista_step,

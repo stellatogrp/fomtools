@@ -80,10 +80,11 @@ class Verifier(object):
             Solver-specific parameters forwarded to the canonicalizer.
         obbt_params : dict, optional
             Solver-specific parameters for the OBBT bound-tightening solver
-            (e.g. ``{"OutputFlag": 0}`` to silence Gurobi's per-subproblem log).
-            When omitted, ``params`` is reused if ``obbt_solver`` is the same
-            backend as ``solver``; otherwise the OBBT solver runs with its
-            defaults.
+            (e.g. ``{"TimeLimit": 10}``). When omitted, ``params`` is reused if
+            ``obbt_solver`` is the same backend as ``solver``. Either way the
+            bound-tightening solves are silenced by default; pass the backend's
+            own output option (``{"OutputFlag": 1}`` for Gurobi,
+            ``{"output_flag": True}`` for HiGHS) to get a per-subproblem log.
         rlt_cuts : bool, default False
             SDP-only: when True, add RLT cuts between cone-mate index
             pairs (paper §4.5 eq 18). No effect for ``method != "sdp"``.
