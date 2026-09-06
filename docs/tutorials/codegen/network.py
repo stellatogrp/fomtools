@@ -1,20 +1,22 @@
 import marimo
 
-__generated_with = "0.23.11"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
 @app.cell
 def _():
     import json
-    import marimo as mo
-    import numpy as np
     import os
     import statistics
     import sys
     import textwrap
     import time
     from pathlib import Path
+
+    import marimo as mo
+    import numpy as np
+    from scipy.optimize import linprog
 
     start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
     for candidate in (start, *start.parents):
@@ -29,6 +31,11 @@ def _():
 
     examples_dir = repo_root / "examples"
 
+    from docs.tutorials.helper_functions.network import (
+        make_network_data,
+        pdhg_step,
+        solve_pdhg_numpy,
+    )
     from fomtools.codegen import CodegenConfig, TerminationSpec
     from fomtools.codegen.agent import make_agent_driver
     from fomtools.codegen.harness import find_compiler
@@ -49,10 +56,14 @@ def _():
         agent_available,
         examples_dir,
         find_compiler,
+        linprog,
         make_agent_driver,
+        make_network_data,
         mo,
         np,
+        pdhg_step,
         recorded_timings,
+        solve_pdhg_numpy,
         statistics,
         textwrap,
         time,
@@ -62,26 +73,15 @@ def _():
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-# Nonnegative Least Squares: Python vs Codegen
+    # Network Flow: Python vs Codegen
 
-In this tutorial we benchmark projected gradient descent for the nonnegative least-squares problem:
+    In this tutorial we benchmark a small capacitated network-flow problem.
+    There are supply nodes, demand nodes, edge capacities, and linear edge costs.
 
-\[
-\begin{array}{ll}
-    \text{minimize} & (1/2)\lVert Az - x \rVert_2^2 \\
-    \text{subject to} & z \ge 0.
-\end{array}
-\]
-
-The update is
-
-\[
-z^{k+1} = \max\{z^k - \eta A^\top(Az^k - x), 0\}.
-\]
-
-We compare a direct NumPy implementation with the verified generated C solver.
-The generated C is timed after code generation, then timed again after the C-editing optimization pass.
-""")
+    The solver uses a primal-dual projected update: each iteration clips the flow to the capacity box, projects one dual variable to be nonnegative, and updates the demand-side dual variable.
+    We compare a direct NumPy implementation with the verified generated C solver.
+    The problem construction, PDHG step, and NumPy reference solver are shared with the [network verification tutorial](../verification/network.html).
+    """)
     )
     return
 
@@ -89,32 +89,87 @@ The generated C is timed after code generation, then timed again after the C-edi
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-We generate a small dense matrix \(A\), put the input vector \(x\) in a box, and start from a fixed positive vector.
-Both implementations run the same update rule for the same number of iterations.
-""")
+    We generate a complete bipartite graph from supply nodes to demand nodes.
+    The starting flow is computed once by solving the linear program at the lower-demand endpoint.
+    Both implementations then run the same fixed iteration map.
+    """)
     )
     return
 
 
 @app.cell
-def _(examples_dir, np):
-    rng = np.random.RandomState(0)
-    m, n = 5, 3
-    A = rng.normal(size=(m, n))
-    x_lb = np.zeros(m)
-    x_ub = 0.25 * np.ones(m)
+def _(examples_dir, linprog, make_network_data, np):
+    n_supply, n_demand = 3, 2
+    A_supply, A_demand, supply_capacity, edge_capacity, edge_cost = make_network_data(
+        n_supply=n_supply, n_demand=n_demand, data_seed=2, complete=True
+    )
+    n_edges = A_supply.shape[1]
+    x_lb = -7.0 * np.ones(n_demand)
+    x_ub = -6.0 * np.ones(n_demand)
     x_mid = 0.5 * (x_lb + x_ub)
 
-    z0 = 5.05 * np.ones(n)
-    L = float(np.linalg.eigvalsh(A.T @ A)[-1])
-    eta = 1.0 / L
+    initial_flow = linprog(
+        c=edge_cost,
+        A_ub=A_supply,
+        b_ub=supply_capacity,
+        A_eq=A_demand,
+        b_eq=x_lb,
+        bounds=[(0.0, float(capacity)) for capacity in edge_capacity],
+        method="highs",
+    )
+    if not initial_flow.success:
+        raise RuntimeError(initial_flow.message)
+
+    z0 = initial_flow.x
+    v0 = np.zeros(n_supply)
+    w0 = np.zeros(n_demand)
+    L = float(np.linalg.norm(np.hstack([A_supply.T, A_demand.T]), 2))
+    eta = 0.5 / L
     K = 200
-    out_dir = examples_dir / "_codegen_speedups" / "nnls_codegen_speedup"
-    return A, K, eta, m, n, out_dir, x_lb, x_mid, x_ub, z0
+    out_dir = examples_dir / "_codegen_speedups" / "network_codegen_speedup"
+    return (
+        A_demand,
+        A_supply,
+        K,
+        edge_capacity,
+        edge_cost,
+        eta,
+        n_demand,
+        n_edges,
+        n_supply,
+        out_dir,
+        supply_capacity,
+        v0,
+        w0,
+        x_lb,
+        x_mid,
+        x_ub,
+        z0,
+    )
 
 
 @app.cell
-def _(A, CodegenConfig, K, TerminationSpec, Verifier, eta, m, n, x_lb, x_ub, z0):
+def _(
+    A_demand,
+    A_supply,
+    CodegenConfig,
+    K,
+    TerminationSpec,
+    Verifier,
+    edge_capacity,
+    edge_cost,
+    eta,
+    n_demand,
+    n_edges,
+    n_supply,
+    pdhg_step,
+    supply_capacity,
+    v0,
+    w0,
+    x_lb,
+    x_ub,
+    z0,
+):
     verifier = Verifier(
         method="mip",
         solver="highs",
@@ -122,35 +177,75 @@ def _(A, CodegenConfig, K, TerminationSpec, Verifier, eta, m, n, x_lb, x_ub, z0)
         params={"output_flag": False},
     )
 
-    x_param = verifier.add_param(m, lb=x_lb, ub=x_ub)
-    z = verifier.add_iterate(n, lb=z0, ub=z0)
-    z_next = verifier.step.relu(z - eta * A.T @ (A @ z - x_param))
+    x_param = verifier.add_param(n_demand, lb=x_lb, ub=x_ub)
+    z = verifier.add_iterate(n_edges, lb=z0, ub=z0)
+    v = verifier.add_iterate(n_supply, lb=v0, ub=v0)
+    w = verifier.add_iterate(n_demand, lb=w0, ub=w0)
+    z_next, v_next, w_next, _ = pdhg_step(
+        verifier,
+        A_supply,
+        A_demand,
+        eta,
+        z,
+        v,
+        w,
+        x_param,
+        edge_capacity,
+        edge_cost,
+        supply_capacity,
+        k=1,
+        momentum=False,
+    )
 
     config = CodegenConfig(
         termination=TerminationSpec(max_iters=K),
         num_verify_samples=4,
     )
-    next_state = z_next
-    s_state = [z]
+    next_state = [z_next, v_next, w_next]
+    s_state = [z, v, w]
     params = [x_param]
     return config, next_state, params, s_state, verifier
 
 
 @app.cell
-def _(A, K, eta, np, statistics, time, x_mid, z0):
-    def nnls_solve():
-        z_py = z0.copy()
-        for _ in range(K):
-            z_py = np.maximum(z_py - eta * A.T @ (A @ z_py - x_mid), 0.0)
-        return z_py
+def _(
+    A_demand,
+    A_supply,
+    K,
+    edge_capacity,
+    edge_cost,
+    eta,
+    solve_pdhg_numpy,
+    statistics,
+    supply_capacity,
+    time,
+    v0,
+    w0,
+    x_mid,
+    z0,
+):
+    def network_solve():
+        return solve_pdhg_numpy(
+            A_supply,
+            A_demand,
+            eta,
+            edge_capacity,
+            edge_cost,
+            supply_capacity,
+            z0,
+            v0,
+            w0,
+            x_mid,
+            max_iters=K,
+        )
 
     for _ in range(3):
-        nnls_solve()
+        network_solve()
 
     python_times = []
     for _ in range(40):
         t0 = time.perf_counter()
-        nnls_solve()
+        network_solve()
         python_times.append((time.perf_counter() - t0) * 1.0e6)
 
     python_us = statistics.median(python_times)
@@ -175,7 +270,7 @@ def _(
         # Show the recorded row as published. The live python_us measured just
         # above is deliberately NOT reused here: pairing this machine's Python
         # time with another machine's C time would invent a cross-machine ratio.
-        _rec = recorded_timings["examples"]["nnls"]
+        _rec = recorded_timings["examples"]["network"]
         table_python_us = _rec["python_us"]
         codegen_us = _rec["c_initial_us"]
         iteration_us = _rec["c_final_us"]
@@ -200,7 +295,7 @@ def _(
             driver=make_agent_driver(config=config),
             state=s_state,
             params=params,
-            name="nnls_codegen_speedup",
+            name="network_codegen_speedup",
             run_phase_b=True,
             profile=True,
         )
@@ -254,35 +349,35 @@ def _(
 ):
     if timings_live:
         _footer = f"""
-Generated solver directory: `{out_dir}`
+    Generated solver directory: `{out_dir}`
 
-Generated solver source: `{solver_path}`
-"""
+    Generated solver source: `{solver_path}`
+    """
     else:
         _prov = recorded_timings["provenance"]
         _footer = f"""
-> **Recorded measurement.** These timings were recorded by {_prov["recorded_by"]} on
-> {_prov["recorded_date"]} (commit `{_prov["recorded_commit"]}`) and are **not** recomputed in
-> this build, since a docs build has no coding-agent backend and its timings would in any case
-> come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
-> to generate, verify and re-time the solver on your own machine. Every example's recorded
-> numbers are collected in the [code generation speedup results](codegen_speedup_results.md).
-"""
+    > **Recorded measurement.** These timings were recorded by {_prov["recorded_by"]} on
+    > {_prov["recorded_date"]} (commit `{_prov["recorded_commit"]}`) and are **not** recomputed in
+    > this build, since a docs build has no coding-agent backend and its timings would in any case
+    > come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
+    > to generate, verify and re-time the solver on your own machine. Every example's recorded
+    > numbers are collected in the [code generation speedup results](speedup_results/).
+    """
     summary = mo.md(f"""
-## Timing summary
+    ## Timing summary
 
-One complete solve runs `{K}` iterations.
+    One complete solve runs `{K}` iterations.
 
-| implementation | median / mean per solve |
-|---|---:|
-| direct NumPy Python | `{table_python_us:.3f} us` |
-| generated C after code generation | `{codegen_us:.3f} us` |
-| generated C after optimization iteration | `{iteration_us:.3f} us` |
+    | implementation | median / mean per solve |
+    |---|---:|
+    | direct NumPy Python | `{table_python_us:.3f} µs` |
+    | generated C after code generation | `{codegen_us:.3f} µs` |
+    | generated C after optimization iteration | `{iteration_us:.3f} µs` |
 
-The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
+    The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
 
-The optimization iteration uses a live coding agent to edit `src/fom_solver.c`; the edited solver was `{optimization_status}` after verification and timing.
-{_footer}"""
+    The optimization iteration uses a live coding agent to edit `src/fom_solver.c`; the edited solver was `{optimization_status}` after verification and timing.
+    {_footer}"""
     )
     summary
     return

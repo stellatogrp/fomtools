@@ -9,7 +9,7 @@ Open the companion [marimo notebook](nnls.html), or edit the source locally from
 the repository root:
 
 ```bash
-uv run marimo edit docs/tutorials/nnls.py
+uv run marimo edit docs/tutorials/codegen/nnls.py
 ```
 
 ## Problem

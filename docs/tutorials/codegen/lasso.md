@@ -9,7 +9,7 @@ Open the companion [marimo notebook](lasso.html), or edit the source locally
 from the repository root:
 
 ```bash
-uv run marimo edit docs/tutorials/lasso.py
+uv run marimo edit docs/tutorials/codegen/lasso.py
 ```
 
 ## Problem

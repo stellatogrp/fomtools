@@ -58,20 +58,23 @@ dev = [
        "pandas",
        "pydantic",
        "networkx",
+       "pepit",
 ]
 
 nn = ["torch", "jax", "flax"]
 
 docs = [
        "cvxpy",
-       "marimo",
+       "marimo==0.23.9",
        "matplotlib",
        "mkdocs>=1.6,<2",
        "mkdocstrings-python",
        "mkdocs-marimo",
        "mkdocs-material",
        "pydantic",
-       "pymdown-extensions"
+       "pymdown-extensions",
+       "networkx",
+       "pepit",
 ]
 
 [tool.mypy]

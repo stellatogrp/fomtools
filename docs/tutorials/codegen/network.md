@@ -8,7 +8,7 @@ Open the companion [marimo notebook](network.html), or edit the source locally
 from the repository root:
 
 ```bash
-uv run marimo edit docs/tutorials/network.py
+uv run marimo edit docs/tutorials/codegen/network.py
 ```
 
 ## Problem

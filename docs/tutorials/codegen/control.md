@@ -9,7 +9,7 @@ Open the companion [marimo notebook](control.html), or edit the source locally
 from the repository root:
 
 ```bash
-uv run marimo edit docs/tutorials/control.py
+uv run marimo edit docs/tutorials/codegen/control.py
 ```
 
 ## Problem

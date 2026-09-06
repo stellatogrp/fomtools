@@ -1,20 +1,21 @@
 import marimo
 
-__generated_with = "0.23.11"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
 @app.cell
 def _():
     import json
-    import marimo as mo
-    import numpy as np
     import os
     import statistics
     import sys
     import textwrap
     import time
     from pathlib import Path
+
+    import marimo as mo
+    import numpy as np
 
     start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
     for candidate in (start, *start.parents):
@@ -29,6 +30,7 @@ def _():
 
     examples_dir = repo_root / "examples"
 
+    from docs.tutorials.helper_functions.control import admm_step, solve_admm_numpy
     from fomtools.codegen import CodegenConfig, TerminationSpec
     from fomtools.codegen.agent import make_agent_driver
     from fomtools.codegen.harness import find_compiler
@@ -46,6 +48,7 @@ def _():
         CodegenConfig,
         TerminationSpec,
         Verifier,
+        admm_step,
         agent_available,
         examples_dir,
         find_compiler,
@@ -53,6 +56,7 @@ def _():
         mo,
         np,
         recorded_timings,
+        solve_admm_numpy,
         statistics,
         textwrap,
         time,
@@ -62,14 +66,15 @@ def _():
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-# Optimal Control: Python vs Codegen
+    # Optimal Control: Python vs Codegen
 
-In this tutorial we benchmark a small finite-horizon control problem for a linear dynamical system.
-The solver uses the alternating direction method of multipliers: each iteration solves a small linear system, projects onto box constraints, and updates the auxiliary variables.
+    In this tutorial we benchmark a small finite-horizon control problem for a linear dynamical system.
+    The solver uses the alternating direction method of multipliers: each iteration solves a small linear system, projects onto box constraints, and updates the auxiliary variables.
 
-We compare a direct NumPy implementation with the verified generated C solver.
-The generated C is timed after code generation, then timed again after the C-editing optimization pass.
-""")
+    We compare a direct NumPy implementation with the verified generated C solver.
+    The ADMM step and NumPy reference solver are shared with the [control verification tutorial](../verification/control.html).
+    The generated C is timed after code generation, then timed again after the C-editing optimization pass.
+    """)
     )
     return
 
@@ -77,9 +82,9 @@ The generated C is timed after code generation, then timed again after the C-edi
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-We fix the initial state, input bounds, prediction horizon, and quadratic costs.
-Both implementations run the same update rule for the same number of iterations.
-""")
+    We fix the initial state, input bounds, prediction horizon, and quadratic costs.
+    Both implementations run the same update rule for the same number of iterations.
+    """)
     )
     return
 
@@ -157,11 +162,27 @@ def _(examples_dir, np):
     z0 = np.zeros(n_total)
     v0 = 0.5 * np.ones(n_total)
     out_dir = examples_dir / "_codegen_speedups" / "control_codegen_speedup"
-    return K, M, lower, lhs, n_total, out_dir, q, rho, sigma, upper, v0, z0
+    return K, M, lhs, lower, n_total, out_dir, q, rho, sigma, upper, v0, z0
 
 
 @app.cell
-def _(CodegenConfig, K, M, TerminationSpec, Verifier, lower, lhs, n_total, q, rho, sigma, upper, v0, z0):
+def _(
+    CodegenConfig,
+    K,
+    M,
+    TerminationSpec,
+    Verifier,
+    admm_step,
+    lhs,
+    lower,
+    n_total,
+    q,
+    rho,
+    sigma,
+    upper,
+    v0,
+    z0,
+):
     verifier = Verifier(
         method="mip",
         solver="highs",
@@ -171,10 +192,12 @@ def _(CodegenConfig, K, M, TerminationSpec, Verifier, lower, lhs, n_total, q, rh
 
     z = verifier.add_iterate(n_total, lb=z0, ub=z0)
     v = verifier.add_iterate(n_total, lb=v0, ub=v0)
-    w = verifier.step.satlin(v, l=lower, u=upper)
-    rhs = sigma * z - q + rho * M.T @ (2 * w - v)
-    z_next = verifier.step.implicit_linear(rhs, output_mat=lhs)
-    v_next = v + M @ z_next - w
+    def project(VP, v_prev):
+        return VP.step.satlin(v_prev, l=lower, u=upper)
+
+    z_next, v_next, _ = admm_step(
+        verifier, M, q, rho, sigma, z, v, project, lhs
+    )
 
     config = CodegenConfig(
         termination=TerminationSpec(max_iters=K),
@@ -186,16 +209,25 @@ def _(CodegenConfig, K, M, TerminationSpec, Verifier, lower, lhs, n_total, q, rh
 
 
 @app.cell
-def _(K, M, lhs, lower, np, q, rho, sigma, statistics, time, upper, v0, z0):
+def _(
+    K,
+    M,
+    lhs,
+    lower,
+    q,
+    rho,
+    sigma,
+    solve_admm_numpy,
+    statistics,
+    time,
+    upper,
+    v0,
+    z0,
+):
     def control_solve():
-        z_py = z0.copy()
-        v_py = v0.copy()
-        for _ in range(K):
-            w_py = np.minimum(np.maximum(v_py, lower), upper)
-            rhs_py = sigma * z_py - q + rho * M.T @ (2 * w_py - v_py)
-            z_py = np.linalg.solve(lhs, rhs_py)
-            v_py = v_py + M @ z_py - w_py
-        return np.concatenate([z_py, v_py])
+        return solve_admm_numpy(
+            M, q, rho, sigma, lhs, lower, upper, z0, v0, max_iters=K
+        )
 
     for _ in range(3):
         control_solve()
@@ -305,35 +337,35 @@ def _(
 ):
     if timings_live:
         _footer = f"""
-Generated solver directory: `{out_dir}`
+    Generated solver directory: `{out_dir}`
 
-Generated solver source: `{solver_path}`
-"""
+    Generated solver source: `{solver_path}`
+    """
     else:
         _prov = recorded_timings["provenance"]
         _footer = f"""
-> **Recorded measurement.** These timings were recorded by {_prov["recorded_by"]} on
-> {_prov["recorded_date"]} (commit `{_prov["recorded_commit"]}`) and are **not** recomputed in
-> this build, since a docs build has no coding-agent backend and its timings would in any case
-> come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
-> to generate, verify and re-time the solver on your own machine. Every example's recorded
-> numbers are collected in the [code generation speedup results](codegen_speedup_results.md).
-"""
+    > **Recorded measurement.** These timings were recorded by {_prov["recorded_by"]} on
+    > {_prov["recorded_date"]} (commit `{_prov["recorded_commit"]}`) and are **not** recomputed in
+    > this build, since a docs build has no coding-agent backend and its timings would in any case
+    > come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
+    > to generate, verify and re-time the solver on your own machine. Every example's recorded
+    > numbers are collected in the [code generation speedup results](speedup_results/).
+    """
     summary = mo.md(f"""
-## Timing summary
+    ## Timing summary
 
-One complete solve runs `{K}` iterations.
+    One complete solve runs `{K}` iterations.
 
-| implementation | median / mean per solve |
-|---|---:|
-| direct NumPy Python | `{table_python_us:.3f} us` |
-| generated C after code generation | `{codegen_us:.3f} us` |
-| generated C after optimization iteration | `{iteration_us:.3f} us` |
+    | implementation | median / mean per solve |
+    |---|---:|
+    | direct NumPy Python | `{table_python_us:.3f} µs` |
+    | generated C after code generation | `{codegen_us:.3f} µs` |
+    | generated C after optimization iteration | `{iteration_us:.3f} µs` |
 
-The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
+    The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
 
-The optimization iteration uses a live coding agent to edit `src/fom_solver.c`; the edited solver was `{optimization_status}` after verification and timing.
-{_footer}"""
+    The optimization iteration uses a live coding agent to edit `src/fom_solver.c`; the edited solver was `{optimization_status}` after verification and timing.
+    {_footer}"""
     )
     summary
     return

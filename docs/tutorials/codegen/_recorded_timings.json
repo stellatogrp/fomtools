@@ -10,11 +10,11 @@
     "re-deriving a ratio from the stored timings does NOT reproduce it (e.g. lasso",
     "7.335/1.546 = 4.74, but the recorded ratio is 4.75). The lost precision is not",
     "recoverable, so these rows are treated as a record to reproduce exactly, which",
-    "also keeps every notebook page consistent with codegen_speedup_results.md.",
+    "also keeps every notebook page consistent with speedup_results.md.",
     "",
     "To refresh: run each notebook with FOMTOOLS_CODEGEN_AGENT=1 on the benchmark",
     "machine and copy the reported timings here, updating provenance below.",
-    "docs/tutorials/codegen_speedup_results.md presents the same numbers."
+    "docs/tutorials/codegen/speedup_results.md presents the same numbers."
   ],
   "provenance": {
     "recorded_by": "Daniel Deza",

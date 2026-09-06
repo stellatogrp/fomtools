@@ -56,8 +56,8 @@ jobs:
           GRB_LICENSE_FILE: ${{ github.workspace }}/gurobi.lic
         run: python scripts/export_marimo.py --force
 
-      - name: Build documentation strictly
-        run: mkdocs build --strict
+      - name: Verify html generation
+        run: ls -R docs/tutorials
 
       - name: Configure Git Credentials
         run: |
@@ -76,7 +76,7 @@ jobs:
             mkdocs-material-
 
       - name: Build MkDocs site
-        run: mkdocs build
+        run: mkdocs build --strict
 
       - name: Deploy to Cloudflare Pages with Wrangler
         uses: cloudflare/wrangler-action@v4.0.0

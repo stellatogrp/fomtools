@@ -100,8 +100,7 @@ def export_tutorials(
 ) -> tuple[list[Path], list[Path]]:
     """Export missing or stale tutorial notebooks and return exported/skipped sources."""
     tutorials_directory = repository_root / "docs" / "tutorials"
-    recorded_timings = tutorials_directory / "_recorded_timings.json"
-    dependencies = (recorded_timings,)
+    dependencies = tuple(sorted(tutorials_directory.rglob("_recorded_timings.json")))
     exported: list[Path] = []
     skipped: list[Path] = []
 

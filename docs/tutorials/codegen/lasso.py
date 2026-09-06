@@ -1,20 +1,21 @@
 import marimo
 
-__generated_with = "0.23.11"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
 @app.cell
 def _():
     import json
-    import marimo as mo
-    import numpy as np
     import os
     import statistics
     import sys
     import textwrap
     import time
     from pathlib import Path
+
+    import marimo as mo
+    import numpy as np
 
     start = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd().resolve()
     for candidate in (start, *start.parents):
@@ -29,6 +30,11 @@ def _():
 
     examples_dir = repo_root / "examples"
 
+    from docs.tutorials.helper_functions.lasso import (
+        ista_step,
+        make_lasso_data,
+        solve_ista_numpy,
+    )
     from fomtools.codegen import CodegenConfig, TerminationSpec
     from fomtools.codegen.agent import make_agent_driver
     from fomtools.codegen.harness import find_compiler
@@ -49,10 +55,13 @@ def _():
         agent_available,
         examples_dir,
         find_compiler,
+        ista_step,
         make_agent_driver,
+        make_lasso_data,
         mo,
         np,
         recorded_timings,
+        solve_ista_numpy,
         statistics,
         textwrap,
         time,
@@ -62,14 +71,28 @@ def _():
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-# Portfolio: Python vs Codegen
+    # Lasso: Python vs Codegen
 
-In this tutorial we benchmark a small mean-variance portfolio problem.
-The portfolio weights must satisfy lower bounds, upper bounds, and a budget equality.
+    In this tutorial we benchmark iterative soft-thresholding for the Lasso problem:
 
-The solver uses the alternating direction method of multipliers: each iteration clips an auxiliary variable to the constraint box, solves a small linear system, and updates the auxiliary variable.
-We compare a direct NumPy implementation with the verified generated C solver.
-""")
+    \[
+    \begin{array}{ll}
+    \text{minimize} & (1/2)\lVert Ds - x \rVert_2^2 + \lambda \lVert s \rVert_1,
+    \end{array}
+    \]
+
+    where \(D \in \mathbb{R}^{p \times n}\), \(s \in \mathbb{R}^n\), and \(x\) is the parameter.
+    The method is
+
+    \[
+    s^{k+1} =
+    \mathbf{soft}_{\lambda\eta}\left(s^k - \eta D^\top(Ds^k - x)\right).
+    \]
+
+    We compare a direct NumPy implementation with the verified generated C solver.
+    The problem construction, ISTA step, and NumPy reference solver are shared with the [Lasso verification tutorial](../verification/lasso.html).
+    The generated C is timed after code generation, then timed again after the C-editing optimization pass.
+    """)
     )
     return
 
@@ -77,38 +100,45 @@ We compare a direct NumPy implementation with the verified generated C solver.
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-We generate a positive definite covariance matrix and a vector of expected returns.
-Both implementations start from the same fixed vectors and run the same update rule for the same number of iterations.
-""")
+    We generate a small sparse dictionary \(D\), sample sparse signals, and use those samples to define the range of possible inputs \(x\).
+    Both implementations run the same update rule for the same number of iterations.
+    """)
     )
     return
 
 
 @app.cell
-def _(examples_dir, np):
-    rng = np.random.RandomState(0)
-    n = 4
-    F = rng.normal(size=(n, n))
-    covariance = (F @ F.T) / n + 0.1 * np.eye(n)
-    expected_return = rng.uniform(0.05, 0.15, size=n)
+def _(examples_dir, make_lasso_data, np):
+    p, n, lambd = 3, 4, 1e-1
+    num_star = 200
+    D, x_lb, x_ub, _, eta, lambd = make_lasso_data(
+        p=p, n=n, lambd=lambd, num_signals=num_star, seed=0
+    )
+    x_mid = 0.5 * (x_lb + x_ub)
 
-    upper_weight = 0.6 * np.ones(n)
-    A = np.vstack([np.eye(n), np.ones((1, n))])
-    lower = np.hstack([np.zeros(n), [1.0]])
-    upper = np.hstack([upper_weight, [1.0]])
-
-    sigma = 1e-4
-    rho = 1.0
-    lhs = covariance + sigma * np.eye(n) + rho * A.T @ A
-    x0 = np.zeros(n)
-    v0 = 0.5 * np.ones(n + 1)
     K = 200
-    out_dir = examples_dir / "_codegen_speedups" / "portfolio_codegen_speedup"
-    return A, K, expected_return, lhs, lower, n, out_dir, rho, sigma, upper, v0, x0
+    s0 = np.zeros(n)
+
+    out_dir = examples_dir / "_codegen_speedups" / "lasso_codegen_speedup"
+    return D, K, eta, lambd, n, out_dir, p, s0, x_lb, x_mid, x_ub
 
 
 @app.cell
-def _(A, CodegenConfig, K, TerminationSpec, Verifier, expected_return, lhs, lower, n, rho, sigma, upper, v0, x0):
+def _(
+    CodegenConfig,
+    D,
+    K,
+    TerminationSpec,
+    Verifier,
+    eta,
+    ista_step,
+    lambd,
+    n,
+    p,
+    s0,
+    x_lb,
+    x_ub,
+):
     verifier = Verifier(
         method="mip",
         solver="highs",
@@ -116,41 +146,31 @@ def _(A, CodegenConfig, K, TerminationSpec, Verifier, expected_return, lhs, lowe
         params={"output_flag": False},
     )
 
-    x = verifier.add_iterate(n, lb=x0, ub=x0)
-    v = verifier.add_iterate(n + 1, lb=v0, ub=v0)
-    w = verifier.step.satlin(v, l=lower, u=upper)
-    rhs = sigma * x + expected_return + rho * A.T @ (2 * w - v)
-    x_next = verifier.step.implicit_linear(rhs, output_mat=lhs)
-    v_next = v + A @ x_next - w
+    x_param = verifier.add_param(p, lb=x_lb, ub=x_ub)
+    s = verifier.add_iterate(n, lb=s0, ub=s0)
+    next_s, _, _, _ = ista_step(
+        verifier, D, eta, lambd, s, s, x_param, 1.0, k=1, momentum=False
+    )
 
     config = CodegenConfig(
         termination=TerminationSpec(max_iters=K),
         num_verify_samples=4,
     )
-    next_state = [x_next, v_next]
-    s_state = [x, v]
-    return config, next_state, s_state, verifier
+    return config, next_s, s, verifier, x_param
 
 
 @app.cell
-def _(A, K, expected_return, lhs, lower, np, rho, sigma, statistics, time, upper, v0, x0):
-    def portfolio_solve():
-        x_py = x0.copy()
-        v_py = v0.copy()
-        for _ in range(K):
-            w_py = np.minimum(np.maximum(v_py, lower), upper)
-            rhs_py = sigma * x_py + expected_return + rho * A.T @ (2 * w_py - v_py)
-            x_py = np.linalg.solve(lhs, rhs_py)
-            v_py = v_py + A @ x_py - w_py
-        return np.concatenate([x_py, v_py])
+def _(D, K, eta, lambd, s0, solve_ista_numpy, statistics, time, x_mid):
+    def python_lasso_solve():
+        return solve_ista_numpy(D, eta, lambd, s0, x_mid, max_iters=K)
 
     for _ in range(3):
-        portfolio_solve()
+        python_lasso_solve()
 
     python_times = []
     for _ in range(40):
         t0 = time.perf_counter()
-        portfolio_solve()
+        python_lasso_solve()
         python_times.append((time.perf_counter() - t0) * 1.0e6)
 
     python_us = statistics.median(python_times)
@@ -163,18 +183,19 @@ def _(
     config,
     find_compiler,
     make_agent_driver,
-    next_state,
+    next_s,
     out_dir,
     python_us,
     recorded_timings,
-    s_state,
+    s,
     verifier,
+    x_param,
 ):
     if not agent_available:
         # Show the recorded row as published. The live python_us measured just
         # above is deliberately NOT reused here: pairing this machine's Python
         # time with another machine's C time would invent a cross-machine ratio.
-        _rec = recorded_timings["examples"]["portfolio"]
+        _rec = recorded_timings["examples"]["lasso"]
         table_python_us = _rec["python_us"]
         codegen_us = _rec["c_initial_us"]
         iteration_us = _rec["c_final_us"]
@@ -194,11 +215,12 @@ def _(
     else:
         result = verifier.codegen_rolled(
             out_dir,
-            next_state=next_state,
+            next_state=next_s,
             config=config,
             driver=make_agent_driver(config=config),
-            state=s_state,
-            name="portfolio_codegen_speedup",
+            state=[s],
+            params=[x_param],
+            name="lasso_codegen_speedup",
             run_phase_b=True,
             profile=True,
         )
@@ -252,35 +274,35 @@ def _(
 ):
     if timings_live:
         _footer = f"""
-Generated solver directory: `{out_dir}`
+    Generated solver directory: `{out_dir}`
 
-Generated solver source: `{solver_path}`
-"""
+    Generated solver source: `{solver_path}`
+    """
     else:
         _prov = recorded_timings["provenance"]
         _footer = f"""
-> **Recorded measurement.** These timings were recorded by {_prov["recorded_by"]} on
-> {_prov["recorded_date"]} (commit `{_prov["recorded_commit"]}`) and are **not** recomputed in
-> this build, since a docs build has no coding-agent backend and its timings would in any case
-> come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
-> to generate, verify and re-time the solver on your own machine. Every example's recorded
-> numbers are collected in the [code generation speedup results](codegen_speedup_results.md).
-"""
+    > **Recorded measurement.** These timings were recorded by {_prov["recorded_by"]} on
+    > {_prov["recorded_date"]} (commit `{_prov["recorded_commit"]}`) and are **not** recomputed in
+    > this build, since a docs build has no coding-agent backend and its timings would in any case
+    > come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
+    > to generate, verify and re-time the solver on your own machine. Every example's recorded
+    > numbers are collected in the [code generation speedup results](speedup_results/).
+    """
     summary = mo.md(f"""
-## Timing summary
+    ## Timing summary
 
-One complete solve runs `{K}` iterations.
+    One complete solve runs `{K}` iterations.
 
-| implementation | median / mean per solve |
-|---|---:|
-| direct NumPy Python | `{table_python_us:.3f} us` |
-| generated C after code generation | `{codegen_us:.3f} us` |
-| generated C after optimization iteration | `{iteration_us:.3f} us` |
+    | implementation | median / mean per solve |
+    |---|---:|
+    | direct NumPy Python | `{table_python_us:.3f} µs` |
+    | generated C after code generation | `{codegen_us:.3f} µs` |
+    | generated C after optimization iteration | `{iteration_us:.3f} µs` |
 
-The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
+    The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
 
-The optimization iteration uses a live coding agent to edit `src/fom_solver.c`; the edited solver was `{optimization_status}` after verification and timing.
-{_footer}"""
+    The optimization iteration uses a live coding agent to edit `src/fom_solver.c`; the edited solver was `{optimization_status}` after verification and timing.
+    {_footer}"""
     )
     summary
     return

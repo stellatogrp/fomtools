@@ -8,7 +8,7 @@ Open the companion [marimo notebook](portfolio.html), or edit the source locally
 from the repository root:
 
 ```bash
-uv run marimo edit docs/tutorials/portfolio.py
+uv run marimo edit docs/tutorials/codegen/portfolio.py
 ```
 
 ## Problem
