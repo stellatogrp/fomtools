@@ -20,6 +20,10 @@ embedded C project in which
 CVXPYgen is extended from the outside (no fork): the integration registers a
 solver named `'FOMTOOLS'` in CVXPYgen's dispatch at runtime.
 
+The [CVXPYgen MPC notebook](cvxpygen_mpc.html) works through the whole flow on a
+model-predictive-control problem, from the CVXPY model to the generated C
+project.
+
 ## Requirements
 
 ```bash

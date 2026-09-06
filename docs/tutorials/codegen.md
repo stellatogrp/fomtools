@@ -7,6 +7,20 @@ Python wrapper. The translation is performed by an LLM coding agent that writes
 the target code and iterates against a Python reference oracle until the output
 is numerically verified.
 
+## Examples
+
+Each of these notebooks builds a FOM, generates an embedded C solver for it, and
+times the generated solver against direct Python. The
+[summary table](codegen/speedup_results.md) collects the results of all five side
+by side. Each notebook has a companion write-up covering the problem formulation
+and the update rule it uses.
+
+* Lasso — [notebook](codegen/lasso.html), [write-up](codegen/lasso.md)
+* Optimal control — [notebook](codegen/control.html), [write-up](codegen/control.md)
+* Network flow — [notebook](codegen/network.html), [write-up](codegen/network.md)
+* Nonnegative least squares — [notebook](codegen/nnls.html), [write-up](codegen/nnls.md)
+* Portfolio — [notebook](codegen/portfolio.html), [write-up](codegen/portfolio.md)
+
 ## Defining the FOM
 
 Write the algorithm as a loop, exactly as you would to verify it, and keep the

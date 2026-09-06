@@ -3,7 +3,7 @@
 This guide walks through the core components of FOMTools: linear expressions, steps,
 proxable functions, objectives, and the fixed-point encoding.
 
-## [Architecture overview](api.md)
+## [Architecture overview](api/index.md)
 
 The user writes the first-order method as a sequence of operations on expression objects
 that represent iterates and parameters, and that the package maintains internally as affine

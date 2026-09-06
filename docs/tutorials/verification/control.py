@@ -207,7 +207,7 @@ def _(mo):
 
 @app.cell
 def _():
-    K = 5  # Maximum iteration number
+    K = 7  # Maximum iteration number
     fix_initial_x = True  # False lets x vary over [x_lb, x_ub].
     return K, fix_initial_x
 

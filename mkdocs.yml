@@ -4,7 +4,7 @@ nav:
   - Installation: installation.md
   - User guide: user_guide.md
   - API and modules:
-      - Overview: api.md
+      - api/index.md
       - Verifier: api/verifier.md
       - Linear expressions: api/linearexpression.md
       - Constraints: api/constraint.md
@@ -13,9 +13,15 @@ nav:
       - Solvers: api/solvers.md
       - Proxable functions: api/proxablefunctions.md
       - Code generation: api/codegen.md
-  - Tutorials: tutorials.md
+  - Tutorials:
+      - tutorials/index.md
+      - Verification: tutorials/verification.md
+      - Code generation: tutorials/codegen.md
+      - CVXPYgen integration: tutorials/cvxpygen.md
 theme:
   name: material
+  features:
+    - navigation.indexes
   palette:
     - media: "(prefers-color-scheme)"
       toggle:
