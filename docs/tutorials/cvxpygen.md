@@ -27,7 +27,7 @@ project.
 ## Requirements
 
 ```bash
-pip install 'fomtools[cvxpygen]'   # cvxpy, cvxpygen, osqp
+pip install -e '.[cvxpygen,codegen]'   # run from the repository root
 ```
 
 Building the Python wrapper additionally needs `cmake` and `pip` available in
@@ -59,7 +59,7 @@ problem = cp.Problem(
 result = fcpg.generate_solver(
     problem,
     "out_qp",                          # CVXPYgen layout: c/, cpg_solver.py, ...
-    fom="admm",                        # or "pdhg", or a custom builder
+    fom="admm",                        # use "pdhg" for LPs, or a custom builder
     param_bounds={q: (-1.0, 1.0)},     # verified parameter range
     config=CodegenConfig(termination=TerminationSpec(max_iters=2000)),
 )

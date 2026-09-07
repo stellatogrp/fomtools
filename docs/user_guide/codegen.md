@@ -17,6 +17,11 @@ examples, and [the API page](../api/codegen.md) documents each symbol.
 
 ## Defining the FOM
 
+The Python snippets below reuse the imports and problem data in the first block.
+Calls to `codegen`, `codegen_rolled`, and `generate_code` require the `codegen`
+extra and an authenticated coding-agent driver (`FOMTOOLS_CODEGEN_AGENT=1`),
+or an explicit `driver=`. Recording the method requires no coding agent.
+
 Write the algorithm as a loop, exactly as you would to verify it, and keep the
 iterate sequence. An
 [`iterate_trajectory`](../api/verifier.md#fomtools.Verifier.iterate_trajectory) is
@@ -111,10 +116,15 @@ Douglas–Rachford and ADMM carry their iterate through an expression rather tha
 step output:
 
 ```python
+dr = Verifier(method="simulator", obbt_solver=None)
+q_dr = dr.add_param(n, lb=-1, ub=1)
+kkt = np.eye(n) + A.T @ A
+z_dr = dr.iterate_trajectory(K + 1)
+z_dr[0] = dr.add_iterate(n, lb=2, ub=2)
 for k in range(1, K + 1):
-    u = vp.step.implicit_linear(z[k - 1] - q, output_mat=kkt)
-    ut = vp.step.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
-    z[k] = z[k - 1] + ut - u        # not a step output
+    u = dr.step.implicit_linear(z_dr[k - 1] - q_dr, output_mat=kkt)
+    ut = dr.step.relu(2 * u - z_dr[k - 1])
+    z_dr[k] = z_dr[k - 1] + ut - u        # not a step output
 ```
 
 Written that way, each iterate references every leaf the previous one did plus the
@@ -190,11 +200,18 @@ Makefile   (make verify / make lib)
 From C, via the OSQP-style ABI:
 
 ```c
-FomWorkspace work; FomSettings s;
-fom_set_default_settings(&s);
-fom_setup(&work, &s);
-fom_update_params(&work, &params);   /* set params.p0[...] */
-fom_solve(&work);                    /* work.solution.x holds the solution */
+#include "fom_solver.h"
+
+int main(void) {
+    FomWorkspace work; FomSettings s;
+    FomParams params = {0};             /* example parameter p0 = 0 */
+    fom_set_default_settings(&s);
+    fom_setup(&work, &s);
+    fom_update_params(&work, &params);   /* set params.p0[...] */
+    fom_solve(&work);                    /* work.solution.x holds the solution */
+    fom_cleanup(&work);
+    return 0;
+}
 ```
 
 Or from Python:

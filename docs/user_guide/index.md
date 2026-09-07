@@ -2,6 +2,7 @@
 
 This guide walks through the core components of FOMTools: linear expressions, steps,
 proxable functions, objectives, and the fixed-point encoding.
+Run the Python blocks in order; later snippets reuse earlier imports, data, and expressions.
 
 ## [Architecture overview](../api/index.md)
 
@@ -28,8 +29,9 @@ import numpy as np
 
 # problem parameters and setup
 lambd, eta, K = 0.1, 0.01, 10
-m, n = 10, 15
-D = np.random.normal(size=(m, n))
+m, n = 4, 3
+rng = np.random.default_rng(0)
+D = rng.normal(size=(m, n))
 VP = ft.Verifier(method="mip", solver="gurobi")
 
 # initialize VP parameters + iterates
@@ -70,22 +72,22 @@ support addition, scalar multiplication, and left multiplication by numpy arrays
 sparse matrices, so the package tracks arbitrary affine combinations symbolically.
 
 ```python
-# different ways to declare leaf objects
-m, n = 10, 15
-x = VP.add_param(m, lb=0, ub=1)
-z0 = VP.add_iterate(n, lb=0, ub=0)
+# reuse the imports and dimensions from the workflow above
+demo = ft.Verifier(method="mip", solver="gurobi")
+x_demo = demo.add_param(m, lb=0, ub=1)
+z0 = demo.add_iterate(n, lb=0, ub=0)
 
 # arbitrary combinations
 A = np.random.normal(size=(n, n))
 B = np.random.normal(size=(n, m))
-y = A @ (z0 - 2 * B @ x)
+y = A @ (z0 - 2 * B @ x_demo)
 
 # arbitrary constraints
-VP.add_constraint(np.ones((1, m)) @ x == 1)
+demo.add_constraint(np.ones((1, m)) @ x_demo == 1)
 ```
 
 The expression `y` above is not a new leaf: its internal representation records the affine
-map from the leaves `z0` and `x`. This mechanism is what enables automatic dimension
+map from the leaves `z0` and `x_demo`. This mechanism is what enables automatic dimension
 reduction, since explicit affine steps such as gradient computations and momentum updates
 never introduce new variables into the verification problem. Interval arithmetic propagates
 elementwise bounds on each expression through affine operations. Arbitrary polyhedral
@@ -115,9 +117,11 @@ linear into ReLU primitives automatically, so the same user code runs unchanged 
 backend.
 
 ```python
-s_next = VP.step.relu(s - eta * grad)
-s_next = VP.step.soft_threshold(s - eta * grad, lambd=lambd * eta)
-s_next = VP.step.satlin(s - eta * grad, lb=l, ub=u)
+grad_demo = D.T @ (D @ z0 - x_demo)
+l, u = -np.ones(n), np.ones(n)
+s_relu = demo.step.relu(z0 - eta * grad_demo)
+s_soft = demo.step.soft_threshold(z0 - eta * grad_demo, lambd=lambd * eta)
+s_box = demo.step.satlin(z0 - eta * grad_demo, l=l, u=u)
 ```
 
 ## [Proxable functions](../api/proxablefunctions.md)
@@ -140,9 +144,9 @@ projection does not depend on `gamma`.
 from fomtools.proxable_functions import NormL1
 from fomtools.sets import Box
 
-# a proximal gradient step, two equivalent spellings
-z_next = VP.prox(NormL1(lambd), z - eta * grad, eta)
-z_next = VP.project(Box(l, u), z - eta * grad)
+# equivalent to s_soft and s_box above, respectively
+z_soft = demo.prox(NormL1(lambd), z0 - eta * grad_demo, eta)
+z_box = demo.project(Box(l, u), z0 - eta * grad_demo)
 ```
 
 Both entry points return an expression, so a proximal gradient step is a single line of user
@@ -161,12 +165,17 @@ vector before applying the norm — useful for composite metrics such as the OSQ
 check, which monitors both the primal and the dual residual.
 
 ```python
-# OSQP convergence criterion
-VP.set_objective_norm([M @ zk - wk, P @ zk + q + M.T @ yk], np.inf)
+# illustrative OSQP residuals with bounded primal and dual variables
+M, P = np.eye(n), D.T @ D
+q = -D.T @ x_demo
+zk = demo.add_iterate(n, lb=-1, ub=1)
+wk = demo.add_iterate(n, lb=-1, ub=1)
+yk = demo.add_iterate(n, lb=-1, ub=1)
+demo.set_objective_norm([M @ zk - wk, P @ zk + q + M.T @ yk], np.inf)
 ```
 
 The list interface stacks both residual vectors and maximizes the ℓ∞-norm of the result. The
-dual residual involves the problem parameter `x`, which is permitted because the objective
+dual residual involves the problem parameter `x_demo` through `q`, which is permitted because the objective
 operates on arbitrary expressions.
 
 ## [Fixed-point encoding](../api/verifier.md#fomtools.Verifier.fixed_point)
@@ -179,13 +188,17 @@ Python function, together with bounds on `z*`.
 
 ```python
 # fixed point for ista
-z_star = VP.fixed_point(
+zk = z0
+for _ in range(K):
+    zk = demo.step.soft_threshold(
+        zk - eta * D.T @ (D @ zk - x_demo), lambd=lambd * eta)
+z_star = demo.fixed_point(
     n_dim=n,
-    operator=lambda z: VP.step.soft_threshold(
-        z - eta * D.T @ (D @ z - x), lambd=lambd * eta),
+    operator=lambda z: demo.step.soft_threshold(
+        z - eta * D.T @ (D @ z - x_demo), lambd=lambd * eta),
     lb=-100, ub=100,
 )
-VP.set_objective_norm(zk - z_star, 2)
+demo.set_objective_norm(zk - z_star, 2)
 ```
 
 Internally, `fixed_point` creates a new iterate `z*` with the given bounds, applies the
@@ -206,6 +219,10 @@ intermediate representation of the run, hands the resulting specification to an 
 agent, and iterates the generated code against a Python reference oracle until it is
 numerically verified. The emitted directory is a self-contained C project — an
 OSQP-style ABI, all numeric data, a `Makefile`, and a small `ctypes` wrapper.
+
+This call requires the `codegen` extra and an authenticated coding-agent driver.
+Set `FOMTOOLS_CODEGEN_AGENT=1` or pass an explicit `driver=`; see the
+[code generation guide](codegen.md#generating-the-solver).
 
 ```python
 # the same trajectory that was verified, now compiled
