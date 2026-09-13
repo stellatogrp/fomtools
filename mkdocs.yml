@@ -2,6 +2,7 @@ site_name: FOM Tools
 nav:
   - Home: index.md
   - Installation: installation.md
+  - Quick start: quick_start.md
   - User guide:
       - user_guide/index.md
       - Code generation guide: user_guide/codegen.md
