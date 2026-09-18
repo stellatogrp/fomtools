@@ -1,12 +1,11 @@
 # User guide
 
-This guide walks through the core components of FOMTools: linear expressions, steps,
-proxable functions, objectives, and the fixed-point encoding.
-Run the Python blocks in order; later snippets reuse earlier imports, data, and expressions.
+This user guide is a more comprehensive companion to the [Quick Start](../quick_start.md),
+covering more of FOMTools' capabilities.
 
 ## [Architecture overview](../api/index.md)
 
-The user writes the first-order method as a sequence of operations on expression objects
+The user writes the first order method as a sequence of operations on expression objects
 that represent iterates and parameters, and that the package maintains internally as affine
 functions of a set of leaf variables. Each piecewise affine (PWA) step creates a new leaf
 and records the step. Once the user sets an objective and calls `solve`, the package
@@ -15,57 +14,10 @@ the verification problem into MIP, SDP, or simulator form, and dispatches to the
 solver. The same specification also drives a code generation path, which emits standalone
 solver code for embedded and parallel targets.
 
-## [Workflow walkthrough](../api/verifier.md)
-
-We illustrate the user experience on the FISTA example. We import the package, set up the
-problem data, create a `Verifier` object, declare the problem parameter `x` and the initial
-iterate `s[0]`, and then write the FISTA iterations in a loop. The code mirrors the
-mathematical description of FISTA, with the soft-thresholding step, the momentum update, and
-the objective each on a single line.
-
-```python
-import fomtools as ft
-import numpy as np
-
-# problem parameters and setup
-lambd, eta, K = 0.1, 0.01, 10
-m, n = 4, 3
-rng = np.random.default_rng(0)
-D = rng.normal(size=(m, n))
-VP = ft.Verifier(method="mip", solver="gurobi")
-
-# initialize VP parameters + iterates
-x = VP.add_param(m, lb=0, ub=1)
-s = [None for _ in range(K + 1)]
-s[0] = VP.add_iterate(n, lb=0, ub=0)
-wk = s[0]
-beta_k = 1
-results = []
-
-for k in range(K):
-    # core algorithm logic
-    grad = D.T @ (D @ wk - x)
-    s[k + 1] = VP.step.soft_threshold(wk - eta * grad, lambd=lambd * eta)
-    beta_kplus1 = 0.5 * (1 + np.sqrt(1 + 4 * beta_k ** 2))
-    w_kplus1 = s[k + 1] + (beta_k - 1) / beta_kplus1 * (s[k + 1] - s[k])
-
-    # solving the VP
-    VP.set_objective_norm(s[k + 1] - s[k], np.inf)
-    results.append(VP.solve())
-
-    # setting up for next loop iteration
-    wk, beta_k = w_kplus1, beta_kplus1
-```
-
-The momentum variable `w_kplus1` is not a new leaf. The package represents it internally as
-an affine combination of the leaf iterates `s[k+1]` and `s[k]`, which is the automatic
-substitution that eliminates the auxiliary momentum sequence without any manual algebra. The
-code reads almost identically to a concrete implementation of FISTA.
-
 ## [Linear expressions](../api/linearexpression.md)
 
 Internally, FOMTools represents every quantity in the verification problem as an affine
-combination `Ay + b` of a stacked vector `y` of leaf variables. A leaf is an expression that
+combination $Ay + b$ of a stacked vector $y$ of leaf variables. A leaf is an expression that
 cannot be written as an affine combination of others: parameters, initial iterates, and
 outputs of PWA steps are always leaves. Through operator overloading, expression objects
 support addition, scalar multiplication, and left multiplication by numpy arrays or scipy
@@ -95,26 +47,60 @@ constraints can also be imposed on any expression through the `==`, `<=`, and `>
 operators, as above, which is useful for encoding structure in the parameter set such as a
 probability simplex.
 
+## [Choosing a backend](../api/verifier.md)
+
+FOMTools supports three backends for analyzing first order methods. All use the same
+algorithm specification, but trade off exactness, cost, and scale.
+
+| Backend | Result | Pros | Cons |
+| --- | --- | --- | --- |
+| MIP | Exact worst case | Strong deterministic certificate, often the more practical formal backend | Can grow quickly with iterations and activation patterns |
+| SDP | Certified upper bound | Convex formulation with no integer branching | May be conservative, and large lifted PSD matrices limit scale |
+| Simulator | Empirical worst case + statistical guarantee | Fastest and most scalable | Does not certify every admissible instance |
+
+All three backends support the same objective norms and share one user level algorithm
+description. MIP and simulation handle ReLU, soft thresholding, and saturated linear steps
+directly. The SDP backend represents the latter two through equivalent ReLU decompositions.
+
+```python
+# MIP: exact worst case analysis
+demo = ft.Verifier(method="mip", solver="gurobi")
+```
+
+```python
+# SDP: certified upper bound analysis
+demo = ft.Verifier(method="sdp", solver="clarabel")
+```
+
+```python
+# Simulator: empirical analysis at larger scale
+demo = ft.Verifier(method="simulator", solver="numpy")
+```
+
+Optional SDP cuts tighten the relaxation at additional computational cost. `rlt_cuts` adds
+reformulation linearization cuts between cone mate variable pairs. `triangle_cuts` adds lifted
+triangle cuts for mixed bound ReLU outputs. `full_psd_cone` merges the moment matrices into one
+full PSD cone. Add them to the SDP configuration as follows:
+
+```python
+# a tighter, more expensive SDP relaxation
+demo = ft.Verifier(
+    method="sdp",
+    solver="clarabel",
+    rlt_cuts=True,
+    triangle_cuts=True,
+    full_psd_cone=True,
+)
+```
+
 ## [Steps](../api/steps.md)
 
 A step is a primitive operator that maps an affine input to a possibly PWA output, and is
 the unit at which the package interfaces with each backend. Affine steps, such as gradient
 evaluations on quadratics, momentum updates, and linear solves, live inline in the affine
-expression algebra and introduce no new leaves. The three PWA steps, ReLU, soft-thresholding,
+expression algebra and introduce no new leaves. The three PWA steps, ReLU, soft thresholding,
 and saturated linear, each create a new leaf and record the activation pattern that the
-canonicalizer needs:
-
-| Step | MIP | SDP | Simulator |
-| --- | --- | --- | --- |
-| Affine | native | native | native |
-| ReLU | native | native | native |
-| Soft-thresholding | native | decomposed | native |
-| Saturated linear | native | decomposed | native |
-
-The MIP and simulator backends handle all three natively, while the SDP backend natively
-supports only ReLU; a step-decomposition layer rewrites soft-thresholding and saturated
-linear into ReLU primitives automatically, so the same user code runs unchanged on every
-backend.
+canonicalizer needs.
 
 ```python
 grad_demo = D.T @ (D @ z0 - x_demo)
@@ -126,19 +112,19 @@ s_box = demo.step.satlin(z0 - eta * grad_demo, l=l, u=u)
 
 ## [Proxable functions](../api/proxablefunctions.md)
 
-A proxable function in FOMTools is a convex function `f` whose proximal operator the
-package can encode exactly, for a step size `gamma > 0`. The library covers 24 functions.
+A proxable function in FOMTools is a convex function $f$ whose proximal operator the
+package can encode exactly, for a step size $\gamma > 0$. The library covers 24 functions.
 Most have a closed form in the PWA primitives above, so they compile to one step plus affine
-arithmetic: the ℓ1-norm becomes a single soft-thresholding step, the indicator of the
+arithmetic: the $\ell_1$ norm becomes a single soft thresholding step, the indicator of the
 nonnegative orthant a single ReLU, and the indicator of a box a single saturated linear step.
 The rest, such as convex quadratics and the indicators of a polyhedron, a simplex, or an
-ℓ1-ball, have no such closed form; for these the package encodes the optimality conditions
+$\ell_1$ ball, have no such closed form. For these the package encodes the optimality conditions
 of the proximal operator directly, as linear equalities together with a complementarity
 condition on the multipliers.
 
 A proxable function is applied with `prox(function, expr, gamma)`. For an indicator, the
 equivalent `project(set, expr)` takes the set itself and is the more natural spelling, since
-projection does not depend on `gamma`.
+projection does not depend on $\gamma$.
 
 ```python
 from fomtools.proxable_functions import NormL1
@@ -155,13 +141,13 @@ code and the decomposition into steps stays hidden.
 ## [Objectives](../api/verifier.md#fomtools.Verifier.set_objective_norm)
 
 The verification problem maximizes a norm of an arbitrary expression, so custom performance
-metrics can go beyond the standard fixed-point residual `‖s^{k+1} - s^k‖`, including scaled
+metrics can go beyond the standard fixed point residual $\lVert s^{k+1} - s^k \rVert$, including scaled
 residuals, residuals involving the problem parameters, and distances to a reference
-expression. The package supports four objectives: the ℓ1-norm, the squared ℓ2-norm, the
-ℓ∞-norm, and a zero objective for feasibility checks. The objective is set with
+expression. The package supports four objectives: the $\ell_1$ norm, the squared $\ell_2$ norm, the
+$\ell_\infty$ norm, and a zero objective for feasibility checks. The objective is set with
 `set_objective_norm(expr, ord)`, where `expr` is an expression and `ord` selects the norm.
 The objective also accepts a list of expressions, which the package stacks into a single
-vector before applying the norm — useful for composite metrics such as the OSQP convergence
+vector before applying the norm, useful for composite metrics such as the OSQP convergence
 check, which monitors both the primal and the dual residual.
 
 ```python
@@ -174,17 +160,17 @@ yk = demo.add_iterate(n, lb=-1, ub=1)
 demo.set_objective_norm([M @ zk - wk, P @ zk + q + M.T @ yk], np.inf)
 ```
 
-The list interface stacks both residual vectors and maximizes the ℓ∞-norm of the result. The
+The list interface stacks both residual vectors and maximizes the $\ell_\infty$ norm of the result. The
 dual residual involves the problem parameter `x_demo` through `q`, which is permitted because the objective
 operates on arbitrary expressions.
 
-## [Fixed-point encoding](../api/verifier.md#fomtools.Verifier.fixed_point)
+## [Fixed point encoding](../api/verifier.md#fomtools.Verifier.fixed_point)
 
-Distance-to-optimality metrics require the verification problem to encode an optimal
-solution `z*` of the parametric problem. For first-order methods with contractive operators,
-`z*` is a fixed point of the algorithm operator `T`, that is, the vector satisfying
-`z* = T(z*, x)`, whose value depends on the parameter `x`. The operator is supplied as a
-Python function, together with bounds on `z*`.
+Distance to optimality metrics require the verification problem to encode an optimal
+solution $z^\star$ of the parametric problem. For first order methods with contractive operators,
+$z^\star$ is a fixed point of the algorithm operator $T$, that is, the vector satisfying
+$z^\star = T(z^\star, x)$, whose value depends on the parameter $x$. The operator is supplied as a
+Python function, together with bounds on $z^\star$.
 
 ```python
 # fixed point for ista
@@ -201,11 +187,11 @@ z_star = demo.fixed_point(
 demo.set_objective_norm(zk - z_star, 2)
 ```
 
-Internally, `fixed_point` creates a new iterate `z*` with the given bounds, applies the
-operator to obtain `T(z*, x)`, and adds the equality constraint `z* = T(z*, x)`. The returned
+Internally, `fixed_point` creates a new iterate $z^\star$ with the given bounds, applies the
+operator to obtain $T(z^\star, x)$, and adds the equality constraint $z^\star = T(z^\star, x)$. The returned
 expression then enters the objective, as above, which maximizes the distance between the
-`k`-th iterate and the fixed point. The bounds on `z*` must hold for all parameters in the
-declared parameter set; they can be overestimated, but the tightness of both the MIP
+$k$th iterate and the fixed point. The bounds on $z^\star$ must hold for all parameters in the
+declared parameter set. They can be overestimated, but the tightness of both the MIP
 formulation and the SDP relaxation depends on reasonable estimates.
 
 ## [Code generation](../api/codegen.md)
@@ -217,11 +203,11 @@ sequence, and passes it to
 [`codegen`](../api/verifier.md#fomtools.Verifier.codegen), which extracts an
 intermediate representation of the run, hands the resulting specification to an LLM coding
 agent, and iterates the generated code against a Python reference oracle until it is
-numerically verified. The emitted directory is a self-contained C project — an
-OSQP-style ABI, all numeric data, a `Makefile`, and a small `ctypes` wrapper.
+numerically verified. The emitted directory is a self contained C project with an
+OSQP style ABI, all numeric data, a `Makefile`, and a small `ctypes` wrapper.
 
-This call requires the `codegen` extra and an authenticated coding-agent driver.
-Set `FOMTOOLS_CODEGEN_AGENT=1` or pass an explicit `driver=`; see the
+This call requires the `codegen` extra and an authenticated coding agent driver.
+Set `FOMTOOLS_CODEGEN_AGENT=1` or pass an explicit `driver=`. See the
 [code generation guide](codegen.md#generating-the-solver).
 
 ```python
@@ -230,10 +216,10 @@ result = VP.codegen("out/fista", iterates=s, name="fista")
 assert result.success
 ```
 
-Generating the run literally would emit one block per iteration, so before unrolling
+Generating the run would emit one block per iteration, so before unrolling
 anything the extractor pulls out a single iteration and asks whether repeating it reproduces
-the recording; when it does, the compact loop is what gets emitted, and the check that
-decides to roll is itself the proof that rolling was safe. Iteration-varying coefficients,
+the recording. When it does, the compact loop is what gets emitted, and the check that
+decides to roll is itself the proof that rolling was safe. Iteration varying coefficients,
 such as the FISTA momentum above, are handled without any special syntax, since the recorded
 tape simply gives each iteration its own number. Affine operators are factorized once at
 generation time rather than inverted, and structured matrices are emitted as sparse
@@ -243,13 +229,13 @@ termination criteria, and the emitted project layout in full.
 
 ## [Implementation notes](../api/canonicalizer.md)
 
-The package separates the user-facing front end — expressions, steps, objectives, and the
-fixed-point encoding — from the back-end canonicalizers and solvers. All canonicalizers
+The package separates the user facing front end, including expressions, steps, objectives, and
+fixed point encoding, from the back end canonicalizers and solvers. All canonicalizers
 implement a common interface: accept variables with bounds, add constraints, set an
 objective norm, solve, and retrieve solution values. Adding a new backend therefore amounts
 to implementing this interface, without touching the upstream pipeline. After a solve, the
-optimal value of any expression can be queried, including non-leaf expressions, which the
+optimal value of any expression can be queried, including nonleaf expressions, which the
 package reconstructs from the leaf solution through the stored affine representation. All
-coefficient matrices are stored in sparse format using `scipy.sparse`, and interval-arithmetic
+coefficient matrices are stored in sparse format using `scipy.sparse`, and interval arithmetic
 bound propagation through affine maps is lazy, so bounds are recomputed only when a
 canonicalizer consumes them.
