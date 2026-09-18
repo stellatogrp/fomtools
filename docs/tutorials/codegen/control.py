@@ -4,10 +4,8 @@ __generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
-    import json
-    import os
     import statistics
     import sys
     import textwrap
@@ -31,16 +29,11 @@ def _():
     examples_dir = repo_root / "examples"
 
     from docs.tutorials.helper_functions.control import admm_step, solve_admm_numpy
+    from docs.tutorials.helper_functions.codegen_benchmarks import run_codegen_benchmark
     from fomtools.codegen import CodegenConfig, TerminationSpec
-    from fomtools.codegen.agent import make_agent_driver
-    from fomtools.codegen.harness import find_compiler
     from fomtools.verifier import Verifier
 
-    # Generating a verified solver needs a real coding-agent backend. When it
-    # isn't configured (e.g. a headless docs build), the timing cells below fall
-    # back to the timings recorded on the benchmark machine instead of raising.
-    agent_available = os.environ.get("FOMTOOLS_CODEGEN_AGENT") == "1"
-    recorded_timings = json.loads((start / "_recorded_timings.json").read_text())
+    timing_file = start / "_recorded_timings.json"
 
     np.set_printoptions(precision=5)
     np.set_printoptions(suppress=True)
@@ -49,16 +42,14 @@ def _():
         TerminationSpec,
         Verifier,
         admm_step,
-        agent_available,
         examples_dir,
-        find_compiler,
-        make_agent_driver,
         mo,
         np,
-        recorded_timings,
+        run_codegen_benchmark,
         solve_admm_numpy,
         statistics,
         textwrap,
+        timing_file,
         time,
     )
 
@@ -165,7 +156,7 @@ def _(examples_dir, np):
     return K, M, lhs, lower, n_total, out_dir, q, rho, sigma, upper, v0, z0
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     CodegenConfig,
     K,
@@ -242,115 +233,47 @@ def _(
     return (python_us,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
-    agent_available,
     config,
-    find_compiler,
-    make_agent_driver,
     next_state,
     out_dir,
     python_us,
-    recorded_timings,
+    run_codegen_benchmark,
     s_state,
+    timing_file,
     verifier,
 ):
-    if not agent_available:
-        # Show the recorded row as published. The live python_us measured just
-        # above is deliberately NOT reused here: pairing this machine's Python
-        # time with another machine's C time would invent a cross-machine ratio.
-        _rec = recorded_timings["examples"]["control"]
-        table_python_us = _rec["python_us"]
-        codegen_us = _rec["c_initial_us"]
-        iteration_us = _rec["c_final_us"]
-        codegen_speedup = _rec["codegen_speedup"]
-        iteration_speedup = _rec["iteration_speedup"]
-        total_speedup = _rec["total_speedup"]
-        optimization_status = _rec["optimization_status"]
-        solver_path = None
-        timings_live = False
-        print(
-            "Skipping code generation: showing recorded timings. Set "
-            "FOMTOOLS_CODEGEN_AGENT=1 (and configure a coding-agent backend) to "
-            "generate, verify and re-time the embedded solver."
-        )
-    elif find_compiler() is None:
-        raise RuntimeError("No C compiler found. Install cc/gcc/clang to run codegen timing.")
-    else:
-        result = verifier.codegen_rolled(
-            out_dir,
-            next_state=next_state,
-            config=config,
-            driver=make_agent_driver(config=config),
-            state=s_state,
-            name="control_codegen_speedup",
-            run_phase_b=True,
-            profile=True,
-        )
-        if not result.translate.success:
-            raise RuntimeError(result.translate.log[-4000:])
-
-        if (
-            result.timing is None
-            or result.timing.c_initial_us is None
-            or result.timing.c_final_us is None
-        ):
-            raise RuntimeError("Code generation finished without the requested timing report.")
-
-        table_python_us = python_us
-        codegen_us = result.timing.c_initial_us
-        iteration_us = result.timing.c_final_us
-        codegen_speedup = python_us / codegen_us
-        iteration_speedup = codegen_us / iteration_us
-        total_speedup = python_us / iteration_us
-        optimization_status = "kept" if result.optimization_kept else "not kept"
-        solver_path = out_dir / result.target.solver_source_path()
-        timings_live = True
-    return (
-        codegen_speedup,
-        codegen_us,
-        iteration_speedup,
-        iteration_us,
-        optimization_status,
-        solver_path,
-        table_python_us,
-        timings_live,
-        total_speedup,
+    timings = run_codegen_benchmark(
+        config=config,
+        example="control",
+        name="control_codegen_speedup",
+        next_state=next_state,
+        out_dir=out_dir,
+        params=None,
+        python_us=python_us,
+        state=s_state,
+        timing_file=timing_file,
+        verifier=verifier,
     )
+    return (timings,)
 
 
 @app.cell(hide_code=True)
 def _(
     K,
-    codegen_speedup,
-    codegen_us,
-    iteration_speedup,
-    iteration_us,
     mo,
-    optimization_status,
     out_dir,
-    recorded_timings,
-    solver_path,
-    table_python_us,
-    timings_live,
-    total_speedup,
+    timings,
 ):
-    if timings_live:
+    if timings["live"]:
         _footer = f"""
     Generated solver directory: `{out_dir}`
 
-    Generated solver source: `{solver_path}`
+    Generated solver source: `{timings["solver_path"]}`
     """
     else:
-        _prov = recorded_timings["provenance"]
-        _footer = f"""
-    > **Recorded measurement.** These timings were recorded by {_prov["recorded_by"]} on
-    > {_prov["recorded_date"]} (commit `{_prov["recorded_commit"]}`) and are **not** recomputed in
-    > this build, since a docs build has no coding-agent backend and its timings would in any case
-    > come from a shared, noisy runner. Set `FOMTOOLS_CODEGEN_AGENT=1` with a coding-agent backend
-    > to generate, verify and re-time the solver on your own machine. Every example's recorded
-    > numbers are collected in the [code generation speedup results](speedup_results/).
-    """
+        _footer = ""
     summary = mo.md(f"""
     ## Timing summary
 
@@ -358,13 +281,11 @@ def _(
 
     | implementation | median / mean per solve |
     |---|---:|
-    | direct NumPy Python | `{table_python_us:.3f} µs` |
-    | generated C after code generation | `{codegen_us:.3f} µs` |
-    | generated C after optimization iteration | `{iteration_us:.3f} µs` |
+    | direct NumPy Python | `{timings["python_us"]:.3f} µs` |
+    | generated C after code generation | `{timings["codegen_us"]:.3f} µs` |
+    | generated C after optimization iteration | `{timings["iteration_us"]:.3f} µs` |
 
-    The speedup from code generation is `{codegen_speedup:.1f}x`, while the speedup from the optimization iteration is `{iteration_speedup:.2f}x`, totaling a speedup of `{total_speedup:.1f}x`.
-
-    The optimization iteration uses a live coding agent to edit `src/fom_solver.c`; the edited solver was `{optimization_status}` after verification and timing.
+    The speedup from code generation is `{timings["codegen_speedup"]:.1f}x`, while the speedup from the optimization iteration is `{timings["iteration_speedup"]:.2f}x`, totaling a speedup of `{timings["total_speedup"]:.1f}x`.
     {_footer}"""
     )
     summary
