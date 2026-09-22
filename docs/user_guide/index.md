@@ -58,6 +58,14 @@ algorithm specification, but trade off exactness, cost, and scale.
 | SDP | Certified upper bound | Convex formulation with no integer branching | May be conservative, and large lifted PSD matrices limit scale |
 | Simulator | Empirical worst case + statistical guarantee | Fastest and most scalable | Does not certify every admissible instance |
 
+Option 2:
+
+| Backend | Result | Best fit | Main limitation |
+| --- | --- | --- | --- |
+| MIP-VP | Exact worst-case value | A tight deterministic certificate is required and the finite VP is tractable | Branch-and-bound can grow rapidly with the number of ambiguous PWA regions and iterations |
+| SDP-VP | Certified upper bound | A convex certificate is sufficient, especially when MIP branching is difficult | The relaxation may be conservative, and the lifted PSD matrix can become expensive at larger dimensions and horizons |
+| Simulator | Empirical worst case over samples with a statistical risk bound | Large-scale exploration, debugging, and data-driven assessment | Does not certify the worst case over every admissible instance |
+
 All three backends support the same objective norms and share one user level algorithm
 description. MIP and simulation handle ReLU, soft thresholding, and saturated linear steps
 directly. The SDP backend represents the latter two through equivalent ReLU decompositions.
