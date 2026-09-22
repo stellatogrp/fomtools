@@ -10,7 +10,7 @@ license = { text = "Apache 2.0" }
 dynamic = ["version"]
 requires-python = ">=3.13"
 authors = [
-       { name = "Vinit Ranjan", email = "vranjan@princeton.edu" },
+       { name = "Vinit Ranjan", email = "vranjan1@mit.edu" },
        { name = "Daniel Deza", email = "dd7022@princeton.edu" },
        { name = "Anushka Acharya", email = "aa9078@princeton.edu"},
        { name = "Jisun Park", email = "jisunpark@princeton.edu"},
@@ -19,8 +19,10 @@ authors = [
 
 dependencies = [
        "gurobipy>=12.0.1",
+       "cvxpy",
        "highspy",
        "numpy",
+       "pyyaml",
        "scipy",
 ]
 
@@ -40,15 +42,14 @@ gpu = ["cupy-cuda12x"]
 # agent; extracting the IR, scaffolding, building, and the ctypes wrapper need
 # none of this (the wrapper uses the stdlib ``ctypes``). The Pi backend is a CLI
 # (https://pi.dev), installed separately, so it needs no Python dependency here.
-codegen = ["claude-agent-sdk", "openai-codex", "pydantic", "pyyaml"]
+codegen = ["claude-agent-sdk", "openai-codex", "pydantic"]
 
 # CVXPYgen integration (fomtools.cvxpygen): model in CVXPY, canonicalize with
 # CVXPYgen's generated C code, solve with a fomtools-generated embedded FOM.
 # Pinned to the cvxpygen 1.x internal API (solver-interface seam).
-cvxpygen = ["cvxpy", "cvxpygen>=1.0,<2", "osqp"]
+cvxpygen = ["cvxpygen>=1.0,<2", "osqp"]
 
 dev = [
-       "cvxpy",
        "pytest",
        "pre-commit",
        "ruff",
@@ -63,7 +64,6 @@ dev = [
 nn = ["torch", "jax", "flax"]
 
 docs = [
-       "cvxpy",
        "marimo",
        "matplotlib",
        "mkdocs",
