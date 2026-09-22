@@ -8,15 +8,15 @@ for a worst-case bound.
 
 ## Examples
 
-* **[Lasso](lasso.html)** — ISTA on the $\ell_1$-regularized least-squares
+* **[Lasso](verification/lasso.html)** — ISTA on the $\ell_1$-regularized least-squares
   problem, verified with a soft-threshold step.
-* **[Optimal control](control.html)** — a linear-quadratic control problem with
+* **[Optimal control](verification/control.html)** — a linear-quadratic control problem with
   input bounds, verified with a saturated linear step.
-* **[Network flow](network.html)** — a capacitated min-cost
+* **[Network flow](verification/network.html)** — a capacitated min-cost
   network-flow linear program, solved by an operator-splitting method.
-* **[Nonnegative least squares](nnls.html)** — projected gradient
+* **[Nonnegative least squares](verification/nnls.html)** — projected gradient
   descent, whose projection onto the nonnegative orthant is a ReLU step.
-* **[Portfolio](portfolio.html)** — a mean–variance portfolio
+* **[Portfolio](verification/portfolio.html)** — a mean–variance portfolio
   problem with box bounds and a budget constraint, solved by ADMM.
 
 Once a method is verified, the [code generation](codegen.md) tutorial shows how
