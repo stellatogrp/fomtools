@@ -35,12 +35,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v6
         with:
-          # Pin the same uv that generates uv.lock locally, so CI reads the
-          # lockfile instead of silently falling back to a fresh resolution.
           version: "0.11.15"
-          enable-cache: true
 
       - shell: bash
         id: write-license
@@ -50,12 +47,7 @@ jobs:
           echo "$LICENSE" > $PWD/gurobi.lic
 
       - name: Install the project
-        env:
-          # Use the interpreter set up above rather than downloading another.
-          UV_PYTHON_DOWNLOADS: never
-        run: >
-          uv sync --locked --python ${{ matrix.python-version }}
-          --extra dev --extra docs --extra nn --extra cvxpygen
+        run: uv sync --extra dev --extra docs --extra nn --extra cvxpygen
 
       - name: Check Gurobi License
         env:

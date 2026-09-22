@@ -8,7 +8,7 @@ description = "FOMTools: A Python Toolbox for Analysis of First-Order Methods"
 readme = "README.md"
 license = { text = "Apache 2.0" }
 dynamic = ["version"]
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 authors = [
        { name = "Vinit Ranjan", email = "vranjan1@mit.edu" },
        { name = "Daniel Deza", email = "dd7022@princeton.edu" },
@@ -61,7 +61,9 @@ dev = [
        "networkx",
 ]
 
-nn = ["torch", "jax", "flax"]
+# jax 0.11.2 removed jax.experimental.hijax.HiPrimitive, which flax (<=0.12.9)
+# still imports; drop the bound once flax ships a compatible release.
+nn = ["torch", "jax<0.11.2", "flax"]
 
 docs = [
        "marimo",
