@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       - name: ruff
         uses: chartboost/ruff-action@v1
 
@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.12"]
+        python-version: ["3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -52,9 +52,9 @@ jobs:
       - name: Check Gurobi License
         env:
           GRB_LICENSE_FILE: ${{ github.workspace }}/gurobi.lic
-        run: uv run python -c "import gurobipy; gurobipy.Model()"
+        run: uv run --frozen python -c "import gurobipy; gurobipy.Model()"
 
       - name: Run tests
         env:
             GRB_LICENSE_FILE: ${{ github.workspace }}/gurobi.lic
-        run: uv run pytest tests
+        run: uv run --frozen pytest tests
