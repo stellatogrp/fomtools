@@ -70,7 +70,7 @@ class SDPStepDecomposer(StepDecomposer):
         # method's presence to keep non-SDP decomposers (if ever paired) safe.
         register = getattr(self.canonicalizer, "register_prox_step", None)
         if register is not None:
-            register(z=z, v=step.arg, tau=lambd)
+            register(z=z, v=step.arg, tau=lambd, func="l1")
 
         return z
 
