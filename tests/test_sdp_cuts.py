@@ -1281,6 +1281,7 @@ def test_relu_registers_unit_tau_prox():
     canon = vp.canonicalizer
     assert len(canon._prox_steps) == 1
     assert canon._prox_steps[0]["tau"] == 1.0
+    assert canon._prox_steps[0]["func"] == "nonneg_orthant"
 
 
 def test_softthreshold_registers_single_composite_prox():
@@ -1296,6 +1297,7 @@ def test_softthreshold_registers_single_composite_prox():
     # ... but only the single composite prox is registered for the subgrad cut.
     assert len(canon._prox_steps) == 1
     assert canon._prox_steps[0]["tau"] == pytest.approx(0.3)
+    assert canon._prox_steps[0]["func"] == "l1"
 
 
 # ---- cross cut: emission + validity --------------------------------------- #
@@ -1464,6 +1466,119 @@ def test_subgrad_cut_tau_guard_skips_tiny_threshold():
     canon._cut_bineq_upperbounds = []
     canon._build_subgrad_mono_cuts()
     assert canon._cut_ineq_matrices == []
+
+
+def _rank1_lift_from_inputs(canon, input_vals):
+    """Rank-1 lift X = u u^T of the true trajectory for given input-leaf values.
+
+    ``input_vals`` maps input leaves to value arrays. Every ReLU node (including
+    the internal ReLUs of soft-thresholding) is evaluated in registration order.
+    """
+    n = canon.get_sdp_var_dim()
+    u = np.zeros(n)
+    u[0] = 1.0
+    for leaf, val in input_vals.items():
+        s, e = canon.var_idx_map[leaf]
+        u[s:e] = val
+    for step in canon._relu_steps:
+        A, idx = canon.linexpr_to_Amat_and_bounds(step.arg)
+        w = np.concatenate([u[s:e] for s, e in idx])
+        arg_val = np.asarray(A @ w).flatten() + np.asarray(step.arg.const).flatten()
+        out = np.maximum(arg_val, 0.0)
+        offset = 0
+        for leaf in step.output_leaves:
+            s, e = canon.var_idx_map[leaf]
+            u[s:e] = out[offset : offset + (e - s)]
+            offset += e - s
+    return np.outer(u, u)
+
+
+def _build_mixed_prox_verifier(subgrad_mono_cut=True, n=2, lambdas=(0.3, 0.7)):
+    """Two ReLUs and two soft-thresholds (different lambda) on independent inputs."""
+    vp = Verifier(
+        method="sdp", solver="clarabel", obbt_solver=None, subgrad_mono_cut=subgrad_mono_cut
+    )
+    inputs = [vp.add_iterate(n, lb=-2, ub=2) for _ in range(2 + len(lambdas))]
+    vp.step.relu(inputs[0])
+    vp.step.relu(inputs[1])
+    for x, lam in zip(inputs[2:], lambdas):
+        vp.step.soft_threshold(x, lambd=lam)
+    return vp, inputs
+
+
+def _fresh_subgrad_cuts(canon):
+    canon._cut_ineq_matrices = []
+    canon._cut_bineq_upperbounds = []
+    canon._build_subgrad_mono_cuts()
+    return canon._cut_ineq_matrices, canon._cut_bineq_upperbounds
+
+
+def test_subgrad_cut_skips_mixed_relu_softthreshold():
+    """A ReLU (orthant) and a soft-threshold (ell-1) are proxes of different
+    functions, so neither ordered pair gets a subgradient cut."""
+    vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, subgrad_mono_cut=True)
+    vi = vp.add_iterate(1, lb=-3, ub=3)
+    vj = vp.add_iterate(1, lb=-3, ub=3)
+    vp.step.relu(vi)
+    vp.step.soft_threshold(vj, lambd=0.5)
+    canon = vp.canonicalizer
+    assert len(canon._prox_steps) == 2
+    mats, _ = _fresh_subgrad_cuts(canon)
+    assert mats == []
+
+
+def test_subgrad_cut_mixed_steps_count():
+    """Two ReLUs + two soft-thresholds (different lambda): only same-function
+    pairs are cut -> 2 orthant ordered pairs + 2 ell-1 ordered pairs."""
+    vp, _ = _build_mixed_prox_verifier()
+    mats, _ = _fresh_subgrad_cuts(vp.canonicalizer)
+    assert len(mats) == 4
+
+
+def test_subgrad_cut_valid_on_mixed_trajectories():
+    """Every emitted subgradient cut holds on true trajectories of a mixed
+    ReLU / soft-threshold instance, including the counterexample from the paper
+    (relu input 1, soft-threshold input 2*lambda) that the unguarded pairing
+    cut off."""
+    lambdas = (0.3, 0.7)
+    vp, inputs = _build_mixed_prox_verifier(lambdas=lambdas)
+    canon = vp.canonicalizer
+    mats, ubs = _fresh_subgrad_cuts(canon)
+    assert len(mats) > 0
+
+    rng = np.random.default_rng(0)
+    draws = [[np.ones(2), np.ones(2), 2 * lambdas[0] * np.ones(2), 2 * lambdas[1] * np.ones(2)]]
+    draws += [[rng.uniform(-2, 2, size=2) for _ in inputs] for _ in range(100)]
+    for vals in draws:
+        X = _rank1_lift_from_inputs(canon, dict(zip(inputs, vals)))
+        for M, b in zip(mats, ubs):
+            output = float((M @ X).trace())
+            assert output <= b + 1e-9, f"Subgrad cut violated at {vals}: {output} > {b}"
+
+
+def test_subgrad_cut_skips_dimension_mismatch():
+    """Proxes of different dimension are not paired (and do not crash)."""
+    vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, subgrad_mono_cut=True)
+    vp.step.relu(vp.add_iterate(2, lb=-1, ub=1))
+    vp.step.relu(vp.add_iterate(3, lb=-1, ub=1))
+    mats, _ = _fresh_subgrad_cuts(vp.canonicalizer)
+    assert mats == []
+
+
+def test_subgrad_cut_mixed_steps_sdp_matches_true_value():
+    """End to end: max ||relu(v_i) + soft_threshold(v_j, 0.5)||^2 with
+    v_i in [0.9, 1], v_j in [0.9, 1.1] is (1 + 0.6)^2 = 2.56. The SDP bound with
+    the subgradient cut must stay a valid upper bound (the unguarded mixed
+    pairing made the SDP infeasible)."""
+    vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, subgrad_mono_cut=True)
+    vi = vp.add_iterate(1, lb=0.9, ub=1.0)
+    vj = vp.add_iterate(1, lb=0.9, ub=1.1)
+    zi = vp.step.relu(vi)
+    zj = vp.step.soft_threshold(vj, lambd=0.5)
+    vp.set_objective_norm(zi + zj, 2)
+    val = vp.solve()
+    assert np.isfinite(val)
+    assert val >= 2.56 - TEST_EPS
 
 
 def test_subgrad_cut_tighten_bound():
@@ -1818,8 +1933,12 @@ def test_box_cuts_close_gap_to_mip():
 
     def sdp(**kw):
         vp = Verifier(
-            method="sdp", solver="clarabel", obbt_solver=None,
-            rlt_cuts=True, relu_envelope_cuts=True, **kw,
+            method="sdp",
+            solver="clarabel",
+            obbt_solver=None,
+            rlt_cuts=True,
+            relu_envelope_cuts=True,
+            **kw,
         )
         vp.set_objective_norm(_build_boxpgd_mixed(vp, K, P, q, lo, hi, t), 2)
         return vp.solve()

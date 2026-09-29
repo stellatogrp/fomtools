@@ -655,15 +655,19 @@ class SDP(Canonicalizer):
         # Constrain the bilinear entries.
         self.add_psd_cone_indices(idx1 + idx2)
 
-    def register_prox_step(self, z: LinearExpression, v: LinearExpression, tau: float) -> None:
+    def register_prox_step(
+        self, z: LinearExpression, v: LinearExpression, tau: float, *, func: str
+    ) -> None:
         """
         Register a prox step for the subgradient-monotonicity cut.
 
-        Records ``(z, v, tau)`` where ``z`` is the prox output expression, ``v``
-        is the prox input expression (so the subgradient is ``s = v - z``), and
+        Records ``(z, v, tau, func)`` where ``z`` is the prox output expression,
+        ``v`` is the prox input expression (so the subgradient is ``s = v - z``),
         ``tau`` is the prox threshold (``tau = 1`` for orthant projection / ReLU,
-        ``tau = lambda`` for soft-thresholding). The subgradient cut builder
-        (:meth:`_build_subgrad_mono_cuts`) consumes this registry.
+        ``tau = lambda`` for soft-thresholding), and ``func`` names the sublinear
+        function the step is the prox of. The subgradient cut builder
+        (:meth:`_build_subgrad_mono_cuts`) consumes this registry and pairs only
+        steps with the same ``func`` (the cut is invalid across functions).
 
         Parameters
         ----------
@@ -675,8 +679,11 @@ class SDP(Canonicalizer):
             Prox input (``step.arg``).
         tau : float
             Prox threshold used to normalize the subgradient.
+        func : str
+            Identifier of the sublinear function (``"nonneg_orthant"`` for ReLU,
+            ``"l1"`` for soft-thresholding).
         """
-        self._prox_steps.append({"z": z, "v": v, "tau": float(tau)})
+        self._prox_steps.append({"z": z, "v": v, "tau": float(tau), "func": func})
         self._cuts_dirty = True
 
     def register_box_prox_step(self, z: LinearExpression, v: LinearExpression, l, u) -> None:
@@ -793,7 +800,7 @@ class SDP(Canonicalizer):
         # registered by the decomposer instead (see SDPStepDecomposer). The ReLU
         # still joins ``_relu_steps`` above so the cross cut sees every node.
         if not getattr(step, "_skip_prox_registration", False):
-            self.register_prox_step(z=step.output, v=step.arg, tau=1.0)
+            self.register_prox_step(z=step.output, v=step.arg, tau=1.0, func="nonneg_orthant")
 
         self._cuts_dirty = True
 
@@ -1767,6 +1774,11 @@ class SDP(Canonicalizer):
         ``z^i, v^i, z^j, v^j`` so the cross-step moments bind (this is the smallest
         cone that couples the involved leaves, but for composite proxes it spans
         several index ranges, so it is not as small as the cross cut's cone).
+
+        The cut is valid only when ``partial f_j(0) subseteq partial f_i(0)``, so
+        pairs are restricted to proxes of the same function (``func``) and the
+        same dimension. Skipping mismatched-dimension orthant pairs loses nothing:
+        there the cut is a sum of per-coordinate cross cuts (``cross_cut``).
         """
         prox = self._prox_steps
         for i, pi in enumerate(prox):
@@ -1778,6 +1790,9 @@ class SDP(Canonicalizer):
                     continue
                 zj, vj, tau_j = pj["z"], pj["v"], pj["tau"]
                 if tau_j < 1e-9:
+                    continue
+                # Same sublinear function and dimension only (else the cut is invalid).
+                if pi["func"] != pj["func"] or zi.ndim != zj.ndim:
                     continue
 
                 # Couple all involved leaves so the cross-step moments bind.
