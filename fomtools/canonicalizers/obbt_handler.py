@@ -172,13 +172,11 @@ class OBBTHandler(Canonicalizer):
         # reset objective
         self.solver.set_objective(0)
 
-        # Tolerance guards against minor LP-solver inconsistency between the
-        # min and max solves for the same index (e.g. lb_out slightly above
-        # ub_out); larger crossings indicate a genuine bug.
-        assert np.all(lb_out <= ub_out + 1e-7)
-        # Both the raw LP bounds and their intersection with the input bounds
-        # can cross by solver noise (e.g. input ub = 0, LP lb = 2e-17); repair
-        # so downstream bound_propagation does not raise.
+        # Both the raw LP bounds (min/max solves for the same index) and their
+        # intersection with the input bounds can cross by solver noise (e.g.
+        # input ub = 0, LP lb = 2e-17); repair so downstream bound_propagation
+        # does not raise. Crossings beyond the tolerance raise (genuine bug).
+        lb_out, ub_out = repair_crossed_bounds(lb_out, ub_out)
         return repair_crossed_bounds(np.maximum(lb, lb_out), np.minimum(ub, ub_out))
 
     # ------------------------------------------------------------------

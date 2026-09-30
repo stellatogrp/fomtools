@@ -45,7 +45,10 @@ def _sym_error(P) -> float:
 
 
 def is_identity_matrix(P) -> bool:
-    """True if ``P`` is ``None`` or (numerically) the identity (dense or sparse)."""
+    """True if ``P`` is ``None`` or (numerically) the identity (dense or sparse).
+
+    ``P`` is expected to be 2-D; non-square (or 1-D) inputs return ``False``.
+    """
     if P is None:
         return True
     n = P.shape[0]

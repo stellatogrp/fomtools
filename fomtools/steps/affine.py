@@ -40,11 +40,12 @@ class Affine(Step):
     output_mat: np.matrix
         Coefficient matrix on the left-hand side of the operator equation.
     obbt_output: bool
-        If true, OBBT is also run on the output leaf after the affine equality
-        is added to the OBBT LP (see ``StepDecomposer._process_primitive``).
+        True when ``output_mat`` is not the identity: OBBT is then also run on the
+        output leaf after the affine equality is added to the OBBT LP (see
+        ``StepDecomposer._process_primitive``). For identity ``output_mat`` the
+        output equals the arg, so ``sync_output_bounds`` already copies the
+        OBBT-tightened input box and the extra LPs would be redundant.
     """
-
-    obbt_output: bool = True
 
     def __init__(
         self,
@@ -68,6 +69,10 @@ class Affine(Step):
         # steps' bound_propagation() doesn't hit sparse @ scalar NaN errors.
         ndim = self.arg.ndim
         self.output.update_bounds(np.full(ndim, -np.inf), np.full(ndim, np.inf))
+
+    @cached_property
+    def obbt_output(self) -> bool:
+        return not is_identity_matrix(self.output_mat)
 
     def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
         """
@@ -93,6 +98,10 @@ class Affine(Step):
             out_lb = np.maximum(out_lb, self.lb)
             out_ub = np.minimum(out_ub, self.ub)
         self.output.update_bounds(lb=out_lb, ub=out_ub)
+        # Repair the *combined* result (update_bounds intersects with the existing
+        # output bounds, which is where noise crossings arise). Repairing before
+        # update_bounds would be undone by the intersection, hence the direct write;
+        # update_bounds is a plain elementwise max/min with no other side effects.
         self.output.lb, self.output.ub = repair_crossed_bounds(self.output.lb, self.output.ub)
 
     @cached_property

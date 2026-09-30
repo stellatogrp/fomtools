@@ -27,8 +27,9 @@ class Step:
         Override in subclasses that compute bounds analytically.
     obbt_output : bool
         If true, OBBT is also run on the step's output leaves once the step's
-        relaxation is in the OBBT LP. Enabled for :class:`Affine`, whose output
-        bounds cannot otherwise see the tightened input box without ``M^{-1}``.
+        relaxation is in the OBBT LP. Enabled for :class:`Affine` with non-identity
+        ``output_mat``, whose output bounds cannot otherwise see the tightened
+        input box without ``M^{-1}``.
 
     Notes
     -----

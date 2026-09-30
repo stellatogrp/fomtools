@@ -13,10 +13,12 @@ They verify that, with the per-primitive OBBT canonicalization hook:
 
 import numpy as np
 import pytest
+import scipy.sparse as spa
 
 from fomtools.canonicalizers.sdp import SDP
 from fomtools.steps import Affine
 from fomtools.utils.math_utils import repair_crossed_bounds
+from fomtools.utils.matrix_utils import is_identity_matrix
 from fomtools.verifier import Verifier
 from tests.conftest import (
     SDP_SOLVERS,
@@ -352,11 +354,44 @@ def _affine_steps(v):
 
 
 def test_repair_crossed_bounds():
-    lb = np.array([0.0, 2e-17, -1.0])
-    ub = np.array([1.0, 0.0, -1.0])
+    lb = np.array([0.0, 2e-17, -1.0, -np.inf])
+    ub = np.array([1.0, 0.0, -1.0, np.inf])
     new_lb, new_ub = repair_crossed_bounds(lb, ub)
-    np.testing.assert_array_equal(new_lb, [0.0, 0.0, -1.0])
-    np.testing.assert_array_equal(new_ub, [1.0, 2e-17, -1.0])
+    np.testing.assert_array_equal(new_lb, [0.0, 0.0, -1.0, -np.inf])
+    np.testing.assert_array_equal(new_ub, [1.0, 2e-17, -1.0, np.inf])
+
+
+def test_repair_crossed_bounds_rejects_empty_interval():
+    with pytest.raises(ValueError, match="cross"):
+        repair_crossed_bounds(np.array([1.0]), np.array([-1.0]))
+    # The tolerance is relative to the bound magnitude.
+    repair_crossed_bounds(np.array([1e6 + 1e-2]), np.array([1e6]), tol=1e-7)
+    with pytest.raises(ValueError):
+        repair_crossed_bounds(np.array([1e6 + 1.0]), np.array([1e6]), tol=1e-7)
+
+
+@pytest.mark.parametrize(
+    "P, expected",
+    [
+        (None, True),
+        (np.eye(3), True),
+        (spa.eye(3, format="csc"), True),
+        (2 * np.eye(3), False),
+        (spa.csc_matrix(np.diag([1.0, 1.0, 1.0 + 1e-6])), False),
+        (np.eye(3, 4), False),
+        (spa.eye(3, 4, format="csr"), False),
+        (np.ones(3), False),
+    ],
+)
+def test_is_identity_matrix(P, expected):
+    assert is_identity_matrix(P) is expected
+
+
+def test_affine_output_obbt_only_for_non_identity():
+    v, _ = build_relu_linsolve_chain(None, "gurobi", K=1, identity=True)
+    assert not any(s.obbt_output for s in _affine_steps(v))
+    v, _ = build_relu_linsolve_chain(None, "gurobi", K=1, identity=False)
+    assert all(s.obbt_output for s in _affine_steps(v))
 
 
 @pytest.mark.parametrize("identity", [True, False])

@@ -34,7 +34,7 @@ def norm(x, norm_type):
             return np.sqrt(np.sum(np.power(x, 2)))
 
 
-def repair_crossed_bounds(lb, ub) -> tuple[np.ndarray, np.ndarray]:
+def repair_crossed_bounds(lb, ub, tol: float = 1e-7) -> tuple[np.ndarray, np.ndarray]:
     """
     Repair elementwise crossed bounds ``lb > ub`` by swapping them.
 
@@ -43,17 +43,33 @@ def repair_crossed_bounds(lb, ub) -> tuple[np.ndarray, np.ndarray]:
     point. Such a crossing makes ``LinearExpression.bound_propagation`` raise
     downstream. Returning ``(min(lb, ub), max(lb, ub))`` gives an interval
     that covers both values, so it remains a valid (if marginally looser)
-    bound. Callers should reject large crossings before repairing.
+    bound. Crossings larger than ``tol`` (relative to the bound magnitude)
+    indicate a genuinely empty interval and raise instead of being hidden.
 
     Parameters
     ----------
     lb, ub : np.ndarray or float
         Lower and upper bounds.
+    tol : float, default 1e-7
+        Largest crossing ``lb - ub`` treated as solver noise, scaled by
+        ``max(1, |lb|, |ub|)``.
 
     Returns
     -------
     tuple[np.ndarray, np.ndarray]
         The repaired ``(lb, ub)`` with ``lb <= ub`` elementwise.
+
+    Raises
+    ------
+    ValueError
+        If any crossing exceeds the tolerance.
     """
     lb, ub = np.asarray(lb, dtype=float), np.asarray(ub, dtype=float)
+    with np.errstate(invalid="ignore"):
+        scale = np.maximum(1.0, np.maximum(np.abs(lb), np.abs(ub)))
+        too_crossed = lb - ub > tol * scale
+    if np.any(too_crossed):
+        raise ValueError(
+            f"Bounds cross by more than tol={tol}: max(lb - ub) = {np.max(lb - ub):.3e}"
+        )
     return np.minimum(lb, ub), np.maximum(lb, ub)
