@@ -381,3 +381,46 @@ def test_obbt_tightens_unbounded_dual_via_stack(solver):
     new_lb, new_ub = y.bound_propagation()
     assert np.allclose(new_lb, np.array([-1.0, -1.0, -1.0, -1.0]), atol=TEST_EPS)
     assert np.allclose(new_ub, np.array([1.0, 1.0, 1.0, 1.0]), atol=TEST_EPS)
+
+
+# ---------------------------------------------------------------------------
+# Coefficient type normalization for leaves shared across components
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("dense_first", [False, True])
+def test_stack_shared_leaf_sparse_and_dense_is_ndarray(dense_first):
+    # Regression: sparse + ndarray returns np.matrix, which made bound_propagation
+    # produce (1, d) bounds and crash. Mixed sums must densify to a plain ndarray.
+    x = _leaf(2, lb=0.0, ub=1.0)
+    parts = [np.eye(2) @ x, x] if dense_first else [x, np.eye(2) @ x]
+    y = stack(parts)
+
+    coeff = y.decomposition_dict[x]
+    assert type(coeff) is np.ndarray
+    np.testing.assert_allclose(coeff, np.vstack([np.eye(2), np.eye(2)]))
+    assert y.lb.shape == (4,) and y.ub.shape == (4,)
+    np.testing.assert_allclose(y.lb, np.zeros(4))
+    np.testing.assert_allclose(y.ub, np.ones(4))
+
+
+def test_stack_shared_leaf_sparse_stays_sparse():
+    x = _leaf(2)
+    y = stack([x, 2 * x])
+
+    coeff = y.decomposition_dict[x]
+    assert spa.issparse(coeff)
+    np.testing.assert_allclose(coeff.toarray(), np.vstack([np.eye(2), 2 * np.eye(2)]))
+    assert y.lb.shape == (4,)
+
+
+def test_stack_warm_start_through_verifier():
+    # The pattern that surfaced the bug: stack([y0, M @ y0]).
+    vp = Verifier(obbt_solver=None)
+    y0 = vp.add_param(2, lb=0, ub=1)
+    M = np.array([[1.0, 2.0], [0.0, -1.0]])
+    y = stack([y0, M @ y0])
+    assert y.ndim == 4
+    assert all(not isinstance(v, np.matrix) for v in y.decomposition_dict.values())
+    np.testing.assert_allclose(y.lb, [0.0, 0.0, 0.0, -1.0])
+    np.testing.assert_allclose(y.ub, [1.0, 1.0, 3.0, 0.0])

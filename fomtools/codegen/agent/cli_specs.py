@@ -132,6 +132,7 @@ class CliAgentSpec:
         """Env vars to read an API key from, in resolution order."""
         return tuple(v for v in (self.api_key_env, *self.api_key_aliases) if v)
 
+
 _user_specs_loaded = False
 
 # Field name -> coercion for the YAML loader (everything else is rejected so a

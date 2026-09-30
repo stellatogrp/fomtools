@@ -316,3 +316,27 @@ def test_affine_obbt_tightens_when_constrained(solver):
         f"lb={affine_step.lb}, ub={affine_step.ub} vs "
         f"arg_lb={arg_lb}, arg_ub={arg_ub}."
     )
+
+
+# --------------------------------------------------------------------------
+# OBBT solver parameters
+# --------------------------------------------------------------------------
+
+
+def test_obbt_inherits_output_flag_only():
+    v = Verifier(params={"OutputFlag": 0, "TimeLimit": 5})
+    model = v.obbt_handler.solver.model
+    assert model.Params.OutputFlag == 0
+    # Main-solve options are not forwarded to the OBBT LPs.
+    assert model.Params.TimeLimit != 5
+
+
+def test_obbt_params_override():
+    v = Verifier(params={"OutputFlag": 0}, obbt_params={"OutputFlag": 1})
+    assert v.obbt_handler.solver.model.Params.OutputFlag == 1
+
+
+def test_obbt_params_from_highs_key():
+    assert Verifier._obbt_params_from({"output_flag": False}, "highs") == {"output_flag": False}
+    assert Verifier._obbt_params_from({"OutputFlag": 0}, "highs") is None
+    assert Verifier._obbt_params_from(None, "gurobi") is None
