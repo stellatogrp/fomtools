@@ -10,6 +10,7 @@ from fomtools.linearexpression import LinearExpression
 from fomtools.solvers.clarabel import ClarabelSolver
 from fomtools.solvers.cuclarabel import CuClarabelSolver
 from fomtools.steps import Affine, Relu
+from fomtools.utils.math_utils import repair_crossed_bounds
 from fomtools.utils.range_utils import process_1d_ranges, process_2d_ranges
 from fomtools.utils.sparse_utils import efficient_csc_pad
 
@@ -1414,20 +1415,38 @@ class SDP(Canonicalizer):
         self._cut_ineq_matrices.append(symmetrize(M4.tocsc()))
         self._cut_bineq_upperbounds.append(-u_p * l_q)
 
+    @staticmethod
+    def _relu_arg_bounds(step: Relu) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Bounds on a ReLU step's input used by the ReLU cut builders.
+
+        Intersects the step's cached input bounds ``step.lb``/``step.ub`` (which
+        carry any OBBT tightening applied in ``_process_primitive``) with a fresh
+        ``step.arg.bound_propagation()`` (which reflects leaf tightening since the
+        step was canonicalized). Both are valid, so the intersection is too; tiny
+        solver-noise crossings are repaired.
+        """
+        prop_lb, prop_ub = step.arg.bound_propagation()
+        d = step.arg.ndim
+        lb = np.maximum(np.broadcast_to(np.asarray(step.lb, dtype=float), d), prop_lb)
+        ub = np.minimum(np.broadcast_to(np.asarray(step.ub, dtype=float), d), prop_ub)
+        return repair_crossed_bounds(lb, ub)
+
     def _build_triangle_cuts(self) -> None:
         """
         Append lifted triangle cuts for every registered ReLU step.
 
         For each step, iterate over output index pairs ``(i, j)``: emit one
         cut whenever row ``i`` has mixed bounds (``arg_lb[i] < 0 <
-        arg_ub[i]``) and column ``j`` has finite upper bound. Bounds are
-        recomputed fresh from ``step.arg.bound_propagation()`` so they
-        reflect any leaf tightening since ``canonicalize_relu`` ran. See
+        arg_ub[i]``) and column ``j`` has finite upper bound. Bounds come
+        from :meth:`_relu_arg_bounds`: the OBBT-tightened ``step.lb``/``step.ub``
+        intersected with a fresh ``step.arg.bound_propagation()`` (which
+        reflects any leaf tightening since ``canonicalize_relu`` ran). See
         paper §4.5 eq 25/26 for the derivation.
         """
         for step in self._relu_steps:
             arg = step.arg
-            arg_lb, arg_ub = arg.bound_propagation()
+            arg_lb, arg_ub = self._relu_arg_bounds(step)
             A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(arg)
             b_vec = np.asarray(arg.const)
 
@@ -1479,10 +1498,9 @@ class SDP(Canonicalizer):
         Derivation:
         ``(E_ii (a_i^T x + b_i) + c_i − y_i)(u_j − a_j^T x − b_j) ≥ 0``
         where ``E_ii = u_i / (u_i − l_i)``, ``c_i = −E_ii · l_i``, and
-        ``(l_i, u_i, u_j)`` are taken from the freshly propagated bounds
-        ``arg_lb`` / ``arg_ub`` of the ReLU's input expression. Using
-        propagated bounds (rather than the cached ``step.lb``/``step.ub``)
-        keeps the cuts in sync with leaf tightening — see ``_build_triangle_cuts``.
+        ``(l_i, u_i, u_j)`` are taken from ``arg_lb`` / ``arg_ub``, the bounds
+        of the ReLU's input expression from :meth:`_relu_arg_bounds` (OBBT
+        bounds intersected with fresh propagation) — see ``_build_triangle_cuts``.
 
         Expanding gives 9 product groups that land in the lifted-matrix
         slots:
@@ -1564,14 +1582,14 @@ class SDP(Canonicalizer):
         ``y_i >= 0`` is intentionally omitted: the y-leaf box bound (lb >= 0)
         together with the PSD ``2x2`` minor already implies it.
 
-        Bounds are recomputed fresh from ``step.arg.bound_propagation()`` so the
-        cuts track any leaf tightening since ``canonicalize_relu`` ran (parity
-        with ``_build_triangle_cuts``).
+        Bounds come from :meth:`_relu_arg_bounds` (OBBT-tightened ``step.lb``/
+        ``step.ub`` intersected with fresh propagation; parity with
+        ``_build_triangle_cuts``).
         """
         n_dim = self.get_sdp_var_dim()
         for step in self._relu_steps:
             arg = step.arg
-            arg_lb, arg_ub = arg.bound_propagation()
+            arg_lb, arg_ub = self._relu_arg_bounds(step)
             A_mat, x_idx_bounds = self.linexpr_to_Amat_and_bounds(arg)
             b_vec = np.asarray(arg.const)
 

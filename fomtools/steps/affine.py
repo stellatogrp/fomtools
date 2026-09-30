@@ -5,6 +5,8 @@ import scipy.sparse as spa
 
 from fomtools.linearexpression import LinearExpression
 from fomtools.steps.step import Step
+from fomtools.utils.math_utils import repair_crossed_bounds
+from fomtools.utils.matrix_utils import is_identity_matrix
 
 
 class Affine(Step):
@@ -37,7 +39,12 @@ class Affine(Step):
         are relaxed to take continuous values.
     output_mat: np.matrix
         Coefficient matrix on the left-hand side of the operator equation.
+    obbt_output: bool
+        If true, OBBT is also run on the output leaf after the affine equality
+        is added to the OBBT LP (see ``StepDecomposer._process_primitive``).
     """
+
+    obbt_output: bool = True
 
     def __init__(
         self,
@@ -70,9 +77,23 @@ class Affine(Step):
         self.sync_output_bounds()
 
     def sync_output_bounds(self) -> None:
-        """Propagate current input bounds to output via output_mat_inverse."""
+        """
+        Tighten output bounds from the current input bounds.
+
+        Interval-propagates ``output_mat_inverse`` (built by linear solves, never an
+        explicit inverse). When ``output_mat`` is the identity, ``output == arg``, so
+        the (possibly OBBT-tightened) input box ``self.lb``/``self.ub`` also bounds the
+        output directly. ``output.update_bounds`` intersects with the existing output
+        bounds, so tightening applied earlier is never discarded. For general
+        ``output_mat`` the tightened input box is exploited by OBBT on the output leaf
+        (see ``StepDecomposer._process_primitive``).
+        """
         out_lb, out_ub = self.output_mat_inverse.bound_propagation()
+        if is_identity_matrix(self.output_mat):
+            out_lb = np.maximum(out_lb, self.lb)
+            out_ub = np.minimum(out_ub, self.ub)
         self.output.update_bounds(lb=out_lb, ub=out_ub)
+        self.output.lb, self.output.ub = repair_crossed_bounds(self.output.lb, self.output.ub)
 
     @cached_property
     def output_mat_inverse(self) -> LinearExpression:

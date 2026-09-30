@@ -14,6 +14,9 @@ They verify that, with the per-primitive OBBT canonicalization hook:
 import numpy as np
 import pytest
 
+from fomtools.canonicalizers.sdp import SDP
+from fomtools.steps import Affine
+from fomtools.utils.math_utils import repair_crossed_bounds
 from fomtools.verifier import Verifier
 from tests.conftest import (
     SDP_SOLVERS,
@@ -316,6 +319,111 @@ def test_affine_obbt_tightens_when_constrained(solver):
         f"lb={affine_step.lb}, ub={affine_step.ub} vs "
         f"arg_lb={arg_lb}, arg_ub={arg_ub}."
     )
+
+
+# --------------------------------------------------------------------------
+# 8. SDP uses OBBT bounds: ReLU cuts, Affine output leaves, crossed bounds.
+# --------------------------------------------------------------------------
+
+
+def build_relu_linsolve_chain(obbt, solver, *, method="mip", K=2, identity=False, **kwargs):
+    """ReLU followed by an implicit linear solve ``M w = relu(.) - z`` per iteration."""
+    np.random.seed(0)
+    n = m = 3
+    t = 0.5
+    A = np.random.normal(size=(m, n))
+    W = np.eye(n) - t * A.T @ A
+    G = t * A.T
+    M = np.eye(n) if identity else np.eye(n) + t * A.T @ A
+    params = mip_params(solver) if method == "mip" else None
+    v = Verifier(method=method, solver=solver, obbt_solver=obbt, params=params, **kwargs)
+    z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
+    b = v.add_param(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
+    iterates = [z]
+    for _ in range(K):
+        y = v.step.relu(arg=W @ z + G @ b)
+        z = v.step.implicit_linear(arg=y - z, output_mat=M)
+        iterates.append(z)
+    return v, iterates
+
+
+def _affine_steps(v):
+    return [s for s in v.steps if isinstance(s, Affine)]
+
+
+def test_repair_crossed_bounds():
+    lb = np.array([0.0, 2e-17, -1.0])
+    ub = np.array([1.0, 0.0, -1.0])
+    new_lb, new_ub = repair_crossed_bounds(lb, ub)
+    np.testing.assert_array_equal(new_lb, [0.0, 0.0, -1.0])
+    np.testing.assert_array_equal(new_ub, [1.0, 2e-17, -1.0])
+
+
+@pytest.mark.parametrize("identity", [True, False])
+def test_obbt_tightens_affine_output_leaves(identity):
+    """Affine output leaves use the tightened input box (identity ``M``) or output OBBT."""
+    v_no, _ = build_relu_linsolve_chain(None, "gurobi", K=3, identity=identity)
+    v_ob, _ = build_relu_linsolve_chain("gurobi", "gurobi", K=3, identity=identity)
+
+    tightened = False
+    for s_no, s_ob in zip(_affine_steps(v_no), _affine_steps(v_ob)):
+        out = s_ob.output
+        assert np.all(out.lb <= out.ub)
+        w_no = s_no.output.ub - s_no.output.lb
+        w_ob = out.ub - out.lb
+        assert np.all(w_ob <= w_no + TEST_EPS)  # never widens
+        tightened |= bool(np.any(w_ob < w_no - 1e-3))
+        if identity:
+            # output == arg, so the OBBT-tightened input box bounds the output.
+            assert np.all(out.lb >= s_ob.lb - TEST_EPS)
+            assert np.all(out.ub <= s_ob.ub + TEST_EPS)
+    assert tightened, "OBBT did not tighten any Affine output leaf"
+
+
+def test_obbt_affine_output_preserves_mip_optimum():
+    v_no, it_no = build_relu_linsolve_chain(None, "gurobi", K=3)
+    v_ob, it_ob = build_relu_linsolve_chain("gurobi", "gurobi", K=3)
+    opt_no = _mip_optimum(v_no, it_no)
+    opt_ob = _mip_optimum(v_ob, it_ob)
+    assert opt_ob == pytest.approx(opt_no, abs=1e-4)
+
+
+@pytest.mark.parametrize("sdp_solver", SDP_SOLVERS)
+def test_obbt_tightens_sdp_with_relu_cuts(sdp_solver):
+    """With ReLU cuts on, OBBT strictly lowers the SDP bound and stays above the MIP."""
+    K = 3
+    cuts = {"triangle_cuts": True, "relu_envelope_cuts": True}
+    opts = []
+    # The no-OBBT baseline (wide IBP bounds) is too poorly scaled for the cvxpy
+    # Clarabel wrapper, so it always runs on native Clarabel.
+    for obbt, solver in [(None, "clarabel"), ("highs", sdp_solver)]:
+        v, it = build_relu_linsolve_chain(obbt, solver, method="sdp", K=K, **cuts)
+        v.set_objective_norm(it[-1] - it[-2], 2)
+        opts.append(v.solve())
+    opt_no, opt_ob = opts
+
+    v_mip, it_mip = build_relu_linsolve_chain("gurobi", "gurobi", K=K)
+    v_mip.set_objective_norm(it_mip[-1] - it_mip[-2], 2)
+    opt_mip = v_mip.solve()
+
+    assert opt_ob < opt_no - 1.0
+    assert opt_ob >= opt_mip - 1e-3
+
+
+def test_relu_cut_bounds_use_obbt_bounds():
+    """The ReLU cut builders see the OBBT-tightened ``step.lb``/``step.ub``."""
+    v, _ = build_relu_linsolve_chain(
+        "highs", "clarabel", method="sdp", K=3, triangle_cuts=True, relu_envelope_cuts=True
+    )
+    tighter = False
+    for step in v.canonicalizer._relu_steps:
+        lb, ub = SDP._relu_arg_bounds(step)
+        prop_lb, prop_ub = step.arg.bound_propagation()
+        np.testing.assert_allclose(lb, np.maximum(step.lb, prop_lb))
+        np.testing.assert_allclose(ub, np.minimum(step.ub, prop_ub))
+        assert np.all(lb <= ub)
+        tighter |= bool(np.any(lb > prop_lb + 1e-3) or np.any(ub < prop_ub - 1e-3))
+    assert tighter, "OBBT bounds were never tighter than propagation"
 
 
 # --------------------------------------------------------------------------
