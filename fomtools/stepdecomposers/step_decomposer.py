@@ -220,7 +220,9 @@ class StepDecomposer:
             )
         return proxer(self, prox_function, arg, gamma)
 
-    def _decompose_saturatedlinear_to_relus(self, step: SaturatedLinear) -> LinearExpression:
+    def _decompose_saturatedlinear_to_relus(
+        self, step: SaturatedLinear, return_relus: bool = False
+    ) -> LinearExpression | tuple[LinearExpression, Relu, Relu]:
         """
         Decompose saturated linear into ReLU operations.
 
@@ -236,12 +238,16 @@ class StepDecomposer:
         ----------
         step : SaturatedLinear
             The saturated linear step to decompose.
+        return_relus : bool, default False
+            If True, also return the two processed ReLU steps, whose input bounds
+            carry any OBBT tightening (used by the SDP hull inequalities).
 
         Returns
         -------
-        LinearExpression
+        LinearExpression or tuple
             A composite expression representing the saturated linear
-            output as relu(x - l) - relu(x - u) + l.
+            output as relu(x - l) - relu(x - u) + l, followed by
+            ``relu_lower`` and ``relu_upper`` when ``return_relus`` is True.
         """
         x_lb, x_ub = step.lb, step.ub
 
@@ -271,7 +277,10 @@ class StepDecomposer:
         output_upper = self.process_step(relu_upper)
 
         # satlin(x, l, u) = relu(x - l) - relu(x - u) + l
-        return output_lower - output_upper + step.l
+        z = output_lower - output_upper + step.l
+        if return_relus:
+            return z, relu_lower, relu_upper
+        return z
 
     def _process_primitive(self, step: Step) -> LinearExpression:
         """

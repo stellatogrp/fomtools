@@ -1745,9 +1745,10 @@ def _pep_sdp_value(build, **cut_kwargs):
     "problem,min_cross,min_subgrad,min_both,complementary",
     [
         # thresholds are conservative vs measured (cross 97.7%, subgrad 97.7%,
-        # both 98.7% on NNLS; cross 88.7%, subgrad 80.4%, both 95.0% on ISTA).
+        # both 98.7% on NNLS). The ISTA instance moved to
+        # test_softthreshold_hull_closes_ista_gap: the soft-threshold hull rows now
+        # close its gap before any PEP cut is added.
         ("nnls", 0.85, 0.65, 0.85, False),
-        ("ista", 0.70, 0.55, 0.85, True),
     ],
 )
 def test_pep_cuts_close_gap_to_mip(problem, min_cross, min_subgrad, min_both, complementary):
@@ -1787,6 +1788,30 @@ def test_pep_cuts_close_gap_to_mip(problem, min_cross, min_subgrad, min_both, co
         # ISTA: combining strictly beats either family (>= 10% smaller residual gap).
         assert (both - mip) <= 0.9 * (cross - mip) + TEST_EPS
         assert (both - mip) <= 0.9 * (subgrad - mip) + TEST_EPS
+
+
+def test_softthreshold_hull_closes_ista_gap():
+    """Regression: the soft-threshold hull rows close the ISTA SDP-to-MIP gap.
+
+    On this instance the bare ReLU decomposition gave 5.39 (squared two-norm,
+    exact 0.985), and 1.21 with both PEP cut families. With the hull rows the base
+    relaxation is within 10% of exact, and the PEP cuts stay valid and never
+    loosen it.
+    """
+    pytest.importorskip("gurobipy", reason="exact two-norm MIP requires Gurobi")
+    build = _pep_mixed_builder("ista")
+
+    vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver=None, params=dict(_PEP_GUROBI))
+    vp_mip.set_objective_norm(build(vp_mip), 2)
+    mip = vp_mip.solve()
+
+    base = _pep_sdp_value(build)
+    both = _pep_sdp_value(build, cross_cut=True, subgrad_mono_cut=True)
+
+    for label, v in (("base", base), ("both", both)):
+        assert v >= mip - TEST_EPS, f"{label}: sdp {v} < mip {mip} (invalid cut)"
+    assert base <= 1.1 * mip, f"hull rows left a {base / mip - 1:.1%} gap"
+    assert both <= base + TEST_EPS
 
 
 # ============================================================
@@ -1860,7 +1885,17 @@ def test_box_cuts_registered_and_emitted():
     P, q, lo, hi, t = _boxpgd_mixed_data()
 
     def _n_cuts(**flags):
-        vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, **flags)
+        # The ineq_* families are off so only cross/box cuts are counted: the
+        # satlin hull rows are inequality constraints and would add their own.
+        vp = Verifier(
+            method="sdp",
+            solver="clarabel",
+            obbt_solver=None,
+            ineq_product_cuts=False,
+            ineq_box_cuts=False,
+            ineq_square_cuts=False,
+            **flags,
+        )
         vp.set_objective_norm(_build_boxpgd_mixed(vp, 2, P, q, lo, hi, t), 2)
         assert len(vp.canonicalizer._box_prox_steps) == 2  # two satlin steps registered
         vp.solve()
