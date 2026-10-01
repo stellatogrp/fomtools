@@ -7,6 +7,7 @@ from fomtools.canonicalizers.canonicalizer import Canonicalizer
 from fomtools.constraint import Constraint, is_binary_free
 from fomtools.linearexpression import LinearExpression
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
+from fomtools.utils.math_utils import repair_crossed_bounds
 
 log = logging.getLogger(__name__)
 
@@ -171,11 +172,12 @@ class OBBTHandler(Canonicalizer):
         # reset objective
         self.solver.set_objective(0)
 
-        # Tolerance guards against minor LP-solver inconsistency between the
-        # min and max solves for the same index (e.g. lb_out slightly above
-        # ub_out); the intersection below clamps the bounds either way.
-        assert np.all(lb_out <= ub_out + 1e-7)
-        return np.maximum(lb, lb_out), np.minimum(ub, ub_out)
+        # Both the raw LP bounds (min/max solves for the same index) and their
+        # intersection with the input bounds can cross by solver noise (e.g.
+        # input ub = 0, LP lb = 2e-17); repair so downstream bound_propagation
+        # does not raise. Crossings beyond the tolerance raise (genuine bug).
+        lb_out, ub_out = repair_crossed_bounds(lb_out, ub_out)
+        return repair_crossed_bounds(np.maximum(lb, lb_out), np.minimum(ub, ub_out))
 
     # ------------------------------------------------------------------
     # Linear (binary-free) canonicalization of steps into the OBBT LP.

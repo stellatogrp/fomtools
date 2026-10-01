@@ -25,6 +25,11 @@ class Step:
     skip_obbt : bool
         If true, OBBT bound tightening is skipped for this step type.
         Override in subclasses that compute bounds analytically.
+    obbt_output : bool
+        If true, OBBT is also run on the step's output leaves once the step's
+        relaxation is in the OBBT LP. Enabled for :class:`Affine` with non-identity
+        ``output_mat``, whose output bounds cannot otherwise see the tightened
+        input box without ``M^{-1}``.
 
     Notes
     -----
@@ -38,6 +43,7 @@ class Step:
     """
 
     skip_obbt: bool = False
+    obbt_output: bool = False
 
     def __init__(self, arg: LinearExpression, relax_binary_vars: bool = False):
         self.arg = arg

@@ -42,3 +42,19 @@ def _sym_error(P) -> float:
         diff = diff.tocoo()
         return 0.0 if diff.nnz == 0 else float(np.abs(diff.data).max())
     return float(np.abs(np.asarray(diff, dtype=float)).max())
+
+
+def is_identity_matrix(P) -> bool:
+    """True if ``P`` is ``None`` or (numerically) the identity (dense or sparse).
+
+    ``P`` is expected to be 2-D; non-square (or 1-D) inputs return ``False``.
+    """
+    if P is None:
+        return True
+    n = P.shape[0]
+    if P.shape != (n, n):
+        return False
+    if spa.issparse(P):
+        diff = P - spa.eye(n, format="csr")
+        return diff.nnz == 0 or float(np.abs(diff).max()) <= 1e-12
+    return np.allclose(np.asarray(P, dtype=float), np.eye(n))

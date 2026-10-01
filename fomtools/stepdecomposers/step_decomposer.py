@@ -35,19 +35,9 @@ from fomtools.proxable_functions import (
 from fomtools.proxable_functions.total_variation_1d import _SHORT_SIGNAL_MSG, diff_matrix
 from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
 from fomtools.steps.step import Step
+from fomtools.utils.matrix_utils import is_identity_matrix
 
 log = logging.getLogger(__name__)
-
-
-def _is_identity_matrix(P) -> bool:
-    """True if ``P`` is ``None`` or (numerically) the identity (dense or sparse)."""
-    if P is None:
-        return True
-    n = P.shape[0]
-    if spa.issparse(P):
-        diff = P - spa.eye(n, format="csr")
-        return diff.nnz == 0 or float(np.abs(diff).max()) <= 1e-12
-    return np.allclose(np.asarray(P, dtype=float), np.eye(n))
 
 
 def _finite_bounds(expr: LinearExpression) -> tuple[np.ndarray, np.ndarray]:
@@ -328,8 +318,6 @@ class StepDecomposer:
         for leaf in step.output_leaves:
             self.register_var(leaf, var_type="param")
 
-        self.canonicalizer.canonicalize(step)
-
         # Add this primitive's binary-free relaxation to the OBBT LP for use by
         # subsequent steps. Affine equalities are added too (skip_obbt only
         # gates input tightening, not the relaxation). If a step type has no
@@ -345,7 +333,30 @@ class StepDecomposer:
                     type(step).__name__,
                 )
 
+        # Output OBBT (Affine): with ``output_mat @ output == arg`` now in the LP,
+        # tighten the fresh output leaves directly. This lets a non-identity
+        # ``output_mat`` benefit from the tightened input box without forming its
+        # inverse. Runs before the main canonicalize so it sees the final bounds.
+        if obbt is not None and step.obbt_output and not step.skip_obbt:
+            for leaf in step.output_leaves:
+                self._obbt_leaf(obbt, leaf)
+
+        self.canonicalizer.canonicalize(step)
+
         return step.output
+
+    def _obbt_leaf(self, obbt, leaf: LinearExpression) -> None:
+        """
+        Run OBBT on a registered leaf and push the result to the leaf, the main
+        canonicalizer, and the OBBT LP (mirrors ``Verifier._tighten_constraint_bounds``).
+        """
+        result = obbt.obbt(leaf, leaf.lb, leaf.ub)
+        if result is None:
+            return
+        new_lb, new_ub = result
+        leaf.update_bounds(new_lb, new_ub)
+        self.canonicalizer.update_bounds(leaf, leaf.lb, leaf.ub)
+        obbt.update_bounds(leaf, leaf.lb, leaf.ub)
 
     @staticmethod
     def _to_satlin_bound(value, ndim: int):
@@ -579,7 +590,7 @@ class StepDecomposer:
             nu = self.add_iterate(p, lb=nu_lb, ub=nu_ub)
             stat = stat + A_eq.T @ nu
 
-        identity = _is_identity_matrix(P)
+        identity = is_identity_matrix(P)
 
         # Primal bounds for the fresh iterate ``x``.
         if primal_bounds is not None:
