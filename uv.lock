@@ -725,9 +725,9 @@ name = "fomtools"
 source = { editable = "." }
 dependencies = [
     { name = "cvxpy" },
-    { name = "gurobipy" },
     { name = "highspy" },
     { name = "numpy" },
+    { name = "pydantic" },
     { name = "pyyaml" },
     { name = "scipy" },
 ]
@@ -736,35 +736,38 @@ dependencies = [
 codegen = [
     { name = "claude-agent-sdk" },
     { name = "openai-codex" },
-    { name = "pydantic" },
 ]
 cvxpygen = [
     { name = "cvxpygen" },
     { name = "osqp" },
 ]
 dev = [
+    { name = "gurobipy" },
     { name = "hydra-core" },
     { name = "ipdb" },
     { name = "networkx" },
     { name = "pandas" },
+    { name = "pip" },
     { name = "pre-commit" },
-    { name = "pydantic" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "ruff-lsp" },
 ]
 docs = [
+    { name = "gurobipy" },
     { name = "marimo" },
     { name = "matplotlib" },
     { name = "mkdocs" },
     { name = "mkdocs-marimo" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings-python" },
-    { name = "pydantic" },
     { name = "pymdown-extensions" },
 ]
 gpu = [
     { name = "cupy-cuda12x" },
+]
+gurobi = [
+    { name = "gurobipy" },
 ]
 nn = [
     { name = "flax" },
@@ -779,7 +782,9 @@ requires-dist = [
     { name = "cvxpy" },
     { name = "cvxpygen", marker = "extra == 'cvxpygen'", specifier = ">=1.0,<2" },
     { name = "flax", marker = "extra == 'nn'" },
-    { name = "gurobipy", specifier = ">=12.0.1" },
+    { name = "fomtools", extras = ["gurobi"], marker = "extra == 'dev'" },
+    { name = "fomtools", extras = ["gurobi"], marker = "extra == 'docs'" },
+    { name = "gurobipy", marker = "extra == 'gurobi'", specifier = ">=12.0.1" },
     { name = "highspy" },
     { name = "hydra-core", marker = "extra == 'dev'" },
     { name = "ipdb", marker = "extra == 'dev'" },
@@ -795,10 +800,9 @@ requires-dist = [
     { name = "openai-codex", marker = "extra == 'codegen'" },
     { name = "osqp", marker = "extra == 'cvxpygen'" },
     { name = "pandas", marker = "extra == 'dev'" },
+    { name = "pip", marker = "extra == 'dev'" },
     { name = "pre-commit", marker = "extra == 'dev'" },
-    { name = "pydantic", marker = "extra == 'codegen'" },
-    { name = "pydantic", marker = "extra == 'dev'" },
-    { name = "pydantic", marker = "extra == 'docs'" },
+    { name = "pydantic" },
     { name = "pymdown-extensions", marker = "extra == 'docs'" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pyyaml" },
@@ -807,7 +811,7 @@ requires-dist = [
     { name = "scipy" },
     { name = "torch", marker = "extra == 'nn'" },
 ]
-provides-extras = ["gpu", "codegen", "cvxpygen", "dev", "nn", "docs"]
+provides-extras = ["gurobi", "gpu", "codegen", "cvxpygen", "dev", "nn", "docs"]
 
 [[package]]
 name = "fonttools"
@@ -2435,6 +2439,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c9/e4/4b64a97d71b2a83158134abbb2f5bd3f8a2ea691361282f010998f339ec7/pillow-12.2.0-cp314-cp314t-win32.whl", hash = "sha256:6bb77b2dcb06b20f9f4b4a8454caa581cd4dd0643a08bacf821216a16d9c8354", size = 6482084, upload-time = "2026-04-01T14:45:47.568Z" },
     { url = "https://files.pythonhosted.org/packages/ba/13/306d275efd3a3453f72114b7431c877d10b1154014c1ebbedd067770d629/pillow-12.2.0-cp314-cp314t-win_amd64.whl", hash = "sha256:6562ace0d3fb5f20ed7290f1f929cae41b25ae29528f2af1722966a0a02e2aa1", size = 7225152, upload-time = "2026-04-01T14:45:50.032Z" },
     { url = "https://files.pythonhosted.org/packages/ff/6e/cf826fae916b8658848d7b9f38d88da6396895c676e8086fc0988073aaf8/pillow-12.2.0-cp314-cp314t-win_arm64.whl", hash = "sha256:aa88ccfe4e32d362816319ed727a004423aab09c5cea43c01a4b435643fa34eb", size = 2556579, upload-time = "2026-04-01T14:45:52.529Z" },
+]
+
+[[package]]
+name = "pip"
+version = "26.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ae/15/4500e320e6b101ec3b719ae85b697d9940b6cda672bc555bd6016fc60c6f/pip-26.2.1.tar.gz", hash = "sha256:f6ad667e89a1fe78046c8f13232b247200f5258d7828f3f7883d660878e0813f", size = 1848877, upload-time = "2026-08-04T22:51:14.148Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl", hash = "sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e", size = 1816632, upload-time = "2026-08-04T22:51:12.472Z" },
 ]
 
 [[package]]
