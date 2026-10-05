@@ -2,13 +2,18 @@ from fomtools.solvers.solver import Solver
 from fomtools.solvers.mip_solver import MIPSolver
 from fomtools.solvers.sdp_solver import SDPSolver
 from fomtools.solvers.highs import HiGHSSolver
-from fomtools.solvers.clarabel import ClarabelSolver
-from fomtools.solvers.cuclarabel import CuClarabelSolver
+
+_LAZY = {
+    "GurobiSolver": "fomtools.solvers.gurobi",
+    "ClarabelSolver": "fomtools.solvers.clarabel",
+    "CuClarabelSolver": "fomtools.solvers.cuclarabel",
+}
 
 
 def __getattr__(name):
-    if name == "GurobiSolver":
-        from fomtools.solvers.gurobi import GurobiSolver
+    if name in _LAZY:
+        import importlib
 
-        return GurobiSolver
+        mod = importlib.import_module(_LAZY[name])
+        return getattr(mod, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
