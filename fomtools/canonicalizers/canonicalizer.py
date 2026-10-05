@@ -5,7 +5,7 @@ import numpy as np
 
 from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
-from fomtools.solvers import gurobi, highs
+from fomtools.solvers import highs
 from fomtools.solvers.solver import Solver
 from fomtools.steps.step import Step
 
@@ -85,7 +85,9 @@ class Canonicalizer:
         """
         match solver.lower():
             case "gurobi" | "grb":
-                return gurobi.GurobiSolver(solver_params)
+                from fomtools.solvers.gurobi import GurobiSolver
+
+                return GurobiSolver(solver_params)
             case "highs":
                 return highs.HiGHSSolver(solver_params)
             case "clarabel" | "cvxpy" | "cvxpy_sdp" | "cuclarabel":

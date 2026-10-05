@@ -18,7 +18,6 @@ authors = [
 ]
 
 dependencies = [
-       "gurobipy>=12.0.1",
        "cvxpy",
        "highspy",
        "numpy",
@@ -37,6 +36,7 @@ include = ["fomtools*"]
 "fomtools.codegen.agent" = ["agents.yaml"]
 
 [project.optional-dependencies]
+gurobi = ["gurobipy>=12.0.1"]
 gpu = ["cupy-cuda12x"]
 
 # Code generation. The Claude Agent SDK is only needed to *run* the LLM coding
@@ -51,6 +51,7 @@ codegen = ["claude-agent-sdk", "openai-codex", "pydantic"]
 cvxpygen = ["cvxpygen>=1.0,<2", "osqp"]
 
 dev = [
+       "fomtools[gurobi]",
        "pytest",
        "pre-commit",
        "ruff",

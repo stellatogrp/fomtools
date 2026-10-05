@@ -48,7 +48,7 @@ class Verifier(object):
         theory_func=None,
         method="mip",
         solver="gurobi",
-        obbt_solver="gurobi",
+        obbt_solver="auto",
         params=None,
         rlt_cuts=False,
         triangle_cuts=False,
@@ -73,9 +73,11 @@ class Verifier(object):
             Canonicalization method for the verification problem.
         solver : str, default "gurobi"
             Solver backend identifier (e.g., "gurobi", "highs", "clarabel").
-        obbt_solver : str or None, default "gurobi"
-            Solver used by the OBBT bound-tightening handler. Disable with
-            ``None``.
+        obbt_solver : str or None, default "auto"
+            Solver used by the OBBT bound-tightening handler. ``"auto"``
+            (the default) uses ``solver`` when it is a valid OBBT backend
+            (Gurobi or HiGHS) and disables OBBT otherwise. Disable
+            explicitly with ``None``.
         params : dict, optional
             Solver-specific parameters forwarded to the canonicalizer. Only the
             verbosity key (``OutputFlag`` for Gurobi, ``output_flag`` for HiGHS)
@@ -146,6 +148,9 @@ class Verifier(object):
             cross_cut=cross_cut,
             subgrad_mono_cut=subgrad_mono_cut,
         )
+        if obbt_solver == "auto":
+            _OBBT_SOLVERS = {"gurobi", "grb", "highs"}
+            obbt_solver = solver if solver.lower() in _OBBT_SOLVERS else None
         if obbt_solver and obbt_params is None:
             obbt_params = self._obbt_params_from(params, obbt_solver)
         self.obbt_handler = (
