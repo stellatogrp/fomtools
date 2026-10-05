@@ -68,6 +68,7 @@ dev = [
 nn = ["torch", "jax<0.11.2", "flax"]
 
 docs = [
+       "fomtools[gurobi]",
        "marimo",
        "matplotlib",
        "mkdocs",
