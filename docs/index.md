@@ -18,7 +18,7 @@ n = 3           # dimension of the iterate
 step_size = 0.01
 q_offset = 1.0
 
-vp = Verifier(solver="gurobi") # initialize verifier
+vp = Verifier() # initialize verifier (uses HiGHS by default)
 
 z = [None] * (K + 1)
 # set up initial iterate
