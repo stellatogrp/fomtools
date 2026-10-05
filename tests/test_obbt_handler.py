@@ -467,7 +467,7 @@ def test_relu_cut_bounds_use_obbt_bounds():
 
 
 def test_obbt_inherits_output_flag_only():
-    v = Verifier(params={"OutputFlag": 0, "TimeLimit": 5})
+    v = Verifier(solver="gurobi", params={"OutputFlag": 0, "TimeLimit": 5})
     model = v.obbt_handler.solver.model
     assert model.Params.OutputFlag == 0
     # Main-solve options are not forwarded to the OBBT LPs.
@@ -475,7 +475,7 @@ def test_obbt_inherits_output_flag_only():
 
 
 def test_obbt_params_override():
-    v = Verifier(params={"OutputFlag": 0}, obbt_params={"OutputFlag": 1})
+    v = Verifier(solver="gurobi", params={"OutputFlag": 0}, obbt_params={"OutputFlag": 1})
     assert v.obbt_handler.solver.model.Params.OutputFlag == 1
 
 
