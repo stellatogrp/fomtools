@@ -180,7 +180,7 @@ class GurobiSolver(MIPSolver):
         )
 
     def expression_to_solver(self, expression: LinearExpression) -> gp.MLinExpr:
-        """
+        r"""
         Convert a ``LinearExpression`` into a Gurobi ``MLinExpr``.
 
         Given a ``LinearExpression`` object with a decomposition of the form

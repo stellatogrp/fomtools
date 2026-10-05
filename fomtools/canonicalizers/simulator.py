@@ -842,7 +842,7 @@ class Simulator(Canonicalizer):
     def _register_statistics(
         self, residuals: cp.ndarray, delta: float, epsilon: float, total_time: float
     ):
-        """
+        r"""
         Compute and register summary statistics from simulation residuals.
 
         Parameters
