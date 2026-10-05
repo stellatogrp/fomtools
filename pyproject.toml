@@ -31,6 +31,7 @@ fomtools-codegen = "fomtools.codegen.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["fomtools*"]
 
 [tool.setuptools.package-data]
 "fomtools.codegen.agent" = ["agents.yaml"]
