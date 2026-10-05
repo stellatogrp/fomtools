@@ -17,6 +17,57 @@ jobs:
       - name: ruff
         uses: chartboost/ruff-action@v1
 
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.15"
+
+      - name: Build wheel
+        run: uv build --wheel
+
+      - name: Install into clean venv (no extras)
+        run: |
+          uv venv /tmp/pkg-test
+          uv pip install --python /tmp/pkg-test/bin/python dist/*.whl
+
+      - name: Smoke-test import and CLI
+        run: |
+          /tmp/pkg-test/bin/python -c "import fomtools; print(fomtools.__version__)"
+          /tmp/pkg-test/bin/fomtools-codegen --help
+
+      - name: Verify HiGHS default works
+        run: |
+          /tmp/pkg-test/bin/python -c "
+          from fomtools.verifier import Verifier
+          v = Verifier()
+          assert v.canonicalizer.solver.__class__.__name__ == 'HiGHSSolver'
+          print('HiGHS default: OK')
+          "
+
+      - name: Verify Gurobi ImportError message
+        run: |
+          /tmp/pkg-test/bin/python -c "
+          import sys
+          from fomtools.verifier import Verifier
+          try:
+              Verifier(solver='gurobi')
+              sys.exit('expected ImportError')
+          except ImportError as e:
+              assert 'fomtools[gurobi]' in str(e)
+              print(f'ImportError hint: OK ({e})')
+          "
+
   test:
     runs-on: ubuntu-latest
     strategy:
