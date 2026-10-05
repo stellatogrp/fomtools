@@ -47,7 +47,7 @@ class Verifier(object):
         self,
         theory_func=None,
         method="mip",
-        solver="gurobi",
+        solver="highs",
         obbt_solver="auto",
         params=None,
         rlt_cuts=False,
@@ -71,8 +71,8 @@ class Verifier(object):
             Theoretical convergence function used by ``theory_bound``.
         method : {"mip", "sdp", "simulator"}, default "mip"
             Canonicalization method for the verification problem.
-        solver : str, default "gurobi"
-            Solver backend identifier (e.g., "gurobi", "highs", "clarabel").
+        solver : str, default "highs"
+            Solver backend identifier (e.g., "highs", "gurobi", "clarabel").
         obbt_solver : str or None, default "auto"
             Solver used by the OBBT bound-tightening handler. ``"auto"``
             (the default) uses ``solver`` when it is a valid OBBT backend

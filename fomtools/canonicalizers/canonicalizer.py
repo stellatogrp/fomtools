@@ -31,7 +31,7 @@ class Canonicalizer:
 
     _CANONICALIZERS: ClassVar[dict] = {}
 
-    def __init__(self, solver_params: dict = None, solver: str = "gurobi"):
+    def __init__(self, solver_params: dict = None, solver: str = "highs"):
         """
         Initialize an instance of :class:`Method`.
 
@@ -85,8 +85,13 @@ class Canonicalizer:
         """
         match solver.lower():
             case "gurobi" | "grb":
-                from fomtools.solvers.gurobi import GurobiSolver
-
+                try:
+                    from fomtools.solvers.gurobi import GurobiSolver
+                except ImportError:
+                    raise ImportError(
+                        "gurobipy is required for solver='gurobi'. "
+                        "Install it with: pip install fomtools[gurobi]"
+                    ) from None
                 return GurobiSolver(solver_params)
             case "highs":
                 return highs.HiGHSSolver(solver_params)
