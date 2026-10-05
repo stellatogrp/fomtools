@@ -41,6 +41,8 @@ STEP_CLASSES = {
     "soft_threshold": SoftThreshold,
 }
 
+_OBBT_SOLVERS = {"gurobi": "OutputFlag", "grb": "OutputFlag", "highs": "output_flag"}
+
 
 class Verifier(object):
     def __init__(
@@ -149,7 +151,6 @@ class Verifier(object):
             subgrad_mono_cut=subgrad_mono_cut,
         )
         if obbt_solver == "auto":
-            _OBBT_SOLVERS = {"gurobi", "grb", "highs"}
             obbt_solver = solver if solver.lower() in _OBBT_SOLVERS else None
         if obbt_solver and obbt_params is None:
             obbt_params = self._obbt_params_from(params, obbt_solver)
@@ -314,13 +315,9 @@ class Verifier(object):
         """
         if not params:
             return None
-        match obbt_solver.lower():
-            case "gurobi" | "grb":
-                key = "OutputFlag"
-            case "highs":
-                key = "output_flag"
-            case _:
-                return None
+        key = _OBBT_SOLVERS.get(obbt_solver.lower())
+        if key is None:
+            return None
         return {key: params[key]} if key in params else None
 
     @staticmethod
