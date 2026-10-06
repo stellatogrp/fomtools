@@ -183,12 +183,12 @@ def test_softthreshold_single_step_branches_exact():
     lam = 1.0
     # (lb, ub) -> case: exact pieces + the three uncertain branches.
     boxes = [
-        (1.5, 3.0),    # right (lb >= lam)
+        (1.5, 3.0),  # right (lb >= lam)
         (-3.0, -1.5),  # left (ub <= -lam)
-        (-0.5, 0.5),   # zero (-lam <= lb <= ub <= lam)
-        (-2.0, 2.0),   # full-mixed
-        (-0.5, 2.0),   # right-or-middle
-        (-2.0, 0.5),   # left-or-middle (the buggy case)
+        (-0.5, 0.5),  # zero (-lam <= lb <= ub <= lam)
+        (-2.0, 2.0),  # full-mixed
+        (-0.5, 2.0),  # right-or-middle
+        (-2.0, 0.5),  # left-or-middle (the buggy case)
     ]
     for lb, ub in boxes:
         for sense in (1.0, -1.0):  # try to push the optimum either way
@@ -206,8 +206,7 @@ def test_softthreshold_single_step_branches_exact():
             arg = np.atleast_1d(vp.get_solution_value(x))
             out = np.atleast_1d(vp.get_solution_value(y))
             assert np.allclose(out, _st(arg, lam), atol=TEST_EPS), (
-                f"box=({lb},{ub}) sense={sense}: arg={arg} out={out} "
-                f"true={_st(arg, lam)}"
+                f"box=({lb},{ub}) sense={sense}: arg={arg} out={out} true={_st(arg, lam)}"
             )
 
 
@@ -281,7 +280,9 @@ def _build_boxpgd(seed, K, obbt_solver=None):
     hi = np.array([0.5, 1.0])
     t = 0.5
 
-    vp = Verifier(method="mip", solver="gurobi", obbt_solver=obbt_solver, params=dict(GUROBI_SILENT))
+    vp = Verifier(
+        method="mip", solver="gurobi", obbt_solver=obbt_solver, params=dict(GUROBI_SILENT)
+    )
     q_param = vp.add_param(n, lb=q - 0.5, ub=q + 0.5)
     z = [vp.add_iterate(n, lb=-1.5, ub=1.5)]  # straddles [lo, hi] faces
     for k in range(K):

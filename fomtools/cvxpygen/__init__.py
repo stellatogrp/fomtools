@@ -19,6 +19,13 @@ Typical use::
     problem.register_solve("CPG", cpg_solve)
     problem.solve(method="CPG")
 
+The FOM behind ``fom=`` may be one of the built-ins (``"admm"``,
+``"relaxed_admm"``, ``"pdhg"``) or a builder of your own, generated down any of
+the three code-generation paths — one stationary iteration repeated, a method
+whose varying coefficients are declared and tabulated, or a whole recorded run
+emitted as a single pass. See :mod:`fomtools.cvxpygen.builders` and the
+tutorial for how a builder declares which.
+
 Requires the optional dependencies ``cvxpy``, ``cvxpygen``, and ``osqp``
 (``pip install 'fomtools[cvxpygen]'``). All imports of cvxpygen are lazy so
 that importing :mod:`fomtools.cvxpygen` itself never fails.

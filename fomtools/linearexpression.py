@@ -726,9 +726,10 @@ def stack(exprs: list[LinearExpression]) -> LinearExpression:
         for leaf, coeff in e.decomposition_dict.items():
             composed = sel @ coeff
             if leaf in decomposition_dict:
-                decomposition_dict[leaf] = decomposition_dict[leaf] + composed
-            else:
-                decomposition_dict[leaf] = composed
+                composed = decomposition_dict[leaf] + composed
+            # Keep sparse + sparse sparse; anything touching a dense operand becomes a
+            # plain ndarray (sparse + ndarray returns np.matrix, which breaks bound_propagation)
+            decomposition_dict[leaf] = composed if spa.issparse(composed) else np.asarray(composed)
         const[offset : offset + e.ndim] = e.const
         offset += e.ndim
 

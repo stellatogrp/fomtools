@@ -61,6 +61,7 @@ class Verifier(object):
         full_psd_cone=False,
         cross_cut=False,
         subgrad_mono_cut=False,
+        obbt_params=None,
     ):
         """
         Initialize a Verifier instance.
@@ -126,6 +127,9 @@ class Verifier(object):
             monotonicity cuts. On the orthant the prox form reduces to
             ``cross_cut``; on soft-thresholding it is a distinct coupling. No effect
             for ``method != "sdp"``.
+        obbt_params : dict, optional
+            Parameters passed verbatim to the OBBT solver. When ``None``, the
+            OBBT solver inherits only the verbosity key from ``params``.
         """
         self.theory_func = theory_func
         self.method = method.lower()
@@ -329,6 +333,25 @@ class Verifier(object):
                 return Simulator()
             case _:
                 raise ValueError(f"Method must be 'mip', 'sdp' or 'simulator', got {method}")
+
+    @staticmethod
+    def _obbt_params_from(params: dict | None, obbt_solver: str) -> dict | None:
+        """
+        Extract the verbosity setting from the main solver ``params`` for the OBBT solver.
+
+        The rest of ``params`` (time limits, gaps, SDP-solver options) is not forwarded:
+        it targets the main solve and may be invalid for the OBBT backend.
+        """
+        if not params:
+            return None
+        match obbt_solver.lower():
+            case "gurobi" | "grb":
+                key = "OutputFlag"
+            case "highs":
+                key = "output_flag"
+            case _:
+                return None
+        return {key: params[key]} if key in params else None
 
     @staticmethod
     def _get_step_decomposer(method: str):

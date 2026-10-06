@@ -9,8 +9,9 @@ description = "FOMTools: A Python Toolbox for Analysis of First-Order Methods"
 readme = "README.md"
 license = { text = "Apache 2.0" }
 dynamic = ["version"]
+requires-python = ">=3.12"
 authors = [
-       { name = "Vinit Ranjan", email = "vranjan@princeton.edu" },
+       { name = "Vinit Ranjan", email = "vranjan1@mit.edu" },
        { name = "Daniel Deza", email = "dd7022@princeton.edu" },
        { name = "Anushka Acharya", email = "aa9078@princeton.edu"},
        { name = "Jisun Park", email = "jisunpark@princeton.edu"},
@@ -19,8 +20,10 @@ authors = [
 
 dependencies = [
        "gurobipy>=12.0.1",
+       "cvxpy",
        "highspy",
        "numpy",
+       "pyyaml",
        "scipy",
 ]
 
@@ -40,15 +43,14 @@ gpu = ["cupy-cuda12x"]
 # agent; extracting the IR, scaffolding, building, and the ctypes wrapper need
 # none of this (the wrapper uses the stdlib ``ctypes``). The Pi backend is a CLI
 # (https://pi.dev), installed separately, so it needs no Python dependency here.
-codegen = ["claude-agent-sdk", "openai-codex", "pydantic", "pyyaml"]
+codegen = ["claude-agent-sdk", "openai-codex", "pydantic"]
 
 # CVXPYgen integration (fomtools.cvxpygen): model in CVXPY, canonicalize with
 # CVXPYgen's generated C code, solve with a fomtools-generated embedded FOM.
 # Pinned to the cvxpygen 1.x internal API (solver-interface seam).
-cvxpygen = ["cvxpy", "cvxpygen>=1.0,<2", "osqp"]
+cvxpygen = ["cvxpygen>=1.0,<2", "osqp"]
 
 dev = [
-       "cvxpy",
        "pytest",
        "pre-commit",
        "ruff",
@@ -61,11 +63,12 @@ dev = [
        "pepit",
 ]
 
-nn = ["torch", "jax", "flax"]
+# jax 0.11.2 removed jax.experimental.hijax.HiPrimitive, which flax (<=0.12.9)
+# still imports; drop the bound once flax ships a compatible release.
+nn = ["torch", "jax<0.11.2", "flax"]
 
 docs = [
-       "cvxpy",
-       "marimo==0.23.9",
+       "marimo",
        "matplotlib",
        "mkdocs>=1.6,<2",
        "mkdocstrings-python",
@@ -91,7 +94,7 @@ markers = [
 ]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py313"
 line-length = 100
 exclude = ["build", "docs", "*__init__.py"]
 

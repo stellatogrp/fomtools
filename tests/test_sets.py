@@ -277,7 +277,10 @@ def test_sdp_projection_tight_at_fixed_point(make, x0):
     v.set_objective_norm(u, 2)
     obj = v.solve()
     proj = make().project(x0)
-    np.testing.assert_allclose(obj, float(proj @ proj), atol=1e-3)
+    # With lb == ub the lifted feasible set collapses to a single rank-one point (no
+    # Slater point), so interior-point accuracy degrades to ~sqrt(tol): the KKT-based
+    # case lands ~2e-4 off on macOS and ~1.2e-3 off on Linux CI (BLAS-dependent).
+    np.testing.assert_allclose(obj, float(proj @ proj), atol=5e-3)
 
 
 # --- simulator support split ------------------------------------------------

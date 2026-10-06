@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fomtools.cvxpygen.builders import FomSpec
+from fomtools.cvxpygen.builders import BaseFomSpec
 from fomtools.cvxpygen.qpdata import QPData
 
 _BANNER = (
@@ -44,6 +44,52 @@ def cmake_solver_sources(target) -> list[str]:
         "src/cpg_fom_bridge.c",
     ]
     return [f"${{CMAKE_CURRENT_SOURCE_DIR}}/{r}" for r in rel]
+
+
+#: Every runtime setting the bridge can forward, and the copy that does it.
+#: Which of these actually exist is decided by the interface from the FOM's
+#: declared kind — a solver that cannot honor a setting does not advertise it.
+_SETTING_COPIES = {
+    "max_iter": "  fom_work.settings.max_iter = (fom_int){p}Canon_Settings.max_iter;",
+    "tol": "  fom_work.settings.tol = (fom_float){p}Canon_Settings.tol;",
+    "check_termination": (
+        "  fom_work.settings.check_termination = (fom_int){p}Canon_Settings.check_termination;"
+    ),
+}
+
+
+def _settings_block(prefix: str, settings: tuple[str, ...], schedule_len: int | None) -> str:
+    """The per-solve copy from cvxpygen's Canon_Settings into the FomWorkspace.
+
+    ``settings`` names the members that exist; an empty tuple means cvxpygen
+    emitted no ``Canon_Settings`` struct at all (an unrolled solver has no
+    iteration count, tolerance or check interval to tune), so the bridge must
+    not name it.
+
+    ``schedule_len`` caps ``max_iter`` for a scheduled solver: past the end of a
+    coefficient table the emitted accessor clamps to its last entry, which is
+    memory-safe but freezes the coefficients instead of continuing the method.
+    Capping here keeps a caller's ``cpg_set_solver_max_iter`` from quietly
+    running a different algorithm.
+    """
+    if not settings:
+        return (
+            "  /* No runtime settings: this solver is an unrolled single pass, so\n"
+            "   * there is no iteration count, tolerance or check interval to set. */"
+        )
+    lines = ["  /* Runtime-tunable settings, kept in sync with cpg_set_solver_*. */"]
+    for name in settings:
+        if name == "max_iter" and schedule_len is not None:
+            lines += [
+                f"  /* Capped at the {schedule_len}-entry schedule tables (FOM_MAX_ITER):",
+                "   * past their end the emitted accessors clamp to the last value, which",
+                "   * would freeze the coefficients instead of continuing the method. */",
+                f"  fom_work.settings.max_iter = (fom_int)({prefix}Canon_Settings.max_iter < "
+                f"{schedule_len} ? {prefix}Canon_Settings.max_iter : {schedule_len});",
+            ]
+        else:
+            lines.append(_SETTING_COPIES[name].format(p=prefix))
+    return "\n".join(lines)
 
 
 def _piece_dims(qp: QPData) -> dict[str, tuple[str, int, int]]:
@@ -115,11 +161,14 @@ def _residual_block(qp: QPData, prefix: str, has_quad_term: bool) -> str:
 
 
 def emit_bridge(
-    spec: FomSpec,
+    spec: BaseFomSpec,
     qp: QPData,
     solver_code_dir: str | Path,
     prefix: str,
     has_quad_term: bool,
+    settings: tuple[str, ...] = ("max_iter", "tol", "check_termination"),
+    schedule_len: int | None = None,
+    iter_count: int | None = None,
 ) -> None:
     """Write ``include/cpg_fom_bridge.h`` and ``src/cpg_fom_bridge.c``.
 
@@ -127,6 +176,14 @@ def emit_bridge(
     the solve entry point and the generated ``Canon_Params``/``Canon_Settings``
     structs. The solution/info globals are unprefixed, as in cvxpygen's
     statically-allocated solver backends (one solver instance per binary).
+
+    ``settings`` names the ``Canon_Settings`` members to forward each solve; it
+    must match what the interface put in its ``stgs``, since anything else names
+    a struct member cvxpygen did not emit. ``schedule_len`` caps ``max_iter`` at
+    the length of the coefficient tables. ``iter_count`` overrides the reported
+    iteration count, which an unrolled solver needs: its loop runs once, so
+    ``solution.iter`` is 1 rather than the number of iterations the emitted
+    straight-line body actually performs.
     """
     solver_code_dir = Path(solver_code_dir)
     n, m = qp.n, qp.m
@@ -189,6 +246,15 @@ extern void {fn}(void);
     else:
         quad_src = "  /* no quadratic term */\n"
 
+    settings_src = _settings_block(prefix, tuple(settings), schedule_len)
+    if iter_count is None:
+        iter_src = "  fom_iter = (int)fom_work.solution.iter;"
+    else:
+        iter_src = (
+            f"  /* The body is the whole recorded run, executed once, so the loop\n"
+            f"   * counter is 1; report the {iter_count} iterations it performs. */\n"
+            f"  fom_iter = {iter_count};"
+        )
     residual_src = _residual_block(qp, prefix, has_quad_term)
     # Scratch for the residual evaluation (statically allocated, like sol_x).
     scratch = (
@@ -224,10 +290,7 @@ void {fn}(void) {{
     fom_initialized = 1;
   }}
 
-  /* Runtime-tunable settings, kept in sync with cpg_set_solver_*. */
-  fom_work.settings.max_iter = (fom_int){prefix}Canon_Settings.max_iter;
-  fom_work.settings.tol = (fom_float){prefix}Canon_Settings.tol;
-  fom_work.settings.check_termination = (fom_int){prefix}Canon_Settings.check_termination;
+{settings_src}
 
   /* Canonical parameter vectors -> FomParams (field order = p0, p1, ...). */
 {copies_src}
@@ -241,7 +304,7 @@ void {fn}(void) {{
   for (i = 0; i < {m}; i++) {{
     sol_y[i] = (double)fom_work.solution.x[{spec.dual_offset} + i];
   }}
-  fom_iter = (int)fom_work.solution.iter;
+{iter_src}
 
   /* OSQP-style primal/dual residuals from the canonical data + the solution. */
 {residual_src}
