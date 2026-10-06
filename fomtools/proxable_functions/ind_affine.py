@@ -6,28 +6,40 @@ from fomtools.proxable_functions import ProxableFunction
 
 class IndAffine(ProxableFunction):
     r"""
-    Indicator of the affine set $\{x \in \mathbb{R}^n : Ax = b\}$.
+    Indicator of the affine set $\{x : Ax = b\}$.
 
     Represents
 
     $$
-        I_{\{Ax = b\}}(x) = \begin{cases}
+        f(x) = I_{\{Ax = b\}}(x) = \begin{cases}
             0       & \text{if } Ax = b \\
             +\infty & \text{otherwise.}
         \end{cases}
     $$
 
-    The matrix $A \in \mathbb{R}^{m \times n}$ is assumed to have full
-    row rank (so $AA^\top$ is invertible and the projection is uniquely
-    defined). ``b`` may be numeric data or a ``LinearExpression``
-    parameter — both flow through the verification-side lowering
-    uniformly.
+    Parameters
+    ----------
+    A : np.ndarray
+        Constraint matrix of shape ``(m, n)``, assumed to have full row rank so
+        that $AA^\top$ is invertible.
+    b : float, np.ndarray, or LinearExpression
+        Right-hand side of shape ``(m,)``. A scalar is broadcast; a
+        ``LinearExpression`` is treated as a parameter by the verification
+        lowering.
+
+    Raises
+    ------
+    ValueError
+        If ``A`` is not 2-D, or ``b`` does not match the row count of ``A``.
+
+    See Also
+    --------
+    IndPolyhedral : Inequality-constrained counterpart $\{Ax \le b\}$.
 
     Notes
     -----
-    The proximal operator is the Euclidean projection onto the affine
-    set. KKT conditions on the Lagrangian $\tfrac{1}{2}\|u-v\|^2 +
-    \nu^\top(Au - b)$ yield the block system
+    **Proximal operator.** The Euclidean projection onto the affine set,
+    independent of $\gamma$. Its KKT conditions form the block system
 
     $$
         \begin{bmatrix} I_n & A^\top \\ A & 0_{m\times m} \end{bmatrix}
@@ -36,11 +48,11 @@ class IndAffine(ProxableFunction):
         \begin{bmatrix} v \\ b \end{bmatrix},
     $$
 
-    independent of $\gamma$. Eliminating $u$ gives the small-system
-    closed form $\nu = (AA^\top)^{-1}(Av - b)$, $u = v - A^\top \nu$
-    used by the numpy ``prox`` reference. The verification model
-    posts the two KKT rows as linear equalities and never forms
-    $(AA^\top)^{-1}$.
+    whose solution is $u = v - A^\top (AA^\top)^{-1}(Av - b)$.
+
+    **Verification lowering.** ``prox_indaffine`` posts the two KKT rows as
+    linear equalities on fresh iterates $u$ and $\nu$; it never forms
+    $(AA^\top)^{-1}$ and needs no complementarity constraints.
     """
 
     def __init__(
@@ -69,11 +81,10 @@ class IndAffine(ProxableFunction):
 
     def eval(self, x: np.ndarray) -> float:
         r"""
-        Evaluate $I_{\{Ax = b\}}(x)$.
+        Evaluate $f(x) = I_{\{Ax = b\}}(x)$.
 
-        Numeric ``b`` only — passing a ``LinearExpression`` for ``b``
-        here is supported only by the verification-side lowering, not
-        this numpy reference.
+        Requires numeric ``b``; a ``LinearExpression`` ``b`` is supported only by
+        the verification lowering.
 
         Parameters
         ----------
@@ -83,13 +94,13 @@ class IndAffine(ProxableFunction):
         Returns
         -------
         float
-            ``0.0`` if $Ax = b$ (within numerical tolerance), ``+inf``
+            ``0.0`` if $Ax = b$ (within floating-point tolerance), ``+inf``
             otherwise.
 
         Raises
         ------
         TypeError
-            If ``self.b`` is a ``LinearExpression``.
+            If ``b`` is a ``LinearExpression``.
         """
         if hasattr(self.b, "decomposition_dict"):
             raise TypeError(
@@ -102,35 +113,30 @@ class IndAffine(ProxableFunction):
 
     def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Project ``arg`` onto the affine set $\{Ax = b\}$.
+        Project ``arg`` onto the affine set $\{x : Ax = b\}$.
 
-        The prox of an indicator function is the projection onto its
-        feasible set, independent of $\gamma$. Solves the small
-        $m \times m$ system $\nu = (AA^\top)^{-1}(A\,\text{arg} - b)$
-        and returns $\text{arg} - A^\top \nu$. Forming $AA^\top$ is
-        allowed at the numpy reference level; the verification model
-        never forms it.
+        Solves the $m \times m$ system $AA^\top \nu = A\,\text{arg} - b$ and
+        returns $\text{arg} - A^\top \nu$.
 
-        Numeric ``b`` only — passing a ``LinearExpression`` for ``b``
-        here is supported only by the verification-side lowering, not
-        this numpy reference.
+        Requires numeric ``b``; a ``LinearExpression`` ``b`` is supported only by
+        the verification lowering.
 
         Parameters
         ----------
         arg : np.ndarray
             Input point.
         gamma : float, default 1.0
-            Step size (ignored for indicator functions).
+            Step size; unused, since the projection is independent of $\gamma$.
 
         Returns
         -------
         np.ndarray
-            The projection.
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{arg})$.
 
         Raises
         ------
         TypeError
-            If ``self.b`` is a ``LinearExpression``.
+            If ``b`` is a ``LinearExpression``.
         """
         if hasattr(self.b, "decomposition_dict"):
             raise TypeError(
@@ -141,4 +147,12 @@ class IndAffine(ProxableFunction):
         return arg - self.A.T @ nu
 
     def grad(self, x: np.ndarray) -> np.ndarray:
+        """
+        Not defined: indicator functions are not differentiable.
+
+        Raises
+        ------
+        NotImplementedError
+            Always.
+        """
         raise NotImplementedError("Indicator functions are not differentiable.")

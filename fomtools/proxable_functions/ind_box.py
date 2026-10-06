@@ -6,25 +6,44 @@ from fomtools.proxable_functions import ProxableFunction
 
 class IndBox(ProxableFunction):
     r"""
-    A proximal operator for the indicator function of the box $[l, u]$.
+    Indicator of the box $[l, u]$.
 
     Represents
 
     $$
-        I_{[l, u]}(x) = \begin{cases}
+        f(x) = I_{[l, u]}(x) = \begin{cases}
             0       & \text{if } l \leq x \leq u \text{ (element-wise)} \\
             +\infty & \text{otherwise.}
         \end{cases}
     $$
 
-    The bounds ``l`` and ``u`` may be scalars, arrays, or
-    ``LinearExpression`` instances. When ``l``/``u`` are
-    ``LinearExpression``s, the symbolic lowering treats them as
-    parameters and uses their interval bounds for satlin propagation.
+    Parameters
+    ----------
+    l : float, np.ndarray, or LinearExpression
+        Lower bound. A scalar is broadcast; a ``LinearExpression`` is treated as
+        a parameter by the verification lowering.
+    u : float, np.ndarray, or LinearExpression
+        Upper bound, with the same conventions as ``l``.
 
-    The numpy reference methods ``eval`` and ``prox`` are
-    numeric-only; passing a ``LinearExpression`` for ``l`` or ``u`` is
-    supported solely by the verification-side lowering.
+    See Also
+    --------
+    IndBallLinf : Symmetric box $[-r, r]$.
+    IndNonNegative : One-sided box $[0, +\infty)$.
+
+    Notes
+    -----
+    **Proximal operator.** The Euclidean projection onto the box,
+
+    $$
+        \operatorname{prox}_{\gamma f}(v) = \min(\max(v, l), u)
+        \quad \text{(element-wise)},
+    $$
+
+    independent of $\gamma$.
+
+    **Verification lowering.** ``prox_indbox`` posts a single
+    ``SaturatedLinear`` step clipping to $[l, u]$. ``LinearExpression`` bounds
+    enter through their interval bounds during bound propagation.
     """
 
     def __init__(
@@ -38,11 +57,10 @@ class IndBox(ProxableFunction):
 
     def eval(self, x: np.ndarray) -> float:
         r"""
-        Evaluate the indicator function $I_{[l, u]}(x)$.
+        Evaluate $f(x) = I_{[l, u]}(x)$.
 
-        Numeric ``l``/``u`` only — passing a ``LinearExpression`` for
-        either bound here is supported only by the verification-side
-        lowering, not this numpy reference.
+        Requires numeric ``l`` and ``u``; ``LinearExpression`` bounds are
+        supported only by the verification lowering.
 
         Parameters
         ----------
@@ -57,7 +75,7 @@ class IndBox(ProxableFunction):
         Raises
         ------
         TypeError
-            If either ``self.l`` or ``self.u`` is a ``LinearExpression``.
+            If ``l`` or ``u`` is a ``LinearExpression``.
         """
         if hasattr(self.l, "decomposition_dict") or hasattr(self.u, "decomposition_dict"):
             raise TypeError(
@@ -70,32 +88,29 @@ class IndBox(ProxableFunction):
 
     def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Project ``arg`` onto the box $[l, u]$ element-wise.
+        Project ``arg`` onto the box $[l, u]$.
 
-        The prox of an indicator function is the projection onto its
-        feasible set, independent of $\gamma$.
+        Computes $\min(\max(\text{arg}, l), u)$ element-wise.
 
-        Numeric ``l``/``u`` only — passing a ``LinearExpression`` for
-        either bound here is supported only by the verification-side
-        lowering, not this numpy reference.
+        Requires numeric ``l`` and ``u``; ``LinearExpression`` bounds are
+        supported only by the verification lowering.
 
         Parameters
         ----------
         arg : np.ndarray
             Input point.
         gamma : float, default 1.0
-            Step size (ignored for indicator functions; kept for interface
-            consistency).
+            Step size; unused, since the projection is independent of $\gamma$.
 
         Returns
         -------
         np.ndarray
-            The projection $\min(\max(\text{arg}, l), u)$.
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{arg})$.
 
         Raises
         ------
         TypeError
-            If either ``self.l`` or ``self.u`` is a ``LinearExpression``.
+            If ``l`` or ``u`` is a ``LinearExpression``.
         """
         if hasattr(self.l, "decomposition_dict") or hasattr(self.u, "decomposition_dict"):
             raise TypeError(
@@ -105,4 +120,12 @@ class IndBox(ProxableFunction):
         return np.minimum(np.maximum(arg, self.l), self.u)
 
     def grad(self, x: np.ndarray) -> np.ndarray:
+        """
+        Not defined: indicator functions are not differentiable.
+
+        Raises
+        ------
+        NotImplementedError
+            Always.
+        """
         raise NotImplementedError("Indicator functions are not differentiable.")

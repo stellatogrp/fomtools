@@ -1,26 +1,59 @@
 import cvxpy as cp
 import numpy as np
 
+from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import ProxableFunction
 
 
 class IndSimplex(ProxableFunction):
     r"""
-    Indicator of the (scaled probability) simplex
-    $\{u : u \ge 0,\ \mathbf{1}^\top u = a\}$.
+    Indicator of the scaled simplex $\{x : x \ge 0,\ \mathbf{1}^\top x = a\}$.
 
-    The proximal operator is the Euclidean projection onto the simplex, independent of
-    $\gamma$. The verification-side lowering (``prox_indsimplex``) uses the KKT
-    system of the mixed polyhedron ``{u >= 0, 1^T u = a}`` via the shared polyhedral-KKT
-    helper.
+    Represents
+
+    $$
+        f(x) = I_{\{x \ge 0,\ \mathbf{1}^\top x = a\}}(x) = \begin{cases}
+            0       & \text{if } x \ge 0 \text{ and } \mathbf{1}^\top x = a \\
+            +\infty & \text{otherwise.}
+        \end{cases}
+    $$
+
+    For $a = 1$ this is the probability simplex.
 
     Parameters
     ----------
-    a : float or LinearExpression
-        Positive simplex sum (scalar), or a dim-1 ``LinearExpression`` parameter.
+    a : float or LinearExpression, default 1.0
+        Simplex sum $a > 0$, or a dim-1 ``LinearExpression`` treated as a
+        parameter by the verification lowering.
+
+    Raises
+    ------
+    ValueError
+        If ``a`` is not positive, or a ``LinearExpression`` ``a`` is not dim-1.
+
+    See Also
+    --------
+    IndPolyhedral : General polyhedron $\{Ax \le b\}$.
+
+    Notes
+    -----
+    **Proximal operator.** The Euclidean projection onto the simplex,
+
+    $$
+        \operatorname{prox}_{\gamma f}(v)
+        = \arg\min_{u}\ \tfrac{1}{2}\|u - v\|_2^2
+        \quad\text{s.t.}\quad u \ge 0,\ \mathbf{1}^\top u = a,
+    $$
+
+    independent of $\gamma$.
+
+    **Verification lowering.** ``prox_indsimplex`` encodes the KKT system of
+    this projection with complementarity constraints. The simplex is bounded,
+    so the multiplier bounds are derived from the input box and no ``dual_ub``
+    is needed.
     """
 
-    def __init__(self, a=1.0):
+    def __init__(self, a: float | LinearExpression = 1.0):
         super().__init__()
         if hasattr(a, "decomposition_dict"):  # dim-1 LinearExpression parameter
             if a.ndim != 1:
@@ -29,21 +62,24 @@ class IndSimplex(ProxableFunction):
             raise ValueError("a must be positive")
         self.a = a
 
-    def prox(self, arg, gamma=1.0):
-        """
-        Project ``arg`` onto ``{u : u >= 0, 1^T u = a}`` (independent of ``gamma``).
+    def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+        r"""
+        Project ``arg`` onto the simplex $\{x : x \ge 0,\ \mathbf{1}^\top x = a\}$.
+
+        Solved numerically with CVXPY (Clarabel) as an independent reference; a
+        ``LinearExpression`` ``a`` uses its constant value.
 
         Parameters
         ----------
         arg : np.ndarray
-            Point to project.
+            Input point.
         gamma : float, default 1.0
-            Step size (irrelevant for an indicator; accepted for interface consistency).
+            Step size; unused, since the projection is independent of $\gamma$.
 
         Returns
         -------
         np.ndarray
-            The Euclidean projection of ``arg`` onto the simplex.
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{arg})$.
         """
         arg = np.asarray(arg, dtype=float)
         a = float(self.a.const[0]) if hasattr(self.a, "decomposition_dict") else float(self.a)

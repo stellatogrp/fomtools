@@ -1,38 +1,63 @@
 import cvxpy as cp
 import numpy as np
 
+from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import ProxableFunction
 
 
 class NormInf(ProxableFunction):
     r"""
-    Proximal operator of the scaled $\ell_\infty$ norm
-    $f(x) = \lambda \|x\|_\infty$.
+    Scaled $\ell_\infty$ norm.
 
-    By Moreau decomposition the prox is dual to projection onto the
-    $\ell_1$-ball:
+    Represents
 
     $$
-        \operatorname{prox}_{\gamma\lambda\|\cdot\|_\infty}(v)
-        = v - \operatorname{proj}_{\{\|\cdot\|_1 \le \gamma\lambda\}}(v),
+        f(x) = \lambda \|x\|_\infty = \lambda \max_i |x_i|.
     $$
 
-    which is how the verification-side lowering (``prox_norminf``) is implemented —
-    reusing the ℓ1-ball projection decomposer.
+    Convex and piecewise linear.
 
     Parameters
     ----------
-    lambd : float or LinearExpression
-        Non-negative scalar weight (the $\ell_\infty$ norm is not separable, so a
-        single scalar), or a dim-1 ``LinearExpression`` parameter.
-    dual_ub : None, float, or np.ndarray, optional
-        Upper bound forwarded to the underlying ℓ1-ball projection's dual (the prox is
-        ``v - proj_{||.||_1 <= gamma*lambda}(v)`` by Moreau). ``None`` (default) lets
-        ``IndBallL1`` auto-derive a valid bound from the input box; supply a value to
-        override it when the auto bound is loose (e.g. large asymmetric inputs).
+    lambd : float or LinearExpression, default 1.0
+        Weight $\lambda \ge 0$ (a single scalar, since the $\ell_\infty$ norm is
+        not separable), or a dim-1 ``LinearExpression`` treated as a parameter
+        by the verification lowering.
+    dual_ub : float, np.ndarray, or None, default None
+        Upper bound forwarded to the underlying ``IndBallL1`` projection.
+        ``None`` auto-derives a valid bound from the input box; supply a value
+        when that bound is loose (e.g. large asymmetric inputs).
+
+    Raises
+    ------
+    ValueError
+        If ``lambd`` is negative, or a ``LinearExpression`` ``lambd`` is not
+        dim-1.
+
+    See Also
+    --------
+    IndBallL1 : Projection used by the Moreau decomposition below.
+    NormL1 : The $\ell_1$ norm.
+
+    Notes
+    -----
+    **Proximal operator.** By Moreau decomposition, the prox is the residual of
+    the projection onto the dual-norm ball,
+
+    $$
+        \operatorname{prox}_{\gamma f}(v)
+        = v - \operatorname{proj}_{\{\|u\|_1 \le \gamma\lambda\}}(v).
+    $$
+
+    **Verification lowering.** ``prox_norminf`` applies this identity, reusing
+    ``prox_indballl1`` with radius $\gamma\lambda$ and the given ``dual_ub``.
     """
 
-    def __init__(self, lambd=1.0, dual_ub=None):
+    def __init__(
+        self,
+        lambd: float | LinearExpression = 1.0,
+        dual_ub: float | np.ndarray | None = None,
+    ):
         super().__init__()
         if hasattr(lambd, "decomposition_dict"):  # dim-1 LinearExpression parameter
             if lambd.ndim != 1:
@@ -49,27 +74,42 @@ class NormInf(ProxableFunction):
         return float(self.lambd)
 
     def eval(self, x: np.ndarray) -> float:
-        r"""Evaluate $f(x) = \lambda \|x\|_\infty$."""
+        r"""
+        Evaluate $f(x) = \lambda \|x\|_\infty$.
+
+        A ``LinearExpression`` ``lambd`` uses its constant value.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Point at which to evaluate the function.
+
+        Returns
+        -------
+        float
+            The function value $f(x)$.
+        """
         return self._lambd_value() * float(np.max(np.abs(np.asarray(x, dtype=float))))
 
     def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Compute $\operatorname{prox}_{\gamma \lambda \|\cdot\|_\infty}(\text{arg})$.
+        Compute $\operatorname{prox}_{\gamma f}(\text{arg})$.
 
-        Solved directly from the defining problem (an independent reference, not via the
-        Moreau identity used for the verification lowering).
+        Solved numerically with CVXPY (Clarabel) from the defining problem, as
+        a reference independent of the Moreau identity used by the verification
+        lowering; a ``LinearExpression`` ``lambd`` uses its constant value.
 
         Parameters
         ----------
         arg : np.ndarray
             Input point.
         gamma : float, default 1.0
-            Step size.
+            Step size $\gamma > 0$.
 
         Returns
         -------
         np.ndarray
-            The proximal point.
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{arg})$.
         """
         arg = np.asarray(arg, dtype=float)
         u = cp.Variable(arg.shape[0])

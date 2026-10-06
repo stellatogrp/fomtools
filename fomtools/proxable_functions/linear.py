@@ -6,28 +6,32 @@ from fomtools.proxable_functions import ProxableFunction
 
 class Linear(ProxableFunction):
     r"""
-    Linear cost function.
+    Linear cost.
 
-    Represents the convex function
+    Represents
 
     $$
-        f(x) = c^\top x,
+        f(x) = c^\top x.
     $$
 
-    where ``c`` may be a scalar (broadcast), an array of per-coordinate
-    weights, or a ``LinearExpression`` parameter — the symbolic lowering
-    treats all three uniformly via ``LinearExpression`` arithmetic.
+    Convex and smooth.
+
+    Parameters
+    ----------
+    c : float, np.ndarray, or LinearExpression
+        Cost vector. A scalar is broadcast; a ``LinearExpression`` is treated as
+        a parameter by the verification lowering.
 
     Notes
     -----
-    The proximal operator admits the closed form
+    **Proximal operator.**
 
     $$
-        \operatorname{prox}_{\gamma f}(v) \;=\; v - \gamma\, c,
+        \operatorname{prox}_{\gamma f}(v) = v - \gamma\, c.
     $$
 
-    which is a pure affine shift — no fresh leaf variables or step
-    constraints are introduced by the decomposer.
+    **Verification lowering.** ``prox_linear`` is a pure affine shift; no step
+    and no fresh leaf variables are introduced.
     """
 
     def __init__(self, c: float | np.ndarray | LinearExpression):
@@ -38,6 +42,9 @@ class Linear(ProxableFunction):
         r"""
         Evaluate $f(x) = c^\top x$.
 
+        Requires numeric ``c``; a ``LinearExpression`` ``c`` is supported only by
+        the verification lowering.
+
         Parameters
         ----------
         x : np.ndarray
@@ -46,36 +53,42 @@ class Linear(ProxableFunction):
         Returns
         -------
         float
-            The function value $c^\top x$.
+            The function value $f(x)$.
         """
         return float(np.dot(self.c, x))
 
     def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Compute the proximal point of the linear function.
+        Compute $\operatorname{prox}_{\gamma f}(\text{arg})$.
 
         Uses the closed form
         $\operatorname{prox}_{\gamma f}(\text{arg}) = \text{arg} - \gamma c$.
+
+        Requires numeric ``c``; a ``LinearExpression`` ``c`` is supported only by
+        the verification lowering.
 
         Parameters
         ----------
         arg : np.ndarray
             Input point.
         gamma : float, default 1.0
-            Proximal step size.
+            Step size $\gamma > 0$.
 
         Returns
         -------
         np.ndarray
-            The proximal point $\text{arg} - \gamma c$.
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{arg})$.
         """
         return arg - gamma * self.c
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""
-        Compute the gradient of $f$ at $x$.
+        Compute the gradient of $f$ at ``x``.
 
-        Returns $c$, broadcast to the shape of ``x``.
+        $\nabla f(x) = c$, broadcast to the shape of ``x``.
+
+        Requires numeric ``c``; a ``LinearExpression`` ``c`` is supported only by
+        the verification lowering.
 
         Parameters
         ----------
@@ -85,6 +98,6 @@ class Linear(ProxableFunction):
         Returns
         -------
         np.ndarray
-            The gradient $\nabla f(x) = c$.
+            The gradient $\nabla f(x)$.
         """
         return np.broadcast_to(self.c, x.shape).copy()

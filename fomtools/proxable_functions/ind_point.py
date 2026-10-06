@@ -5,20 +5,38 @@ from fomtools.proxable_functions import ProxableFunction
 
 class IndPoint(ProxableFunction):
     r"""
-    A proximal operator for the indicator function of the singleton
-    $\{ p \}$.
+    Indicator of the singleton $\{p\}$.
 
     Represents
 
     $$
-        I_{\{p\}}(x) = \begin{cases}
+        f(x) = I_{\{p\}}(x) = \begin{cases}
             0       & \text{if } x = p \\
             +\infty & \text{otherwise.}
         \end{cases}
     $$
 
-    The proximal operator is the constant map $x \mapsto p$.
-    ``p`` may be a scalar (broadcast against the input) or an array.
+    Parameters
+    ----------
+    p : float or np.ndarray
+        The point. A scalar is broadcast against the input.
+
+    See Also
+    --------
+    IndBox : The box $[l, u]$; $\{p\}$ is the case $l = u = p$.
+
+    Notes
+    -----
+    **Proximal operator.** The constant map
+
+    $$
+        \operatorname{prox}_{\gamma f}(v) = p,
+    $$
+
+    independent of $\gamma$.
+
+    **Verification lowering.** ``prox_indpoint`` posts a degenerate
+    ``SaturatedLinear`` step with $l = u = p$.
     """
 
     def __init__(self, p: float | np.ndarray):
@@ -27,7 +45,7 @@ class IndPoint(ProxableFunction):
 
     def eval(self, x: np.ndarray) -> float:
         r"""
-        Evaluate the indicator of the singleton $\{ p \}$.
+        Evaluate $f(x) = I_{\{p\}}(x)$.
 
         Parameters
         ----------
@@ -37,8 +55,8 @@ class IndPoint(ProxableFunction):
         Returns
         -------
         float
-            ``0.0`` if $x = p$ (within floating-point tolerance),
-            ``+inf`` otherwise.
+            ``0.0`` if $x = p$ (within floating-point tolerance), ``+inf``
+            otherwise.
         """
         if np.allclose(x, self.p):
             return 0.0
@@ -46,26 +64,32 @@ class IndPoint(ProxableFunction):
 
     def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Return $p$, broadcast to the shape of ``arg``.
+        Project ``arg`` onto $\{p\}$.
 
-        The prox of an indicator function is the projection onto its
-        feasible set; for a singleton this is the constant map returning
-        $p$, independent of $\gamma$.
+        Returns $p$ broadcast to the shape of ``arg``; ``arg`` is used only for
+        its shape.
 
         Parameters
         ----------
         arg : np.ndarray
-            Input point (used only for shape broadcasting).
+            Input point.
         gamma : float, default 1.0
-            Step size (ignored for indicator functions; kept for interface
-            consistency).
+            Step size; unused, since the projection is independent of $\gamma$.
 
         Returns
         -------
         np.ndarray
-            The constant $p$ broadcast to ``arg.shape``.
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{arg})$.
         """
         return np.broadcast_to(self.p, arg.shape).copy()
 
     def grad(self, x: np.ndarray) -> np.ndarray:
+        """
+        Not defined: indicator functions are not differentiable.
+
+        Raises
+        ------
+        NotImplementedError
+            Always.
+        """
         raise NotImplementedError("Indicator functions are not differentiable.")

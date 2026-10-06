@@ -7,20 +7,23 @@ class SumNegative(ProxableFunction):
     r"""
     Sum of negative parts.
 
-    Represents the asymmetric piecewise-linear convex function
+    Represents
 
     $$
-        f(x) = \sum_i \max(0, -x_i),
+        f(x) = \sum_i \max(0, -x_i).
     $$
 
-    the mirror image of ``SumPositive`` under $x \mapsto -x$. It
-    penalizes only the negative coordinates and leaves non-negative ones
-    untouched.
+    Convex and piecewise linear. Penalizes only the negative coordinates and
+    leaves non-negative ones untouched.
+
+    See Also
+    --------
+    SumPositive : Mirror image under $x \mapsto -x$.
+    NormL1 : Two-sided counterpart $\lambda \|x\|_1$.
 
     Notes
     -----
-    The proximal operator is element-wise separable. For a single
-    coordinate $v$,
+    **Proximal operator.** Element-wise separable; per coordinate,
 
     $$
         \operatorname{prox}_{\gamma f}(v) = \begin{cases}
@@ -31,14 +34,10 @@ class SumNegative(ProxableFunction):
     $$
 
     which collapses to
+    $\operatorname{prox}_{\gamma f}(v) = v - \mathrm{satlin}(v;\, -\gamma,\, 0)$.
 
-    $$
-        \operatorname{prox}_{\gamma f}(v) = v - \mathrm{satlin}(v;\, -\gamma,\, 0).
-    $$
-
-    Equivalently, $\operatorname{prox}_{\gamma f}(v)
-    = -\operatorname{prox}_{\gamma f_+}(-v)$ where $f_+$ is
-    ``SumPositive``.
+    **Verification lowering.** ``prox_sumnegative`` posts a single
+    ``SaturatedLinear`` clip to $[-\gamma, 0]$ and subtracts it from the input.
     """
 
     def __init__(self):
@@ -56,46 +55,49 @@ class SumNegative(ProxableFunction):
         Returns
         -------
         float
-            The function value.
+            The function value $f(x)$.
         """
         return float(np.sum(np.maximum(0.0, -x)))
 
     def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Compute the proximal point.
+        Compute $\operatorname{prox}_{\gamma f}(\text{arg})$.
 
         Uses the closed form
-        $\operatorname{prox}_{\gamma f}(v) = v - \mathrm{satlin}(v; -\gamma, 0)$.
+
+        $$
+            \operatorname{prox}_{\gamma f}(\text{arg})
+            = \text{arg} - \mathrm{satlin}(\text{arg};\, -\gamma,\, 0).
+        $$
 
         Parameters
         ----------
         arg : np.ndarray
             Input point.
         gamma : float, default 1.0
-            Proximal step size.
+            Step size $\gamma > 0$.
 
         Returns
         -------
         np.ndarray
-            The proximal point.
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{arg})$.
         """
         return arg - np.minimum(np.maximum(arg, -gamma), 0.0)
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""
-        Compute a subgradient of $f$ at $x$.
+        Compute a subgradient of $f$ at ``x``.
 
         Per coordinate,
 
         $$
             g_i = \begin{cases}
                 -1  & x_i < 0 \\
-                0   & x_i \geq 0.
+                0   & x_i \geq 0,
             \end{cases}
         $$
 
-        At $x_i = 0$ this returns $0$, an element of the
-        subdifferential $[-1, 0]$.
+        where $0 \in [-1, 0]$ is the canonical choice at the kink $x_i = 0$.
 
         Parameters
         ----------

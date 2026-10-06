@@ -7,25 +7,33 @@ class HuberLoss(ProxableFunction):
     r"""
     Element-wise Huber loss.
 
-    The Huber function with threshold $\delta \geq 0$ is applied
-    per-coordinate and summed:
+    Represents
 
     $$
-        h(x_i) = \begin{cases}
-            \tfrac{1}{2} x_i^2                          & |x_i| \leq \delta \\
-            \delta |x_i| - \tfrac{1}{2}\delta^2          & |x_i| > \delta,
-        \end{cases}
+        f(x) = \sum_i h(x_i),
         \qquad
-        f(x) = \sum_i h(x_i).
+        h(t) = \begin{cases}
+            \tfrac{1}{2} t^2                        & |t| \leq \delta \\
+            \delta |t| - \tfrac{1}{2}\delta^2        & |t| > \delta.
+        \end{cases}
     $$
 
-    This is the standard element-wise robust loss — *not* the
-    multivariate norm-based "vector Huber" parameterized by a smoothing
-    parameter and a radius.
+    Convex and $C^1$. This is the standard element-wise robust loss, *not* the
+    multivariate norm-based "vector Huber" function.
+
+    Parameters
+    ----------
+    delta : float
+        Threshold $\delta \ge 0$ between the quadratic and linear regimes.
+
+    Raises
+    ------
+    ValueError
+        If ``delta`` is negative.
 
     Notes
     -----
-    The proximal operator admits the closed form (per-coordinate):
+    **Proximal operator.** Element-wise separable; per coordinate,
 
     $$
         \operatorname{prox}_{\gamma f}(v)_i = \begin{cases}
@@ -36,17 +44,17 @@ class HuberLoss(ProxableFunction):
         \end{cases}
     $$
 
-    The two branches join continuously at the kink $|v_i| = \delta(1+\gamma)$
-    (both evaluate to $\delta\,\operatorname{sign}(v_i)$). The same prox can
-    be written using element-wise soft thresholding,
+    The branches join continuously at $|v_i| = \delta(1+\gamma)$. Equivalently,
+    with element-wise soft thresholding $S$,
 
     $$
         \operatorname{prox}_{\gamma f}(v)
-            = \frac{v + \gamma\, S_{\delta(1+\gamma)}(v)}{1+\gamma},
+            = \frac{v + \gamma\, S_{\delta(1+\gamma)}(v)}{1+\gamma}.
     $$
 
-    which is the form used by the step decomposer's
-    ``prox_huberloss`` lowering.
+    **Verification lowering.** ``prox_huberloss`` uses the soft-threshold form:
+    a single ``SoftThreshold`` step with threshold $\delta(1+\gamma)$ followed
+    by affine arithmetic.
     """
 
     def __init__(self, delta: float):
@@ -67,7 +75,7 @@ class HuberLoss(ProxableFunction):
         Returns
         -------
         float
-            The function value $\sum_i h(x_i)$.
+            The function value $f(x)$.
         """
         ax = np.abs(x)
         per_coord = np.where(
@@ -79,9 +87,9 @@ class HuberLoss(ProxableFunction):
 
     def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Compute the proximal point of the element-wise Huber loss.
+        Compute $\operatorname{prox}_{\gamma f}(\text{arg})$.
 
-        Uses the closed form per coordinate
+        Uses the closed form, per coordinate,
 
         $$
             \operatorname{prox}_{\gamma f}(\text{arg})_i = \begin{cases}
@@ -92,15 +100,12 @@ class HuberLoss(ProxableFunction):
             \end{cases}
         $$
 
-        The two branches agree at the kink, so the result is a
-        continuous piecewise-linear function of ``arg``.
-
         Parameters
         ----------
         arg : np.ndarray
             Input point.
         gamma : float, default 1.0
-            Proximal step size.
+            Step size $\gamma > 0$.
 
         Returns
         -------
@@ -116,20 +121,16 @@ class HuberLoss(ProxableFunction):
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""
-        Compute the gradient of $f$ at $x$.
+        Compute the gradient of $f$ at ``x``.
 
         Per coordinate,
 
         $$
-            h'(x_i) = \begin{cases}
+            \nabla f(x)_i = h'(x_i) = \begin{cases}
                 x_i                                     & |x_i| \leq \delta \\
                 \delta\,\operatorname{sign}(x_i)         & |x_i| > \delta.
             \end{cases}
         $$
-
-        The two branches join smoothly at $|x_i| = \delta$ (both evaluate to
-        $\delta\,\operatorname{sign}(x_i)$), so $f$ is $C^1$ and there
-        is no subgradient ambiguity.
 
         Parameters
         ----------
