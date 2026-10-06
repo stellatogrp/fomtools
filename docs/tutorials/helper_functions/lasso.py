@@ -91,37 +91,26 @@ def solve_ista_numpy(dictionary, eta, lambd, s0, x, max_iters):
     return s
 
 
-def estimate_lasso_pepit_radius(
-    dictionary,
-    eta,
-    lambd,
-    s0_samples,
-    x_samples,
-    max_iters=2000,
-    tol=1e-10,
-):
-    """Estimate the sampled initial-condition radius used by the Lasso PEP.
+def certify_lasso_pepit_radius(lambd, s0_lb, s0_ub, x_lb, x_ub, n):
+    """Return a certified initial-condition radius for the Lasso PEP.
 
-    Runs vectorized ISTA from zero to approximate the optimizer associated
-    with each sampled measurement, then returns the largest distance from a
-    sampled initial iterate to its corresponding optimizer. The result is
-    empirical: it covers the supplied samples, not every point in their boxes.
+    Unlike :func:`estimate_lasso_pepit_radius`, this covers every point in the
+    boxes rather than only the drawn samples, so the resulting PEPit curve is a
+    valid upper bound for the set the verification problem searches.
+
+    Comparing the Lasso objective at any solution ``s*(x)`` against its value at
+    the origin gives ``0.5||D s* - x||^2 + lambd ||s*||_1 <= 0.5||x||^2``, hence
+    ``||s*||_2 <= ||s*||_1 <= ||x||^2 / (2 lambd)``. Maximizing ``||x||^2`` and
+    ``||s0||_2`` over their boxes and applying the triangle inequality bounds
+    ``||s0 - s*(x)||_2`` uniformly. No strong convexity is needed, which matters
+    here because ``D`` has more columns than rows.
     """
-    s_star_samples = np.zeros(
-        (x_samples.shape[0], dictionary.shape[1]), dtype=float
-    )
-    for _ in range(max_iters):
-        grad = (s_star_samples @ dictionary.T - x_samples) @ dictionary
-        argument = s_star_samples - eta * grad
-        s_next_samples = np.sign(argument) * np.maximum(
-            np.abs(argument) - lambd * eta,
-            0.0,
-        )
-        step_norm = np.max(
-            np.linalg.norm(s_next_samples - s_star_samples, axis=1)
-        )
-        s_star_samples = s_next_samples
-        if step_norm <= tol:
-            break
+    x_lb = np.broadcast_to(np.asarray(x_lb, dtype=float), (len(np.atleast_1d(x_lb)),))
+    x_ub = np.broadcast_to(np.asarray(x_ub, dtype=float), x_lb.shape)
+    s0_lb = np.broadcast_to(np.asarray(s0_lb, dtype=float), (n,))
+    s0_ub = np.broadcast_to(np.asarray(s0_ub, dtype=float), (n,))
 
-    return float(np.max(np.linalg.norm(s0_samples - s_star_samples, axis=1)))
+    max_x_squared = float(np.sum(np.maximum(x_lb**2, x_ub**2)))
+    s_star_bound = max_x_squared / (2.0 * lambd)
+    s0_bound = float(np.linalg.norm(np.maximum(np.abs(s0_lb), np.abs(s0_ub))))
+    return s0_bound + s_star_bound

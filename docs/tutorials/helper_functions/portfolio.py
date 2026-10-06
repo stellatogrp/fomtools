@@ -92,28 +92,3 @@ def solve_admm_numpy(
         x = np.linalg.solve(lhs, rhs)
         v = v + constraint_matrix @ x - w
     return np.concatenate([x, v])
-
-
-def calibrated_portfolio_pepit_residuals(
-    covariance,
-    K,
-    target_residual,
-):
-    """Return portfolio ADMM PEP bounds calibrated at the first iteration.
-
-    Computes the strong-convexity and smoothness constants of the quadratic
-    objective, then asks :class:`PEPitRunner` to calibrate the initial radius
-    so its first residual equals ``target_residual``. Returns both the residual
-    curve and the calibrated radius.
-    """
-    from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
-
-    covariance_eigenvalues = np.linalg.eigvalsh(covariance)
-    mu = float(covariance_eigenvalues.min())
-    L = float(covariance_eigenvalues.max())
-    return PEPitRunner().admm_residuals(
-        K=K,
-        mu=mu,
-        L=L,
-        calibrate_to=target_residual,
-    )

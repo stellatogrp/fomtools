@@ -28,7 +28,6 @@ def _():
         sys.path.insert(0, str(repo_root))
 
     from docs.tutorials.helper_functions.network import (
-        estimate_network_pepit_radius,
         make_network_data,
         pdhg_step,
     )
@@ -55,7 +54,6 @@ def _():
 
     return (
         cp,
-        estimate_network_pepit_radius,
         make_network_data,
         mo,
         np,
@@ -211,7 +209,7 @@ def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    We verify the performance of PDHG and its momentum variant up to a fixed iteration budget $K>0$. As in the NNLS tutorial, we compare randomly sampled simulations, exact MIP verification, SDP-relaxed verification, a PEPit bound, and the trajectories obtained by replaying the MIP worst-case instances.
+    We verify the performance of PDHG and its momentum variant up to a fixed iteration budget $K>0$. As in the NNLS tutorial, we compare randomly sampled simulations, exact MIP verification, SDP-relaxed verification, and the trajectories obtained by replaying the MIP worst-case instances. Unlike NNLS, there is no PEPit comparison here; the reason is explained alongside the figures below.
     """)
     return
 
@@ -269,6 +267,10 @@ def _(A_d, A_s, b_s, c, eta, mu, n_d, n_e, n_s, np, pdhg_step):
         returned ``residuals`` has shape ``(n_samples, K)``. Summary statistics
         (``mean``, ``min``, ``max``, ``final_residuals``, ...) are available on
         the returned instance ``VP`` via ``VP[...]``.
+
+        ``ord`` defaults to ``inf``, matching the MIP backend of
+        :func:`pdhg_verification`; see the note there on why this example is
+        plotted in the infinity norm rather than the 2-norm.
         """
         VP = Verifier(method='simulator', obbt_solver=None)
         x_param = VP.add_param(ndim=n_d, samples=x_samples)
@@ -394,7 +396,7 @@ def _(
 
     plt.yscale('log')
     plt.xlabel(r'$K$')
-    plt.ylabel('In-sample KKT residual')
+    plt.ylabel(r'In-sample KKT residual $\|r^k\|_\infty$')
     plt.legend()
     plt.suptitle('PDHG vs. momentum PDHG in-sample residual statistics')
     return
@@ -451,9 +453,16 @@ def _(
         this tutorial those parameter bounds have zero width, so both choices
         describe the same nominal problem; the numeric SDP representation
         merely avoids redundant lifted variables. Pass ``parametrize_data``
-        to override this backend-derived default. ``ord`` selects the residual
-        norm (defaults to ``inf`` for MIP and ``2`` for SDP); a 2-norm
-        objective is squared, so its value is square-rooted on return. Extra
+        to override this backend-derived default.
+
+        Every curve in this notebook reports $\\|r^k\\|_\\infty$. ``ord`` defaults
+        to ``inf`` for the MIP, which is a MILP and solves in well under a second,
+        and to ``2`` for the SDP, where the infinity-norm objective does not
+        finish in reasonable time. A 2-norm objective is squared, so its value is
+        square-rooted on return; since $\\|r\\|_\\infty \\le \\|r\\|_2$, the
+        resulting $\\|r^k\\|_2$ bound is still a valid upper bound on the
+        infinity-norm worst case that the other curves report -- just a more
+        conservative one. Extra
         ``verifier_kwargs`` (``solver``, ``obbt_solver``, ``params``, ...) are
         forwarded to the ``Verifier`` constructor.
         """
@@ -548,60 +557,56 @@ def _(K, pdhg_verification):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Now we plot the verification results against the SDP comparison,
-    a worst-case rate from PEPit's performance estimation problem, and the
-    horizon-specific worst-case instances extracted from MIP.
+    Now we plot the verification results against the SDP comparison and the
+    in-sample simulation statistics. Every curve bounds the same scalar,
+    $\|r^k\|_\infty$ of the scaled KKT residual, but they answer different
+    questions:
+
+    - **sample worst-case** — a *lower* bound on the true worst case. The samples
+      are uniform over the same boxes the verifiers search, but uniform sampling
+      in $22$ dimensions concentrates away from the vertices and faces where the
+      maximizer sits, so this curve is loose by construction.
+    - **MIP-VP** — the *exact* worst case over the boxes, for this instance.
+    - **SDP-VP** — a relaxation of the same problem, hence a valid *upper* bound.
+      It is solved with the 2-norm objective because the infinity-norm SDP does
+      not finish in reasonable time here; since $\|r\|_\infty \le \|r\|_2$, the
+      reported $\|r^k\|_2$ is still a valid upper bound on the infinity-norm
+      worst case, just a more conservative one. The MIP keeps the infinity-norm
+      objective, which is a MILP and solves in under a second; its 2-norm
+      counterpart is a nonconvex MIQP that does not finish here, and switching
+      it would cost the *exactness* that makes the MIP curve worth plotting.
+
+    So the expected ordering at every $K$ is
+    $\text{sample worst-case} \le \text{MIP-VP} \le \text{SDP-VP}$.
+
+    **There is no PEPit curve here**, unlike the NNLS tutorial. Two things would
+    have to be built first. PEPit's PDHG template measures the plain iterate
+    difference $\|x^k-x^{k-1}\|^2 + \|u^k-u^{k-1}\|^2$, whereas `pdhg_step`
+    measures the scaled KKT residual, which premultiplies those differences by
+    the PDHG metric matrix ($1/\eta$ on the diagonal, $A_s^T$ and $A_d^T$ off
+    it); with $\eta = 0.5/L$ the $1/\eta$ factor alone is $2L$, so the two
+    numbers are not comparable. More fundamentally, PEPit needs a radius $R$
+    covering the whole initial-condition box, and the objective $\mu^T f$ here
+    is *linear*: the primal-dual solution map of an LP is piecewise constant and
+    can jump across the parameter box, and under dual degeneracy the saddle point
+    need not even be unique, so there is no Lipschitz argument to turn the box
+    into a certified $R$. Plotting a bound built from a radius measured on the
+    samples would not be a guarantee for the set the verifiers search.
     """)
     return
 
 
 @app.cell(hide_code=True)
 def _(
-    A_d,
-    A_s,
     K,
-    L,
     all_residuals,
     all_residuals_sdp,
-    b_s,
-    c,
-    estimate_network_pepit_radius,
-    eta,
-    mu,
     plt,
     simulation_residual_quantiles_pdhg,
     simulation_residuals_pdhg,
-    v0_samples,
-    w0_samples,
-    x_samples,
-    z0_samples,
 ):
-    from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
-
-    # Empirical primal-dual radius over the shared simulation samples.
-    _pepit_radius = estimate_network_pepit_radius(
-        A_s,
-        A_d,
-        b_s,
-        mu,
-        c,
-        eta,
-        z0_samples,
-        v0_samples,
-        w0_samples,
-        x_samples,
-    )
-    _runner = PEPitRunner()
-    all_residuals_PEP, _ = _runner.pdhg_residuals(
-        K=K, L=float(L), eta=float(eta), R=_pepit_radius
-    )
-    all_residuals_PEP_momentum, _ = _runner.pdhg_momentum_residuals(
-        K=K, L=float(L), eta=float(eta), R=_pepit_radius
-    )
-
     plt.figure()
     _ks = range(1, K+1)
-    plt.plot(_ks, all_residuals_PEP, label='PEPit')
     plt.plot(_ks, all_residuals, label='MIP-VP')
     plt.plot(_ks, all_residuals_sdp, label='SDP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals_pdhg, '--', label='sample average')
@@ -609,10 +614,10 @@ def _(
     plt.plot(_ks, simulation_residual_quantiles_pdhg[3], ':', color=_avg_line.get_color(), label='sample worst-case')
     plt.yscale('log')
     plt.xlabel(r'$K$')
-    plt.ylabel('Worst-case KKT residual')
+    plt.ylabel(r'Worst-case KKT residual $\|r^k\|_\infty$')
     plt.legend()
     plt.suptitle('network optimization example')
-    return (all_residuals_PEP_momentum,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -626,7 +631,6 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(
     K,
-    all_residuals_PEP_momentum,
     all_residuals_momentum,
     all_residuals_sdp_momentum,
     plt,
@@ -635,7 +639,6 @@ def _(
 ):
     plt.figure()
     _ks = range(1, K+1)
-    plt.plot(_ks, all_residuals_PEP_momentum, label='PEPit')
     plt.plot(_ks, all_residuals_momentum, label='MIP-VP')
     plt.plot(_ks, all_residuals_sdp_momentum, label='SDP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals_pdhg_mom, '--', label='sample average')
@@ -643,7 +646,7 @@ def _(
     plt.plot(_ks, simulation_residual_quantiles_pdhg_mom[3], ':', color=_avg_line.get_color(), label='sample worst-case')
     plt.yscale('log')
     plt.xlabel(r'$K$')
-    plt.ylabel('Worst-case KKT residual')
+    plt.ylabel(r'Worst-case KKT residual $\|r^k\|_\infty$')
     plt.legend()
     plt.suptitle('network optimization momentum PDHG example')
     return
@@ -700,7 +703,7 @@ def _(
 
     plt.yscale('log')
     plt.xlabel(r'$K$')
-    plt.ylabel('Worst-case KKT residual')
+    plt.ylabel(r'Worst-case KKT residual $\|r^k\|_\infty$')
     _leg = plt.legend(handles=_method_handles, loc='upper right')
     plt.gca().add_artist(_leg)
     plt.legend(handles=_style_handles, loc='lower left')

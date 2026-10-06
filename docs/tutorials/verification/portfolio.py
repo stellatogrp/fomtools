@@ -29,7 +29,6 @@ def _():
 
     from docs.tutorials.helper_functions.portfolio import (
         admm_step,
-        calibrated_portfolio_pepit_residuals,
         make_portfolio_data,
     )
 
@@ -55,7 +54,6 @@ def _():
 
     return (
         admm_step,
-        calibrated_portfolio_pepit_residuals,
         csr_matrix,
         make_portfolio_data,
         mo,
@@ -221,13 +219,18 @@ def _(A_mat, admm_step, l_val, lhs_mat, mu, n, rho, sigma, u_val, x0_val):
 def _(K, admm_simulation, np, v0_samples):
     _VP, _residuals = admm_simulation(v0_samples, K, ord=2)
 
+    # These come straight from the objective, so they are in squared units.
     print(
-        f"Summary statistics:\n"
+        f"Summary statistics (squared, at K={K}):\n"
         f"mean: {_VP['mean']:.6e}\n"
         f"min: {_VP['min']:.6e}\n"
         f"max: {_VP['max']:.6e}\n"
         f"median: {_VP['median']:.6e}\n"
     )
+
+    # Convert to ||r^k||_2 before any statistic: sqrt commutes with quantiles but
+    # not with the mean, so it has to be applied elementwise first.
+    _residuals = np.sqrt(_residuals)
 
     simulation_residuals_admm = np.mean(_residuals, axis=0)
     # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
@@ -258,6 +261,7 @@ def _(
     lhs_mat,
     mu,
     n,
+    np,
     rho,
     sigma,
     u_val,
@@ -274,6 +278,9 @@ def _(
         with one worst-case residual per iteration. Extra ``verifier_kwargs``
         (``solver``, ``obbt_solver``, ``params``, ...) are forwarded to the
         ``Verifier`` constructor.
+
+        ``ord`` defaults to ``2``. A 2-norm objective is squared, so the value is
+        square-rooted on return and the residuals are reported as $\\|r^k\\|_2$.
         """
         VP = Verifier(method=method, **verifier_kwargs)
         x = VP.iterate_trajectory(K + 1, collapse_expr="auto")
@@ -287,7 +294,8 @@ def _(
                 VP, A_mat, l_val, u_val, mu, rho, sigma, x, v, lhs_mat, k=k
             )
             VP.set_objective_norm(residual, ord)
-            residuals.append(VP.solve())
+            val = VP.solve()
+            residuals.append(np.sqrt(val) if ord == 2 else val)
         return VP, residuals
 
     return (admm_verification,)
@@ -332,31 +340,32 @@ def _(K, admm_verification):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### PEP-obtained worst-case convergence rate
-
-    We compare the MIP result to a PEPit ADMM residual bound for the smooth strongly-convex quadratic term and the indicator function of the portfolio constraint set. As in the comparison script, the initial radius is calibrated so the PEPit value matches the MIP value at $K=1$.
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _(K, Sigma, all_residuals, calibrated_portfolio_pepit_residuals):
-    all_residuals_PEP, _ = calibrated_portfolio_pepit_residuals(
-        Sigma,
-        K,
-        all_residuals[0],
-    )
-    return (all_residuals_PEP,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
     ## Numerical Result
 
-    Now we plot the verification results against the PEPit bound, the SDP
-    bound, and the in-sample simulation statistics, including the sample
-    worst-case instance.
+    Now we plot the verification results against the SDP bound and the in-sample
+    simulation statistics, including the sample worst-case instance. Every curve
+    reports $\|r^k\|_2$, but they answer different questions:
+
+    - **sample worst-case** — a *lower* bound on the true worst case, from $10^4$
+      draws uniform over the same box $v^0 \in [0,1]^{n+1}$ the verifiers search.
+    - **MIP-VP** — the *exact* worst case over that box, for this instance.
+    - **SDP-VP** — a relaxation of the same problem, hence a valid *upper* bound.
+
+    So the expected ordering at every $K$ is
+    $\text{sample worst-case} \le \text{MIP-VP} \le \text{SDP-VP}$.
+
+    **There is no PEPit curve here.** Earlier versions of this notebook plotted
+    one, but it was not a bound on this algorithm: PEPit's `admm_residuals`
+    template is textbook Douglas–Rachford with unit proximal steps, in which
+    $\sigma$, $\rho$ and $A$ do not appear at all, whereas the recurrence above
+    is OSQP-form ADMM with $\sigma = 10^{-4}$, $\rho = 1$ and
+    $A = [I;\ \mathbf{1}^T]$ — a different operator with a different contraction
+    factor. Its radius was additionally calibrated so that the PEPit value
+    matched the MIP value at $K=1$, which is why the curve used to fall *below*
+    the exact MIP worst case at later $K$. Restoring it would require a PEP
+    template for OSQP-ADMM with $A \ne I$; the `_osqp_admm_residual` template
+    used by the optimal-control tutorial models $\sigma$ and $\rho$ correctly but
+    assumes $A = I$.
     """)
     return
 
@@ -365,7 +374,6 @@ def _(mo):
 def _(
     K,
     all_residuals,
-    all_residuals_PEP,
     all_residuals_sdp,
     plt,
     simulation_residual_quantiles_admm,
@@ -373,7 +381,6 @@ def _(
 ):
     plt.figure()
     _ks = range(1, K + 1)
-    plt.plot(_ks, all_residuals_PEP, label="ADMM (PEPit)")
     plt.plot(_ks, all_residuals, label="ADMM (MIP worst-case)")
     plt.plot(_ks, all_residuals_sdp, label="ADMM (SDP bound)")
     _avg_line, = plt.plot(_ks, simulation_residuals_admm, "--", label="ADMM (in-sample avg)")
@@ -386,7 +393,7 @@ def _(
     )
     plt.plot(_ks, simulation_residual_quantiles_admm[3], ":", color=_avg_line.get_color(), label="ADMM sample worst-case")
     plt.yscale("log")
-    plt.ylabel("Worst-case fixed-point residual")
+    plt.ylabel(r"Worst-case fixed-point residual $\|r^k\|_2$")
     plt.xlabel(r"$K$")
     plt.suptitle("portfolio optimization ADMM example")
     plt.legend()

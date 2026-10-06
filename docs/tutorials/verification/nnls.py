@@ -232,7 +232,7 @@ def _(mo):
 def _(A, eta, m, n, np, pgd_step):
     from fomtools.verifier import Verifier
 
-    def pgd_simulation(x_samples, z0_samples, K, momentum=False, ord=np.inf):
+    def pgd_simulation(x_samples, z0_samples, K, momentum=False, ord=2):
         """Simulate projected gradient descent``.
 
         Builds a simulator-mode :class:`Verifier`, registers the parameter ``x`` and
@@ -242,6 +242,12 @@ def _(A, eta, m, n, np, pgd_step):
         and the returned ``residuals`` has shape ``(n_samples, K)``. Summary statistics
         (``mean``, ``min``, ``max``, ...) are available on the returned instance
         ``VP`` via ``VP[...]``.
+
+        ``ord`` defaults to ``2``, matching :func:`pgd_verification`. Note that
+        ``set_objective_norm(..., 2)`` maximizes the *squared* Euclidean norm, so
+        the returned residuals (and the ``VP[...]`` statistics) are in squared
+        units; take a square root before comparing against anything reported in
+        $\\|r^k\\|_2$.
         """
         VP = Verifier(method='simulator', obbt_solver=None)
         x_param = VP.add_param(ndim=m, samples=x_samples)
@@ -271,15 +277,20 @@ def _(mo):
 
 @app.cell
 def _(K, np, pgd_simulation, x_samples, z0_samples):
-    _VP, _residuals = pgd_simulation(x_samples, z0_samples, K, momentum=False, ord=np.inf)
+    _VP, _residuals = pgd_simulation(x_samples, z0_samples, K, momentum=False, ord=2)
 
+    # These come straight from the objective, so they are in squared units.
     print(
-        f"Summary statistics:\n"
+        f"Summary statistics (squared, at K={K}):\n"
         f"mean: {_VP['mean']:.6e}\n"
         f"min: {_VP['min']:.6e}\n"
         f"max: {_VP['max']:.6e}\n"
         f"median: {_VP['median']:.6e}\n"
     )
+
+    # Convert to ||r^k||_2 before any statistic: sqrt commutes with quantiles but
+    # not with the mean, so it has to be applied elementwise first.
+    _residuals = np.sqrt(_residuals)
 
     # Take average of residuals for iterate K=1 to K=K
     simulation_residuals = np.mean(_residuals, axis=0)
@@ -298,7 +309,8 @@ def _(mo):
 
 @app.cell
 def _(K, np, pgd_simulation, x_samples, z0_samples):
-    _, _residuals = pgd_simulation(x_samples, z0_samples, K, momentum=True, ord=np.inf)
+    _, _residuals = pgd_simulation(x_samples, z0_samples, K, momentum=True, ord=2)
+    _residuals = np.sqrt(_residuals)  # squared objective -> ||r^k||_2
     simulation_residuals_momentum = np.mean(_residuals, axis=0)
     # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
     simulation_residual_quantiles_momentum = np.quantile(_residuals, [0.90, 0.50, 0.10, 1.0], axis=0)
@@ -322,26 +334,29 @@ def _(mo):
 
     Both formulations use the following function, which rolls out the same
     `pgd_step` recurrence over the horizon $K$ and maximizes the residual at
-    each iteration. The MIP backend uses the infinity-norm objective while the
-    SDP backend uses the squared Euclidean objective.
+    each iteration. Both backends use the same squared Euclidean objective, and
+    the returned value is square-rooted so that every curve in the figures below
+    reports $\|r^k\|_2$. Mixing norms across backends would make the plotted
+    gaps a unit artifact rather than a measure of how loose each bound is.
     """)
     return
 
 
 @app.cell
 def _(A, Verifier, eta, m, n, np, pgd_step, x_lb, x_ub, z0_lb, z0_ub):
-    def pgd_verification(K, method, momentum=False, ord=None, **verifier_kwargs):
+    def pgd_verification(K, method, momentum=False, ord=2, **verifier_kwargs):
         """Solve the projected-gradient verification problem for one backend.
 
         Builds a ``Verifier`` in ``method`` mode, registers the parameter box
         ``[x_lb, x_ub]`` and the initial iterate box ``[z0_lb, z0_ub]``,
         rolls out ``pgd_step`` over the horizon ``K``, and returns ``(VP, residuals)``
-        with one worst-case residual per iteration. ``ord`` defaults to ``inf``
-        for MIP and ``2`` for SDP. Extra ``verifier_kwargs`` (``solver``, ``params``, ...)
-        are forwarded to the ``Verifier`` constructor.
-        """
-        ord = ord if ord is not None else (np.inf if method == 'mip' else 2)
+        with one worst-case residual per iteration. Extra ``verifier_kwargs``
+        (``solver``, ``params``, ...) are forwarded to the ``Verifier`` constructor.
 
+        ``ord`` defaults to ``2`` for every backend so that the MIP and SDP curves
+        are directly comparable. A 2-norm objective is squared, so the value is
+        square-rooted on return and the residuals are reported as $\\|r^k\\|_2$.
+        """
         VP = Verifier(method=method, **verifier_kwargs)
         x_param = VP.add_param(m, lb=x_lb, ub=x_ub)
         z = VP.iterate_trajectory(K+1, collapse_expr='auto')
@@ -354,7 +369,8 @@ def _(A, Verifier, eta, m, n, np, pgd_step, x_lb, x_ub, z0_lb, z0_ub):
                 VP, A, eta, z, w, x_param, k=k, momentum=momentum,
             )
             VP.set_objective_norm(residual, ord)
-            residuals.append(VP.solve())
+            val = VP.solve()
+            residuals.append(np.sqrt(val) if ord == 2 else val)
         return VP, residuals
 
     return (pgd_verification,)
@@ -387,6 +403,14 @@ def _(mo):
     ### SDP-VP
 
     The following example formulates the verification problem as a semidefinite program (SDP) and solves it to obtain valid upper bound to the worst-case fixed-point residual after $K$ iterations. Although the constraints, objective function, and iterate updates are quadratic, we use semidefinite lifting to relax the (nonconvex) quadratic constraints into convex linear matrix inequality.
+
+    Each horizon $K$ is a separate relaxation, and the lifting accumulates one
+    relaxed nonconvexity per iteration, so the bound loosens as $K$ grows. For
+    plain PGD it still decreases; for momentum PGD it *increases* with $K$ and
+    becomes uninformative after a few iterations. Note that we do not replace
+    such a curve by its running minimum: each $K$ bounds a different quantity
+    $\|r^K\|_2$, and only for a nonexpansive iteration is $\|r^k\|_2$
+    guaranteed non-increasing in $k$ — which the momentum variant is not.
     """)
     return
 
@@ -432,7 +456,7 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(A, K, L, certify_nnls_pepit_radius, eta, x_lb, x_ub, z0_lb, z0_ub):
+def _(A, K, L, certify_nnls_pepit_radius, eta, np, x_lb, x_ub, z0_lb, z0_ub):
     from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 
     _pepit_radius = certify_nnls_pepit_radius(
@@ -442,12 +466,20 @@ def _(A, K, L, certify_nnls_pepit_radius, eta, x_lb, x_ub, z0_lb, z0_ub):
         z0_lb,
         z0_ub,
     )
-    all_residuals_PEP, _ = PEPitRunner().proximal_gradient_residuals(
+    # PEPitRunner defaults to Clarabel: SCS fails on the k=1 PEP here and
+    # returns None, which used to show up as a missing K=1 point in the figure.
+    _runner = PEPitRunner()
+
+    # PEPit's performance metric is ||x[k] - x[k-1]||^2, so square-root it to
+    # match the ||r^k||_2 units used by the simulator and the two verifiers.
+    _pep, _ = _runner.proximal_gradient_residuals(
         K=K, L=float(L), eta=float(eta), R=_pepit_radius, nonsmooth="indicator"
     )
-    all_residuals_PEP_momentum, _ = PEPitRunner().accelerated_proximal_gradient_residuals(
+    _pep_momentum, _ = _runner.accelerated_proximal_gradient_residuals(
         K=K, L=float(L), eta=float(eta), R=_pepit_radius, nonsmooth="indicator"
     )
+    all_residuals_PEP = np.sqrt(np.asarray(_pep, dtype=float))
+    all_residuals_PEP_momentum = np.sqrt(np.asarray(_pep_momentum, dtype=float))
     return all_residuals_PEP, all_residuals_PEP_momentum
 
 
@@ -458,7 +490,26 @@ def _(mo):
 
     Now we plot the verification results against the PEPit bound, the SDP
     bound, and the in-sample simulation statistics, including the sample
-    worst-case instance.
+    worst-case instance. Every curve reports $\|r^k\|_2$, but they answer
+    different questions, so they are not interchangeable:
+
+    - **sample worst-case** — a *lower* bound on the true worst case. The
+      samples are uniform over the same boxes the verifiers search, but uniform
+      sampling in $8$ dimensions concentrates away from the vertices and faces
+      where the maximizer sits, so this curve is loose by construction.
+    - **MIP-VP** — the *exact* worst case over the boxes, for this problem
+      instance.
+    - **SDP-VP** — a relaxation of the same problem, hence a valid *upper* bound
+      for this instance. The relaxation loosens as the horizon grows.
+    - **PEPit** — the worst case over *every* $L$-smooth convex $f$ and convex
+      indicator $g$ with $\|z^0-z^\star\| \le R$. It bounds a whole function
+      class rather than this instance, so it should sit above MIP-VP; here $R$
+      comes from `certify_nnls_pepit_radius`, which covers the entire
+      initial-condition box rather than just the drawn samples.
+
+    So the expected ordering at every $K$ is
+    $\text{sample worst-case} \le \text{MIP-VP} \le \text{SDP-VP}$ and
+    $\text{MIP-VP} \le \text{PEPit}$.
     """)
     return
 
@@ -482,7 +533,7 @@ def _(
     plt.fill_between(_ks, simulation_residual_quantiles[2], simulation_residual_quantiles[0], alpha=.18, label='sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles[3], ':', color=_avg_line.get_color(), label='sample worst-case')
     plt.yscale('log')
-    plt.ylabel('Worst-case fixed-point residual')
+    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_2$')
     plt.xlabel(r'$K$')
     plt.suptitle('NNLS: projected gradient descent (PGD)')
     plt.legend()
@@ -516,7 +567,7 @@ def _(
     plt.fill_between(_ks, simulation_residual_quantiles_momentum[2], simulation_residual_quantiles_momentum[0], alpha=.18, label='sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_momentum[3], ':', color=_avg_line.get_color(), label='sample worst-case')
     plt.yscale('log')
-    plt.ylabel('Worst-case fixed-point residual')
+    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_2$')
     plt.xlabel(r'$K$')
     plt.suptitle('NNLS: momentum PGD')
     plt.legend()
@@ -527,8 +578,11 @@ def _(
 def _(mo):
     mo.md(r"""
     Finally, we overlay PGD and momentum PGD to compare the two methods
-    directly. Methods are distinguished by color, and the data series (PEPit,
-    MIP-VP, SDP-VP, and sample average with its 10%-90% band) by line style.
+    directly. Methods are distinguished by color, and the data series (MIP-VP,
+    SDP-VP, and sample average with its 10%-90% band) by line style. PEPit is
+    left out here: it bounds a function class rather than this instance, so it
+    is the one curve that does not distinguish the two methods *on this
+    problem*. It is shown in the per-method figures above.
     """)
     return
 
@@ -537,8 +591,6 @@ def _(mo):
 def _(
     K,
     all_residuals,
-    all_residuals_PEP,
-    all_residuals_PEP_momentum,
     all_residuals_momentum,
     all_residuals_sdp,
     all_residuals_sdp_momentum,
@@ -554,14 +606,13 @@ def _(
     _ks = range(1, K+1)
 
     _methods = [
-        ('PGD', 'C0', all_residuals_PEP, all_residuals, all_residuals_sdp,
+        ('PGD', 'C0', all_residuals, all_residuals_sdp,
          simulation_residuals, simulation_residual_quantiles),
-        ('momentum PGD', 'C1', all_residuals_PEP_momentum, all_residuals_momentum,
+        ('momentum PGD', 'C1', all_residuals_momentum,
          all_residuals_sdp_momentum, simulation_residuals_momentum,
          simulation_residual_quantiles_momentum),
     ]
-    for _, _color, _pep, _mip, _sdp, _avg, _quant in _methods:
-        # plt.plot(_ks, _pep, '-', color=_color)
+    for _, _color, _mip, _sdp, _avg, _quant in _methods:
         plt.plot(_ks, _mip, '--', color=_color)
         plt.plot(_ks, _sdp, '-.', color=_color)
         plt.plot(_ks, _avg, ':', color=_color)
@@ -572,7 +623,6 @@ def _(
         for _name, _color, *_ in _methods
     ]
     _style_handles = [
-        # Line2D([], [], color='gray', linestyle='-', label='PEPit'),
         Line2D([], [], color='gray', linestyle='--', label='MIP-VP'),
         Line2D([], [], color='gray', linestyle='-.', label='SDP-VP'),
         Line2D([], [], color='gray', linestyle=':', label='sample average'),
@@ -580,7 +630,7 @@ def _(
 
     plt.yscale('log')
     plt.xlabel(r'$K$')
-    plt.ylabel('Worst-case fixed-point residual')
+    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_2$')
     _leg = plt.legend(handles=_method_handles, loc='upper right')
     plt.gca().add_artist(_leg)
     plt.legend(handles=_style_handles, loc='lower left')

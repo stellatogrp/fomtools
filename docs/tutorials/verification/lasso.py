@@ -27,7 +27,7 @@ def _():
         sys.path.insert(0, str(repo_root))
 
     from docs.tutorials.helper_functions.lasso import (
-        estimate_lasso_pepit_radius,
+        certify_lasso_pepit_radius,
         ista_step,
         make_lasso_data,
     )
@@ -53,7 +53,7 @@ def _():
             _gp.Model()
 
     return (
-        estimate_lasso_pepit_radius,
+        certify_lasso_pepit_radius,
         ista_step,
         make_lasso_data,
         mo,
@@ -191,7 +191,7 @@ def _(mo):
 def _(D, eta, ista_step, lambd, n, np, p):
     from fomtools.verifier import Verifier
 
-    def ista_simulation(x_samples, s0_samples, K, momentum=False, ord=np.inf):
+    def ista_simulation(x_samples, s0_samples, K, momentum=False, ord=2):
         """Simulate ISTA on sampled instances.
 
         Builds a simulator-mode :class:`Verifier`, registers the parameter
@@ -199,7 +199,11 @@ def _(D, eta, ista_step, lambd, n, np, p):
         recurrence with ``ista_step``, and simulates via ``VP.solve()``. Each
         ``*_samples`` array has shape ``(n_samples, dim)`` (a single-row array
         replays one instance), and the returned ``residuals`` has shape
-        ``(n_samples, K)``. Summary statistics (``mean``, ``min``, ``max``, ...)
+        ``(n_samples, K)``. ``ord`` defaults to ``2``, matching
+        :func:`ista_verification`; ``set_objective_norm(..., 2)`` maximizes the
+        *squared* Euclidean norm, so the returned residuals are in squared units
+        and need a square root before being compared against anything reported in
+        $\\|r^k\\|_2$. Summary statistics (``mean``, ``min``, ``max``, ...)
         are available on the returned instance ``VP`` via ``VP[...]``.
         """
         VP = Verifier(method='simulator', obbt_solver=None)
@@ -221,15 +225,20 @@ def _(D, eta, ista_step, lambd, n, np, p):
 
 @app.cell
 def _(K, ista_simulation, np, s0_samples, x_samples):
-    _VP, _residuals = ista_simulation(x_samples, s0_samples, K, momentum=False, ord=np.inf)
+    _VP, _residuals = ista_simulation(x_samples, s0_samples, K, momentum=False, ord=2)
 
+    # These come straight from the objective, so they are in squared units.
     print(
-        f"Summary statistics:\n"
+        f"Summary statistics (squared, at K={K}):\n"
         f"mean: {_VP['mean']:.6e}\n"
         f"min: {_VP['min']:.6e}\n"
         f"max: {_VP['max']:.6e}\n"
         f"median: {_VP['median']:.6e}\n"
     )
+
+    # Convert to ||r^k||_2 before any statistic: sqrt commutes with quantiles but
+    # not with the mean, so it has to be applied elementwise first.
+    _residuals = np.sqrt(_residuals)
 
     simulation_residuals_ista = np.mean(_residuals, axis=0)
     # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
@@ -247,7 +256,8 @@ def _(mo):
 
 @app.cell
 def _(K, ista_simulation, np, s0_samples, x_samples):
-    _, _residuals = ista_simulation(x_samples, s0_samples, K, momentum=True, ord=np.inf)
+    _, _residuals = ista_simulation(x_samples, s0_samples, K, momentum=True, ord=2)
+    _residuals = np.sqrt(_residuals)  # squared objective -> ||r^k||_2
     simulation_residuals_fista = np.mean(_residuals, axis=0)
     # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
     simulation_residual_quantiles_fista = np.quantile(_residuals, [0.90, 0.50, 0.10, 1.0], axis=0)
@@ -270,7 +280,7 @@ def _(mo):
 
 @app.cell
 def _(D, Verifier, eta, ista_step, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
-    def ista_verification(K, method, momentum=False, ord=np.inf, **verifier_kwargs):
+    def ista_verification(K, method, momentum=False, ord=2, **verifier_kwargs):
         """Solve the ISTA/FISTA verification problem for one backend.
 
         Builds a ``Verifier`` in ``method`` mode, registers the parameter box
@@ -279,6 +289,10 @@ def _(D, Verifier, eta, ista_step, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
         with one worst-case residual per iteration. Extra ``verifier_kwargs``
         (``solver``, ``params``, ...) are forwarded to the ``Verifier``
         constructor.
+
+        ``ord`` defaults to ``2`` for every backend so that the MIP and SDP curves
+        are directly comparable. A 2-norm objective is squared, so the value is
+        square-rooted on return and the residuals are reported as $\\|r^k\\|_2$.
         """
         VP = Verifier(method=method, **verifier_kwargs)
         x_param = VP.add_param(p, lb=x_lb, ub=x_ub)
@@ -291,7 +305,8 @@ def _(D, Verifier, eta, ista_step, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
                 VP, D, eta, lambd, z, y, x_param, t, k=k, momentum=momentum
             )
             VP.set_objective_norm(residual, ord)
-            residuals.append(VP.solve())
+            val = VP.solve()
+            residuals.append(np.sqrt(val) if ord == 2 else val)
         return VP, residuals
 
     return (ista_verification,)
@@ -346,31 +361,51 @@ def _(mo):
     mo.md(r"""
     ### PEP-obtained worst-case convergence rate
 
-    We compare our results to the worst-case performance of ISTA and FISTA
-    returned by the performance estimation problem (PEP), using the shared
-    `PEPitRunner`.
+    We compare our ISTA results to the worst-case performance returned by the
+    performance estimation problem (PEP), using the shared `PEPitRunner`. The
+    radius is certified rather than measured on the samples, so the curve is a
+    valid upper bound for the whole box the verification problem searches; the
+    price is that it is far looser than the sampled radius used previously
+    ($R \approx 23.7$ instead of $3.0$, and the PEP scales as $R^2$).
+
+    The FISTA curve uses a PEP written to match `ista_step` rather than the
+    generic accelerated template. `PEPitRunner` exposes this through
+    `variant="fista"`, which changes two things relative to the default
+    `variant="simple"` used by the NNLS tutorial: the extrapolation weights come
+    from the classical sequence $t_0 = 1$,
+    $t_{k} = (1+\sqrt{1+4t_{k-1}^2})/2$, $\beta_k = (t_{k-1}-1)/t_{k}$ instead
+    of the hardcoded $\beta_k = (k-1)/(k+2)$ (they differ precisely over the
+    small $K$ plotted here: $\beta_2 = 0.282$ vs $0.250$,
+    $\beta_3 = 0.434$ vs $0.400$), and the performance metric is the difference
+    of the *proximal* iterates $y^k - y^{k-1}$ rather than of the extrapolated
+    ones, which is the residual `ista_step` returns. Since $y^0 = z^0 = s^0$ in
+    the notebook, the same initial condition $\|z^0-z^\star\| \le R$ covers
+    both sequences.
     """)
     return
 
 
 @app.cell(hide_code=True)
-def _(D, K, L, estimate_lasso_pepit_radius, eta, lambd, s0_samples, x_samples):
+def _(K, L, certify_lasso_pepit_radius, eta, lambd, n, np, s0_lb, s0_ub, x_lb, x_ub):
     from docs.tutorials.helper_functions.pepit_runner import PEPitRunner
 
-    # Empirical initial-condition radius for the PEPit comparison.
-    _pepit_radius = estimate_lasso_pepit_radius(
-        D,
-        eta,
-        lambd,
-        s0_samples,
-        x_samples,
-    )
-    all_residuals_PEP, _ = PEPitRunner().proximal_gradient_residuals(
+    # Certified initial-condition radius: covers the whole box, not just the
+    # drawn samples, so the PEP value below is a genuine upper bound.
+    _pepit_radius = certify_lasso_pepit_radius(lambd, s0_lb, s0_ub, x_lb, x_ub, n)
+
+    _runner = PEPitRunner()
+    _pep, _ = _runner.proximal_gradient_residuals(
         K=K, L=float(L), eta=float(eta), R=_pepit_radius, nonsmooth="convex"
     )
-    all_residuals_PEP_fista, _ = PEPitRunner().accelerated_proximal_gradient_residuals(
-        K=K, L=float(L), eta=float(eta), R=_pepit_radius, nonsmooth="convex"
+    # variant="fista" matches ``ista_step``: classical t_k weights, and the
+    # metric taken on the proximal iterates y^k rather than the extrapolated z^k.
+    _pep_fista, _ = _runner.accelerated_proximal_gradient_residuals(
+        K=K, L=float(L), eta=float(eta), R=_pepit_radius, nonsmooth="convex",
+        variant="fista",
     )
+    # PEPit's metric is ||x[k] - x[k-1]||^2, so square-root it to match ||r^k||_2.
+    all_residuals_PEP = np.sqrt(np.asarray(_pep, dtype=float))
+    all_residuals_PEP_fista = np.sqrt(np.asarray(_pep_fista, dtype=float))
     return all_residuals_PEP, all_residuals_PEP_fista
 
 
@@ -392,6 +427,7 @@ def _(
     all_residuals,
     all_residuals_PEP,
     all_residuals_sdp,
+    np,
     plt,
     simulation_residual_quantiles_ista,
     simulation_residuals_ista,
@@ -404,11 +440,20 @@ def _(
     _avg_line, = plt.plot(_ks, simulation_residuals_ista, '--', label='ISTA (in-sample avg)')
     plt.fill_between(_ks, simulation_residual_quantiles_ista[2], simulation_residual_quantiles_ista[0], alpha=.18, label='ISTA sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_ista[3], ':', color=_avg_line.get_color(), label='ISTA sample worst-case')
+    # Bound the axis by the plotted *lines*, not by the 10%-90% band: the band's
+    # lower edge decays to ~0, which would otherwise squeeze every curve into the
+    # top of the figure. Nothing drawn as a line is clipped.
+    _lines = np.concatenate([
+        all_residuals,
+        all_residuals_sdp,
+        simulation_residuals_ista,
+        simulation_residual_quantiles_ista[3],
+    ])
+    plt.ylim(bottom=0.5 * float(np.min(_lines)))
     plt.suptitle('sparse coding example')
     plt.yscale('log')
     plt.xlabel(r'$K$')
-    plt.ylabel('Worst-case fixed-point residual')
-    plt.ylim([1e-3, 1e2])
+    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_2$')
     plt.legend()
     return
 
@@ -427,6 +472,7 @@ def _(
     all_residuals_PEP_fista,
     all_residuals_fista,
     all_residuals_sdp_fista,
+    np,
     plt,
     simulation_residual_quantiles_fista,
     simulation_residuals_fista,
@@ -439,11 +485,20 @@ def _(
     _avg_line, = plt.plot(_ks, simulation_residuals_fista, '--', label='FISTA (in-sample avg)')
     plt.fill_between(_ks, simulation_residual_quantiles_fista[2], simulation_residual_quantiles_fista[0], alpha=.18, label='FISTA sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_fista[3], ':', color=_avg_line.get_color(), label='FISTA sample worst-case')
+    # Bound the axis by the plotted *lines*, not by the 10%-90% band: the band's
+    # lower edge decays to ~0, which would otherwise squeeze every curve into the
+    # top of the figure. Nothing drawn as a line is clipped.
+    _lines = np.concatenate([
+        all_residuals_fista,
+        all_residuals_sdp_fista,
+        simulation_residuals_fista,
+        simulation_residual_quantiles_fista[3],
+    ])
+    plt.ylim(bottom=0.5 * float(np.min(_lines)))
     plt.suptitle('sparse coding FISTA example')
     plt.yscale('log')
     plt.xlabel(r'$K$')
-    plt.ylabel('Worst-case fixed-point residual')
-    plt.ylim([1e-3, 5e1])
+    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_2$')
     plt.legend()
     return
 
