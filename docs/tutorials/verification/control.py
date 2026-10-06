@@ -204,7 +204,7 @@ def _(mo):
     simulator cannot project onto the resulting zero-width state box, each mode
     passes the appropriate projection into the shared `admm_step`: the
     simulator clips the input block with `satlin` and stacks $x$ on top, while
-    the MIP and SDP verification backends project onto an `IndBox` whose
+    the MIP verification backend projects onto an `IndBox` whose
     bounds pin the state block to $x$.
     """)
     return
@@ -215,7 +215,7 @@ def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    We now describe how to use `fomtools` to verify the worst-case convergence rate of the OSQP-style ADMM method for constrained optimal control. We compare randomly sampled simulations, exact MIP verification, SDP-relaxed verification, and a PEPit bound, up to $K$ iterations. The initial state parameter $x$ can either be fixed at $x_\text{init}$ or allowed to vary over its prescribed box.
+    We now describe how to use `fomtools` to verify the worst-case convergence rate of the OSQP-style ADMM method for constrained optimal control. We compare randomly sampled simulations, exact MIP verification, and a PEPit bound, up to $K$ iterations. The SDP-relaxed verification problem for the same example is covered in the [SDP verification](sdp.html) tutorial. The initial state parameter $x$ can either be fixed at $x_\text{init}$ or allowed to vary over its prescribed box.
     """)
     return
 
@@ -458,38 +458,6 @@ def _(K, P, admm_verification, n_xz, np, solver_params):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### SDP-VP
-
-    > **Runtime warning.** The SDP relaxation for this control example is
-    > substantially more expensive than the other verification problems. On
-    > the benchmark machine, even the first two horizons took several minutes
-    > each. The solve cell below is therefore disabled by default so that the
-    > notebook remains practical to run end to end. Uncomment the marked lines
-    > to compute the SDP curve.
-
-    We also solve the SDP-relaxed verification problem using the squared
-    Euclidean OSQP-state residual. This is the same recurrence, parameter set,
-    and initialization set as the MIP-VP above; only the verification backend
-    and residual formulation differ. The SDP value is already in the squared
-    Euclidean units used by the simulations and PEP comparison.
-    """)
-    return
-
-
-@app.cell
-def _(K, P, admm_verification):
-    # WARNING: this solve can take a very long time, especially as K grows.
-    # Uncomment the following lines to enable the SDP comparison.
-    # _, all_residuals_sdp = admm_verification(
-    #     K, 'sdp', P, ord=2, solver='clarabel', obbt_solver='highs',
-    # )
-    all_residuals_sdp = None
-    return (all_residuals_sdp,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
     ### PEP-obtained worst-case convergence rate
 
     We compare the MIP result with a PEP that uses the same OSQP recurrence,
@@ -590,7 +558,7 @@ def _(mo):
     ## Numerical Result
 
     We plot every curve in squared Euclidean units. The MIP curve uses the
-    dimension-dependent norm conversion above; SDP, simulation, and PEP use
+    dimension-dependent norm conversion above; simulation and PEP use
     the squared Euclidean residual directly, and the simulation includes the
     sample worst-case instance.
     """)
@@ -603,7 +571,6 @@ def _(
     all_residuals,
     all_residuals_PEP,
     all_residuals_PEP_radius,
-    all_residuals_sdp,
     plt,
     simulation_residual_quantiles_admm,
     simulation_residuals_admm,
@@ -622,8 +589,6 @@ def _(
         all_residuals,
         label=r'ADMM (MIP upper bound via $2n_{xz}\|\cdot\|_\infty^2$)',
     )
-    if all_residuals_sdp is not None:
-        plt.plot(_ks, all_residuals_sdp, label='ADMM (SDP bound)')
     _avg_line, = plt.plot(_ks, simulation_residuals_admm, '--', label='ADMM (in-sample avg)')
     plt.fill_between(_ks, simulation_residual_quantiles_admm[2], simulation_residual_quantiles_admm[0], alpha=.18, label='ADMM sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_admm[3], ':', color=_avg_line.get_color(), label='ADMM sample worst-case')

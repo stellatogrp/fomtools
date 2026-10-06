@@ -174,7 +174,7 @@ def _(A, np):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Every verification mode below (simulator, MIP-VP, and SDP-VP) drives this
+    Every verification mode below (simulator and MIP-VP) drives this
     *same* `pgd_step` recurrence and residual; only the `Verifier` backend and
     whether $(x, z^0)$ are sampled instances or bounded search variables change.
     Setting `momentum=True` selects the FISTA variant.
@@ -326,18 +326,13 @@ def _(mo):
     ## Algorithm verification through verification problem (VP)
 
     We now obtain worst-case guarantee by solving the corresponding verification problem (VP).
-    There are two approaches to formulating VP: mixed-integer linear program (MILP) formulation and (relaxed) semidefinite program (SDP) formulation.
-    Passing the option `method='mip'` and `method='sdp'` will formulate respective verification problem forms, which are based on the following papers:
+    Passing the option `method='mip'` formulates the VP as a mixed-integer linear program (MILP), based on [Exact Verification of First-Order Methods via Mixed-Integer Linear Programming.](https://arxiv.org/abs/2412.11330)
+    The relaxed semidefinite program (SDP) formulation, `method='sdp'`, is covered in the [SDP verification](sdp.html) tutorial.
 
-    - MIP-VP: [Exact Verification of First-Order Methods via Mixed-Integer Linear Programming.](https://arxiv.org/abs/2412.11330)
-    - SDP-VP: [Verification of First-Order Methods for Parametric Quadratic Optimization.](https://link.springer.com/article/10.1007/s10107-025-02261-w)
-
-    Both formulations use the following function, which rolls out the same
-    `pgd_step` recurrence over the horizon $K$ and maximizes the residual at
-    each iteration. Both backends use the same squared Euclidean objective, and
-    the returned value is square-rooted so that every curve in the figures below
-    reports $\|r^k\|_2$. Mixing norms across backends would make the plotted
-    gaps a unit artifact rather than a measure of how loose each bound is.
+    The following function rolls out the same `pgd_step` recurrence over the
+    horizon $K$ and maximizes the residual at each iteration. It uses the
+    squared Euclidean objective, and the returned value is square-rooted so
+    that every curve in the figures below reports $\|r^k\|_2$.
     """)
     return
 
@@ -353,8 +348,7 @@ def _(A, Verifier, eta, m, n, np, pgd_step, x_lb, x_ub, z0_lb, z0_ub):
         with one worst-case residual per iteration. Extra ``verifier_kwargs``
         (``solver``, ``params``, ...) are forwarded to the ``Verifier`` constructor.
 
-        ``ord`` defaults to ``2`` for every backend so that the MIP and SDP curves
-        are directly comparable. A 2-norm objective is squared, so the value is
+        ``ord`` defaults to ``2``. A 2-norm objective is squared, so the value is
         square-rooted on return and the residuals are reported as $\\|r^k\\|_2$.
         """
         VP = Verifier(method=method, **verifier_kwargs)
@@ -395,35 +389,6 @@ def _(K, pgd_verification, solver_params):
         K, 'mip', momentum=True, solver='gurobi', params=solver_params,
     )
     return all_residuals, all_residuals_momentum
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ### SDP-VP
-
-    The following example formulates the verification problem as a semidefinite program (SDP) and solves it to obtain valid upper bound to the worst-case fixed-point residual after $K$ iterations. Although the constraints, objective function, and iterate updates are quadratic, we use semidefinite lifting to relax the (nonconvex) quadratic constraints into convex linear matrix inequality.
-
-    Each horizon $K$ is a separate relaxation, and the lifting accumulates one
-    relaxed nonconvexity per iteration, so the bound loosens as $K$ grows. For
-    plain PGD it still decreases; for momentum PGD it *increases* with $K$ and
-    becomes uninformative after a few iterations. Note that we do not replace
-    such a curve by its running minimum: each $K$ bounds a different quantity
-    $\|r^K\|_2$, and only for a nonexpansive iteration is $\|r^k\|_2$
-    guaranteed non-increasing in $k$ — which the momentum variant is not.
-    """)
-    return
-
-
-@app.cell
-def _(K, pgd_verification):
-    _, all_residuals_sdp = pgd_verification(
-        K, 'sdp', momentum=False, solver='clarabel'
-    )
-    _, all_residuals_sdp_momentum = pgd_verification(
-        K, 'sdp', momentum=True, solver='clarabel',
-    )
-    return all_residuals_sdp, all_residuals_sdp_momentum
 
 
 @app.cell(hide_code=True)
@@ -488,8 +453,8 @@ def _(mo):
     mo.md(r"""
     ### Numerical result: comparison against baselines
 
-    Now we plot the verification results against the PEPit bound, the SDP
-    bound, and the in-sample simulation statistics, including the sample
+    Now we plot the verification results against the PEPit bound and the
+    in-sample simulation statistics, including the sample
     worst-case instance. Every curve reports $\|r^k\|_2$, but they answer
     different questions, so they are not interchangeable:
 
@@ -499,8 +464,6 @@ def _(mo):
       where the maximizer sits, so this curve is loose by construction.
     - **MIP-VP** — the *exact* worst case over the boxes, for this problem
       instance.
-    - **SDP-VP** — a relaxation of the same problem, hence a valid *upper* bound
-      for this instance. The relaxation loosens as the horizon grows.
     - **PEPit** — the worst case over *every* $L$-smooth convex $f$ and convex
       indicator $g$ with $\|z^0-z^\star\| \le R$. It bounds a whole function
       class rather than this instance, so it should sit above MIP-VP; here $R$
@@ -508,8 +471,7 @@ def _(mo):
       initial-condition box rather than just the drawn samples.
 
     So the expected ordering at every $K$ is
-    $\text{sample worst-case} \le \text{MIP-VP} \le \text{SDP-VP}$ and
-    $\text{MIP-VP} \le \text{PEPit}$.
+    $\text{sample worst-case} \le \text{MIP-VP} \le \text{PEPit}$.
     """)
     return
 
@@ -519,7 +481,6 @@ def _(
     K,
     all_residuals,
     all_residuals_PEP,
-    all_residuals_sdp,
     plt,
     simulation_residual_quantiles,
     simulation_residuals,
@@ -528,7 +489,6 @@ def _(
     _ks = range(1, K+1)
     plt.plot(_ks, all_residuals_PEP, label='PEPit')
     plt.plot(_ks, all_residuals, label='MIP-VP')
-    plt.plot(_ks, all_residuals_sdp, label='SDP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals, '--', label='sample average')
     plt.fill_between(_ks, simulation_residual_quantiles[2], simulation_residual_quantiles[0], alpha=.18, label='sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles[3], ':', color=_avg_line.get_color(), label='sample worst-case')
@@ -553,7 +513,6 @@ def _(
     K,
     all_residuals_PEP_momentum,
     all_residuals_momentum,
-    all_residuals_sdp_momentum,
     plt,
     simulation_residual_quantiles_momentum,
     simulation_residuals_momentum,
@@ -562,7 +521,6 @@ def _(
     _ks = range(1, K+1)
     plt.plot(_ks, all_residuals_PEP_momentum, label='PEPit')
     plt.plot(_ks, all_residuals_momentum, label='MIP-VP')
-    plt.plot(_ks, all_residuals_sdp_momentum, label='SDP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals_momentum, '--', label='sample average')
     plt.fill_between(_ks, simulation_residual_quantiles_momentum[2], simulation_residual_quantiles_momentum[0], alpha=.18, label='sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_momentum[3], ':', color=_avg_line.get_color(), label='sample worst-case')
@@ -578,8 +536,8 @@ def _(
 def _(mo):
     mo.md(r"""
     Finally, we overlay PGD and momentum PGD to compare the two methods
-    directly. Methods are distinguished by color, and the data series (MIP-VP,
-    SDP-VP, and sample average with its 10%-90% band) by line style. PEPit is
+    directly. Methods are distinguished by color, and the data series (MIP-VP
+    and sample average with its 10%-90% band) by line style. PEPit is
     left out here: it bounds a function class rather than this instance, so it
     is the one curve that does not distinguish the two methods *on this
     problem*. It is shown in the per-method figures above.
@@ -592,8 +550,6 @@ def _(
     K,
     all_residuals,
     all_residuals_momentum,
-    all_residuals_sdp,
-    all_residuals_sdp_momentum,
     plt,
     simulation_residual_quantiles,
     simulation_residual_quantiles_momentum,
@@ -606,15 +562,13 @@ def _(
     _ks = range(1, K+1)
 
     _methods = [
-        ('PGD', 'C0', all_residuals, all_residuals_sdp,
+        ('PGD', 'C0', all_residuals,
          simulation_residuals, simulation_residual_quantiles),
         ('momentum PGD', 'C1', all_residuals_momentum,
-         all_residuals_sdp_momentum, simulation_residuals_momentum,
-         simulation_residual_quantiles_momentum),
+         simulation_residuals_momentum, simulation_residual_quantiles_momentum),
     ]
-    for _, _color, _mip, _sdp, _avg, _quant in _methods:
+    for _, _color, _mip, _avg, _quant in _methods:
         plt.plot(_ks, _mip, '--', color=_color)
-        plt.plot(_ks, _sdp, '-.', color=_color)
         plt.plot(_ks, _avg, ':', color=_color)
         plt.fill_between(_ks, _quant[2], _quant[0], color=_color, alpha=.18)
 
@@ -624,7 +578,6 @@ def _(
     ]
     _style_handles = [
         Line2D([], [], color='gray', linestyle='--', label='MIP-VP'),
-        Line2D([], [], color='gray', linestyle='-.', label='SDP-VP'),
         Line2D([], [], color='gray', linestyle=':', label='sample average'),
     ]
 
@@ -635,77 +588,6 @@ def _(
     plt.gca().add_artist(_leg)
     plt.legend(handles=_style_handles, loc='lower left')
     plt.suptitle('NNLS: PGD vs. momentum PGD')
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    # Appendix
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Backend-aware collapsing with `iterate_trajectory`
-
-    Writing an affine update such as `z[k] = M @ z[k-1] + c` produces a
-    *collapsed* linear expression: it references existing variables and mints no
-    new one. This is ideal for the MIP and simulator backends. For the **SDP**
-    backend, however, collapsing couples many variables in a single dense moment
-    matrix; keeping each iterate as its own leaf (linked by an equality) yields a
-    much sparser matrix that decomposes into many small PSD cones and is often
-    substantially faster to solve.
-
-    `verifier.iterate_trajectory(K + 1, collapse_expr="auto")` picks the right
-    behavior automatically: collapse on MIP/simulator, keep a separate leaf on
-    SDP. Pass `collapse_expr=True`/`False` (on the trajectory or per slot via
-    `z.assign(k, expr, collapse_expr=...)`) to force it. Note the policy only
-    applies to *collapsed* expressions — a value that is already a fresh variable
-    (a `relu`/`satlin`/`soft_threshold` output on MIP, or a `relu` on SDP) is
-    stored as-is regardless.
-
-    The cell below illustrates the SDP effect on a soft-threshold (ISTA) chain,
-    where the collapsed and separated formulations are genuinely different SDP
-    relaxations.
-    """)
-    return
-
-
-@app.cell
-def _(np):
-    import time
-
-    from fomtools.verifier import Verifier as _V
-
-    def _sdp_ista_bound(collapse_expr, K=2, seed=0):
-        m2, n2 = 4, 3
-        t, lambd = 0.05, 0.1
-        np.random.seed(seed)
-        A2 = np.random.normal(size=(m2, n2))
-        vp = _V(method="sdp", solver="clarabel", obbt_solver=None)
-        xp = vp.add_param(m2, lb=-1, ub=1)
-        zt = vp.iterate_trajectory(K + 1, collapse_expr=collapse_expr)
-        zt[0] = vp.add_iterate(n2, lb=-0.5, ub=0.5)
-        for kk in range(1, K + 1):
-            zt[kk] = vp.step.soft_threshold(
-                zt[kk - 1] - t * A2.T @ (A2 @ zt[kk - 1] - xp), lambd=lambd * t
-            )
-        vp.set_objective_norm(zt[K] - zt[K - 1], 2)
-        t0 = time.perf_counter()
-        bound = vp.solve()
-        return bound, time.perf_counter() - t0
-
-    try:
-        b_collapse, s_collapse = _sdp_ista_bound(True, K=7)
-        b_auto, s_auto = _sdp_ista_bound("auto")  # -> no-collapse on SDP
-        print(f"SDP collapsed    : bound={b_collapse:.4f}  solve={s_collapse:.3f}s")
-        print(f"SDP no-collapse  : bound={b_auto:.4f}  solve={s_auto:.3f}s")
-        print("no-collapse is a sparser (>=) relaxation; timing favors it as K/n grow")
-    except Exception as exc:  # missing SDP solver in this environment
-        print(f"(skipping SDP comparison: {exc})")
     return
 
 

@@ -132,7 +132,7 @@ def _(make_lasso_data):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Every verification mode below (simulator, MIP-VP, and SDP-VP) drives this
+    Every verification mode below (simulator and MIP-VP) drives this
     *same* `ista_step` recurrence and residual; only the `Verifier` backend and
     whether $(x, s^0)$ are sampled instances or bounded search variables change.
     Setting `momentum=True` selects the FISTA variant.
@@ -145,7 +145,7 @@ def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    In this experiment, we verify the performance of ISTA and FISTA for sparse coding given the iteration budget $K>0$. We compare simulator statistics, exact MIP verification, SDP verification, PEPit bounds, and the in-sample worst-case instances.
+    In this experiment, we verify the performance of ISTA and FISTA for sparse coding given the iteration budget $K>0$. We compare simulator statistics, exact MIP verification, PEPit bounds, and the in-sample worst-case instances. The SDP-relaxed verification problem for the same example is covered in the [SDP verification](sdp.html) tutorial.
     """)
     return
 
@@ -270,10 +270,9 @@ def _(mo):
     ## Algorithm verification through verification problem (VP)
 
     We now obtain worst-case guarantees by solving the verification problem
-    with a MIP formulation (exact) and an SDP relaxation (valid upper bound).
-    Both formulations use the following function, which rolls out the same
-    `ista_step` recurrence over the horizon $K$ and maximizes the fixed-point
-    residual at each iteration.
+    with a MIP formulation, which gives the exact worst case. The following
+    function rolls out the same `ista_step` recurrence over the horizon $K$
+    and maximizes the fixed-point residual at each iteration.
     """)
     return
 
@@ -290,8 +289,7 @@ def _(D, Verifier, eta, ista_step, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
         (``solver``, ``params``, ...) are forwarded to the ``Verifier``
         constructor.
 
-        ``ord`` defaults to ``2`` for every backend so that the MIP and SDP curves
-        are directly comparable. A 2-norm objective is squared, so the value is
+        ``ord`` defaults to ``2``. A 2-norm objective is squared, so the value is
         square-rooted on return and the residuals are reported as $\\|r^k\\|_2$.
         """
         VP = Verifier(method=method, **verifier_kwargs)
@@ -333,27 +331,6 @@ def _(K, ista_verification, solver_params):
         K, 'mip', momentum=True, solver='gurobi', params=solver_params,
     )
     return all_residuals, all_residuals_fista
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ### SDP-VP
-
-    Here, we compare against valid upper bounds obtained from the SDP-relaxed verification problem, for both ISTA and FISTA.
-    """)
-    return
-
-
-@app.cell
-def _(K, ista_verification):
-    _, all_residuals_sdp = ista_verification(
-        K, 'sdp', momentum=False, solver='clarabel'
-    )
-    _, all_residuals_sdp_fista = ista_verification(
-        K, 'sdp', momentum=True, solver='clarabel'
-    )
-    return all_residuals_sdp, all_residuals_sdp_fista
 
 
 @app.cell(hide_code=True)
@@ -414,9 +391,8 @@ def _(mo):
     mo.md(r"""
     ## Numerical Result
 
-    Now we plot the verification results against the PEPit bound, the SDP
-    bound, and the in-sample simulation statistics, including the sample
-    worst-case instance.
+    Now we plot the verification results against the PEPit bound and the
+    in-sample simulation statistics, including the sample worst-case instance.
     """)
     return
 
@@ -426,7 +402,6 @@ def _(
     K,
     all_residuals,
     all_residuals_PEP,
-    all_residuals_sdp,
     np,
     plt,
     simulation_residual_quantiles_ista,
@@ -436,7 +411,6 @@ def _(
     _ks = range(1, K+1)
     plt.plot(_ks, all_residuals_PEP, label='ISTA (PEPit)')
     plt.plot(_ks, all_residuals, label='ISTA (MIP worst-case)')
-    plt.plot(_ks, all_residuals_sdp, label='ISTA (SDP bound)')
     _avg_line, = plt.plot(_ks, simulation_residuals_ista, '--', label='ISTA (in-sample avg)')
     plt.fill_between(_ks, simulation_residual_quantiles_ista[2], simulation_residual_quantiles_ista[0], alpha=.18, label='ISTA sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_ista[3], ':', color=_avg_line.get_color(), label='ISTA sample worst-case')
@@ -445,7 +419,6 @@ def _(
     # top of the figure. Nothing drawn as a line is clipped.
     _lines = np.concatenate([
         all_residuals,
-        all_residuals_sdp,
         simulation_residuals_ista,
         simulation_residual_quantiles_ista[3],
     ])
@@ -471,7 +444,6 @@ def _(
     K,
     all_residuals_PEP_fista,
     all_residuals_fista,
-    all_residuals_sdp_fista,
     np,
     plt,
     simulation_residual_quantiles_fista,
@@ -481,7 +453,6 @@ def _(
     _ks = range(1, K+1)
     plt.plot(_ks, all_residuals_PEP_fista, label='FISTA (PEPit)')
     plt.plot(_ks, all_residuals_fista, label='FISTA (MIP worst-case)')
-    plt.plot(_ks, all_residuals_sdp_fista, label='FISTA (SDP bound)')
     _avg_line, = plt.plot(_ks, simulation_residuals_fista, '--', label='FISTA (in-sample avg)')
     plt.fill_between(_ks, simulation_residual_quantiles_fista[2], simulation_residual_quantiles_fista[0], alpha=.18, label='FISTA sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_fista[3], ':', color=_avg_line.get_color(), label='FISTA sample worst-case')
@@ -490,7 +461,6 @@ def _(
     # top of the figure. Nothing drawn as a line is clipped.
     _lines = np.concatenate([
         all_residuals_fista,
-        all_residuals_sdp_fista,
         simulation_residuals_fista,
         simulation_residual_quantiles_fista[3],
     ])

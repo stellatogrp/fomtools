@@ -4,7 +4,8 @@ These notebooks verify the worst-case performance of first-order methods on five
 example problems. Each one sets up a [`Verifier`](../api/verifier.md), declares
 the problem data and the initial condition, writes the algorithm out of
 [step operators](../api/steps.md), and solves the resulting verification problem
-for a worst-case bound.
+exactly as a mixed-integer linear program (`method='mip'`). A separate notebook
+solves the same five problems with the semidefinite relaxation (`method='sdp'`).
 
 ## Examples
 
@@ -18,6 +19,9 @@ for a worst-case bound.
   descent, whose projection onto the nonnegative orthant is a ReLU step.
 * **[Portfolio](verification/portfolio.html)** — a mean–variance portfolio
   problem with box bounds and a budget constraint, solved by ADMM.
+* **[SDP verification](verification/sdp.html)** — the SDP-relaxed verification
+  problem for all five examples above, giving a valid upper bound on each
+  worst case, compared against simulated instances.
 
 Once a method is verified, the [code generation](codegen.md) tutorial shows how
 to turn the same `Verifier` object into an embedded C solver, and the

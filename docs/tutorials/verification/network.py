@@ -196,7 +196,7 @@ def _(A_d, A_s, np):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Every verification mode below (simulator, MIP-VP, SDP-VP, and the worst-case replays) drives this *same* recurrence and residual. In the current experiment, capacity, cost, and supply have zero-width bounds, so MIP and SDP use the same nominal problem data. The MIP represents those values as fixed symbolic parameters, whereas the SDP passes them as numeric constants to avoid an unnecessarily larger lifted matrix.
+    Every verification mode below (simulator and MIP-VP) drives this *same* recurrence and residual. In the current experiment, capacity, cost, and supply have zero-width bounds, so the MIP represents them as fixed symbolic parameters at their nominal values.
     Each cell rolls out the recurrence directly by iterating `pdhg_step` from the initial iterates $(z^0, v^0, w^0)$ over the horizon $K$, registering the scaled KKT residual at each step as an objective along the way.
     Setting `momentum=True` applies the extrapolation $\tilde z^k = z^k + \frac{k-1}{k+2}(z^k - z^{k-1})$
     (see below) before the dual updates.
@@ -209,7 +209,7 @@ def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    We verify the performance of PDHG and its momentum variant up to a fixed iteration budget $K>0$. As in the NNLS tutorial, we compare randomly sampled simulations, exact MIP verification, SDP-relaxed verification, and the trajectories obtained by replaying the MIP worst-case instances. Unlike NNLS, there is no PEPit comparison here; the reason is explained alongside the figures below.
+    We verify the performance of PDHG and its momentum variant up to a fixed iteration budget $K>0$. As in the NNLS tutorial, we compare randomly sampled simulations with exact MIP verification. Unlike NNLS, there is no PEPit comparison here; the reason is explained alongside the figures below. The SDP-relaxed verification problem for the same example is covered in the [SDP verification](sdp.html) tutorial.
     """)
     return
 
@@ -268,9 +268,9 @@ def _(A_d, A_s, b_s, c, eta, mu, n_d, n_e, n_s, np, pdhg_step):
         (``mean``, ``min``, ``max``, ``final_residuals``, ...) are available on
         the returned instance ``VP`` via ``VP[...]``.
 
-        ``ord`` defaults to ``inf``, matching the MIP backend of
-        :func:`pdhg_verification`; see the note there on why this example is
-        plotted in the infinity norm rather than the 2-norm.
+        ``ord`` defaults to ``inf``, matching :func:`pdhg_verification`; see
+        the note there on why this example is plotted in the infinity norm
+        rather than the 2-norm.
         """
         VP = Verifier(method='simulator', obbt_solver=None)
         x_param = VP.add_param(ndim=n_d, samples=x_samples)
@@ -408,7 +408,7 @@ def _(mo):
     ## Algorithm verification through verification problem (VP)
 
     ### MIP-VP
-    We now obtain worst-case guarantees by solving the corresponding verification problem with a MIP formulation. The demand vector and initial iterates vary over their prescribed bounds. Capacities, costs, and supplies are represented as parameters too, but their lower and upper bounds coincide in this experiment, so they remain fixed at the same nominal values used by the SDP.
+    We now obtain worst-case guarantees by solving the corresponding verification problem with a MIP formulation. The demand vector and initial iterates vary over their prescribed bounds. Capacities, costs, and supplies are represented as parameters too, but their lower and upper bounds coincide in this experiment, so they remain fixed at their nominal values.
     """)
     return
 
@@ -419,7 +419,6 @@ def _(
     A_s,
     Verifier,
     b_s,
-    c,
     c_lb,
     c_ub,
     eta,
@@ -438,45 +437,25 @@ def _(
     z0_lb,
     z0_ub,
 ):
-    def pdhg_verification(
-        K, method, momentum=False, ord=None, parametrize_data=None, **verifier_kwargs,
-    ):
+    def pdhg_verification(K, method, momentum=False, ord=np.inf, **verifier_kwargs):
         """Solve the PDHG verification problem for one backend.
 
-        Builds a ``Verifier`` in ``method`` mode, registers the demand parameter
-        and the ``(z0, v0, w0)`` iterate boxes, rolls out ``pdhg_step`` over the
-        horizon ``K``, and returns ``(VP, residuals)`` with one worst-case
-        residual per iteration.
+        Builds a ``Verifier`` in ``method`` mode, registers the demand parameter,
+        the capacity, cost, and supply parameters, and the ``(z0, v0, w0)``
+        iterate boxes, rolls out ``pdhg_step`` over the horizon ``K``, and
+        returns ``(VP, residuals)`` with one worst-case residual per iteration.
 
-        By default, the MIP backend represents capacity, cost, and supply as
-        symbolic parameters while the SDP backend uses numeric constants. In
-        this tutorial those parameter bounds have zero width, so both choices
-        describe the same nominal problem; the numeric SDP representation
-        merely avoids redundant lifted variables. Pass ``parametrize_data``
-        to override this backend-derived default.
-
-        Every curve in this notebook reports $\\|r^k\\|_\\infty$. ``ord`` defaults
-        to ``inf`` for the MIP, which is a MILP and solves in well under a second,
-        and to ``2`` for the SDP, where the infinity-norm objective does not
-        finish in reasonable time. A 2-norm objective is squared, so its value is
-        square-rooted on return; since $\\|r\\|_\\infty \\le \\|r\\|_2$, the
-        resulting $\\|r^k\\|_2$ bound is still a valid upper bound on the
-        infinity-norm worst case that the other curves report -- just a more
-        conservative one. Extra
-        ``verifier_kwargs`` (``solver``, ``obbt_solver``, ``params``, ...) are
-        forwarded to the ``Verifier`` constructor.
+        Every curve in this notebook reports $\\|r^k\\|_\\infty$, so ``ord``
+        defaults to ``inf``; the resulting MIP is a MILP and solves in well under
+        a second. A 2-norm objective is squared, so its value is square-rooted on
+        return. Extra ``verifier_kwargs`` (``solver``, ``obbt_solver``,
+        ``params``, ...) are forwarded to the ``Verifier`` constructor.
         """
         VP = Verifier(method=method, **verifier_kwargs)
         x_param = VP.add_param(n_d, lb=x_lb, ub=x_ub)
-
-        if parametrize_data is None:
-            parametrize_data = method == 'mip'
-        if parametrize_data:
-            capacity = VP.add_param(n_e, lb=c_lb * np.ones(n_e), ub=c_ub * np.ones(n_e))
-            supply = VP.add_param(n_s, lb=b_s, ub=b_s)
-            cost = VP.add_param(n_e, lb=mu, ub=mu)
-        else:
-            capacity, supply, cost = c, b_s, mu
+        capacity = VP.add_param(n_e, lb=c_lb * np.ones(n_e), ub=c_ub * np.ones(n_e))
+        supply = VP.add_param(n_s, lb=b_s, ub=b_s)
+        cost = VP.add_param(n_e, lb=mu, ub=mu)
 
         z = VP.iterate_trajectory(K + 1, collapse_expr='auto')
         v = VP.iterate_trajectory(K + 1, collapse_expr='auto')
@@ -484,8 +463,6 @@ def _(
         z[0] = VP.add_iterate(n_e, lb=z0_lb, ub=z0_ub)
         v[0] = VP.add_iterate(n_s, lb=v0_lb, ub=v0_ub)
         w[0] = VP.add_iterate(n_d, lb=w0_lb, ub=w0_ub)
-
-        ord = ord if ord is not None else (np.inf if method == 'mip' else 2)
 
         residuals = []
         for k in range(1, K + 1):
@@ -531,34 +508,8 @@ def _(K, pdhg_verification, solver_params):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### SDP-VP
-
-    We also solve an SDP relaxation of each verification problem using the squared Euclidean KKT residual, which is substantially faster than an SDP infinity-norm objective. We report the resulting $\|r^k\|_2$ directly, without normalizing by dimension.
-    """)
-    return
-
-
-@app.cell
-def _(K, pdhg_verification):
-    _, all_residuals_sdp = pdhg_verification(
-        K, 'sdp', solver='clarabel', obbt_solver='highs',
-    )
-    return (all_residuals_sdp,)
-
-
-@app.cell
-def _(K, pdhg_verification):
-    _, all_residuals_sdp_momentum = pdhg_verification(
-        K, 'sdp', momentum=True, solver='clarabel', obbt_solver='highs',
-    )
-    return (all_residuals_sdp_momentum,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    Now we plot the verification results against the SDP comparison and the
-    in-sample simulation statistics. Every curve bounds the same scalar,
+    Now we plot the verification results against the in-sample simulation
+    statistics. Every curve bounds the same scalar,
     $\|r^k\|_\infty$ of the scaled KKT residual, but they answer different
     questions:
 
@@ -567,17 +518,13 @@ def _(mo):
       in $22$ dimensions concentrates away from the vertices and faces where the
       maximizer sits, so this curve is loose by construction.
     - **MIP-VP** — the *exact* worst case over the boxes, for this instance.
-    - **SDP-VP** — a relaxation of the same problem, hence a valid *upper* bound.
-      It is solved with the 2-norm objective because the infinity-norm SDP does
-      not finish in reasonable time here; since $\|r\|_\infty \le \|r\|_2$, the
-      reported $\|r^k\|_2$ is still a valid upper bound on the infinity-norm
-      worst case, just a more conservative one. The MIP keeps the infinity-norm
-      objective, which is a MILP and solves in under a second; its 2-norm
-      counterpart is a nonconvex MIQP that does not finish here, and switching
-      it would cost the *exactness* that makes the MIP curve worth plotting.
+      It uses the infinity-norm objective, which is a MILP and solves in under
+      a second; its 2-norm counterpart is a nonconvex MIQP that does not finish
+      here, and switching it would cost the *exactness* that makes the MIP
+      curve worth plotting.
 
     So the expected ordering at every $K$ is
-    $\text{sample worst-case} \le \text{MIP-VP} \le \text{SDP-VP}$.
+    $\text{sample worst-case} \le \text{MIP-VP}$.
 
     **There is no PEPit curve here**, unlike the NNLS tutorial. Two things would
     have to be built first. PEPit's PDHG template measures the plain iterate
@@ -600,7 +547,6 @@ def _(mo):
 def _(
     K,
     all_residuals,
-    all_residuals_sdp,
     plt,
     simulation_residual_quantiles_pdhg,
     simulation_residuals_pdhg,
@@ -608,7 +554,6 @@ def _(
     plt.figure()
     _ks = range(1, K+1)
     plt.plot(_ks, all_residuals, label='MIP-VP')
-    plt.plot(_ks, all_residuals_sdp, label='SDP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals_pdhg, '--', label='sample average')
     plt.fill_between(_ks, simulation_residual_quantiles_pdhg[2], simulation_residual_quantiles_pdhg[0], alpha=.18, label='sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_pdhg[3], ':', color=_avg_line.get_color(), label='sample worst-case')
@@ -632,7 +577,6 @@ def _(mo):
 def _(
     K,
     all_residuals_momentum,
-    all_residuals_sdp_momentum,
     plt,
     simulation_residual_quantiles_pdhg_mom,
     simulation_residuals_pdhg_mom,
@@ -640,7 +584,6 @@ def _(
     plt.figure()
     _ks = range(1, K+1)
     plt.plot(_ks, all_residuals_momentum, label='MIP-VP')
-    plt.plot(_ks, all_residuals_sdp_momentum, label='SDP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals_pdhg_mom, '--', label='sample average')
     plt.fill_between(_ks, simulation_residual_quantiles_pdhg_mom[2], simulation_residual_quantiles_pdhg_mom[0], alpha=.18, label='sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_pdhg_mom[3], ':', color=_avg_line.get_color(), label='sample worst-case')
@@ -666,8 +609,6 @@ def _(
     K,
     all_residuals,
     all_residuals_momentum,
-    all_residuals_sdp,
-    all_residuals_sdp_momentum,
     plt,
     simulation_residual_quantiles_pdhg,
     simulation_residual_quantiles_pdhg_mom,
@@ -680,13 +621,12 @@ def _(
     _ks = range(1, K+1)
 
     _methods = [
-        ('PDHG', 'C0', all_residuals_sdp, all_residuals,
+        ('PDHG', 'C0', all_residuals,
          simulation_residuals_pdhg, simulation_residual_quantiles_pdhg),
-        ('momentum PDHG', 'C1', all_residuals_sdp_momentum, all_residuals_momentum,
+        ('momentum PDHG', 'C1', all_residuals_momentum,
          simulation_residuals_pdhg_mom, simulation_residual_quantiles_pdhg_mom),
     ]
-    for _, _color, _sdp, _mip, _avg, _quant in _methods:
-        plt.plot(_ks, _sdp, '-', color=_color)
+    for _, _color, _mip, _avg, _quant in _methods:
         plt.plot(_ks, _mip, '--', color=_color)
         plt.plot(_ks, _avg, ':', color=_color)
         plt.fill_between(_ks, _quant[2], _quant[0], color=_color, alpha=.18)
@@ -696,7 +636,6 @@ def _(
         for _name, _color, *_ in _methods
     ]
     _style_handles = [
-        Line2D([], [], color='gray', linestyle='-', label='SDP-VP'),
         Line2D([], [], color='gray', linestyle='--', label='MIP-VP'),
         Line2D([], [], color='gray', linestyle=':', label='sample average'),
     ]

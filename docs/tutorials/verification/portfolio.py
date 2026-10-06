@@ -133,7 +133,7 @@ def _(A_mat, Sigma, csr_matrix, n, np):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Every verification mode below (simulator, MIP-VP, and SDP-VP) drives this
+    Every verification mode below (simulator and MIP-VP) drives this
     *same* `admm_step` recurrence and squared Euclidean residual; only the
     `Verifier` backend and whether $v^0$ is a sampled instance or a bounded
     search variable change.
@@ -146,7 +146,7 @@ def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    We compare simulator statistics, exact MIP verification, SDP-relaxed verification, and a PEPit bound for the portfolio ADMM recurrence, up to $K$ iterations.
+    We compare simulator statistics and exact MIP verification for the portfolio ADMM recurrence, up to $K$ iterations. The SDP-relaxed verification problem for the same example is covered in the [SDP verification](sdp.html) tutorial.
     """)
     return
 
@@ -244,10 +244,10 @@ def _(mo):
     ## Algorithm verification through verification problem (VP)
 
     We now obtain worst-case guarantees by solving the verification problem
-    with a MIP formulation (exact) and an SDP relaxation (valid upper bound).
-    Both formulations use the following function, which rolls out the same
-    `admm_step` recurrence over the horizon $K$ and maximizes the residual over
-    the bounded initial dual iterate $v^0$ at each iteration.
+    with a MIP formulation, which gives the exact worst case. The following
+    function rolls out the same `admm_step` recurrence over the horizon $K$
+    and maximizes the residual over the bounded initial dual iterate $v^0$ at
+    each iteration.
     """)
     return
 
@@ -322,37 +322,18 @@ def _(K, admm_verification, solver_params):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### SDP-VP
-
-    We also solve the SDP-relaxed verification problem, which gives a convex upper bound on the same residual metric.
-    """)
-    return
-
-
-@app.cell
-def _(K, admm_verification):
-    _, all_residuals_sdp = admm_verification(
-        K, "sdp", solver="clarabel", obbt_solver="highs",
-    )
-    return (all_residuals_sdp,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
     ## Numerical Result
 
-    Now we plot the verification results against the SDP bound and the in-sample
-    simulation statistics, including the sample worst-case instance. Every curve
-    reports $\|r^k\|_2$, but they answer different questions:
+    Now we plot the verification results against the in-sample simulation
+    statistics, including the sample worst-case instance. Every curve reports
+    $\|r^k\|_2$, but they answer different questions:
 
     - **sample worst-case** — a *lower* bound on the true worst case, from $10^4$
       draws uniform over the same box $v^0 \in [0,1]^{n+1}$ the verifiers search.
     - **MIP-VP** — the *exact* worst case over that box, for this instance.
-    - **SDP-VP** — a relaxation of the same problem, hence a valid *upper* bound.
 
     So the expected ordering at every $K$ is
-    $\text{sample worst-case} \le \text{MIP-VP} \le \text{SDP-VP}$.
+    $\text{sample worst-case} \le \text{MIP-VP}$.
 
     **There is no PEPit curve here.** Earlier versions of this notebook plotted
     one, but it was not a bound on this algorithm: PEPit's `admm_residuals`
@@ -374,7 +355,6 @@ def _(mo):
 def _(
     K,
     all_residuals,
-    all_residuals_sdp,
     plt,
     simulation_residual_quantiles_admm,
     simulation_residuals_admm,
@@ -382,7 +362,6 @@ def _(
     plt.figure()
     _ks = range(1, K + 1)
     plt.plot(_ks, all_residuals, label="ADMM (MIP worst-case)")
-    plt.plot(_ks, all_residuals_sdp, label="ADMM (SDP bound)")
     _avg_line, = plt.plot(_ks, simulation_residuals_admm, "--", label="ADMM (in-sample avg)")
     plt.fill_between(
         _ks,
