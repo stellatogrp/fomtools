@@ -3,8 +3,14 @@ from functools import cached_property
 import numpy as np
 import scipy.sparse as spa
 
+from fomtools.linearexpression import LinearExpression
 from fomtools.solvers.solver import Solver
-from fomtools.utils.convex_hull_cuts import create_new_constr, get_cuts
+from fomtools.utils.convex_hull_cuts import (
+    get_cuts,
+    legacy_cut_to_hullcut,
+    separate_relu,
+    separate_satlin,
+)
 
 
 class MIPSolver(Solver):
@@ -115,56 +121,129 @@ class MIPSolver(Solver):
         """
         return self._relaxed_model
 
-    def add_convex_hull_cuts(self, steps):
+    def relaxed_is_optimal(self) -> bool:
+        """Whether the last ``relax_model`` solve ended optimal."""
+        raise NotImplementedError
+
+    def separate_convex_hull_cuts(self, steps, tol: float = 1e-6) -> list:
         """
-        Add convex hull cuts to tighten the MIP relaxation.
+        Separate the relaxed point from the convex hulls of the piecewise affine steps.
 
-        This method generates and adds cutting planes based on the convex hull
-        of the feasible region defined by the step operators (e.g., ReLU, soft
-        threshold). These cuts strengthen the linear programming relaxation and
-        can improve solution quality.
-
-        The method relaxes the model, then for each step it extracts variable
-        values from the relaxed solution and generates cuts using the algorithm
-        from Huchette & Vielma for piecewise linear functions.
+        Solves the continuous relaxation of the current model (which should already
+        carry the objective) and, for every unstable output component of each ReLU,
+        saturated linear and soft-threshold step, returns the most violated hull
+        inequality, if any. Other steps are skipped. Nothing is added to the model:
+        the caller decides where the cuts go.
 
         Parameters
         ----------
         steps : list of Step
-            List of step objects (e.g., ReluStep, SoftThresholdStep) for which
-            to generate convex hull cuts.
+            The canonicalized steps.
+        tol : float, default 1e-6
+            Minimum violation for a cut to be returned.
+
+        Returns
+        -------
+        list[Constraint]
+            One constraint per separated component, on the step's input and
+            output leaves.
         """
+        from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
+
         self.relax_model()
+        if not self.relaxed_is_optimal():
+            return []
 
+        cuts = []
         for step in steps:
-            y_var, y_val = self.get_relaxed_variables(step.arg)
-            # ``step.output_leaves[0]`` is the fresh MIP variable: the full output
-            # leaf for full relu, or the smaller proj-leaf for partial relu.
-            # ``arg_to_pos`` maps each projected arg row to its row in that
-            # fresh leaf; for full relu this is the identity dict.
-            w_leaf = step.output_leaves[0]
-            w_var, w_val = self.get_relaxed_variables(w_leaf)
+            if isinstance(step, Relu):
+                rows = step.idx_with_binary_vars & step.proj_indices
+            elif isinstance(step, SaturatedLinear):
+                rows = _unstable_satlin_rows(step)
+            elif isinstance(step, SoftThreshold):
+                rows = step.idx_with_right_binary_vars | step.idx_with_left_binary_vars
+            else:
+                continue
+            if not rows:
+                continue
 
+            leaves = list(step.arg.decomposition_dict)
+            L, U = _stacked_leaf_bounds(leaves)
+            _, y_val = self.get_relaxed_variables(step.arg)
+            # ``step.output_leaves[0]`` is the fresh output variable: the full output
+            # leaf, or the smaller proj-leaf for a partial ReLU, whose row for arg
+            # row ``i`` is ``arg_to_pos[i]``.
+            w_leaf = step.output_leaves[0]
+            _, w_val = self.get_relaxed_variables(w_leaf)
             arg_to_pos = {i: j for j, i in enumerate(sorted(step.proj_indices))}
 
-            l = np.concatenate(step.arg.lb)
-            u = np.concatenate(step.arg.ub)
-
-            for i in range(step.output.ndim):
-                if i not in arg_to_pos:
-                    continue
+            for i in sorted(rows):
                 pos = arg_to_pos[i]
-                # special case out sparse matrices as needed
-                A = np.concatenate(
-                    [
-                        np.asarray(v.todense()).reshape(-1) if spa.issparse(v) else v.flatten()
-                        for v in step.arg[i].decomposition_dict.values()
-                    ]
-                )
-
-                # TODO: Gurobi is leaked in this part
-                Iint, lI, h, L_hat, U_hat = get_cuts(step, i, w_val[pos], A, y_val, l, u)
-                if Iint is not None:
-                    self.add_constr(
-                        create_new_constr(w_var[pos], A, y_var, Iint, lI, h, L_hat, U_hat)
+                a = np.concatenate([_coeff_row(v, i) for v in step.arg.decomposition_dict.values()])
+                used = a != 0
+                if not (np.isfinite(L[used]).all() and np.isfinite(U[used]).all()):
+                    continue
+                k = float(np.atleast_1d(step.arg.const)[i])
+                if isinstance(step, Relu):
+                    cut = separate_relu(a, k, L, U, y_val, w_val[pos], tol)
+                elif isinstance(step, SaturatedLinear):
+                    l, u = _satlin_limits(step)
+                    cut = separate_satlin(a, k, L, U, y_val, w_val[pos], l[i], u[i], tol)
+                else:
+                    # Soft-threshold keeps its original separation for now.
+                    Iint, lI, h, L_hat, U_hat = get_cuts(step, i, w_val[pos], a, y_val, L, U)
+                    cut = (
+                        legacy_cut_to_hullcut(a, Iint, lI, h, L_hat, U_hat)
+                        if Iint is not None
+                        else None
                     )
+                if cut is not None:
+                    cuts.append(_cut_to_constraint(cut, w_leaf[pos], leaves))
+        return cuts
+
+
+def _coeff_row(coeff, i: int) -> np.ndarray:
+    """Row ``i`` of a dense or sparse coefficient matrix, as a flat array."""
+    if spa.issparse(coeff):
+        return coeff.tocsr()[i].toarray().ravel()
+    return np.atleast_2d(np.asarray(coeff))[i].ravel()
+
+
+def _stacked_leaf_bounds(leaves) -> tuple[np.ndarray, np.ndarray]:
+    """Current bounds of ``leaves``, stacked in order."""
+    L = np.concatenate([np.broadcast_to(np.asarray(f.lb, dtype=float), (f.ndim,)) for f in leaves])
+    U = np.concatenate([np.broadcast_to(np.asarray(f.ub, dtype=float), (f.ndim,)) for f in leaves])
+    return L, U
+
+
+def _satlin_limits(step) -> tuple[np.ndarray, np.ndarray] | None:
+    """Numeric saturation limits ``(l, u)`` as arrays, or ``None`` if either is parametric."""
+    if isinstance(step.l, LinearExpression) or isinstance(step.u, LinearExpression):
+        return None
+    n = step.arg.ndim
+    l = np.broadcast_to(np.asarray(step.l, dtype=float), (n,))
+    u = np.broadcast_to(np.asarray(step.u, dtype=float), (n,))
+    return l, u
+
+
+def _unstable_satlin_rows(step) -> set[int]:
+    """Rows whose saturation is undecided by the input bounds (the ones with binaries)."""
+    limits = _satlin_limits(step)
+    if limits is None:
+        return set()
+    l, u = limits
+    lb, ub = np.asarray(step.lb, dtype=float), np.asarray(step.ub, dtype=float)
+    stable = (lb >= u) | (ub <= l) | ((lb >= l) & (ub <= u)) | (l >= u)
+    return set(np.flatnonzero(~stable).tolist())
+
+
+def _cut_to_constraint(cut, w_expr, leaves):
+    """The constraint ``cut`` on the output row ``w_expr`` and the input ``leaves``."""
+    decomposition, start = {}, 0
+    for leaf in leaves:
+        row = cut.alpha[start : start + leaf.ndim]
+        start += leaf.ndim
+        if np.any(row != 0):
+            decomposition[leaf] = row.reshape(1, -1)
+    rhs = LinearExpression(decomposition_dict=decomposition, const=np.array([cut.beta]))
+    return w_expr <= rhs if cut.sense > 0 else w_expr >= rhs

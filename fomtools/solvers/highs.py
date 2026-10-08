@@ -66,6 +66,10 @@ class HiGHSSolver(MIPSolver):
 
         self.__dict__.pop("relaxed_model", None)
 
+    def relaxed_is_optimal(self) -> bool:
+        """Whether the last ``relax_model`` solve ended optimal."""
+        return self._relaxed_model.getModelStatus() == hp.HighsModelStatus.kOptimal
+
     def add_var(self, var: LinearExpression, lb: float = -np.inf, ub: float = np.inf):
         """
         Create and register a list of HiGHS variable corresponding to the

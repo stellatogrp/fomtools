@@ -413,20 +413,43 @@ class MIP(Canonicalizer):
         solver.constraints_to_solver(constraints)
         solver.set_objective(expression=q, sense="maximize")
 
-    def solve_model(self, convex_hull_cuts: bool = False, **solver_kwargs) -> float:
+    def separate_hull_cuts(self, tol: float = 1e-6) -> List[Constraint]:
+        """
+        Separate the root LP optimum from the convex hulls of the steps.
+
+        Copies the model (which carries every cut added so far), applies the
+        objective, solves the continuous relaxation and returns the most violated
+        hull inequality of every unstable step component. The model itself is not
+        modified; ``Verifier.solve`` adds the returned cuts.
+
+        Parameters
+        ----------
+        tol: float, default 1e-6
+            Minimum violation for a cut to be returned.
+
+        Returns
+        -------
+        List[Constraint]
+            The separated cuts.
+        """
+        relaxed = self.solver.copy()
+        if self.solver_params:
+            relaxed.set_solver_params(self.solver_params)
+        self._apply_objective(relaxed)
+        return relaxed.separate_convex_hull_cuts(self.steps, tol=tol)
+
+    def solve_model(self, **solver_kwargs) -> float:
         """
         Optimize the underlying MIP problem.
 
         Creates a copy of the solver, applies the objective to the copy,
         solves it, and keeps a reference for solution extraction.
         This prevents objective constraints from accumulating across
-        multiple solve calls.
+        multiple solve calls. Convex hull cuts are added to the model
+        beforehand by ``Verifier.solve``.
 
         Parameters
         ----------
-        convex_hull_cuts: bool
-            If ``True`` convex hull cuts are added to the MIP problem.
-
         **solver_kwargs
             Native solver options forwarded verbatim to the backend
             (e.g. ``TimeLimit=10``, ``MIPGap=1e-4`` for Gurobi). Applied
@@ -450,9 +473,6 @@ class MIP(Canonicalizer):
         # last so solve-time options override construction-time params.
         if self.solver_params:
             self._solved_copy.set_solver_params(self.solver_params)
-
-        if convex_hull_cuts:
-            self._solved_copy.add_convex_hull_cuts(self.steps)
 
         if solver_kwargs:
             self._solved_copy.set_solver_params(solver_kwargs)
@@ -757,7 +777,7 @@ class MIP(Canonicalizer):
                                 arg <= u + (ub - u) * w1,
                             ]
                         )
-                        if lb > l:
+                        if lb >= l:
                             constraints.append(output >= u - (u - lb) * (1 - w1))
 
                 if lb < l and ub > u:
@@ -768,12 +788,14 @@ class MIP(Canonicalizer):
                         ]
                     )
 
-                elif lb < l and ub < u:
+                # Non-strict, so that the boundary cases lb == l and ub == u still pin
+                # the output to arg on the unsaturated side.
+                elif lb < l and ub <= u:
                     constraints.extend(
                         [output >= arg, output <= ((ub - l) / (ub - lb)) * (arg - ub) + ub]
                     )
 
-                elif lb > l and ub > u:
+                elif lb >= l and ub > u:
                     constraints.extend(
                         [output <= arg, output >= ((u - lb) / (ub - lb) * (arg - lb) + lb)]
                     )

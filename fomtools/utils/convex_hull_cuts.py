@@ -1,6 +1,161 @@
 import copy
+from dataclasses import dataclass
 
 import numpy as np
+
+# Separation of the convex hulls of ReLU and saturated linear steps (Theorems 1 and 3
+# of the MIP verification paper, corrected version). Each routine takes one output
+# component ``w = phi(a^T y + k)`` with ``y`` in the box ``[L, U]`` and a relaxed
+# point ``(y_hat, w_hat)``, and returns the most violated hull inequality, if any.
+
+
+@dataclass
+class HullCut:
+    """The inequality ``sense * w <= sense * (alpha @ y + beta)``.
+
+    ``sense = 1`` is an upper bound ``w <= alpha @ y + beta`` and ``sense = -1`` a
+    lower bound ``w >= alpha @ y + beta``. The violation and the constraint are both
+    built from ``(alpha, beta)``, so they cannot disagree.
+    """
+
+    sense: int
+    alpha: np.ndarray
+    beta: float
+
+    def violation(self, y: np.ndarray, w: float) -> float:
+        """Amount by which ``(y, w)`` violates the cut; positive means violated."""
+        return float(self.sense * (w - (self.alpha @ y + self.beta)))
+
+    def reflected(self) -> "HullCut":
+        """The cut on ``-w``, used to turn an upper-bound routine into a lower one."""
+        return HullCut(-self.sense, -self.alpha, -self.beta)
+
+    def shifted(self, k: float) -> "HullCut":
+        """The cut on ``w + k``."""
+        return HullCut(self.sense, self.alpha, self.beta + k)
+
+
+def _endpoints(a, L, U, tol=1e-12):
+    """``l0``, ``u0`` (the box corners minimizing and maximizing each ``a_i y_i``) and ``J``.
+
+    ``J`` holds the coordinates with ``a_i != 0`` and a nondegenerate box. Fixed
+    coordinates stay out of ``J`` but keep contributing ``a_i u0_i`` to every
+    ``ell_I`` (corrected Theorem 1).
+    """
+    l0 = np.where(a >= 0, L, U)
+    u0 = np.where(a >= 0, U, L)
+    J = np.flatnonzero((a != 0) & (U - L > tol))
+    return l0, u0, J
+
+
+def relu_pair_cut(a, L, U, y_hat, w_hat, t=0.0, offset=0.0):
+    """Most violated pair inequality for ``w <= offset + ReLU(a^T y - t)``.
+
+    The family is ``w <= offset + sum_{i in I} a_i (y_i - l0_i)
+    + (ell_I - t) / (u0_o - l0_o) (y_o - l0_o)`` over the pairs ``(I, o)`` with
+    ``ell_I >= t > ell_{I + o}``. Coordinates are added in nondecreasing order of
+    ``(y_hat_i - l0_i) / (u0_i - l0_i)`` until ``ell_I - t`` changes sign, which gives
+    the most violated pair (Tjandraatmadja et al., Prop. 2). Returns ``None`` when
+    the family is empty, i.e. ``ell_empty < t`` or ``ell_J >= t``.
+    """
+    l0, u0, J = _endpoints(a, L, U)
+    ell = float(a @ u0)
+    if ell < t:
+        return None
+    frac = (y_hat[J] - l0[J]) / (u0[J] - l0[J])
+    I = []
+    for o in J[np.argsort(frac, kind="stable")]:
+        ell_next = ell - a[o] * (u0[o] - l0[o])
+        if ell_next < t:
+            slope = (ell - t) / (u0[o] - l0[o])
+            alpha = np.zeros_like(a, dtype=float)
+            alpha[I] = a[I]
+            alpha[o] += slope
+            beta = offset - float(a[I] @ l0[I]) - slope * l0[o]
+            return HullCut(1, alpha, beta)
+        I.append(o)
+        ell = ell_next
+    return None
+
+
+def satlin_subset_cut(a, L, U, y_hat, w_hat, b, c):
+    """Most violated subset inequality of the upper family for ``w = S_[b, c](a^T y)``.
+
+    The family is ``w <= b + (c - b) / (c - ell_I) sum_{i in I} a_i (y_i - l0_i)`` over
+    ``I`` with ``ell_I <= b`` (line 3 of Q in the corrected Theorem 3). The candidate
+    ``I* = {i in J : (c - b) x_i < w_hat - b}`` minimizes the cleared slack; if it is
+    inadmissible, no inequality of the family is violated once the pair family holds.
+    """
+    l0, u0, J = _endpoints(a, L, U)
+    if float(a @ l0) > b:
+        return None
+    x = (y_hat[J] - l0[J]) / (u0[J] - l0[J])
+    I = J[(c - b) * x < w_hat - b]
+    ell_I = float(a @ u0) - float(a[I] @ (u0[I] - l0[I]))
+    if ell_I > b:
+        return None
+    kappa = (c - b) / (c - ell_I)
+    alpha = np.zeros_like(a, dtype=float)
+    alpha[I] = kappa * a[I]
+    return HullCut(1, alpha, b - kappa * float(a[I] @ l0[I]))
+
+
+def _most_violated(cuts, y_hat, w_hat, tol):
+    best, best_viol = None, tol
+    for cut in cuts:
+        if cut is None:
+            continue
+        viol = cut.violation(y_hat, w_hat)
+        if viol > best_viol:
+            best, best_viol = cut, viol
+    return best
+
+
+def separate_relu(a, k, L, U, y_hat, w_hat, tol=1e-6):
+    """Most violated hull cut for ``w = ReLU(a^T y + k)``, or ``None``.
+
+    The constant is folded into the threshold, ``ReLU(a^T y + k) = ReLU(a^T y - (-k))``.
+    The lower bounds ``w >= 0`` and ``w >= a^T y + k`` are already in the formulation.
+    """
+    return _most_violated([relu_pair_cut(a, L, U, y_hat, w_hat, t=-k)], y_hat, w_hat, tol)
+
+
+def separate_satlin(a, k, L, U, y_hat, w_hat, b, c, tol=1e-6):
+    """Most violated hull cut for ``w = S_[b, c](a^T y + k)``, or ``None``.
+
+    With ``w~ = w - k``, ``b~ = b - k`` and ``c~ = c - k`` this is ``w~ = S_[b~, c~](a^T y)``.
+    The upper families are the subset family and the pair family of ``b~ + ReLU(a^T y - b~)``.
+    The lower families follow by the reflection ``(a, w, b, c) -> (-a, -w, -c, -b)``.
+    Lines 1 and 2 of Q (``b <= w <= c`` and the one-sided ``w <= a^T y``, ``w >= a^T y``)
+    are in the formulation already.
+    """
+    bt, ct, wt = b - k, c - k, w_hat - k
+    upper = [
+        satlin_subset_cut(a, L, U, y_hat, wt, bt, ct),
+        relu_pair_cut(a, L, U, y_hat, wt, t=bt, offset=bt),
+    ]
+    lower = [
+        cut.reflected() if cut is not None else None
+        for cut in (
+            satlin_subset_cut(-a, L, U, y_hat, -wt, -ct, -bt),
+            relu_pair_cut(-a, L, U, y_hat, -wt, t=-ct, offset=-ct),
+        )
+    ]
+    best = _most_violated(upper + lower, y_hat, wt, tol)
+    return best.shifted(k) if best is not None else None
+
+
+def legacy_cut_to_hullcut(a, Iint, lI, h, Lhat, Uhat):
+    """The inequality ``create_new_constr`` builds from ``get_cuts`` output, as a ``HullCut``.
+
+    Kept for the soft-threshold path, which still uses the original separation.
+    """
+    alpha = np.zeros_like(a, dtype=float)
+    alpha[Iint] = a[Iint]
+    slope = lI / (Uhat[h] - Lhat[h])
+    alpha[h] += slope
+    beta = -float(a[Iint] @ Lhat[Iint]) - slope * Lhat[h]
+    return HullCut(1, alpha, beta)
 
 
 def add_conv_cuts(wi, ai, y, lambd, y_l, y_u):

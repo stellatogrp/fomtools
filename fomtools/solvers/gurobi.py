@@ -78,6 +78,10 @@ class GurobiSolver(MIPSolver):
 
         self.__dict__.pop("relaxed_model", None)
 
+    def relaxed_is_optimal(self) -> bool:
+        """Whether the last ``relax_model`` solve ended optimal."""
+        return self._relaxed_model.Status == gp.GRB.OPTIMAL
+
     def add_var(self, var: LinearExpression, lb: float = -np.inf, ub: float = np.inf) -> gp.Var:
         """
         Create and register a Gurobi matrix variable corresponding to the

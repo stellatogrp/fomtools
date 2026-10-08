@@ -1,4 +1,5 @@
 import logging
+import time
 import warnings
 from typing import List, Sequence
 
@@ -583,6 +584,33 @@ class Verifier(object):
             self._tighten_constraint_bounds(constr)
         self.canonicalizer.add_constraint(constr)
 
+    def _add_cuts(self, cuts: List[Constraint]) -> None:
+        """
+        Add valid linear cuts to the model and, if OBBT is enabled, to the OBBT LP.
+
+        Like :meth:`add_constraint` for a batch, except that OBBT runs only once on
+        the union of the leaves the cuts touch, rather than once per cut.
+
+        Parameters
+        ----------
+        cuts : List[Constraint]
+            Linear, binary-free constraints valid for every feasible point.
+
+        Returns
+        -------
+        None
+        """
+        for cut in cuts:
+            self.canonicalizer.add_constraint(cut)
+        if not self.use_obbt_handler:
+            return
+        self.obbt_handler.add_constraints(cuts)
+        leaves = {}
+        for cut in cuts:
+            for leaf in cut.lhs.decomposition_dict:
+                leaves.setdefault(id(leaf), leaf)
+        self._tighten_leaf_bounds(leaves.values())
+
     def complementarity(
         self, expr1: LinearExpression, expr2: LinearExpression
     ) -> ComplementarityConstraint:
@@ -653,7 +681,24 @@ class Verifier(object):
         -------
         None
         """
-        for leaf_expr in constr.lhs.decomposition_dict.keys():
+        self._tighten_leaf_bounds(constr.lhs.decomposition_dict.keys())
+
+    def _tighten_leaf_bounds(self, leaves) -> None:
+        """
+        Run OBBT once on each of ``leaves`` and propagate the tightened bounds to
+        the ``LinearExpression``, the main canonicalizer's solver and the OBBT
+        handler's solver.
+
+        Parameters
+        ----------
+        leaves : Iterable[LinearExpression]
+            The leaf expressions to tighten.
+
+        Returns
+        -------
+        None
+        """
+        for leaf_expr in leaves:
             # Get current bounds
             lb, ub = leaf_expr.lb, leaf_expr.ub
 
@@ -1116,7 +1161,7 @@ class Verifier(object):
             case _:
                 raise ValueError(f"Unsupported norm order: {ord}. Use 1, 2, np.inf, or 'inf'.")
 
-    def solve(self, **kwargs) -> float:
+    def solve(self, convex_hull_cuts: bool = False, cut_rounds: int = 1, **kwargs) -> float:
         """
         Solve the optimization problem.
 
@@ -1126,11 +1171,21 @@ class Verifier(object):
 
         Parameters
         ----------
+        convex_hull_cuts : bool, default False
+            MIP only. Before solving, separate the root LP optimum from the convex
+            hulls of the ReLU, saturated linear and soft-threshold steps and add
+            the most violated hull inequality of every unstable component. The
+            cuts stay in the model, so later solves (e.g. at the next ``K``) keep
+            them and separate on top of them. With OBBT enabled, each round of
+            cuts is also added to the OBBT LP, followed by one OBBT pass over the
+            leaves the cuts touch.
+        cut_rounds : int, default 1
+            Maximum number of separation rounds per solve; each round re-solves
+            the relaxation with the previous cuts. Stops early once no cut is
+            violated. Small values (1 to 3) are recommended.
         **kwargs
             Keyword arguments forwarded to the canonicalizer's
-            ``solve_model``. Reserved flags consumed by FOMTools (e.g.
-            ``convex_hull_cuts``) bind to their named parameters; any
-            remaining keyword is passed **verbatim** to the active
+            ``solve_model``. Any keyword is passed **verbatim** to the active
             backend solver as a native option (e.g. ``TimeLimit=10`` or
             ``MIPGap=1e-4`` for Gurobi, ``max_iter=500`` for
             Clarabel/cvxpy). These solve-time options override matching
@@ -1144,6 +1199,23 @@ class Verifier(object):
             The objective value for the current solution, if the
             model was solved to optimality.
         """
+        self.cut_stats = []
+        if convex_hull_cuts and self.method == "mip":
+            for _ in range(cut_rounds):
+                start = time.perf_counter()
+                cuts = self.canonicalizer.separate_hull_cuts()
+                separate_time = time.perf_counter() - start
+                if not cuts:
+                    break
+                start = time.perf_counter()
+                self._add_cuts(cuts)
+                self.cut_stats.append(
+                    dict(
+                        cuts=len(cuts),
+                        separate_time=separate_time,
+                        obbt_time=time.perf_counter() - start,
+                    )
+                )
         return self.canonicalizer.solve_model(**kwargs)
 
     def post_process(self, target_expr, ref_expr, residuals):
