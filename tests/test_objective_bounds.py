@@ -48,7 +48,7 @@ def test_optimum_unchanged(kind, cuts):
     for k in range(1, K + 1):
         vp_ref.set_objective_norm(z_ref[k] - z_ref[k - 1], np.inf)
         vp_new.set_objective_norm(z_new[k] - z_new[k - 1], np.inf)
-        expected = vp_ref.solve()
+        expected = vp_ref.solve(tighten_objective_bounds=False)
         got = vp_new.solve(tighten_objective_bounds=True, convex_hull_cuts=cuts)
         assert got == pytest.approx(expected, abs=1e-6)
 
@@ -60,7 +60,9 @@ def test_optimum_unchanged_chain_builders(solver, build):
     v_new, it_new = build(obbt=solver, solver=solver)
     v_ref.set_objective_norm(it_ref[-1] - it_ref[-2], np.inf)
     v_new.set_objective_norm(it_new[-1] - it_new[-2], np.inf)
-    assert v_new.solve(tighten_objective_bounds=True) == pytest.approx(v_ref.solve(), abs=1e-5)
+    assert v_new.solve(tighten_objective_bounds=True) == pytest.approx(
+        v_ref.solve(tighten_objective_bounds=False), abs=1e-5
+    )
 
 
 def _root_lp(vp):
@@ -109,6 +111,20 @@ def test_noop_without_obbt():
     assert vp_new.objective_bound_stats is None
     for a, b in zip(spec_before, _objective_bounds(vp_new)):
         assert np.array_equal(a, b)
+
+
+def test_default_tightens_with_obbt_and_is_silent_without():
+    vp, _, z, _ = _pgd_chain("satlin", 2, const=0.0, obbt="gurobi")
+    vp.set_objective_norm(z[2] - z[1], np.inf)
+    vp.solve()
+    assert vp.objective_bound_stats is not None
+
+    vp, _, z, _ = _pgd_chain("satlin", 2, const=0.0, obbt=None)
+    vp.set_objective_norm(z[2] - z[1], np.inf)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        vp.solve()
+    assert vp.objective_bound_stats is None
 
 
 def test_noop_for_two_norm():

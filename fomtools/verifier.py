@@ -1165,7 +1165,7 @@ class Verifier(object):
         self,
         convex_hull_cuts: bool = False,
         cut_rounds: int = 1,
-        tighten_objective_bounds: bool = False,
+        tighten_objective_bounds: bool | None = None,
         **kwargs,
     ) -> float:
         """
@@ -1189,13 +1189,15 @@ class Verifier(object):
             Maximum number of separation rounds per solve; each round re-solves
             the relaxation with the previous cuts. Stops early once no cut is
             violated. Small values (1 to 3) are recommended.
-        tighten_objective_bounds : bool, default False
+        tighten_objective_bounds : bool or None, default None
             MIP with an infinity-norm objective and OBBT only. Before solving
             (and after any cut rounds), replace the interval-propagation bounds
             of the residual, from which the objective's big-M constants are
             built, by its range over the OBBT LP, padded slightly outward. The
             optimum is unchanged; the relaxation gets tighter. Statistics are
-            stored on ``objective_bound_stats``.
+            stored on ``objective_bound_stats``. ``None`` tightens whenever an
+            OBBT solver is attached and skips silently otherwise; ``True`` also
+            warns when it cannot tighten; ``False`` keeps the interval bounds.
         **kwargs
             Keyword arguments forwarded to the canonicalizer's
             ``solve_model``. Any keyword is passed **verbatim** to the active
@@ -1235,12 +1237,15 @@ class Verifier(object):
                     )
                 )
         self.objective_bound_stats = None
-        if tighten_objective_bounds and self.method == "mip":
+        # None (the default) tightens whenever an OBBT solver is attached and skips
+        # silently otherwise; True also warns when it cannot tighten; False disables.
+        if tighten_objective_bounds is not False and self.method == "mip":
             if not self.use_obbt_handler:
-                warnings.warn(
-                    "tighten_objective_bounds needs an OBBT solver (obbt_solver=...); "
-                    "keeping the interval bounds."
-                )
+                if tighten_objective_bounds:
+                    warnings.warn(
+                        "tighten_objective_bounds needs an OBBT solver (obbt_solver=...); "
+                        "keeping the interval bounds."
+                    )
             else:
                 self.objective_bound_stats = self.canonicalizer.tighten_objective_bounds()
         return self.canonicalizer.solve_model(**kwargs)
