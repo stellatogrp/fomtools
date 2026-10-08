@@ -1161,7 +1161,13 @@ class Verifier(object):
             case _:
                 raise ValueError(f"Unsupported norm order: {ord}. Use 1, 2, np.inf, or 'inf'.")
 
-    def solve(self, convex_hull_cuts: bool = False, cut_rounds: int = 1, **kwargs) -> float:
+    def solve(
+        self,
+        convex_hull_cuts: bool = False,
+        cut_rounds: int = 1,
+        tighten_objective_bounds: bool = False,
+        **kwargs,
+    ) -> float:
         """
         Solve the optimization problem.
 
@@ -1183,6 +1189,13 @@ class Verifier(object):
             Maximum number of separation rounds per solve; each round re-solves
             the relaxation with the previous cuts. Stops early once no cut is
             violated. Small values (1 to 3) are recommended.
+        tighten_objective_bounds : bool, default False
+            MIP with an infinity-norm objective and OBBT only. Before solving
+            (and after any cut rounds), replace the interval-propagation bounds
+            of the residual, from which the objective's big-M constants are
+            built, by its range over the OBBT LP, padded slightly outward. The
+            optimum is unchanged; the relaxation gets tighter. Statistics are
+            stored on ``objective_bound_stats``.
         **kwargs
             Keyword arguments forwarded to the canonicalizer's
             ``solve_model``. Any keyword is passed **verbatim** to the active
@@ -1199,12 +1212,16 @@ class Verifier(object):
             The objective value for the current solution, if the
             model was solved to optimality.
         """
+        # ``cut_stats`` has one entry per round that added cuts; ``separation_stats``
+        # one per round that ran, including a final round that found nothing.
         self.cut_stats = []
+        self.separation_stats = []
         if convex_hull_cuts and self.method == "mip":
             for _ in range(cut_rounds):
                 start = time.perf_counter()
                 cuts = self.canonicalizer.separate_hull_cuts()
                 separate_time = time.perf_counter() - start
+                self.separation_stats.append(dict(self.canonicalizer.last_separation_stats))
                 if not cuts:
                     break
                 start = time.perf_counter()
@@ -1214,8 +1231,18 @@ class Verifier(object):
                         cuts=len(cuts),
                         separate_time=separate_time,
                         obbt_time=time.perf_counter() - start,
+                        **self.canonicalizer.last_separation_stats,
                     )
                 )
+        self.objective_bound_stats = None
+        if tighten_objective_bounds and self.method == "mip":
+            if not self.use_obbt_handler:
+                warnings.warn(
+                    "tighten_objective_bounds needs an OBBT solver (obbt_solver=...); "
+                    "keeping the interval bounds."
+                )
+            else:
+                self.objective_bound_stats = self.canonicalizer.tighten_objective_bounds()
         return self.canonicalizer.solve_model(**kwargs)
 
     def post_process(self, target_expr, ref_expr, residuals):

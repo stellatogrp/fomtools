@@ -5,12 +5,7 @@ import scipy.sparse as spa
 
 from fomtools.linearexpression import LinearExpression
 from fomtools.solvers.solver import Solver
-from fomtools.utils.convex_hull_cuts import (
-    get_cuts,
-    legacy_cut_to_hullcut,
-    separate_relu,
-    separate_satlin,
-)
+from fomtools.utils.convex_hull_cuts import separate_relu, separate_satlin, separate_soft_threshold
 
 
 class MIPSolver(Solver):
@@ -146,14 +141,18 @@ class MIPSolver(Solver):
         -------
         list[Constraint]
             One constraint per separated component, on the step's input and
-            output leaves.
+            output leaves. ``last_separation_stats`` records the number of
+            components examined per step type and the cuts per family.
         """
         from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
 
+        self.last_separation_stats = {"candidates": {}, "cuts_by_family": {}}
         self.relax_model()
         if not self.relaxed_is_optimal():
             return []
 
+        candidates = self.last_separation_stats["candidates"]
+        by_family = self.last_separation_stats["cuts_by_family"]
         cuts = []
         for step in steps:
             if isinstance(step, Relu):
@@ -161,11 +160,13 @@ class MIPSolver(Solver):
             elif isinstance(step, SaturatedLinear):
                 rows = _unstable_satlin_rows(step)
             elif isinstance(step, SoftThreshold):
-                rows = step.idx_with_right_binary_vars | step.idx_with_left_binary_vars
+                rows = _unstable_soft_threshold_rows(step)
             else:
                 continue
             if not rows:
                 continue
+            kind = type(step).__name__
+            candidates[kind] = candidates.get(kind, 0) + len(rows)
 
             leaves = list(step.arg.decomposition_dict)
             L, U = _stacked_leaf_bounds(leaves)
@@ -190,15 +191,11 @@ class MIPSolver(Solver):
                     l, u = _satlin_limits(step)
                     cut = separate_satlin(a, k, L, U, y_val, w_val[pos], l[i], u[i], tol)
                 else:
-                    # Soft-threshold keeps its original separation for now.
-                    Iint, lI, h, L_hat, U_hat = get_cuts(step, i, w_val[pos], a, y_val, L, U)
-                    cut = (
-                        legacy_cut_to_hullcut(a, Iint, lI, h, L_hat, U_hat)
-                        if Iint is not None
-                        else None
-                    )
+                    lambd = np.broadcast_to(np.asarray(step.lambd, dtype=float), (step.arg.ndim,))
+                    cut = separate_soft_threshold(a, k, L, U, y_val, w_val[pos], lambd[i], tol)
                 if cut is not None:
                     cuts.append(_cut_to_constraint(cut, w_leaf[pos], leaves))
+                    by_family[cut.family] = by_family.get(cut.family, 0) + 1
         return cuts
 
 
@@ -234,6 +231,14 @@ def _unstable_satlin_rows(step) -> set[int]:
     l, u = limits
     lb, ub = np.asarray(step.lb, dtype=float), np.asarray(step.ub, dtype=float)
     stable = (lb >= u) | (ub <= l) | ((lb >= l) & (ub <= u)) | (l >= u)
+    return set(np.flatnonzero(~stable).tolist())
+
+
+def _unstable_soft_threshold_rows(step) -> set[int]:
+    """Rows whose soft-threshold branch is undecided by the input bounds."""
+    lambd = np.broadcast_to(np.asarray(step.lambd, dtype=float), (step.arg.ndim,))
+    lb, ub = np.asarray(step.lb, dtype=float), np.asarray(step.ub, dtype=float)
+    stable = (lb >= lambd) | (ub <= -lambd) | ((lb >= -lambd) & (ub <= lambd))
     return set(np.flatnonzero(~stable).tolist())
 
 

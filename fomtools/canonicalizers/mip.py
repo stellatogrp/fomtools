@@ -1,3 +1,4 @@
+import time
 from typing import List
 
 import numpy as np
@@ -436,7 +437,76 @@ class MIP(Canonicalizer):
         if self.solver_params:
             relaxed.set_solver_params(self.solver_params)
         self._apply_objective(relaxed)
-        return relaxed.separate_convex_hull_cuts(self.steps, tol=tol)
+        cuts = relaxed.separate_convex_hull_cuts(self.steps, tol=tol)
+        self.last_separation_stats = relaxed.last_separation_stats
+        return cuts
+
+    def tighten_objective_bounds(self, pad: float = 1e-6) -> dict | None:
+        """
+        Replace the interval bounds of an infinity-norm objective with OBBT bounds.
+
+        The infinity-norm encoding takes its big-M constants (the global ``M`` and
+        the per-component sign constants) from bounds on each residual component.
+        Any bounds that hold on every feasible point keep the optimum exact, so the
+        interval-propagation bounds set with the objective are intersected with
+        the minimum and maximum of each component over the OBBT LP. The OBBT
+        values are padded outward by ``pad * max(1, |bound|)`` to absorb the LP
+        solver's feasibility tolerance, then clipped back into the interval
+        bounds, which are exactly valid.
+
+        Does nothing unless the objective is an infinity norm and an OBBT handler
+        is attached.
+
+        Parameters
+        ----------
+        pad: float, default 1e-6
+            Relative outward padding of the OBBT bounds.
+
+        Returns
+        -------
+        dict or None
+            ``None`` if nothing was done, otherwise ``time`` (seconds),
+            ``width_ratio`` (median interval width over tightened width),
+            ``M_before``, ``M_after`` and ``sign_fixed`` (components whose sign
+            the tightened bounds determine but the interval bounds did not).
+        """
+        obbt_handler = self.obbt_handler
+        if obbt_handler is None or self._objective_spec is None:
+            return None
+        if self._objective_spec[0] != "infinity_norm":
+            return None
+
+        start = time.perf_counter()
+        _, expr_list, lb_list, ub_list = self._objective_spec
+        new_lb, new_ub = [], []
+        for expr, lb, ub in zip(expr_list, lb_list, ub_list):
+            lb, ub = np.asarray(lb, dtype=float), np.asarray(ub, dtype=float)
+            result = obbt_handler.obbt(expr, lb, ub)
+            if result is None:
+                new_lb.append(lb)
+                new_ub.append(ub)
+                continue
+            t_lb, t_ub = result
+            t_lb = np.maximum(t_lb - pad * np.maximum(1.0, np.abs(t_lb)), lb)
+            t_ub = np.minimum(t_ub + pad * np.maximum(1.0, np.abs(t_ub)), ub)
+            new_lb.append(t_lb)
+            new_ub.append(t_ub)
+        self._objective_spec = ("infinity_norm", expr_list, new_lb, new_ub)
+
+        def big_m(lbs, ubs):
+            return float(np.max(np.abs(np.hstack([np.hstack(lbs), np.hstack(ubs)]))))
+
+        old_lb, old_ub = np.hstack(lb_list), np.hstack(ub_list)
+        t_lb, t_ub = np.hstack(new_lb), np.hstack(new_ub)
+        old_fixed = (old_lb >= 0) | (old_ub < 0)
+        new_fixed = (t_lb >= 0) | (t_ub < 0)
+        return dict(
+            time=time.perf_counter() - start,
+            width_ratio=float(np.median((old_ub - old_lb) / np.maximum(t_ub - t_lb, 1e-12))),
+            M_before=big_m(lb_list, ub_list),
+            M_after=big_m(new_lb, new_ub),
+            sign_fixed=int(np.sum(new_fixed & ~old_fixed)),
+        )
 
     def solve_model(self, **solver_kwargs) -> float:
         """
@@ -911,10 +981,9 @@ class MIP(Canonicalizer):
                     _require_finite_bounds("Soft-threshold", i, lb, ub)
                     w1 = LinearExpression.from_int(arg.ndim, is_binary=True)
                     w2 = LinearExpression.from_int(arg.ndim, is_binary=True)
-                    step.idx_with_right_binary_vars.add(i)
 
                     if ub > step.lambd:
-                        step.idx_with_left_binary_vars.add(i)
+                        step.idx_with_right_binary_vars.add(i)
                         constraints.extend(
                             [
                                 arg >= step.lambd + (lb - step.lambd) * (1 - w1),

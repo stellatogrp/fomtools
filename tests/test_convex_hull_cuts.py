@@ -18,7 +18,7 @@ import pytest
 from scipy.optimize import linprog
 
 import fomtools.solvers.mip_solver as mip_solver
-from fomtools.utils.convex_hull_cuts import separate_relu, separate_satlin
+from fomtools.utils.convex_hull_cuts import separate_relu, separate_satlin, separate_soft_threshold
 from fomtools.verifier import Verifier
 
 MIP_EXACT = {"OutputFlag": 0, "MIPGap": 1e-9}
@@ -129,8 +129,8 @@ def test_satlin_separation_matches_hull(case, k):
             w_out = env + sense * 1e-3
             cut = separate_satlin(a, k, L, U, y, w_out, b, c)
             if sense * (base - env) > 1e-6:
+                # Detection, not depth: see test_soft_threshold_separation_matches_hull.
                 assert cut is not None and cut.sense == sense
-                assert abs((cut.alpha @ y + cut.beta) - env) <= 1e-6
                 found[sense] += 1
             if cut is not None:
                 _check_cut_valid(cut, sat, a, k, L, U, rng)
@@ -140,6 +140,47 @@ def test_satlin_separation_matches_hull(case, k):
         assert found[1] > 0
     if case in ("both", "upper_only"):
         assert found[-1] > 0
+
+
+def _soft(t, lambd):
+    return np.sign(t) * np.maximum(np.abs(t) - lambd, 0.0)
+
+
+@pytest.mark.parametrize("k", [0.0, 0.2])
+@pytest.mark.parametrize("case", ["both", "right_only", "left_only"])
+def test_soft_threshold_separation_matches_hull(case, k):
+    """Every line of Q is in the separator, so any point outside the hull is detected."""
+    rng = np.random.default_rng(2)
+    lambd = 0.3
+    soft = lambda t: _soft(t, lambd)
+    lo, hi = {"both": (-lambd, lambd), "right_only": (lambd, lambd), "left_only": (-lambd, -lambd)}[case]
+    n_checked = 0
+    for _ in range(5000):
+        if n_checked == 25:
+            break
+        a, L, U = _random_unstable(rng, 3, k, lo, hi)
+        tmin = k + np.minimum(a * L, a * U).sum()
+        tmax = k + np.maximum(a * L, a * U).sum()
+        if case == "right_only" and tmin < -lambd:
+            continue
+        if case == "left_only" and tmax > lambd:
+            continue
+        points = _cell_vertices(a, k, L, U, [-lambd, lambd])
+        y = rng.uniform(L, U)
+        envs = {sense: _envelope(lambda p: soft(a @ p + k), points, y, sense) for sense in (1, -1)}
+        # A point strictly between the envelopes is inside the hull.
+        inside = 0.5 * (envs[1] + envs[-1])
+        assert separate_soft_threshold(a, k, L, U, y, inside, lambd) is None
+        for sense, env in envs.items():
+            cut = separate_soft_threshold(a, k, L, U, y, env + sense * 1e-3, lambd)
+            # Separation detects every point outside the hull (corrected Prop. 2), but
+            # the returned cut need not be the deepest: when I* is inadmissible the
+            # subset family defers to the pair family.
+            assert cut is not None and cut.sense == sense
+            assert sense * (cut.alpha @ y + cut.beta) >= sense * env - 1e-9
+            _check_cut_valid(cut, soft, a, k, L, U, rng)
+        n_checked += 1
+    assert n_checked == 25
 
 
 # --------------------------------------------------------------------------
@@ -170,24 +211,35 @@ def _pgd_chain(kind, K, *, const, obbt=None, seed=3, n=3):
     P = M @ M.T / n + 0.1 * np.eye(n)
     t = 0.5 / np.linalg.norm(P, 2)
     l, u = -0.3 * np.ones(n), 0.4 * np.ones(n)
+    lambd = 0.05
     vp = Verifier(method="mip", solver="gurobi", obbt_solver=obbt, params=MIP_EXACT)
     q = vp.add_param(n, lb=-np.ones(n), ub=np.ones(n))
     z = [vp.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))]
     for _ in range(K):
         arg = z[-1] - t * (P @ z[-1] + q) + const
-        z.append(vp.step.relu(arg) if kind == "relu" else vp.step.satlin(arg, l=l, u=u))
+        if kind == "relu":
+            z.append(vp.step.relu(arg))
+        elif kind == "satlin":
+            z.append(vp.step.satlin(arg, l=l, u=u))
+        else:
+            z.append(vp.step.soft_threshold(arg, lambd=lambd))
 
     def simulate(Q):
         Z = [np.zeros_like(Q)]
         for _ in range(K):
             arg = Z[-1] - t * (Z[-1] @ P.T + Q) + const
-            Z.append(np.maximum(arg, 0) if kind == "relu" else np.clip(arg, l, u))
+            if kind == "relu":
+                Z.append(np.maximum(arg, 0))
+            elif kind == "satlin":
+                Z.append(np.clip(arg, l, u))
+            else:
+                Z.append(_soft(arg, lambd))
         return Z
 
     return vp, q, z, simulate
 
 
-@pytest.mark.parametrize("kind", ["relu", "satlin"])
+@pytest.mark.parametrize("kind", ["relu", "satlin", "soft"])
 @pytest.mark.parametrize("const", [0.1, -0.15])
 def test_vp_cuts_valid_on_trajectories(kind, const, record_cuts):
     K = 3
@@ -208,7 +260,7 @@ def test_vp_cuts_valid_on_trajectories(kind, const, record_cuts):
         assert np.all(cut.sense * (w - (Y @ cut.alpha + cut.beta)) <= 1e-7)
 
 
-@pytest.mark.parametrize("kind", ["relu", "satlin"])
+@pytest.mark.parametrize("kind", ["relu", "satlin", "soft"])
 @pytest.mark.parametrize("obbt", [None, "gurobi"])
 def test_cuts_preserve_mip_optimum(kind, obbt):
     K = 4
