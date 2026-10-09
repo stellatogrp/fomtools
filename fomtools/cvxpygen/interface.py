@@ -134,9 +134,7 @@ def _settings_for(kind: str, term) -> dict:
     settings = {"max_iter": Setting(type="cpg_int", default=str(term.max_iters))}
     if term.kind == TerminationKind.INF_NORM_CHANGE:
         settings["tol"] = Setting(type="cpg_float", default=repr(float(term.tol)))
-        settings["check_termination"] = Setting(
-            type="cpg_int", default=str(term.check_termination)
-        )
+        settings["check_termination"] = Setting(type="cpg_int", default=str(term.check_termination))
     return settings
 
 
