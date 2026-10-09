@@ -60,6 +60,24 @@ class MIPSolver(Solver):
             f"(MIQCP). Use a quadratic-capable solver such as solver='gurobi'."
         )
 
+    def set_two_norm_objective(self, expr_list, lb_list, ub_list) -> None:
+        """
+        Maximize the sum of squares of ``expr_list`` (a two-norm objective).
+
+        Default implementation: reject it, since most MIP backends cannot represent
+        a quadratic objective (MIQP); quadratic-capable backends override this.
+
+        Raises
+        ------
+        ValueError
+            Always, unless overridden by a quadratic-capable solver.
+        """
+        raise ValueError(
+            f"Solver '{type(self).__name__}' does not support MIQP, which the two-norm "
+            "objective requires. Use a quadratic-capable solver, or switch to the "
+            "infinity-norm or one-norm objective."
+        )
+
     def relax_model(self):
         """
         Relax the MIP model to a continuous linear program.

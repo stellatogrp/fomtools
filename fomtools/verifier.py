@@ -21,6 +21,7 @@ from fomtools.linearexpression import LinearExpression, stack
 from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.sets import Set
+from fomtools.solvers.factory import is_mip_solver, solver_class
 from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
 from fomtools.stepdecomposers.simulator_step_decomposer import SimulatorStepDecomposer
 from fomtools.steps import (
@@ -41,8 +42,6 @@ STEP_CLASSES = {
     "satlin": SaturatedLinear,
     "soft_threshold": SoftThreshold,
 }
-
-_OBBT_SOLVERS = {"gurobi": "OutputFlag", "grb": "OutputFlag", "highs": "output_flag"}
 
 
 class Verifier(object):
@@ -152,7 +151,7 @@ class Verifier(object):
             subgrad_mono_cut=subgrad_mono_cut,
         )
         if obbt_solver == "auto":
-            obbt_solver = solver if solver.lower() in _OBBT_SOLVERS else None
+            obbt_solver = solver if is_mip_solver(solver) else None
         if obbt_solver and obbt_params is None:
             obbt_params = self._obbt_params_from(params, obbt_solver)
         self.obbt_handler = (
@@ -314,12 +313,8 @@ class Verifier(object):
         The rest of ``params`` (time limits, gaps, SDP-solver options) is not forwarded:
         it targets the main solve and may be invalid for the OBBT backend.
         """
-        if not params:
-            return None
-        key = _OBBT_SOLVERS.get(obbt_solver.lower())
-        if key is None:
-            return None
-        return {key: params[key]} if key in params else None
+        cls = solver_class(obbt_solver)
+        return cls.verbosity_params(params) if cls is not None else None
 
     @staticmethod
     def _get_step_decomposer(method: str):

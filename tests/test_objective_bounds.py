@@ -136,3 +136,59 @@ def test_noop_for_two_norm():
         vp.solve(tighten_objective_bounds=True)
     assert vp.objective_bound_stats is None
     assert vp.canonicalizer._objective_spec is spec
+
+
+# --------------------------------------------------------------------------
+# Solver defaults: branching priority on the objective binaries and MIPFocus.
+# --------------------------------------------------------------------------
+
+
+def _priorities(vp):
+    """BranchPriority of the binaries of the solved model, split by origin."""
+    base = {v.VarName for v in vp.canonicalizer.solver.model.getVars()}
+    model = vp.canonicalizer._solved_copy.model
+    obj, step = [], []
+    for v in model.getVars():
+        if v.VType == gp.GRB.BINARY:
+            (step if v.VarName in base else obj).append(v.BranchPriority)
+    return obj, step
+
+
+def test_objective_binaries_get_branch_priority():
+    vp, _, z, _ = _pgd_chain("satlin", 3, const=0.0, obbt="gurobi")
+    vp.set_objective_norm(z[3] - z[2], np.inf)
+    vp.solve()
+    obj, step = _priorities(vp)
+    assert obj and all(p == vp.canonicalizer.objective_branch_priority for p in obj)
+    assert step and all(p == 0 for p in step)
+
+
+def test_branch_priority_can_be_disabled(monkeypatch):
+    from fomtools.canonicalizers.mip import MIP
+
+    monkeypatch.setattr(MIP, "objective_branch_priority", 0)
+    vp, _, z, _ = _pgd_chain("satlin", 3, const=0.0, obbt="gurobi")
+    vp.set_objective_norm(z[3] - z[2], np.inf)
+    vp.solve()
+    obj, step = _priorities(vp)
+    assert all(p == 0 for p in obj + step)
+
+
+def test_mipfocus_default_and_override():
+    from fomtools.verifier import Verifier
+
+    assert Verifier(solver="gurobi", params={"OutputFlag": 0}).canonicalizer.solver.model.Params.MIPFocus == 2
+    assert Verifier(solver="gurobi", params={"OutputFlag": 0, "MIPFocus": 0}).canonicalizer.solver.model.Params.MIPFocus == 0
+    # The default carries into the solve copy.
+    vp, _, z, _ = _pgd_chain("relu", 2, const=0.0, obbt="gurobi")
+    vp.set_objective_norm(z[2] - z[1], np.inf)
+    vp.solve()
+    assert vp.canonicalizer._solved_copy.model.Params.MIPFocus == 2
+
+
+def test_highs_ignores_branch_priority():
+    v_ref, it_ref = build_relu_chain(obbt="highs", solver="highs")
+    v_ref.set_objective_norm(it_ref[-1] - it_ref[-2], np.inf)
+    v_gur, it_gur = build_relu_chain(obbt="gurobi", solver="gurobi")
+    v_gur.set_objective_norm(it_gur[-1] - it_gur[-2], np.inf)
+    assert v_ref.solve() == pytest.approx(v_gur.solve(), abs=1e-5)

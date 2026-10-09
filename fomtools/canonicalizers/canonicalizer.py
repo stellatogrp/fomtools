@@ -5,7 +5,7 @@ import numpy as np
 
 from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
-from fomtools.solvers import highs
+from fomtools.solvers.factory import make_solver
 from fomtools.solvers.solver import Solver
 from fomtools.steps.step import Step
 
@@ -83,25 +83,7 @@ class Canonicalizer:
         ValueError
             If `solver` is not one of the supported options.
         """
-        match solver.lower():
-            case "gurobi" | "grb":
-                try:
-                    from fomtools.solvers.gurobi import GurobiSolver
-                except ImportError:
-                    raise ImportError(
-                        "gurobipy is required for solver='gurobi'. "
-                        "Install it with: pip install fomtools[gurobi]"
-                    ) from None
-                return GurobiSolver(solver_params)
-            case "highs":
-                return highs.HiGHSSolver(solver_params)
-            case "clarabel" | "cvxpy" | "cvxpy_sdp" | "cuclarabel":
-                return None  # SDP solvers are instantiated at solve time
-            case _:
-                raise ValueError(
-                    f"Unknown solver: {solver}. Supported solvers: "
-                    "'gurobi', 'highs', 'clarabel', 'cvxpy', 'cvxpy_sdp', 'cuclarabel'."
-                )
+        return make_solver(solver, solver_params)
 
     def canonicalize(self, step: Step):
         """

@@ -35,8 +35,16 @@ class MIP(Canonicalizer):
     _solved_copy: Solver or None
         Reference to the solved copy of the solver, used for
         extracting solution values after solve.
+    objective_branch_priority: int
+        Branching priority given to the binaries of the infinity-norm objective
+        (component selectors and signs); step binaries keep priority 0. Branching
+        on the objective first splits the worst case by component and sign, which
+        closes the bound much faster once the objective's big-M constants are
+        tight. Set to 0 to disable. Solvers without branching priorities ignore it.
 
     """
+
+    objective_branch_priority = 10
 
     def __init__(self, solver_params=None, solver="gurobi"):
         self.steps = []
@@ -321,14 +329,20 @@ class MIP(Canonicalizer):
             un = LinearExpression.from_int(ndim=n, ub=np.abs(lb))
             constraints.append(up - un == expr)
 
-            all_gammas.append(gamma := LinearExpression.from_int(ndim=n, is_binary=True))
+            all_gammas.append(
+                gamma := LinearExpression.from_int(
+                    ndim=n, is_binary=True, branch_priority=self.objective_branch_priority
+                )
+            )
             for _lb, _ub, _up, _un, _gamma in zip(lb, ub, up, un, gamma):
                 if _lb >= 0:
                     constraints.append(_un == 0)
                 elif _ub < 0:
                     constraints.append(_up == 0)
                 else:
-                    vobji = LinearExpression.from_int(ndim=1, is_binary=True)
+                    vobji = LinearExpression.from_int(
+                        ndim=1, is_binary=True, branch_priority=self.objective_branch_priority
+                    )
                     constraints.extend(
                         [_up <= np.abs(_ub) * vobji, _un <= np.abs(_lb) * (1 - vobji)]
                     )
@@ -345,8 +359,8 @@ class MIP(Canonicalizer):
         """
         Build and apply two-norm objective to solver.
 
-        The two-norm objective requires a quadratic program (MIQP). This is
-        supported by Gurobi but not by HiGHS.
+        The two-norm objective requires a quadratic program (MIQP); solvers that
+        cannot represent one raise when the objective is set.
 
         Parameters
         ----------
@@ -362,15 +376,8 @@ class MIP(Canonicalizer):
         Raises
         ------
         ValueError
-            If the solver does not support quadratic objectives (e.g., HiGHS).
+            If the solver does not support quadratic objectives.
         """
-        if self.solver_name not in ("gurobi", "grb"):
-            raise ValueError(
-                "Two-norm objective requires a solver that supports quadratic "
-                "programming (MIQP). HiGHS does not support MIQP. Use Gurobi or "
-                "switch to infinity-norm/one-norm objective."
-            )
-
         solver.set_two_norm_objective(expr_list, lb_list, ub_list)
 
     def _apply_one_norm_objective(self, solver, expr_list):

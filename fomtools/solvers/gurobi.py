@@ -26,6 +26,11 @@ class GurobiSolver(MIPSolver):
 
     """
 
+    VERBOSITY_KEY = "OutputFlag"
+    # Defaults applied under the user's parameters. MIPFocus 2 (prove optimality)
+    # closes the bound of the verification MIPs much faster than the balanced default.
+    DEFAULT_PARAMS = {"MIPFocus": 2}
+
     def __init__(self, solver_params=None):
         """
         Initialize an instance of the `GurobiSolver` class.
@@ -33,9 +38,13 @@ class GurobiSolver(MIPSolver):
         Parameters
         ----------
         solver_params
+            Gurobi parameters; they override ``DEFAULT_PARAMS``.
         """
         self.model = gp.Model()
-        super().__init__(solver_params)
+        user = solver_params or {}
+        # Apply the user's verbosity first, so a silenced model does not log the defaults.
+        verbosity = {k: user[k] for k in (self.VERBOSITY_KEY,) if k in user}
+        super().__init__({**verbosity, **self.DEFAULT_PARAMS, **user})
 
     def __getitem__(self, item):
         return getattr(self.model, item)
@@ -112,6 +121,9 @@ class GurobiSolver(MIPSolver):
             self.vector_var_map[k] = self.model.addMVar(
                 var.ndim, lb=lb, ub=ub, vtype=gp.GRB.BINARY if var.is_binary else gp.GRB.CONTINUOUS
             )
+            priority = getattr(var, "branch_priority", 0)
+            if var.is_binary and priority:
+                self.vector_var_map[k].BranchPriority = priority
         self.model.update()
 
     def add_param_stack_var(
