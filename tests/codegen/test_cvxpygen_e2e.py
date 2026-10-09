@@ -76,6 +76,44 @@ def test_generated_solver_verifies_with_tol_termination(
 
 
 @pytest.mark.requires_compiler
+@pytest.mark.parametrize("with_tol", [False, True])
+def test_runtime_tol_setting_exists_only_when_the_loop_checks_it(
+    requires_compiler, tmp_path, monkeypatch, with_tol
+):
+    """Regression: a MAX_ITERS solver compiles its residual check out
+    (FOM_USE_TOL 0), so cvxpygen must not emit a ``cpg_set_solver_tol`` that
+    would be accepted at solve time and silently ignored."""
+    from fomtools.codegen.config import TerminationKind
+
+    monkeypatch.chdir(tmp_path)
+    problem, q, x = _build_problem()
+    term = (
+        TerminationSpec(kind=TerminationKind.INF_NORM_CHANGE, max_iters=4000, tol=1e-9)
+        if with_tol
+        else TerminationSpec(max_iters=2000)
+    )
+    result = generate_solver(
+        problem,
+        "cpg_stgs",
+        fom="admm",
+        param_bounds={q: (-1.0, 1.0)},
+        config=CodegenConfig(termination=term),
+        driver=StubAgentDriver(GOLDEN),
+        wrapper=False,
+    )
+    assert result.success
+
+    cpg_solve = (tmp_path / "cpg_stgs" / "c" / "src" / "cpg_solve.c").read_text()
+    header = (
+        tmp_path / "cpg_stgs" / "c" / "solver_code" / "include" / "fom_workspace.h"
+    ).read_text()
+    assert "cpg_set_solver_max_iter" in cpg_solve
+    assert ("cpg_set_solver_tol" in cpg_solve) == with_tol
+    assert ("cpg_set_solver_check_termination" in cpg_solve) == with_tol
+    assert f"#define FOM_USE_TOL {int(with_tol)}" in header
+
+
+@pytest.mark.requires_compiler
 def test_large_scale_openmp_through_bridge(requires_compiler, tmp_path, monkeypatch):
     """The large-scale OpenMP target generates and verifies through the bridge.
 

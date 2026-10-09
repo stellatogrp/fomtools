@@ -78,9 +78,13 @@ def generate_solver(
         _OPENMP`` pragmas, so it compiles and verifies serially out of the box
         and threads once the CMake build adds ``-fopenmp``. The CUDA build
         emits ``.cu`` translation units and needs a CUDA-enabled toolchain / GPU.
-        ``max_iter``, ``tol`` and ``check_termination`` are emitted as runtime
-        cvxpygen settings (tune them via ``cpg_set_solver_*`` without
-        regenerating) for a rolled or scheduled FOM — a scheduled one caps
+        ``max_iter`` is emitted as a runtime cvxpygen setting (tune it via
+        ``cpg_set_solver_max_iter`` or ``problem.solve(method='CPG',
+        max_iter=...)`` without regenerating) for a rolled or scheduled FOM;
+        ``tol`` and ``check_termination`` are emitted too when the termination
+        kind is ``INF_NORM_CHANGE``, the only kind whose generated loop checks a
+        residual (under the default ``MAX_ITERS`` the check is compiled out, so
+        a runtime ``tol`` is rejected rather than ignored). A scheduled one caps
         ``max_iter`` at the length of its coefficient tables, past which the
         emitted accessors would clamp and freeze the coefficients. An unrolled
         FOM exposes no runtime settings: its body is the whole run executed
