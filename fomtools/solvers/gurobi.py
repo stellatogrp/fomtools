@@ -87,6 +87,26 @@ class GurobiSolver(MIPSolver):
 
         self.__dict__.pop("relaxed_model", None)
 
+    def set_starts(self, starts: list) -> None:
+        """
+        Provide MIP starts, one ``{leaf: value}`` map each. Gurobi tries every start
+        and keeps the best feasible one; leaves a start omits are completed by Gurobi.
+        """
+        if not starts:
+            return
+        self.model.NumStart = len(starts)
+        self.model.update()
+        for number, start in enumerate(starts):
+            self.model.Params.StartNumber = number
+            for leaf, value in start.items():
+                if leaf in self.vector_var_map:
+                    self.vector_var_map[leaf].Start = np.asarray(value, dtype=float).reshape(-1)
+        self.model.update()
+
+    def has_solution(self) -> bool:
+        """Whether the last solve produced a feasible solution."""
+        return self.model.SolCount > 0
+
     def relaxed_is_optimal(self) -> bool:
         """Whether the last ``relax_model`` solve ended optimal."""
         return self._relaxed_model.Status == gp.GRB.OPTIMAL

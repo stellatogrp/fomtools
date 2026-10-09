@@ -78,6 +78,18 @@ class MIPSolver(Solver):
             "infinity-norm or one-norm objective."
         )
 
+    def set_starts(self, starts: list) -> None:
+        """
+        Provide MIP starts: one ``{leaf: value}`` map per start.
+
+        Default implementation: ignore them, for backends without MIP starts.
+        Backends that support them override this.
+        """
+
+    def has_solution(self) -> bool:
+        """Whether the last solve produced a feasible solution."""
+        raise NotImplementedError
+
     def relax_model(self):
         """
         Relax the MIP model to a continuous linear program.

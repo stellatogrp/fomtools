@@ -1161,6 +1161,7 @@ class Verifier(object):
         convex_hull_cuts: bool = False,
         cut_rounds: int = 1,
         tighten_objective_bounds: bool | None = None,
+        warm_start: bool = True,
         **kwargs,
     ) -> float:
         """
@@ -1193,6 +1194,12 @@ class Verifier(object):
             stored on ``objective_bound_stats``. ``None`` tightens whenever an
             OBBT solver is attached and skips silently otherwise; ``True`` also
             warns when it cannot tighten; ``False`` keeps the interval bounds.
+        warm_start : bool, default True
+            MIP only. Give the solver up to two starts: the worst case of the
+            previous solve (normally ``K - 1``) run through the current steps,
+            and the worst of the samples given to ``set_start_samples``.
+            Solvers without MIP starts ignore them. Statistics are stored on
+            ``canonicalizer.warm_start_stats``.
         **kwargs
             Keyword arguments forwarded to the canonicalizer's
             ``solve_model``. Any keyword is passed **verbatim** to the active
@@ -1243,7 +1250,25 @@ class Verifier(object):
                     )
             else:
                 self.objective_bound_stats = self.canonicalizer.tighten_objective_bounds()
+        if self.method == "mip":
+            return self.canonicalizer.solve_model(warm_start=warm_start, **kwargs)
         return self.canonicalizer.solve_model(**kwargs)
+
+    def set_start_samples(self, samples: dict) -> None:
+        """
+        Samples of parameters (and free initial iterates) for the sample-max MIP start.
+
+        At every MIP solve the worst of these samples, run through the current
+        steps, is given to the solver as a start next to the sequential one.
+
+        Parameters
+        ----------
+        samples : dict[LinearExpression, np.ndarray]
+            ``(n, ndim)`` samples per parameter or initial iterate, with the same
+            ``n``. Inputs fixed by their bounds need no samples.
+        """
+        if self.method == "mip":
+            self.canonicalizer.set_start_samples(samples)
 
     def post_process(self, target_expr, ref_expr, residuals):
         """

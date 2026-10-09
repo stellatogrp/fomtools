@@ -2,6 +2,8 @@ import time
 from typing import List
 
 import numpy as np
+import scipy.sparse as spa
+import scipy.sparse.linalg as spla
 
 from fomtools import LinearExpression
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
@@ -51,6 +53,16 @@ class MIP(Canonicalizer):
         super(MIP, self).__init__(solver_params, solver)
         self._objective_spec = None
         self._solved_copy = None
+        # Warm-start bookkeeping (see ``_start_values``): the leaves whose values
+        # determine every other leaf, the binaries each step created, the leaves
+        # the objective created on the last solve copy, the inputs of the last
+        # solution, and optional user samples of the inputs.
+        self._input_leaves = []
+        self._step_binaries = {}
+        self._objective_leaves = None
+        self._warm_start_inputs = None
+        self._start_samples = None
+        self.warm_start_stats = None
 
     def add_var(self, var: LinearExpression, **kwargs) -> None:
         """
@@ -69,6 +81,8 @@ class MIP(Canonicalizer):
         None
         """
         self.solver.add_var(var=var, lb=var.lb, ub=var.ub)
+        if kwargs.get("var_type") in ("param", "iterate"):
+            self._input_leaves.append(var)
 
     def add_constraint(self, constraint: Constraint) -> None:
         """
@@ -321,6 +335,7 @@ class MIP(Canonicalizer):
         M = np.max(np.abs(np.hstack([np.hstack(lb_list), np.hstack(ub_list)])))
         q = LinearExpression.from_int(ndim=1, ub=M)
         all_gammas = []
+        self._objective_leaves = {"q": q, "parts": []}
 
         for expr, lb, ub in zip(expr_list, lb_list, ub_list):
             n = expr.ndim
@@ -334,7 +349,11 @@ class MIP(Canonicalizer):
                     ndim=n, is_binary=True, branch_priority=self.objective_branch_priority
                 )
             )
-            for _lb, _ub, _up, _un, _gamma in zip(lb, ub, up, un, gamma):
+            signs = {}
+            self._objective_leaves["parts"].append(
+                {"expr": expr, "up": up, "un": un, "gamma": gamma, "signs": signs}
+            )
+            for j, (_lb, _ub, _up, _un, _gamma) in enumerate(zip(lb, ub, up, un, gamma)):
                 if _lb >= 0:
                     constraints.append(_un == 0)
                 elif _ub < 0:
@@ -343,6 +362,7 @@ class MIP(Canonicalizer):
                     vobji = LinearExpression.from_int(
                         ndim=1, is_binary=True, branch_priority=self.objective_branch_priority
                     )
+                    signs[j] = vobji
                     constraints.extend(
                         [_up <= np.abs(_ub) * vobji, _un <= np.abs(_lb) * (1 - vobji)]
                     )
@@ -515,7 +535,134 @@ class MIP(Canonicalizer):
             sign_fixed=int(np.sum(new_fixed & ~old_fixed)),
         )
 
-    def solve_model(self, **solver_kwargs) -> float:
+    def set_start_samples(self, samples: dict) -> None:
+        """
+        Samples of input leaves for the sample-max warm start.
+
+        Parameters
+        ----------
+        samples: dict[LinearExpression, np.ndarray]
+            ``(n, ndim)`` samples per input leaf (parameters or initial
+            iterates), sharing the same ``n``. Inputs without samples are held at
+            their value if their bounds fix them, and the start is skipped otherwise.
+        """
+        self._start_samples = {leaf: np.atleast_2d(np.asarray(v, dtype=float)) for leaf, v in samples.items()}
+
+    def _start_values(self, inputs: dict) -> tuple[dict, dict]:
+        """
+        Every leaf and binary of the solve copy at the trajectory from ``inputs``.
+
+        ``inputs`` maps input leaves to ``(n, ndim)`` values. The steps run in
+        canonicalization order, each binary takes the branch its big-M rows force
+        at the computed argument, and the infinity-norm objective's leaves are set
+        from the residual. Values are clipped into the leaves' current bounds.
+        Leaves that cannot be computed (unsupported steps or missing inputs) are
+        left out, so the solver may complete them. Returns the values, with ``n``
+        rows each, and the row-wise residual norm under ``"objective"`` in the
+        second dict (or ``None`` without an infinity-norm objective).
+        """
+        values = dict(inputs)
+        for step in self.steps:
+            arg = _evaluate(step.arg, values)
+            if arg is None:
+                continue
+            binaries = self._step_binaries.get(id(step), {})
+            if isinstance(step, Affine):
+                values[step.output] = _solve_affine(step, arg)
+            elif isinstance(step, Relu):
+                out = np.where(np.isin(np.arange(arg.shape[1]), list(step.proj_indices)), np.maximum(arg, 0.0), arg)
+                leaf = step.output_leaves[0]
+                values[leaf] = out[:, sorted(step.proj_indices)] if leaf is not step.output else out
+                for i, b in binaries.items():
+                    values[b["z"]] = (arg[:, [i]] > 0).astype(float)
+            elif isinstance(step, SaturatedLinear):
+                if isinstance(step.l, LinearExpression) or isinstance(step.u, LinearExpression):
+                    continue
+                l = np.broadcast_to(np.asarray(step.l, dtype=float), (arg.shape[1],))
+                u = np.broadcast_to(np.asarray(step.u, dtype=float), (arg.shape[1],))
+                values[step.output] = np.clip(arg, l, u)
+                for i, b in binaries.items():
+                    values[b["up"]] = (arg[:, [i]] > u[i]).astype(float)
+                    values[b["low"]] = (arg[:, [i]] < l[i]).astype(float)
+            elif isinstance(step, SoftThreshold):
+                lambd = np.broadcast_to(np.asarray(step.lambd, dtype=float), (arg.shape[1],))
+                values[step.output] = np.sign(arg) * np.maximum(np.abs(arg) - lambd, 0.0)
+                for i, b in binaries.items():
+                    values[b["right"]] = (arg[:, [i]] > lambd[i]).astype(float)
+                    values[b["left"]] = (arg[:, [i]] < -lambd[i]).astype(float)
+
+        info = {"objective": None}
+        obj = self._objective_leaves
+        if obj is not None and self._objective_spec and self._objective_spec[0] == "infinity_norm":
+            residuals = [_evaluate(part["expr"], values) for part in obj["parts"]]
+            if all(r is not None for r in residuals):
+                absr = np.hstack([np.abs(r) for r in residuals])
+                best = np.argmax(absr, axis=1)
+                offset = 0
+                for part, r in zip(obj["parts"], residuals):
+                    values[part["up"]] = np.maximum(r, 0.0)
+                    values[part["un"]] = np.maximum(-r, 0.0)
+                    cols = np.arange(r.shape[1]) + offset
+                    values[part["gamma"]] = (best[:, None] == cols[None, :]).astype(float)
+                    for j, v in part["signs"].items():
+                        values[v] = (r[:, [j]] > 0).astype(float)
+                    offset += r.shape[1]
+                values[obj["q"]] = absr.max(axis=1, keepdims=True)
+                info["objective"] = absr.max(axis=1)
+
+        for leaf, val in values.items():
+            values[leaf] = np.clip(val, np.asarray(leaf.lb, dtype=float), np.asarray(leaf.ub, dtype=float))
+        return values, info
+
+    def _free_inputs(self) -> list:
+        """Input leaves that no step computes (trajectory slots can be registered as iterates)."""
+        outputs = {id(leaf) for step in self.steps for leaf in step.output_leaves}
+        return [leaf for leaf in self._input_leaves if id(leaf) not in outputs]
+
+    def _warm_starts(self) -> list[dict]:
+        """The sequential start and the sample-max start, as ``{leaf: 1-D value}`` maps."""
+        starts, stats = [], []
+        free = self._free_inputs()
+        present = self._solved_copy.vector_var_map
+
+        def seeded(values):
+            return sum(1 for leaf in values if leaf in present)
+
+        if self._warm_start_inputs is not None:
+            inputs = {
+                leaf: np.atleast_2d(self._warm_start_inputs[leaf])
+                for leaf in free
+                if leaf in self._warm_start_inputs
+            }
+            values, info = self._start_values(inputs)
+            starts.append({leaf: v[0] for leaf, v in values.items()})
+            stats.append(dict(kind="sequential", objective=_first(info["objective"]), seeded=seeded(values)))
+        if self._start_samples:
+            n = len(next(iter(self._start_samples.values())))
+            inputs = {}
+            for leaf in free:
+                if leaf in self._start_samples:
+                    inputs[leaf] = self._start_samples[leaf]
+                else:
+                    lb, ub = np.asarray(leaf.lb, dtype=float), np.asarray(leaf.ub, dtype=float)
+                    if not np.allclose(lb, ub):
+                        inputs = None
+                        break
+                    inputs[leaf] = np.tile(lb, (n, 1))
+            if inputs is not None:
+                values, info = self._start_values(inputs)
+                if info["objective"] is not None:
+                    k = int(np.argmax(info["objective"]))
+                    starts.append({leaf: v[k] for leaf, v in values.items()})
+                    stats.append(
+                        dict(kind="sample_max", objective=float(info["objective"][k]), seeded=seeded(values))
+                    )
+        for st in stats:
+            st["leaves"] = len(present)
+        self.warm_start_stats = stats
+        return starts
+
+    def solve_model(self, warm_start: bool = True, **solver_kwargs) -> float:
         """
         Optimize the underlying MIP problem.
 
@@ -527,6 +674,11 @@ class MIP(Canonicalizer):
 
         Parameters
         ----------
+        warm_start: bool, default True
+            Give the solver up to two starts: the inputs of the previous
+            solution's worst case run through the current steps, and the
+            worst sample of ``set_start_samples``. Solvers without MIP starts
+            ignore them.
         **solver_kwargs
             Native solver options forwarded verbatim to the backend
             (e.g. ``TimeLimit=10``, ``MIPGap=1e-4`` for Gurobi). Applied
@@ -555,7 +707,16 @@ class MIP(Canonicalizer):
             self._solved_copy.set_solver_params(solver_kwargs)
 
         self._apply_objective(self._solved_copy)
+        self.warm_start_stats = None
+        if warm_start:
+            starts = self._warm_starts()
+            if starts:
+                self._solved_copy.set_starts(starts)
         self._solved_copy.optimize()
+        if self._solved_copy.has_solution():
+            self._warm_start_inputs = {
+                leaf: self._solved_copy.get_solution_value(leaf) for leaf in self._input_leaves
+            }
         return self._solved_copy["objVal"]
 
     def get_solution_value(self, expression: LinearExpression) -> np.ndarray:
@@ -700,6 +861,7 @@ class MIP(Canonicalizer):
             else:
                 _require_finite_bounds("ReLU", i, step.lb[i], step.ub[i])
                 new_var = LinearExpression.from_int(_arg.ndim, is_binary=True)
+                self._step_binaries.setdefault(id(step), {})[i] = {"z": new_var}
                 step.idx_with_binary_vars.add(i)
                 constraints.append(_output <= step.ub[i] * new_var)
                 constraints.extend(
@@ -802,7 +964,7 @@ class MIP(Canonicalizer):
         """
         constraints = []
 
-        for i, (l, u, lb, ub, output, arg) in enumerate(
+        for row, (l, u, lb, ub, output, arg) in enumerate(
             zip(step.l, step.u, step.lb, step.ub, step.output, step.arg)
         ):
             if lb >= u:
@@ -813,9 +975,11 @@ class MIP(Canonicalizer):
                 constraints.append(output == arg)
             else:
                 if not step.relax_binary_vars:
-                    _require_finite_bounds("Saturated-linear", i, lb, ub)
+                    _require_finite_bounds("Saturated-linear", row, lb, ub)
                     w1 = LinearExpression.from_int(arg.ndim, is_binary=True)
                     w2 = LinearExpression.from_int(arg.ndim, is_binary=True)
+                    # w1: upper saturation (arg >= u), w2: lower saturation (arg <= l).
+                    self._step_binaries.setdefault(id(step), {})[row] = {"up": w1, "low": w2}
 
                     if lb < l:
                         constraints.extend(
@@ -988,6 +1152,8 @@ class MIP(Canonicalizer):
                     _require_finite_bounds("Soft-threshold", i, lb, ub)
                     w1 = LinearExpression.from_int(arg.ndim, is_binary=True)
                     w2 = LinearExpression.from_int(arg.ndim, is_binary=True)
+                    # w1: right branch (arg >= lambd), w2: left branch (arg <= -lambd).
+                    self._step_binaries.setdefault(id(step), {})[i] = {"right": w1, "left": w2}
 
                     if ub > step.lambd:
                         step.idx_with_right_binary_vars.add(i)
@@ -1052,3 +1218,28 @@ class MIP(Canonicalizer):
         "saturatedlinear": canonicalize_saturatedlinear,
         "softthreshold": canonicalize_softthreshold,
     }
+
+
+def _first(x):
+    return None if x is None else float(x[0])
+
+
+def _evaluate(expr: LinearExpression, values: dict):
+    """``expr`` at ``(n, ndim)`` leaf values, or ``None`` if a leaf has no value."""
+    out = None
+    for leaf, coeff in expr.decomposition_dict.items():
+        if leaf not in values:
+            return None
+        term = (coeff @ values[leaf].T).T if spa.issparse(coeff) else values[leaf] @ np.atleast_2d(coeff).T
+        out = term if out is None else out + term
+    const = np.atleast_1d(np.asarray(expr.const, dtype=float))
+    return out + const[None, :] if out is not None else np.tile(const, (1, 1))
+
+
+def _solve_affine(step: Affine, arg: np.ndarray) -> np.ndarray:
+    """Rows of ``w`` with ``output_mat @ w = arg``, for each row of ``arg``."""
+    M = step.output_mat
+    if spa.issparse(M):
+        lu = spla.splu(M.tocsc())
+        return lu.solve(arg.T).T
+    return np.linalg.solve(np.asarray(M), arg.T).T

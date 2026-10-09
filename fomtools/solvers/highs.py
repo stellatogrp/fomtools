@@ -68,6 +68,10 @@ class HiGHSSolver(MIPSolver):
 
         self.__dict__.pop("relaxed_model", None)
 
+    def has_solution(self) -> bool:
+        """Whether the last solve produced a feasible solution."""
+        return self.model.getInfo().primal_solution_status == 2
+
     def relaxed_is_optimal(self) -> bool:
         """Whether the last ``relax_model`` solve ended optimal."""
         return self._relaxed_model.getModelStatus() == hp.HighsModelStatus.kOptimal

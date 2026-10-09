@@ -269,8 +269,10 @@ def test_cuts_preserve_mip_optimum(kind, obbt):
     for k in range(1, K + 1):
         vp_no.set_objective_norm(z_no[k] - z_no[k - 1], np.inf)
         vp_cut.set_objective_norm(z_cut[k] - z_cut[k - 1], np.inf)
+        # The encoding lets q exceed |r_j| by up to M * IntFeasTol, so incumbents can
+        # differ at the 1e-6 level between otherwise identical solves.
         assert vp_cut.solve(convex_hull_cuts=True, cut_rounds=2) == pytest.approx(
-            vp_no.solve(), abs=1e-6
+            vp_no.solve(), abs=1e-5
         )
 
 
