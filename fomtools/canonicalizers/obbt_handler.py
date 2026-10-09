@@ -12,6 +12,24 @@ from fomtools.utils.math_utils import repair_crossed_bounds
 log = logging.getLogger(__name__)
 
 
+def _relu_upper_envelope(output, arg, lb: float, ub: float) -> list:
+    """Upper side of the ReLU triangle envelope for ``lb < 0 < ub``.
+
+    With finite bounds this is the chord ``output <= ub/(ub-lb) * (arg - lb)``.
+    An infinite bound has no chord, so the cut is replaced by its limit:
+    ``output <= arg - lb`` when only ``ub`` is infinite, ``output <= ub`` when
+    only ``lb`` is infinite, and nothing when both are. Writing the chord
+    with an infinite bound would hand the solver NaN coefficients.
+    """
+    if np.isfinite(lb) and np.isfinite(ub):
+        return [output <= ub / (ub - lb) * (arg - lb)]
+    if np.isfinite(lb):
+        return [output <= arg - lb]
+    if np.isfinite(ub):
+        return [output <= ub]
+    return []
+
+
 class OBBTHandler(Canonicalizer):
     """
     Handler for Optimization-Based Bound Tightening (OBBT).
@@ -230,12 +248,8 @@ class OBBTHandler(Canonicalizer):
             elif step.lb[i] > 0:
                 constraints.append(_output == _arg)
             else:
-                constraints.extend(
-                    [
-                        _output <= step.ub[i] / (step.ub[i] - step.lb[i]) * (_arg - step.lb[i]),
-                        _output >= _arg,
-                    ]
-                )
+                constraints.append(_output >= _arg)
+                constraints.extend(_relu_upper_envelope(_output, _arg, step.lb[i], step.ub[i]))
         self._add_binary_free(constraints)
 
     def canonicalize_saturatedlinear(self, step: SaturatedLinear) -> None:

@@ -590,6 +590,13 @@ class MIP(Canonicalizer):
             elif step.lb[i] > 0:
                 constraints.append(_output == _arg)
             else:
+                if not (np.isfinite(step.lb[i]) and np.isfinite(step.ub[i])):
+                    raise ValueError(
+                        f"ReLU input {i} has bounds [{step.lb[i]}, {step.ub[i]}]: the exact MIP "
+                        "encoding needs finite bounds on every ReLU input that can change sign. "
+                        "Bound the iterates or parameters that feed it (for example with "
+                        "add_iterate/add_param bounds or OBBT)."
+                    )
                 new_var = LinearExpression.from_int(_arg.ndim, is_binary=True)
                 step.idx_with_binary_vars.add(i)
                 constraints.append(_output <= step.ub[i] * new_var)
