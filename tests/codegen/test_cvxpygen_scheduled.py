@@ -236,9 +236,5 @@ def test_the_bridge_caps_max_iter_at_this_builders_table():
     ir = _extract(build_relaxed_admm_qp(qp), max_iters=250)
 
     assert interface._schedule_len(ir) == 250
-    # And such a solver still exposes all three settings; only max_iter is capped.
-    assert set(interface._settings_for("scheduled", ir.termination)) == {
-        "max_iter",
-        "tol",
-        "check_termination",
-    }
+    # Generated under MAX_ITERS, it exposes max_iter (capped) and no tolerance.
+    assert set(interface._settings_for("scheduled", ir.termination)) == {"max_iter"}
