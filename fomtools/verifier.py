@@ -41,14 +41,16 @@ STEP_CLASSES = {
     "soft_threshold": SoftThreshold,
 }
 
+_OBBT_SOLVERS = {"gurobi": "OutputFlag", "grb": "OutputFlag", "highs": "output_flag"}
+
 
 class Verifier(object):
     def __init__(
         self,
         theory_func=None,
         method="mip",
-        solver="gurobi",
-        obbt_solver="gurobi",
+        solver="highs",
+        obbt_solver="auto",
         params=None,
         rlt_cuts=False,
         triangle_cuts=False,
@@ -71,11 +73,13 @@ class Verifier(object):
             Theoretical convergence function used by ``theory_bound``.
         method : {"mip", "sdp", "simulator"}, default "mip"
             Canonicalization method for the verification problem.
-        solver : str, default "gurobi"
-            Solver backend identifier (e.g., "gurobi", "highs", "clarabel").
-        obbt_solver : str or None, default "gurobi"
-            Solver used by the OBBT bound-tightening handler. Disable with
-            ``None``.
+        solver : str, default "highs"
+            Solver backend identifier (e.g., "highs", "gurobi", "clarabel").
+        obbt_solver : str or None, default "auto"
+            Solver used by the OBBT bound-tightening handler. ``"auto"``
+            (the default) uses ``solver`` when it is a valid OBBT backend
+            (Gurobi or HiGHS) and disables OBBT otherwise. Disable
+            explicitly with ``None``.
         params : dict, optional
             Solver-specific parameters forwarded to the canonicalizer. Only the
             verbosity key (``OutputFlag`` for Gurobi, ``output_flag`` for HiGHS)
@@ -146,6 +150,8 @@ class Verifier(object):
             cross_cut=cross_cut,
             subgrad_mono_cut=subgrad_mono_cut,
         )
+        if obbt_solver == "auto":
+            obbt_solver = solver if solver.lower() in _OBBT_SOLVERS else None
         if obbt_solver and obbt_params is None:
             obbt_params = self._obbt_params_from(params, obbt_solver)
         self.obbt_handler = (
@@ -309,13 +315,9 @@ class Verifier(object):
         """
         if not params:
             return None
-        match obbt_solver.lower():
-            case "gurobi" | "grb":
-                key = "OutputFlag"
-            case "highs":
-                key = "output_flag"
-            case _:
-                return None
+        key = _OBBT_SOLVERS.get(obbt_solver.lower())
+        if key is None:
+            return None
         return {key: params[key]} if key in params else None
 
     @staticmethod

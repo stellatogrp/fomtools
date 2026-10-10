@@ -1,5 +1,5 @@
 ## Solvers
 
 ::: fomtools.solvers.Solver
-::: fomtools.solvers.GurobiSolver
+::: fomtools.solvers.gurobi.GurobiSolver
 ::: fomtools.solvers.HiGHSSolver

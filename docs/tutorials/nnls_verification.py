@@ -68,7 +68,7 @@ def _(np):
 @app.cell
 def _(A, K, Verifier, eta, m, n, x_lb, x_ub):
     solver_params = {
-        "OutputFlag": 0,
+        "output_flag": False,
     }
 
     VP = Verifier(params=solver_params)
