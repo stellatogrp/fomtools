@@ -30,6 +30,42 @@ def _relu_upper_envelope(output, arg, lb: float, ub: float) -> list:
     return []
 
 
+def _softthreshold_envelope(
+    output, arg, lb: float, ub: float, output_lb: float, output_ub: float, lambd: float
+) -> list:
+    """Envelope rows of the soft-threshold graph for an input range that crosses a kink.
+
+    Covers the three mixed cases (two-sided ``lb < -lambd < lambd < ub``,
+    right-or-middle and left-or-middle). With finite bounds these are the
+    chord rows. An infinite bound has no chord, so the chord is replaced by its
+    limit, which has slope 1: in the two-sided case that limit is
+    ``arg +/- lambd``, already present, so the chord is dropped; one-sided it
+    becomes ``output <= arg - lb`` or ``output >= arg - ub``. The choice uses
+    only the input bounds: a finite output bound with an infinite input bound
+    would give slope 0 and an invalid row.
+    """
+    if lb < -lambd and ub > lambd:
+        rows = [output >= arg - lambd, output <= arg + lambd]
+        if np.isfinite(ub):
+            rows.append(output <= output_ub / (ub + lambd) * (arg + lambd))
+        if np.isfinite(lb):
+            rows.append(output >= output_lb / (lb - lambd) * (arg - lambd))
+        return rows
+    if -lambd <= lb <= lambd < ub:
+        if np.isfinite(ub):
+            chord = output <= output_ub / (ub - lb) * (arg - lb)
+        else:
+            chord = output <= arg - lb
+        return [output >= 0, chord, output >= arg - lambd]
+    if lambd >= ub >= -lambd >= lb:
+        if np.isfinite(lb):
+            chord = output >= output_lb / (lb - ub) * (arg - ub)
+        else:
+            chord = output >= arg - ub
+        return [output <= 0, chord, output <= arg + lambd]
+    raise RuntimeError("Unreachable code")
+
+
 class OBBTHandler(Canonicalizer):
     """
     Handler for Optimization-Based Bound Tightening (OBBT).
@@ -308,33 +344,10 @@ class OBBTHandler(Canonicalizer):
                 constraints.append(output == arg + step.lambd)
             elif lb >= -step.lambd and ub <= step.lambd:
                 constraints.append(output == 0)
-            elif lb < -step.lambd and ub > step.lambd:
-                constraints.extend(
-                    [
-                        output >= arg - step.lambd,
-                        output <= arg + step.lambd,
-                        output <= output_ub / (ub + step.lambd) * (arg + step.lambd),
-                        output >= output_lb / (lb - step.lambd) * (arg - step.lambd),
-                    ]
-                )
-            elif -step.lambd <= lb <= step.lambd < ub:
-                constraints.extend(
-                    [
-                        output >= 0,
-                        output <= output_ub / (ub - lb) * (arg - lb),
-                        output >= arg - step.lambd,
-                    ]
-                )
-            elif step.lambd >= ub >= -step.lambd >= lb:
-                constraints.extend(
-                    [
-                        output <= 0,
-                        output >= output_lb / (lb - ub) * (arg - ub),
-                        output <= arg + step.lambd,
-                    ]
-                )
             else:
-                raise RuntimeError("Unreachable code")
+                constraints.extend(
+                    _softthreshold_envelope(output, arg, lb, ub, output_lb, output_ub, step.lambd)
+                )
         self._add_binary_free(constraints)
 
     _CANONICALIZERS: ClassVar[dict] = {
