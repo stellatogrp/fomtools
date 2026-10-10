@@ -81,7 +81,10 @@ def _check_cut_valid(cut, f, a, k, L, U, rng, n=20000):
 @pytest.mark.parametrize("k", [0.0, 0.7, -0.4])
 def test_relu_separation_matches_hull(k):
     rng = np.random.default_rng(0)
-    relu = lambda t: np.maximum(t, 0.0)
+
+    def relu(t):
+        return np.maximum(t, 0.0)
+
     n_checked = 0
     for _ in range(40):
         a, L, U = _random_unstable(rng, 3, k, 0.0, 0.0)
@@ -104,7 +107,10 @@ def test_relu_separation_matches_hull(k):
 def test_satlin_separation_matches_hull(case, k):
     rng = np.random.default_rng(1)
     b, c = -0.3, 0.4
-    sat = lambda t: np.clip(t, b, c)
+
+    def sat(t):
+        return np.clip(t, b, c)
+
     lo, hi = {"both": (b, c), "lower_only": (b, b), "upper_only": (c, c)}[case]
     found = {1: 0, -1: 0}
     for _ in range(40):
@@ -152,7 +158,10 @@ def test_soft_threshold_separation_matches_hull(case, k):
     """Every line of Q is in the separator, so any point outside the hull is detected."""
     rng = np.random.default_rng(2)
     lambd = 0.3
-    soft = lambda t: _soft(t, lambd)
+
+    def soft(t):
+        return _soft(t, lambd)
+
     lo, hi = {"both": (-lambd, lambd), "right_only": (lambd, lambd), "left_only": (-lambd, -lambd)}[case]
     n_checked = 0
     for _ in range(5000):
