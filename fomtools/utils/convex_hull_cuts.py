@@ -49,6 +49,14 @@ def add_conv_cuts(wi, ai, y, lambd, y_l, y_u):
             L_hat[j] = y_u[j]
             U_hat[j] = y_l[j]
 
+    # Leaves with a zero coefficient do not enter the row; zero their bounds so an
+    # infinite one does not turn 0 * inf into NaN. An infinite bound on a leaf that
+    # does enter the row has no finite cut.
+    L_hat[ai == 0] = 0.0
+    U_hat[ai == 0] = 0.0
+    if not (np.all(np.isfinite(L_hat)) and np.all(np.isfinite(U_hat))):
+        return None, None, None, None, None
+
     Iint, rhs, lI, h = compute_v(ai, y, lambd, L_hat, U_hat)
 
     if Iint is not None and wi > rhs + 1e-6:

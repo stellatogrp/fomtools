@@ -6,6 +6,17 @@ from fomtools import LinearExpression
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
 from fomtools.constraint import ComplementarityConstraint, Constraint, QuadraticConstraint
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
+from fomtools.utils.envelopes import softthreshold_envelope
+
+
+def _require_finite_bounds(kind: str, i: int, lb: float, ub: float) -> None:
+    """Raise if a step input that needs binaries has an infinite bound (big-M is undefined)."""
+    if not (np.isfinite(lb) and np.isfinite(ub)):
+        raise ValueError(
+            f"{kind} input {i} has bounds [{lb}, {ub}]: the exact MIP encoding needs finite "
+            f"bounds on every {kind} input that crosses a breakpoint. Bound the iterates or "
+            "parameters that feed it (for example with add_iterate/add_param bounds or OBBT)."
+        )
 
 
 class MIP(Canonicalizer):
@@ -590,6 +601,7 @@ class MIP(Canonicalizer):
             elif step.lb[i] > 0:
                 constraints.append(_output == _arg)
             else:
+                _require_finite_bounds("ReLU", i, step.lb[i], step.ub[i])
                 new_var = LinearExpression.from_int(_arg.ndim, is_binary=True)
                 step.idx_with_binary_vars.add(i)
                 constraints.append(_output <= step.ub[i] * new_var)
@@ -693,8 +705,8 @@ class MIP(Canonicalizer):
         """
         constraints = []
 
-        for l, u, lb, ub, output, arg in zip(
-            step.l, step.u, step.lb, step.ub, step.output, step.arg
+        for i, (l, u, lb, ub, output, arg) in enumerate(
+            zip(step.l, step.u, step.lb, step.ub, step.output, step.arg)
         ):
             if lb >= u:
                 constraints.append(output == u)
@@ -704,6 +716,7 @@ class MIP(Canonicalizer):
                 constraints.append(output == arg)
             else:
                 if not step.relax_binary_vars:
+                    _require_finite_bounds("Saturated-linear", i, lb, ub)
                     w1 = LinearExpression.from_int(arg.ndim, is_binary=True)
                     w2 = LinearExpression.from_int(arg.ndim, is_binary=True)
 
@@ -873,6 +886,7 @@ class MIP(Canonicalizer):
                 constraints.append(output == 0)
             else:
                 if not step.relax_binary_vars:
+                    _require_finite_bounds("Soft-threshold", i, lb, ub)
                     w1 = LinearExpression.from_int(arg.ndim, is_binary=True)
                     w2 = LinearExpression.from_int(arg.ndim, is_binary=True)
                     step.idx_with_right_binary_vars.add(i)
@@ -925,36 +939,9 @@ class MIP(Canonicalizer):
                         if -step.lambd <= ub <= step.lambd:
                             constraints.append(output >= output_lb * w2)
 
-                if lb < -step.lambd and ub > step.lambd:
-                    constraints.extend(
-                        [
-                            output >= arg - step.lambd,
-                            output <= arg + step.lambd,
-                            output <= output_ub / (ub + step.lambd) * (arg + step.lambd),
-                            output >= output_lb / (lb - step.lambd) * (arg - step.lambd),
-                        ]
-                    )
-
-                elif -step.lambd <= lb <= step.lambd < ub:
-                    constraints.extend(
-                        [
-                            output >= 0,
-                            output <= output_ub / (ub - lb) * (arg - lb),
-                            output >= arg - step.lambd,
-                        ]
-                    )
-
-                elif step.lambd >= ub >= -step.lambd >= lb:
-                    constraints.extend(
-                        [
-                            output <= 0,
-                            output >= output_lb / (lb - ub) * (arg - ub),
-                            output <= arg + step.lambd,
-                        ]
-                    )
-
-                else:
-                    raise RuntimeError("Unreachable code")
+                constraints.extend(
+                    softthreshold_envelope(output, arg, lb, ub, output_lb, output_ub, step.lambd)
+                )
 
             i += 1
 

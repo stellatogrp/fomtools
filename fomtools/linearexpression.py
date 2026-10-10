@@ -7,6 +7,12 @@ from fomtools.constraint import EqualityConstraint, InequalityConstraint
 from fomtools.utils.dict_utils import merge_dict, prune_dict
 
 
+def _reject_nan_bounds(lb, ub) -> None:
+    """Raise on NaN bounds, which would otherwise slip past every ``lb > ub`` check."""
+    if np.any(np.isnan(lb)) or np.any(np.isnan(ub)):
+        raise ValueError("Bounds cannot be NaN.")
+
+
 class LinearExpression:
     """
     A linear combination of function values, inner products (between points and/ or gradients)
@@ -128,6 +134,7 @@ class LinearExpression:
             entry: the instance itself as a key, and a SciPy sparse identity matrix of
             shape `(shape, shape)` as the value.
         """
+        _reject_nan_bounds(lb, ub)
         obj = cls.__new__(cls)  # uninitialized instance
         obj.is_leaf = True
         obj.decomposition_dict = {obj: spa.eye(ndim)}
@@ -594,6 +601,7 @@ class LinearExpression:
 
     def update_bounds(self, lb: np.ndarray, ub: np.ndarray) -> None:
         """Update lower and upper bounds of the `LinearExpression` objects."""
+        _reject_nan_bounds(lb, ub)
         self.lb = np.maximum(self.lb, lb)
         self.ub = np.minimum(self.ub, ub)
 
@@ -632,14 +640,36 @@ class LinearExpression:
                    jelovi´c, T. Mann, and Sigma. Kohli. "On the effectiveness of interval bound propa-
                    gation for training verifiably robust models. arXiv:1810.12715, 2018."
             """
-            return (a @ (ub + lb) - np.abs(a) @ (ub - lb)) / 2, (
-                a @ (ub + lb) + np.abs(a) @ (ub - lb)
-            ) / 2
+            if np.all(np.isfinite(lb)) and np.all(np.isfinite(ub)):
+                return (a @ (ub + lb) - np.abs(a) @ (ub - lb)) / 2, (
+                    a @ (ub + lb) + np.abs(a) @ (ub - lb)
+                ) / 2
+            # An infinite bound (e.g. the unbounded output leaf of a linear
+            # solve) makes the midpoint inf - inf = NaN, and the NaN then
+            # spreads to every later bound. Split A into its positive and
+            # negative parts and propagate the finite and infinite parts
+            # separately, with the interval convention 0 * inf = 0.
+            if spa.issparse(a):
+                pos, neg = a.maximum(0), a.minimum(0)
+            else:
+                pos, neg = np.maximum(a, 0), np.minimum(a, 0)
+            lb_f = np.where(np.isfinite(lb), lb, 0.0)
+            ub_f = np.where(np.isfinite(ub), ub, 0.0)
+            lo = pos @ lb_f + neg @ ub_f
+            hi = pos @ ub_f + neg @ lb_f
+            to_minus_inf = pos @ np.isneginf(lb).astype(float) - neg @ np.isposinf(ub).astype(float)
+            to_plus_inf = pos @ np.isposinf(ub).astype(float) - neg @ np.isneginf(lb).astype(float)
+            lo = np.where(np.asarray(to_minus_inf) > 0, -np.inf, lo)
+            hi = np.where(np.asarray(to_plus_inf) > 0, np.inf, hi)
+            return lo, hi
 
         out_lb, out_ub = np.zeros(self.ndim), np.zeros(self.ndim)
         for k, v in self.decomposition_dict.items():
+            # Check the leaf bounds too: the infinite-bound path would read a NaN as 0.
+            _reject_nan_bounds(k.lb, k.ub)
             _lb, _ub = _interval_bound_propagation(v, k.lb, k.ub)
 
+            _reject_nan_bounds(_lb, _ub)
             if np.any(_lb > _ub):
                 raise ValueError("Lower bound cannot exceed upper bound .")
 
