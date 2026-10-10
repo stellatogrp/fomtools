@@ -12,9 +12,9 @@ import warnings
 import numpy as np
 import pytest
 
-from fomtools.canonicalizers.obbt_handler import _relu_upper_envelope, _softthreshold_envelope
 from fomtools.linearexpression import LinearExpression
 from fomtools.utils.convex_hull_cuts import add_conv_cuts
+from fomtools.utils.envelopes import relu_upper_envelope, softthreshold_envelope
 from fomtools.verifier import Verifier
 
 
@@ -46,11 +46,11 @@ def test_issue_123_relu_on_unbounded_input_fails_clearly(solver):
 def test_relu_upper_envelope_limits():
     out = LinearExpression.from_int(1)
     arg = LinearExpression.from_int(1)
-    assert len(_relu_upper_envelope(out, arg, -1.0, 2.0)) == 1
-    assert len(_relu_upper_envelope(out, arg, -1.0, np.inf)) == 1  # output <= arg - lb
-    assert len(_relu_upper_envelope(out, arg, -np.inf, 2.0)) == 1  # output <= ub
-    assert _relu_upper_envelope(out, arg, -np.inf, np.inf) == []
-    for c in _relu_upper_envelope(out, arg, -1.0, np.inf) + _relu_upper_envelope(
+    assert len(relu_upper_envelope(out, arg, -1.0, 2.0)) == 1
+    assert len(relu_upper_envelope(out, arg, -1.0, np.inf)) == 1  # output <= arg - lb
+    assert len(relu_upper_envelope(out, arg, -np.inf, 2.0)) == 1  # output <= ub
+    assert relu_upper_envelope(out, arg, -np.inf, np.inf) == []
+    for c in relu_upper_envelope(out, arg, -1.0, np.inf) + relu_upper_envelope(
         out, arg, -np.inf, 2.0
     ):
         assert np.all(np.isfinite(c.lhs.const))
@@ -127,7 +127,7 @@ def _soft(a):
 def test_softthreshold_envelope_limits_are_finite_and_valid(lb, ub):
     out = LinearExpression.from_int(1)
     arg = LinearExpression.from_int(1)
-    rows = _softthreshold_envelope(out, arg, lb, ub, _soft(lb), _soft(ub), LAMBD)
+    rows = softthreshold_envelope(out, arg, lb, ub, _soft(lb), _soft(ub), LAMBD)
     assert len(rows) == 3 if np.isfinite(lb) or np.isfinite(ub) else len(rows) == 2
     with warnings.catch_warnings():
         warnings.simplefilter("error")
@@ -149,7 +149,7 @@ def test_softthreshold_envelope_finite_unchanged():
     out = LinearExpression.from_int(1)
     arg = LinearExpression.from_int(1)
     for lb, ub in [(-1.0, 2.0), (0.0, 2.0), (-2.0, 0.0)]:
-        assert len(_softthreshold_envelope(out, arg, lb, ub, _soft(lb), _soft(ub), LAMBD)) in (3, 4)
+        assert len(softthreshold_envelope(out, arg, lb, ub, _soft(lb), _soft(ub), LAMBD)) in (3, 4)
 
 
 @pytest.mark.parametrize("solver", SOLVERS)
@@ -229,3 +229,14 @@ def test_conv_cuts_skip_infinite_leaf_in_row():
             np.array([1.0, 1.0]),
         )
     assert got == (None, None, None, None, None)
+
+
+def test_nan_bounds_are_rejected():
+    with pytest.raises(ValueError, match="NaN"):
+        LinearExpression.from_int(2, lb=np.nan)
+    x = LinearExpression.from_int(2, lb=-1.0, ub=1.0)
+    with pytest.raises(ValueError, match="NaN"):
+        x.update_bounds(np.array([np.nan, 0.0]), np.ones(2))
+    x.lb = np.array([np.nan, 0.0])  # bypasses the setter; propagation still catches it
+    with pytest.raises(ValueError, match="NaN"):
+        (2 * x).bound_propagation()

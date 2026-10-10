@@ -7,63 +7,10 @@ from fomtools.canonicalizers.canonicalizer import Canonicalizer
 from fomtools.constraint import Constraint, is_binary_free
 from fomtools.linearexpression import LinearExpression
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
+from fomtools.utils.envelopes import relu_upper_envelope, softthreshold_envelope
 from fomtools.utils.math_utils import repair_crossed_bounds
 
 log = logging.getLogger(__name__)
-
-
-def _relu_upper_envelope(output, arg, lb: float, ub: float) -> list:
-    """Upper side of the ReLU triangle envelope for ``lb < 0 < ub``.
-
-    With finite bounds this is the chord ``output <= ub/(ub-lb) * (arg - lb)``.
-    An infinite bound has no chord, so the cut is replaced by its limit:
-    ``output <= arg - lb`` when only ``ub`` is infinite, ``output <= ub`` when
-    only ``lb`` is infinite, and nothing when both are. Writing the chord
-    with an infinite bound would hand the solver NaN coefficients.
-    """
-    if np.isfinite(lb) and np.isfinite(ub):
-        return [output <= ub / (ub - lb) * (arg - lb)]
-    if np.isfinite(lb):
-        return [output <= arg - lb]
-    if np.isfinite(ub):
-        return [output <= ub]
-    return []
-
-
-def _softthreshold_envelope(
-    output, arg, lb: float, ub: float, output_lb: float, output_ub: float, lambd: float
-) -> list:
-    """Envelope rows of the soft-threshold graph for an input range that crosses a kink.
-
-    Covers the three mixed cases (two-sided ``lb < -lambd < lambd < ub``,
-    right-or-middle and left-or-middle). With finite bounds these are the
-    chord rows. An infinite bound has no chord, so the chord is replaced by its
-    limit, which has slope 1: in the two-sided case that limit is
-    ``arg +/- lambd``, already present, so the chord is dropped; one-sided it
-    becomes ``output <= arg - lb`` or ``output >= arg - ub``. The choice uses
-    only the input bounds: a finite output bound with an infinite input bound
-    would give slope 0 and an invalid row.
-    """
-    if lb < -lambd and ub > lambd:
-        rows = [output >= arg - lambd, output <= arg + lambd]
-        if np.isfinite(ub):
-            rows.append(output <= output_ub / (ub + lambd) * (arg + lambd))
-        if np.isfinite(lb):
-            rows.append(output >= output_lb / (lb - lambd) * (arg - lambd))
-        return rows
-    if -lambd <= lb <= lambd < ub:
-        if np.isfinite(ub):
-            chord = output <= output_ub / (ub - lb) * (arg - lb)
-        else:
-            chord = output <= arg - lb
-        return [output >= 0, chord, output >= arg - lambd]
-    if lambd >= ub >= -lambd >= lb:
-        if np.isfinite(lb):
-            chord = output >= output_lb / (lb - ub) * (arg - ub)
-        else:
-            chord = output >= arg - ub
-        return [output <= 0, chord, output <= arg + lambd]
-    raise RuntimeError("Unreachable code")
 
 
 class OBBTHandler(Canonicalizer):
@@ -285,7 +232,7 @@ class OBBTHandler(Canonicalizer):
                 constraints.append(_output == _arg)
             else:
                 constraints.append(_output >= _arg)
-                constraints.extend(_relu_upper_envelope(_output, _arg, step.lb[i], step.ub[i]))
+                constraints.extend(relu_upper_envelope(_output, _arg, step.lb[i], step.ub[i]))
         self._add_binary_free(constraints)
 
     def canonicalize_saturatedlinear(self, step: SaturatedLinear) -> None:
@@ -346,7 +293,7 @@ class OBBTHandler(Canonicalizer):
                 constraints.append(output == 0)
             else:
                 constraints.extend(
-                    _softthreshold_envelope(output, arg, lb, ub, output_lb, output_ub, step.lambd)
+                    softthreshold_envelope(output, arg, lb, ub, output_lb, output_ub, step.lambd)
                 )
         self._add_binary_free(constraints)
 

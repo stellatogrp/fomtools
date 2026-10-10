@@ -4,9 +4,9 @@ import numpy as np
 
 from fomtools import LinearExpression
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
-from fomtools.canonicalizers.obbt_handler import _softthreshold_envelope
 from fomtools.constraint import ComplementarityConstraint, Constraint, QuadraticConstraint
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
+from fomtools.utils.envelopes import softthreshold_envelope
 
 
 def _require_finite_bounds(kind: str, i: int, lb: float, ub: float) -> None:
@@ -940,7 +940,7 @@ class MIP(Canonicalizer):
                             constraints.append(output >= output_lb * w2)
 
                 constraints.extend(
-                    _softthreshold_envelope(output, arg, lb, ub, output_lb, output_ub, step.lambd)
+                    softthreshold_envelope(output, arg, lb, ub, output_lb, output_ub, step.lambd)
                 )
 
             i += 1
