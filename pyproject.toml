@@ -49,7 +49,9 @@ codegen = ["claude-agent-sdk", "openai-codex"]
 # CVXPYgen integration (fomtools.cvxpygen): model in CVXPY, canonicalize with
 # CVXPYgen's generated C code, solve with a fomtools-generated embedded FOM.
 # Pinned to the cvxpygen 1.x internal API (solver-interface seam).
-cvxpygen = ["cvxpygen>=1.0,<2", "osqp"]
+# cvxpygen installs the compiled wrapper with `python -m pip`, which a uv
+# environment lacks unless asked for.
+cvxpygen = ["cvxpygen>=1.0,<2", "osqp", "pip"]
 
 dev = [
        "fomtools[gurobi]",
