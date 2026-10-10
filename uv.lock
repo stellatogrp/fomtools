@@ -740,6 +740,7 @@ codegen = [
 cvxpygen = [
     { name = "cvxpygen" },
     { name = "osqp" },
+    { name = "pip" },
 ]
 dev = [
     { name = "gurobipy" },
@@ -800,6 +801,7 @@ requires-dist = [
     { name = "openai-codex", marker = "extra == 'codegen'" },
     { name = "osqp", marker = "extra == 'cvxpygen'" },
     { name = "pandas", marker = "extra == 'dev'" },
+    { name = "pip", marker = "extra == 'cvxpygen'" },
     { name = "pip", marker = "extra == 'dev'" },
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "pydantic" },

@@ -118,19 +118,24 @@ def _settings_for(kind: str, term) -> dict:
     recorded run executed once, with no loop counter to bound, no per-iteration
     residual to compare against a tolerance, and nothing to check at an interval.
 
-    The rolled and scheduled paths keep all three. ``check_termination`` stays
-    runtime-tunable on both (the bridge copies it into the FomWorkspace each
-    solve), so the check interval can be tuned without regenerating; a scheduled
-    solver's ``max_iter`` is additionally capped in the bridge at the length of
-    its coefficient tables.
+    The rolled and scheduled paths always honor ``max_iter`` (a scheduled
+    solver's is additionally capped in the bridge at the length of its
+    coefficient tables). ``tol`` and ``check_termination`` exist only when the
+    solver was generated with the ``INF_NORM_CHANGE`` criterion: under
+    ``MAX_ITERS`` the emitted header sets ``FOM_USE_TOL 0`` and the residual
+    check is compiled out, so a ``tol`` setting would be accepted and silently
+    ignored (``problem.solve(method='CPG', tol=1e-4)`` ran every iteration).
+    Leaving it out makes cvxpygen reject the keyword instead. Both stay
+    runtime-tunable when present (the bridge copies them into the FomWorkspace
+    each solve).
     """
     if kind == "unrolled":
         return {}
-    return {
-        "max_iter": Setting(type="cpg_int", default=str(term.max_iters)),
-        "tol": Setting(type="cpg_float", default=repr(float(term.tol or 0.0))),
-        "check_termination": Setting(type="cpg_int", default=str(term.check_termination)),
-    }
+    settings = {"max_iter": Setting(type="cpg_int", default=str(term.max_iters))}
+    if term.kind == TerminationKind.INF_NORM_CHANGE:
+        settings["tol"] = Setting(type="cpg_float", default=repr(float(term.tol)))
+        settings["check_termination"] = Setting(type="cpg_int", default=str(term.check_termination))
+    return settings
 
 
 def _check_spec_matches_kind(spec, kind: str) -> None:
