@@ -127,11 +127,8 @@ def test_obbt_preserves_mip_optimum(solver, op):
     assert abs(opt_ob - opt_no) <= 1e-4
 
 
-# NOTE: the convex_hull_cuts (Huchette) subsystem only supports ReLU and
-# soft-threshold; it raises AttributeError on SaturatedLinear independently of
-# OBBT, so satlin is excluded here. Huchette cuts are out of scope for OBBT.
 @pytest.mark.parametrize("solver", SOLVERS)
-@pytest.mark.parametrize("op", ["softthreshold", "relu"])
+@pytest.mark.parametrize("op", ["softthreshold", "relu", "satlin"])
 def test_obbt_preserves_mip_optimum_with_convex_hull_cuts(solver, op):
     if solver == "highs":
         pytest.skip("convex_hull_cuts path uses Gurobi-specific relaxation")

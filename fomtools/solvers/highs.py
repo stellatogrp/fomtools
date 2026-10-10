@@ -11,6 +11,8 @@ from fomtools.solvers.mip_solver import MIPSolver
 
 
 class HiGHSSolver(MIPSolver):
+    VERBOSITY_KEY = "output_flag"
+
     def __init__(self, solver_params=None):
         # Variable to keep track of number of highs variable created
         self._var_counter = -1
@@ -66,6 +68,14 @@ class HiGHSSolver(MIPSolver):
 
         self.__dict__.pop("relaxed_model", None)
 
+    def has_solution(self) -> bool:
+        """Whether the last solve produced a feasible solution."""
+        return self.model.getInfo().primal_solution_status == 2
+
+    def relaxed_is_optimal(self) -> bool:
+        """Whether the last ``relax_model`` solve ended optimal."""
+        return self._relaxed_model.getModelStatus() == hp.HighsModelStatus.kOptimal
+
     def add_var(self, var: LinearExpression, lb: float = -np.inf, ub: float = np.inf):
         """
         Create and register a list of HiGHS variable corresponding to the
@@ -94,6 +104,7 @@ class HiGHSSolver(MIPSolver):
         None
         """
 
+        # HiGHS has no branching priorities, so ``var.branch_priority`` is ignored.
         def _create_single_var(_lb, _ub, is_binary):
             """Create a HiGHS variable using the specified bounds and integrality."""
             self._var_counter += 1
@@ -264,21 +275,6 @@ class HiGHSSolver(MIPSolver):
         except TypeError:
             self.model.setObjective(self.expression_to_solver(expression)[0], sense=sense)
 
-    def set_two_norm_objective(self, expr_list, lb_list, ub_list) -> None:
-        """
-        Set two-norm objective (not supported for HiGHS).
-
-        HiGHS does not support quadratic objectives (MIQP).
-
-        Raises
-        ------
-        NotImplementedError
-            Always raised since HiGHS does not support quadratic objectives.
-        """
-        raise NotImplementedError(
-            "HiGHS does not support quadratic objectives (MIQP). "
-            "Use Gurobi for two-norm objectives, or switch to one-norm/infinity-norm."
-        )
 
     # sum_squares (quadratic) constraints are unsupported on HiGHS; the rejecting
     # default in MIPSolver.add_sum_squares_constr applies (it names the solver, so no

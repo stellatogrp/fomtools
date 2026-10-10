@@ -108,12 +108,18 @@ class LinearExpression:
         LinearExpression.counter += 1
         self.is_leaf = False
         self.is_binary = is_binary
+        self.branch_priority = 0
         self.lb = [i.lb for i in decomposition_dict.keys()]
         self.ub = [i.ub for i in decomposition_dict.keys()]
 
     @classmethod
     def from_int(
-        cls, ndim: int, is_binary: bool = False, lb: float = -np.inf, ub: float = np.inf
+        cls,
+        ndim: int,
+        is_binary: bool = False,
+        lb: float = -np.inf,
+        ub: float = np.inf,
+        branch_priority: int = 0,
     ) -> Self:
         """
         Initialize a `LinearExpression` object with an integer `shape`. Internally, this
@@ -126,6 +132,10 @@ class LinearExpression:
             The dimension of underlying space, i.e., the size of each coefficient matrix.
         is_binary: bool
             Flag to determine if the leaf expression is binary or not (0 or 1 in each dimension).
+        branch_priority: int, default 0
+            Branching priority hint for a binary leaf: branch-and-bound solvers that
+            support priorities branch on higher values first. Solvers without such
+            a notion ignore it.
 
         Returns
         -------
@@ -142,6 +152,7 @@ class LinearExpression:
         obj.counter = cls.counter
         obj.const = np.zeros(ndim)
         obj.is_binary = is_binary
+        obj.branch_priority = branch_priority
         obj.lb = np.zeros(ndim) if is_binary else np.full(ndim, lb, dtype=float)
         obj.ub = np.ones(ndim) if is_binary else np.full(ndim, ub, dtype=float)
         cls.counter += 1

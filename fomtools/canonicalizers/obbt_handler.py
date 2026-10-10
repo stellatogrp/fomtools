@@ -260,18 +260,14 @@ class OBBTHandler(Canonicalizer):
                         output >= (u - l) / (ub - l) * (arg - l) + l,
                     ]
                 )
-            elif lb < l and ub < u:
+            elif lb < l and ub <= u:
                 constraints.extend(
                     [output >= arg, output <= ((ub - l) / (ub - lb)) * (arg - ub) + ub]
                 )
-            elif lb > l and ub > u:
+            elif lb >= l and ub > u:
                 constraints.extend(
                     [output <= arg, output >= ((u - lb) / (ub - lb) * (arg - lb) + lb)]
                 )
-            # No else: boundary cases (e.g. lb == l with ub > u, or lb < l with
-            # ub == u) intentionally add no envelope row — they are measure-zero
-            # and the variable's box bounds remain a valid relaxation. This
-            # mirrors MIP.canonicalize_saturatedlinear, which has the same gap.
         self._add_binary_free(constraints)
 
     def canonicalize_softthreshold(self, step: SoftThreshold) -> None:

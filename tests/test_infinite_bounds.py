@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from fomtools.linearexpression import LinearExpression
-from fomtools.utils.convex_hull_cuts import add_conv_cuts
+from fomtools.utils.convex_hull_cuts import separate_relu
 from fomtools.utils.envelopes import relu_upper_envelope, softthreshold_envelope
 from fomtools.verifier import Verifier
 
@@ -197,38 +197,26 @@ def test_satlin_relaxed_builds_without_nan(solver, recorded_rows):
 
 def test_conv_cuts_ignore_infinite_leaf_with_zero_coefficient():
     a = np.array([1.0, -2.0])
-    y = np.array([0.6, -0.2])
+    y = np.array([0.0, 0.0])
     lo, hi = np.array([-1.0, -1.0]), np.array([1.0, 1.0])
-    expected = add_conv_cuts(0.9, a, y, 0.0, lo, hi)
+    # w = 2 is above the triangle chord (1.5) at y = 0, so some pair cut is violated.
+    expected = separate_relu(a, 0.0, lo, hi, y, 2.0)
+    assert expected is not None
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        got = add_conv_cuts(
-            0.9,
+        got = separate_relu(
             np.append(a, 0.0),
-            np.append(y, 3.0),
             0.0,
             np.append(lo, -np.inf),
             np.append(hi, np.inf),
+            np.append(y, 3.0),
+            2.0,
         )
-    assert (got[0] is None) == (expected[0] is None)
-    if expected[0] is not None:
-        np.testing.assert_array_equal(got[0], expected[0])
-        assert got[1] == pytest.approx(expected[1])
-        assert got[2] == expected[2]
-
-
-def test_conv_cuts_skip_infinite_leaf_in_row():
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        got = add_conv_cuts(
-            0.9,
-            np.array([1.0, 1.0]),
-            np.array([0.5, 0.5]),
-            0.0,
-            np.array([-1.0, -np.inf]),
-            np.array([1.0, 1.0]),
-        )
-    assert got == (None, None, None, None, None)
+    assert got is not None
+    assert np.all(np.isfinite(got.alpha)) and np.isfinite(got.beta)
+    np.testing.assert_allclose(got.alpha[:-1], expected.alpha)
+    assert got.alpha[-1] == 0.0
+    assert got.beta == pytest.approx(expected.beta)
 
 
 def test_nan_bounds_are_rejected():

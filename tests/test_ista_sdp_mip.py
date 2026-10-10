@@ -90,7 +90,7 @@ def test_ista_sdp_softthresh_vs_relus(vp_sdp):
     Test manual soft threshold decomposition into ReLUs.
 
     Manually implements: softthresh_λ(x) = relu(x - λ) - relu(-x - λ)
-    and verifies that the SDP objective matches the automatic decomposition.
+    and verifies that the automatic decomposition is no looser.
     """
     m, n = 3, 2
     np.random.seed(0)
@@ -161,8 +161,8 @@ def test_ista_sdp_softthresh_vs_relus(vp_sdp):
     assert result_manual >= 0, "Two-norm squared should be non-negative"
     assert result_auto >= 0, "Two-norm squared should be non-negative"
 
-    # Results should nearly match
-    assert np.abs(result_manual - result_auto) <= TEST_EPS, (
-        f"Manual ({result_manual}) and automatic ({result_auto}) decomposition "
-        f"results should match within tolerance {TEST_EPS}"
+    # The automatic decomposition also registers the hull of the composite
+    # soft threshold map, so it can only be tighter than the bare ReLUs.
+    assert result_auto <= result_manual + TEST_EPS, (
+        f"Automatic ({result_auto}) decomposition should be no looser than manual ({result_manual})"
     )
