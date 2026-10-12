@@ -102,14 +102,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tol", type=float, default=None, help="enable inf-norm-change termination")
     p.add_argument("--dtype", choices=["float64", "float32"], default="float64")
     p.add_argument(
-        "--phase-b",
-        dest="phase_b",
+        "--code-optimization",
+        dest="code_optimization",
         action="store_true",
         default=None,
-        help="run the iterative performance-optimization phase (default: on for --driver agent)",
+        help="run the code optimization phase (default: on for --driver agent)",
     )
     p.add_argument(
-        "--no-phase-b", dest="phase_b", action="store_false", help="skip the optimization phase"
+        "--no-code-optimization",
+        dest="code_optimization",
+        action="store_false",
+        help="skip the code optimization phase",
     )
     p.add_argument(
         "--no-profile", dest="profile", action="store_false", help="skip timing/profiling"
@@ -162,9 +165,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     driver = _make_driver(args)
-    # Phase B defaults on for the real agent (the product flow) and off for the
+    # The code optimization phase defaults on for the real agent (the product flow) and off for the
     # stub (which cannot meaningfully optimize), unless the user is explicit.
-    run_phase_b = args.phase_b if args.phase_b is not None else (args.driver == "agent")
+    code_optimization = (
+        args.code_optimization if args.code_optimization is not None else args.driver == "agent"
+    )
     try:
         result = generate_code(
             fom["build"] if fom.get("schedules") else fom["verifier"],
@@ -175,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
             state=fom.get("state"),
             params=fom.get("params"),
             name=fom.get("name", "fom"),
-            run_phase_b=run_phase_b,
+            code_optimization=code_optimization,
             profile=args.profile,
             schedules=fom.get("schedules"),
             iterates=fom.get("iterates"),

@@ -165,13 +165,13 @@ class SdkAgentDriver(AgentDriver):
     def _timeout_for_phase(self, phase: str) -> int:
         """Wall-clock budget for one attempt of ``phase``.
 
-        The optimization phase is open-ended — profile, rewrite, re-verify,
+        The code optimization phase is open-ended — profile, rewrite, re-verify,
         benchmark, repeat — so it gets a larger budget than the bounded
         translation phase. An attempt killed mid-optimization loses the agent's
         own summary, which is the artifact the optimization report is built from.
         """
         config = self.config
-        if phase == "B_optimize":
+        if phase == "code_optimization":
             return int(getattr(config, "agent_optimize_timeout_s", None) or self.cli_timeout)
         return int(getattr(config, "agent_timeout_s", None) or self.cli_timeout)
 

@@ -24,7 +24,7 @@ Everything described lives on git branch **`codegen`** (pushed to
 - **Sparse CSR matvecs** (`fom_ops.c`), **RCM fill-reducing ordering** for LDLᵀ.
 - **OpenMP** target: `#pragma omp` on the data-parallel loops (matvecs + CG
   kernels), guarded by `#ifdef _OPENMP` (optional, off in serial build).
-- **LLM agent loop**: Phase A (translate → verify) + Phase B (profile → optimize
+- **LLM agent loop**: translation phase (translate → verify) + code optimization phase (profile → optimize
   → re-verify with a perf non-regression gate).
 - Examples: `ista`, `dr`, `boxqp`, `mpc` (OSQP-ADMM), `cgqp` (CG), `pdhg_lp`
   (PDHG-for-LP, no restarts), `indef_kkt` (symmetric-indefinite → LU).
@@ -104,8 +104,8 @@ scaffold(ir, out_dir, config) → TargetDescriptor.scaffold(...)   targets/*.py
    │  Makefile, SPEC.md, spec.json/data.npz, python wrapper.
    ▼
 generate_code(...)  drives the coding agent                      generate.py
-   Phase A: agent writes src/fom_solver.c[.cu] until `make verify` == oracle.
-   Phase B: profile→optimize→re-verify(correctness gate)→bench(perf gate).
+   Translation phase: agent writes src/fom_solver.c[.cu] until `make verify` == oracle.
+   Code optimization phase: profile→optimize→re-verify(correctness gate)→bench(perf gate).
    restore_hook re-scaffolds deterministic files before every verify so the
    agent can ONLY change the solver body.
 ```
@@ -421,14 +421,14 @@ r = generate_code(ex["verifier"], ex["next_state"], "out_cuda", config=cfg,
 # Then on the GPU box: cd out_cuda && make verify   (after flipping verify_command)
 ```
 Run the **live agent** instead by passing `driver=ClaudeAgentDriver(...)` and
-`run_phase_b=True, profile=True` — it will profile, optimize the `.cu`, and report
+`code_optimization=True, profile=True` — it will profile, optimize the `.cu`, and report
 speedups, keeping the change only if faster (perf gate in `generate.py`).
 
 ---
 
 ## 11. Current measured baselines (CPU, for reference)
 
-Phase A (Python reference → generated C, golden/stub, `-O3`, per-solve):
+Translation phase (Python reference → generated C, golden/stub, `-O3`, per-solve):
 
 | example | Python µs | C µs | codegen speedup | hottest region |
 |---|--:|--:|--:|---|
@@ -439,8 +439,8 @@ Phase A (Python reference → generated C, golden/stub, `-O3`, per-solve):
 | mpc | 11478 | 422 | 27× | kkt_solve 72% |
 | cgqp | 876 | 12.0 | 73× | CG solve 85% |
 
-Live agent run on MPC (Phase A + Phase B optimization, with perf gate):
-Python 11439 µs → Phase A 388 µs (29.5×) → Phase B **71.7 µs (5.40× on top of A)**
+Live agent run on MPC (translation + code optimization phases, with perf gate):
+Python 11439 µs → translated 388 µs (29.5×) → optimized **71.7 µs (5.40× on top of translated)**
 → **159.5× total**; the agent specialized/unrolled the LDLᵀ KKT solve with baked
 constants (still division-free, no inverse, verified to 1.55e-15). GPU should
 beat the *large-scale* versions of these, especially `cgqp`/`pdhg_lp` where the

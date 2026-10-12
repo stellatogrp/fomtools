@@ -286,7 +286,7 @@ def _(
             state=s_state,
             params=params,
             name="network_codegen_speedup",
-            run_phase_b=True,
+            code_optimization=True,
             profile=True,
         )
         if not result.translate.success:

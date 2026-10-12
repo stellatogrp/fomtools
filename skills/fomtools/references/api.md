@@ -131,14 +131,14 @@ vp.get_solution_value(iterate) -> np.ndarray
 ```python
 vp.codegen(out_dir, iterates=None, config=None, driver=None,
            state=None, params=None, name="fom",
-           run_phase_b=False, profile=False, roll=True, param_values=None)
+           code_optimization=False, profile=False, roll=True, param_values=None)
     -> CodegenResult
 ```
 
 ```python
 vp.codegen_rolled(out_dir, next_state, config=None, driver=None,
                   state=None, params=None, name="fom",
-                  run_phase_b=False, profile=False,
+                  code_optimization=False, profile=False,
                   iterates=None, param_values=None)
     -> CodegenResult
 ```

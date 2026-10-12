@@ -123,7 +123,7 @@ result = vp.codegen_rolled("out/ista", next_state=z[1], config=config)
 ### Performance Profiling
 
 ```python
-result = vp.codegen("out/ista", iterates=z, run_phase_b=True, profile=True)
+result = vp.codegen("out/ista", iterates=z, code_optimization=True, profile=True)
 print(result.timing.summary())
 ```
 

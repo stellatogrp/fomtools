@@ -192,7 +192,7 @@ class CodegenConfig(BaseModel):
         ge=1,
         default=60,
         description=(
-            "Turn budget for one coding-agent attempt at the optimization phase. "
+            "Turn budget for one coding-agent attempt at the code optimization phase. "
             "The phase is a profile/rewrite/verify/benchmark loop, so a method "
             "with more structure to exploit needs more turns; exhausting the "
             "budget leaves the verified solver in place but costs the agent's own "
@@ -204,7 +204,7 @@ class CodegenConfig(BaseModel):
         default=1800,
         description=(
             "Wall-clock budget, in seconds, for one coding-agent attempt at the "
-            "optimization phase. Larger than the translation budget because the "
+            "code optimization phase. Larger than the translation budget because the "
             "phase is open-ended: profile, rewrite, re-verify, benchmark, repeat. "
             "An attempt killed part-way still leaves whatever it had written on "
             "disk (which the pipeline re-verifies), but loses the agent's own "

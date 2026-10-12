@@ -1,6 +1,6 @@
 """Capturing the coding agent's own summary of what it optimized.
 
-`OPTIMIZATIONS.md` is the durable record of what the optimization phase did and
+`OPTIMIZATIONS.md` is the durable record of what the code optimization phase did and
 why, so the extraction that fills it has to be trustworthy. It was not: when an
 agent attempt hit its wall-clock budget, the raw `TimeoutExpired` was
 stringified into the log, and `str()` on a subprocess exception interpolates the
@@ -262,7 +262,7 @@ def test_report_without_caveats_is_unchanged(tmp_path):
 # --- per-phase budgets ----------------------------------------------------
 @pytest.mark.parametrize(
     ("phase", "expected"),
-    [("A_translate", 111), ("B_optimize", 222)],
+    [("translation", 111), ("code_optimization", 222)],
 )
 def test_phase_selects_its_own_budget(phase, expected):
     from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
@@ -275,11 +275,11 @@ def test_budget_falls_back_to_the_constructor_default_without_config():
     from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
 
     driver = ClaudeAgentDriver(cli_timeout=42)
-    assert driver._timeout_for_phase("A_translate") == 42
-    assert driver._timeout_for_phase("B_optimize") == 42
+    assert driver._timeout_for_phase("translation") == 42
+    assert driver._timeout_for_phase("code_optimization") == 42
 
 
 def test_optimize_budget_defaults_larger_than_translate():
-    """The optimization phase is open-ended, so it needs the longer leash."""
+    """The code optimization phase is open-ended, so it needs the longer leash."""
     config = CodegenConfig()
     assert config.agent_optimize_timeout_s > config.agent_timeout_s

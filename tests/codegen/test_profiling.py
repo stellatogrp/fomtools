@@ -1,4 +1,4 @@
-"""Tests for timing, profiling, and the performance-optimization phase.
+"""Tests for timing, profiling, and the code optimization phase.
 
 The "before vs. after codegen" timing compares the Python reference oracle
 (how the FOM ran before codegen) against the generated C solver.
@@ -94,8 +94,8 @@ def test_timing_before_and_after_codegen(tmp_path, requires_compiler):
     assert speedup > 5.0  # very conservative; typically hundreds-to-thousands x
 
 
-# --- phase-B loop machinery (stub: optimize is a no-op, harness is real) --
-def test_phase_b_loop_records_timing_and_reverifies(tmp_path, requires_compiler):
+# --- code optimization loop machinery (stub: optimize is a no-op, harness is real)
+def test_code_optimization_loop_records_timing_and_reverifies(tmp_path, requires_compiler):
     case = build_ista(max_iters=200)
     result = generate_code(
         case["verifier"],
@@ -104,7 +104,7 @@ def test_phase_b_loop_records_timing_and_reverifies(tmp_path, requires_compiler)
         config=case["config"],
         driver=StubAgentDriver(GOLDEN),
         name="ista",
-        run_phase_b=True,
+        code_optimization=True,
         profile=True,
     )
     assert result.translate.success
@@ -126,13 +126,13 @@ def test_phase_b_loop_records_timing_and_reverifies(tmp_path, requires_compiler)
 
 
 def test_optimization_perf_gate_logic():
-    """The keep/revert decision: keep Phase B only if not slower (within noise)."""
+    """The keep/revert decision: keep the optimized solver only if not slower (within noise)."""
     from fomtools.codegen.generate import optimization_is_faster
 
     assert optimization_is_faster(1.0, 2.0)  # clearly faster -> keep
     assert optimization_is_faster(2.0, 2.0)  # equal -> keep
     assert optimization_is_faster(2.02, 2.0)  # within 2% tolerance -> keep
-    assert not optimization_is_faster(3.0, 2.0)  # slower -> revert to phase A
+    assert not optimization_is_faster(3.0, 2.0)  # slower -> revert to the translated solver
     assert not optimization_is_faster(2.1, 2.0)  # >2% slower -> revert
     assert not optimization_is_faster(None, 2.0)  # missing measurement -> revert
     assert not optimization_is_faster(1.0, None)

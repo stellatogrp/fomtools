@@ -199,7 +199,7 @@ def _(
             driver=make_agent_driver(config=config),
             state=s_state,
             name="portfolio_codegen_speedup",
-            run_phase_b=True,
+            code_optimization=True,
             profile=True,
         )
         if not result.translate.success:

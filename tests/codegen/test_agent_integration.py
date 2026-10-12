@@ -56,8 +56,8 @@ def test_real_agent_translates_ista(tmp_path):
 
 @pytest.mark.skipif(not _ENABLED, reason="set FOMTOOLS_CODEGEN_AGENT=1 to run the real agent")
 @pytest.mark.skipif(not _HAS_CC, reason="no C compiler available")
-def test_real_agent_phase_b_optimizes_and_stays_correct(tmp_path):
-    """Phase B: the agent's profile-guided loop speeds up the solver while
+def test_real_agent_code_optimization_speeds_up_and_stays_correct(tmp_path):
+    """Code optimization phase: the agent's profile-guided loop speeds up the solver while
     staying numerically correct, and the timing report is populated."""
     from fomtools.codegen import generate_code
     from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
@@ -71,10 +71,10 @@ def test_real_agent_phase_b_optimizes_and_stays_correct(tmp_path):
         config=case["config"],
         driver=ClaudeAgentDriver(),
         name="ista",
-        run_phase_b=True,
+        code_optimization=True,
         profile=True,
     )
-    # Correctness gate held through optimization (or the phase-A solver was restored).
+    # Correctness gate held through optimization (or the translated solver was restored).
     assert result.translate.success, result.translate.log
     t = result.timing
     assert t is not None and t.python_us and t.c_initial_us and t.c_final_us

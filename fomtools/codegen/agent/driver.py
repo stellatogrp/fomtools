@@ -38,12 +38,12 @@ class AgentTask:
     instructions:
         The natural-language task description / prompt for the agent.
     phase:
-        ``"A_translate"`` for the initial faithful translation, ``"B_optimize"``
-        for the performance pass.
+        ``"translation"`` for the translation phase (the initial faithful
+        translation), ``"code_optimization"`` for the code optimization phase.
     max_turns:
         Maximum agent turns before giving up.
     bench_cmd:
-        Optional benchmark command for the optimization phase.
+        Optional benchmark command for the code optimization phase.
     restore_hook:
         Optional callable invoked before each verify to restore the
         deterministic files (Makefile, headers, numeric data, solve/ops). The
@@ -57,7 +57,7 @@ class AgentTask:
     solver_rel_path: str
     verify_cmd: list[str]
     instructions: str = ""
-    phase: Literal["A_translate", "B_optimize"] = "A_translate"
+    phase: Literal["translation", "code_optimization"] = "translation"
     max_turns: int = 40
     bench_cmd: list[str] | None = None
     restore_hook: Callable[[], None] | None = None
@@ -203,8 +203,8 @@ def run_verify_loop(
     max_attempts:
         How many prompt/verify rounds to attempt.
     max_turns:
-        Per-attempt turn budget for the translation phase (the optimization
-        phase uses ``task.max_turns`` instead).
+        Per-attempt turn budget for the translation phase (the code
+        optimization phase uses ``task.max_turns`` instead).
     truncated_probe:
         Optional callable the backend supplies to report whether its last
         attempt was cut short by a wall-clock budget. Its result is recorded on
@@ -230,8 +230,8 @@ def run_verify_loop(
     agent_parts: list[str] = []
     prompt = task.instructions
 
-    # Larger turn budget for the open-ended optimization phase.
-    turns = task.max_turns if task.phase == "B_optimize" else max(max_turns, 20)
+    # Larger turn budget for the open-ended code optimization phase.
+    turns = task.max_turns if task.phase == "code_optimization" else max(max_turns, 20)
 
     for attempt in range(max_attempts):
         log_parts.append(f"\n===== agent attempt {attempt + 1} =====\n")

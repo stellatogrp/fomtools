@@ -212,7 +212,7 @@ def _(
             state=[s],
             params=[x_param],
             name="lasso_codegen_speedup",
-            run_phase_b=True,
+            code_optimization=True,
             profile=True,
         )
         if not result.translate.success:
