@@ -9,7 +9,7 @@ where CVXPYgen handles canonicalization and FOMTools generates the solver.
 ## Requirements
 
 ```bash
-pip install 'fomtools[cvxpygen]'   # cvxpy, cvxpygen, osqp
+uv pip install 'fomtools[cvxpygen]'   # cvxpy, cvxpygen, osqp
 ```
 
 Building the Python wrapper needs `cmake` and `pip`. Generating the solver
