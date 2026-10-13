@@ -117,7 +117,8 @@ def _(mo):
 
     which is a fixed-point iteration in the pair $(z^k, v^k)$.
 
-    We measure performance by the Euclidean norm of the combined fixed-point residual $r^k = (z^{k+1}-z^k,\; v^{k+1}-v^k)$.
+    We measure performance by the infinity norm of the combined fixed-point residual $r^k = (z^{k+1}-z^k,\; v^{k+1}-v^k)$.
+    As in [Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330), the infinity norm keeps the verification problem a mixed-integer *linear* program.
     """)
     return
 
@@ -134,7 +135,7 @@ def _(A_mat, Sigma, csr_matrix, n, np):
 def _(mo):
     mo.md(r"""
     Every verification mode below (simulator and MIP-VP) drives this
-    *same* `admm_step` recurrence and squared Euclidean residual; only the
+    *same* `admm_step` recurrence and residual; only the
     `Verifier` backend and whether $v^0$ is a sampled instance or a bounded
     search variable change.
     """)
@@ -184,10 +185,10 @@ def _(mo):
 
 
 @app.cell
-def _(A_mat, admm_step, l_val, lhs_mat, mu, n, rho, sigma, u_val, x0_val):
+def _(A_mat, admm_step, l_val, lhs_mat, mu, n, np, rho, sigma, u_val, x0_val):
     from fomtools.verifier import Verifier
 
-    def admm_simulation(v0_samples, K, ord=2):
+    def admm_simulation(v0_samples, K, ord=np.inf):
         """Simulate ADMM on sampled dual iterates.
 
         Builds a simulator-mode :class:`Verifier`, registers the initial dual
@@ -217,20 +218,15 @@ def _(A_mat, admm_step, l_val, lhs_mat, mu, n, rho, sigma, u_val, x0_val):
 
 @app.cell
 def _(K, admm_simulation, np, v0_samples):
-    _VP, _residuals = admm_simulation(v0_samples, K, ord=2)
+    _VP, _residuals = admm_simulation(v0_samples, K, ord=np.inf)
 
-    # These come straight from the objective, so they are in squared units.
     print(
-        f"Summary statistics (squared, at K={K}):\n"
+        f"Summary statistics (at K={K}):\n"
         f"mean: {_VP['mean']:.6e}\n"
         f"min: {_VP['min']:.6e}\n"
         f"max: {_VP['max']:.6e}\n"
         f"median: {_VP['median']:.6e}\n"
     )
-
-    # Convert to ||r^k||_2 before any statistic: sqrt commutes with quantiles but
-    # not with the mean, so it has to be applied elementwise first.
-    _residuals = np.sqrt(_residuals)
 
     simulation_residuals_admm = np.mean(_residuals, axis=0)
     # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
@@ -246,8 +242,8 @@ def _(mo):
     We now obtain worst-case guarantees by solving the verification problem
     with a MIP formulation, which gives the exact worst case. The following
     function rolls out the same `admm_step` recurrence over the horizon $K$
-    and maximizes the residual over the bounded initial dual iterate $v^0$ at
-    each iteration.
+    and maximizes $\|r^k\|_\infty$ over the bounded initial dual iterate $v^0$
+    at each iteration.
     """)
     return
 
@@ -269,7 +265,7 @@ def _(
     v0_ub,
     x0_val,
 ):
-    def admm_verification(K, method, ord=2, **verifier_kwargs):
+    def admm_verification(K, method, ord=np.inf, **verifier_kwargs):
         """Solve the portfolio ADMM verification problem for one backend.
 
         Builds a ``Verifier`` in ``method`` mode, registers the initial dual
@@ -279,8 +275,8 @@ def _(
         (``solver``, ``obbt_solver``, ``params``, ...) are forwarded to the
         ``Verifier`` constructor.
 
-        ``ord`` defaults to ``2``. A 2-norm objective is squared, so the value is
-        square-rooted on return and the residuals are reported as $\\|r^k\\|_2$.
+        ``ord`` defaults to ``inf``, which keeps the MIP a MILP. A 2-norm
+        objective is squared, so its value is square-rooted on return.
         """
         VP = Verifier(method=method, **verifier_kwargs)
         x = VP.iterate_trajectory(K + 1, collapse_expr="auto")
@@ -306,15 +302,15 @@ def _(mo):
     mo.md(r"""
     ## MIP-VP
 
-    We solve the exact MIP verification problem. The MIP maximizes the ADMM fixed-point residual over the bounded initial dual iterate $v^0$ for each horizon.
+    We solve the exact MIP verification problem. The MIP maximizes $\|r^k\|_\infty$ over the bounded initial dual iterate $v^0$ for each horizon.
     """)
     return
 
 
 @app.cell
-def _(K, admm_verification, solver_params):
+def _(K, admm_verification, np, solver_params):
     _, all_residuals = admm_verification(
-        K, "mip", solver="gurobi", obbt_solver="highs", params=solver_params,
+        K, "mip", ord=np.inf, solver="gurobi", obbt_solver="highs", params=solver_params,
     )
     return (all_residuals,)
 
@@ -326,7 +322,7 @@ def _(mo):
 
     Now we plot the verification results against the in-sample simulation
     statistics, including the sample worst-case instance. Every curve reports
-    $\|r^k\|_2$, but they answer different questions:
+    $\|r^k\|_\infty$, but they answer different questions:
 
     - **sample worst-case** — a *lower* bound on the true worst case, from $10^4$
       draws uniform over the same box $v^0 \in [0,1]^{n+1}$ the verifiers search.
@@ -372,7 +368,7 @@ def _(
     )
     plt.plot(_ks, simulation_residual_quantiles_admm[3], ":", color=_avg_line.get_color(), label="ADMM sample worst-case")
     plt.yscale("log")
-    plt.ylabel(r"Worst-case fixed-point residual $\|r^k\|_2$")
+    plt.ylabel(r"Worst-case fixed-point residual $\|r^k\|_\infty$")
     plt.xlabel(r"$K$")
     plt.suptitle("portfolio optimization ADMM example")
     plt.legend()

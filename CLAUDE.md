@@ -102,6 +102,7 @@ All `mo.md` cells in `docs/tutorials/` (verification and codegen notebooks) use 
 
 Norms always carry a subscript: `\|v\|_2`, `\|v\|_\infty` (never `\lVert v \rVert` or a bare `\|v\|`).
 Define soft-thresholding where it is first used: `\mathbf{soft}_\kappa(v)_i = \mathbf{sign}(v_i)\max\{|v_i| - \kappa, 0\}`, applied element-wise.
+Matplotlib labels (`label=`, `xlabel`, `ylabel`, `title`) are rendered by mathtext, not KaTeX: write `\geq`/`\leq` there (mathtext rejects `\ge`/`\le`), and keep `\|v\|_2` norms.
 
 Symbol roles: `x` problem parameter in `\mathcal{X}`; `z` decision variable and primal iterate, `z^0 \in \mathcal{Z}`, `z^\star` solution; `v, w` dual or auxiliary iterates; `y` (lasso) or `w` (NNLS) for the un-extrapolated proximal output of a momentum method, matching the helper code; `k` iteration, `K` horizon, `\eta` step size, `L` smoothness constant, `r^k` residual, `R` PEP initial radius.
 Search-box bounds are `x_\mathrm{lb}, x_\mathrm{ub}` and `z^0_\mathrm{lb}, z^0_\mathrm{ub}`; problem-data bounds keep `_{\min}, _{\max}`. Code names such as `x_lb` or `s0_samples` appear only in backticks in prose. When a math letter differs from the code name, say so once.

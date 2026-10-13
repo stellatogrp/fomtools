@@ -94,9 +94,9 @@ def solve_ista_numpy(dictionary, eta, lambd, s0, x, max_iters):
 def certify_lasso_pepit_radius(lambd, s0_lb, s0_ub, x_lb, x_ub, n):
     """Return a certified initial-condition radius for the Lasso PEP.
 
-    Unlike :func:`estimate_lasso_pepit_radius`, this covers every point in the
-    boxes rather than only the drawn samples, so the resulting PEPit curve is a
-    valid upper bound for the set the verification problem searches.
+    Unlike a radius estimated from sampled points, this covers every point in
+    the boxes rather than only the drawn samples, so the resulting PEPit curve is
+    a valid upper bound for the set the verification problem searches.
 
     Comparing the Lasso objective at any solution ``s*(x)`` against its value at
     the origin gives ``0.5||D s* - x||^2 + lambd ||s*||_1 <= 0.5||x||^2``, hence

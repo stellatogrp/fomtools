@@ -365,7 +365,7 @@ def _(make_lasso_data):
         p=p_lasso, n=n_lasso, lambd=1e-1, num_signals=20, seed=0
     )
     s0_lb_lasso, s0_ub_lasso = -1.0, 1.0
-    K_lasso = 7
+    K_lasso = 5
     return (
         D_lasso,
         K_lasso,
@@ -679,7 +679,7 @@ def _(make_network_data, np):
     w0_lb_net, w0_ub_net = -np.ones(n_d_net), np.ones(n_d_net)
 
     eta_net = 0.5 / np.linalg.norm(np.hstack([-A_s_net.T, A_d_net.T]), 2)
-    K_net = 4
+    K_net = 3
     return (
         A_d_net,
         A_s_net,
@@ -1141,7 +1141,7 @@ def _(np):
         return bound, time.perf_counter() - t0
 
     try:
-        b_collapse, s_collapse = _sdp_ista_bound(True, K=7)
+        b_collapse, s_collapse = _sdp_ista_bound(True)
         b_auto, s_auto = _sdp_ista_bound("auto")  # -> no-collapse on SDP
         print(f"SDP collapsed    : bound={b_collapse:.4f}  solve={s_collapse:.3f}s")
         print(f"SDP no-collapse  : bound={b_auto:.4f}  solve={s_auto:.3f}s")

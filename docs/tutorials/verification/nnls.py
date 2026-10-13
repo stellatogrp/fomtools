@@ -102,13 +102,14 @@ def _(mo):
     This amounts to finding the worst-case performance by solving the verification problem (VP) of the following form:
 
     \begin{array}{ll}
-        \text{maximize} & \|r^K\|_2 \\
+        \text{maximize} & \|r^K\|_\infty \\
         \text{subject to} & \{z^k\}_{k=0}^K \text{ given by algorithm} \\
         & z^0 \in \mathcal{Z} \\
         & x \in \mathcal{X},
     \end{array}
 
     where $\mathcal{X} := [x_\mathrm{lb},\, x_\mathrm{ub}]$ (`x_lb`, `x_ub` in the code) is the space of problem parameters.
+    As in [Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330), we measure the residual in the infinity norm, which keeps the VP a mixed-integer *linear* program.
     """)
     return
 
@@ -232,7 +233,7 @@ def _(mo):
 def _(A, eta, m, n, np, pgd_step):
     from fomtools.verifier import Verifier
 
-    def pgd_simulation(x_samples, z0_samples, K, momentum=False, ord=2):
+    def pgd_simulation(x_samples, z0_samples, K, momentum=False, ord=np.inf):
         """Simulate projected gradient descent``.
 
         Builds a simulator-mode :class:`Verifier`, registers the parameter ``x`` and
@@ -243,11 +244,9 @@ def _(A, eta, m, n, np, pgd_step):
         (``mean``, ``min``, ``max``, ...) are available on the returned instance
         ``VP`` via ``VP[...]``.
 
-        ``ord`` defaults to ``2``, matching :func:`pgd_verification`. Note that
-        ``set_objective_norm(..., 2)`` maximizes the *squared* Euclidean norm, so
-        the returned residuals (and the ``VP[...]`` statistics) are in squared
-        units; take a square root before comparing against anything reported in
-        $\\|r^k\\|_2$.
+        ``ord`` defaults to ``inf``, matching :func:`pgd_verification`. Note that
+        ``set_objective_norm(..., 2)`` would maximize the *squared* Euclidean norm,
+        so with ``ord=2`` the returned residuals are in squared units.
         """
         VP = Verifier(method='simulator', obbt_solver=None)
         x_param = VP.add_param(ndim=m, samples=x_samples)
@@ -277,20 +276,15 @@ def _(mo):
 
 @app.cell
 def _(K, np, pgd_simulation, x_samples, z0_samples):
-    _VP, _residuals = pgd_simulation(x_samples, z0_samples, K, momentum=False, ord=2)
+    _VP, _residuals = pgd_simulation(x_samples, z0_samples, K, momentum=False, ord=np.inf)
 
-    # These come straight from the objective, so they are in squared units.
     print(
-        f"Summary statistics (squared, at K={K}):\n"
+        f"Summary statistics (at K={K}):\n"
         f"mean: {_VP['mean']:.6e}\n"
         f"min: {_VP['min']:.6e}\n"
         f"max: {_VP['max']:.6e}\n"
         f"median: {_VP['median']:.6e}\n"
     )
-
-    # Convert to ||r^k||_2 before any statistic: sqrt commutes with quantiles but
-    # not with the mean, so it has to be applied elementwise first.
-    _residuals = np.sqrt(_residuals)
 
     # Take average of residuals for iterate K=1 to K=K
     simulation_residuals = np.mean(_residuals, axis=0)
@@ -309,8 +303,7 @@ def _(mo):
 
 @app.cell
 def _(K, np, pgd_simulation, x_samples, z0_samples):
-    _, _residuals = pgd_simulation(x_samples, z0_samples, K, momentum=True, ord=2)
-    _residuals = np.sqrt(_residuals)  # squared objective -> ||r^k||_2
+    _, _residuals = pgd_simulation(x_samples, z0_samples, K, momentum=True, ord=np.inf)
     simulation_residuals_momentum = np.mean(_residuals, axis=0)
     # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
     simulation_residual_quantiles_momentum = np.quantile(_residuals, [0.90, 0.50, 0.10, 1.0], axis=0)
@@ -330,16 +323,14 @@ def _(mo):
     The relaxed semidefinite program (SDP) formulation, `method='sdp'`, is covered in the [SDP verification](sdp.html) tutorial.
 
     The following function rolls out the same `pgd_step` recurrence over the
-    horizon $K$ and maximizes the residual at each iteration. It uses the
-    squared Euclidean objective, and the returned value is square-rooted so
-    that every curve in the figures below reports $\|r^k\|_2$.
+    horizon $K$ and maximizes $\|r^k\|_\infty$ at each iteration.
     """)
     return
 
 
 @app.cell
 def _(A, Verifier, eta, m, n, np, pgd_step, x_lb, x_ub, z0_lb, z0_ub):
-    def pgd_verification(K, method, momentum=False, ord=2, **verifier_kwargs):
+    def pgd_verification(K, method, momentum=False, ord=np.inf, **verifier_kwargs):
         """Solve the projected-gradient verification problem for one backend.
 
         Builds a ``Verifier`` in ``method`` mode, registers the parameter box
@@ -348,8 +339,8 @@ def _(A, Verifier, eta, m, n, np, pgd_step, x_lb, x_ub, z0_lb, z0_ub):
         with one worst-case residual per iteration. Extra ``verifier_kwargs``
         (``solver``, ``params``, ...) are forwarded to the ``Verifier`` constructor.
 
-        ``ord`` defaults to ``2``. A 2-norm objective is squared, so the value is
-        square-rooted on return and the residuals are reported as $\\|r^k\\|_2$.
+        ``ord`` defaults to ``inf``, which keeps the MIP a MILP. A 2-norm
+        objective is squared, so its value is square-rooted on return.
         """
         VP = Verifier(method=method, **verifier_kwargs)
         x_param = VP.add_param(m, lb=x_lb, ub=x_ub)
@@ -381,12 +372,12 @@ def _(mo):
 
 
 @app.cell
-def _(K, pgd_verification, solver_params):
+def _(K, np, pgd_verification, solver_params):
     _, all_residuals = pgd_verification(
-        K, 'mip', momentum=False, solver='gurobi', params=solver_params,
+        K, 'mip', momentum=False, ord=np.inf, solver='gurobi', params=solver_params,
     )
     _, all_residuals_momentum = pgd_verification(
-        K, 'mip', momentum=True, solver='gurobi', params=solver_params,
+        K, 'mip', momentum=True, ord=np.inf, solver='gurobi', params=solver_params,
     )
     return all_residuals, all_residuals_momentum
 
@@ -435,8 +426,8 @@ def _(A, K, L, certify_nnls_pepit_radius, eta, np, x_lb, x_ub, z0_lb, z0_ub):
     # returns None, which used to show up as a missing K=1 point in the figure.
     _runner = PEPitRunner()
 
-    # PEPit's performance metric is ||x[k] - x[k-1]||^2, so square-root it to
-    # match the ||r^k||_2 units used by the simulator and the two verifiers.
+    # PEPit's performance metric is ||x[k] - x[k-1]||^2, so its square root
+    # bounds ||r^k||_2, and hence ||r^k||_inf, the norm the MIP maximizes.
     _pep, _ = _runner.proximal_gradient_residuals(
         K=K, L=float(L), eta=float(eta), R=_pepit_radius, nonsmooth="indicator"
     )
@@ -455,7 +446,9 @@ def _(mo):
 
     Now we plot the verification results against the PEPit bound and the
     in-sample simulation statistics, including the sample
-    worst-case instance. Every curve reports $\|r^k\|_2$, but they answer
+    worst-case instance. The simulation and MIP curves report
+    $\|r^k\|_\infty$. PEPit bounds $\|r^k\|_2$, which is also a bound on
+    $\|r^k\|_\infty$ because $\|v\|_\infty \le \|v\|_2$. The curves answer
     different questions, so they are not interchangeable:
 
     - **sample worst-case** — a *lower* bound on the true worst case. The
@@ -464,9 +457,10 @@ def _(mo):
       where the maximizer sits, so this curve is loose by construction.
     - **MIP-VP** — the *exact* worst case over the boxes, for this problem
       instance.
-    - **PEPit** — the worst case over *every* $L$-smooth convex $f$ and convex
-      indicator $g$ with $\|z^0-z^\star\|_2 \le R$. It bounds a whole function
-      class rather than this instance, so it should sit above MIP-VP; here $R$
+    - **PEPit** — the worst case of $\|r^k\|_2$ over *every* $L$-smooth convex
+      $f$ and convex indicator $g$ with $\|z^0-z^\star\|_2 \le R$. It bounds a
+      whole function class rather than this instance, and a larger norm, so it
+      should sit above MIP-VP; here $R$
       comes from `certify_nnls_pepit_radius`, which covers the entire
       initial-condition box rather than just the drawn samples.
 
@@ -487,13 +481,13 @@ def _(
 ):
     plt.figure()
     _ks = range(1, K+1)
-    plt.plot(_ks, all_residuals_PEP, label='PEPit')
+    plt.plot(_ks, all_residuals_PEP, label=r'PEPit (bounds $\|r^k\|_2 \geq \|r^k\|_\infty$)')
     plt.plot(_ks, all_residuals, label='MIP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals, '--', label='sample average')
     plt.fill_between(_ks, simulation_residual_quantiles[2], simulation_residual_quantiles[0], alpha=.18, label='sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles[3], ':', color=_avg_line.get_color(), label='sample worst-case')
     plt.yscale('log')
-    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_2$')
+    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_\infty$')
     plt.xlabel(r'$K$')
     plt.suptitle('NNLS: projected gradient descent (PGD)')
     plt.legend()
@@ -519,13 +513,13 @@ def _(
 ):
     plt.figure()
     _ks = range(1, K+1)
-    plt.plot(_ks, all_residuals_PEP_momentum, label='PEPit')
+    plt.plot(_ks, all_residuals_PEP_momentum, label=r'PEPit (bounds $\|r^k\|_2 \geq \|r^k\|_\infty$)')
     plt.plot(_ks, all_residuals_momentum, label='MIP-VP')
     _avg_line, = plt.plot(_ks, simulation_residuals_momentum, '--', label='sample average')
     plt.fill_between(_ks, simulation_residual_quantiles_momentum[2], simulation_residual_quantiles_momentum[0], alpha=.18, label='sample 10%-90% band')
     plt.plot(_ks, simulation_residual_quantiles_momentum[3], ':', color=_avg_line.get_color(), label='sample worst-case')
     plt.yscale('log')
-    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_2$')
+    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_\infty$')
     plt.xlabel(r'$K$')
     plt.suptitle('NNLS: momentum PGD')
     plt.legend()
@@ -583,7 +577,7 @@ def _(
 
     plt.yscale('log')
     plt.xlabel(r'$K$')
-    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_2$')
+    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_\infty$')
     _leg = plt.legend(handles=_method_handles, loc='upper right')
     plt.gca().add_artist(_leg)
     plt.legend(handles=_style_handles, loc='lower left')

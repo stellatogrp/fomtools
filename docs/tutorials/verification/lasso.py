@@ -98,7 +98,7 @@ def _(mo):
 
     where $y^0 = z^0$, $t_0 = 1$, $t_k = (1 + \sqrt{1 + 4t_{k-1}^2})/2$, and $\beta_k = (t_{k-1}-1)/t_k$, so that $\beta_1 = 0$.
 
-    The performance metric is the Euclidean norm $\|r^k\|_2$ of the fixed-point residual $r^k = y^k - y^{k-1}$ between consecutive proximal iterates.
+    The performance metric is the infinity norm $\|r^k\|_\infty$ of the fixed-point residual $r^k = y^k - y^{k-1}$ between consecutive proximal iterates, as in the paper; it keeps the verification problem a mixed-integer *linear* program.
     For ISTA, $y^k = z^k$, so $r^k = z^k - z^{k-1}$.
     """)
     return
@@ -182,8 +182,8 @@ def _(mo):
     mo.md(r"""
     The simulation is run through the following function. The output of
     `_VP.solve()` is an array of size `(n_samples, K)` whose $i$-th row lists
-    the squared residual norms $\|r^k\|_2^2$ for $k=1,\ldots,K$ of the $i$-th
-    problem instance; we take the square root before computing statistics.
+    the residual norms $\|r^k\|_\infty$ for $k=1,\ldots,K$ of the $i$-th
+    problem instance.
     """)
     return
 
@@ -192,7 +192,7 @@ def _(mo):
 def _(D, eta, ista_step, lambd, n, np, p):
     from fomtools.verifier import Verifier
 
-    def ista_simulation(x_samples, s0_samples, K, momentum=False, ord=2):
+    def ista_simulation(x_samples, s0_samples, K, momentum=False, ord=np.inf):
         """Simulate ISTA on sampled instances.
 
         Builds a simulator-mode :class:`Verifier`, registers the parameter
@@ -200,12 +200,11 @@ def _(D, eta, ista_step, lambd, n, np, p):
         recurrence with ``ista_step``, and simulates via ``VP.solve()``. Each
         ``*_samples`` array has shape ``(n_samples, dim)`` (a single-row array
         replays one instance), and the returned ``residuals`` has shape
-        ``(n_samples, K)``. ``ord`` defaults to ``2``, matching
-        :func:`ista_verification`; ``set_objective_norm(..., 2)`` maximizes the
-        *squared* Euclidean norm, so the returned residuals are in squared units
-        and need a square root before being compared against anything reported in
-        $\\|r^k\\|_2$. Summary statistics (``mean``, ``min``, ``max``, ...)
-        are available on the returned instance ``VP`` via ``VP[...]``.
+        ``(n_samples, K)``. ``ord`` defaults to ``inf``, matching
+        :func:`ista_verification`; ``set_objective_norm(..., 2)`` would maximize
+        the *squared* Euclidean norm, so with ``ord=2`` the returned residuals
+        are in squared units. Summary statistics (``mean``, ``min``, ``max``,
+        ...) are available on the returned instance ``VP`` via ``VP[...]``.
         """
         VP = Verifier(method='simulator', obbt_solver=None)
         x_param = VP.add_param(ndim=p, samples=x_samples)
@@ -226,20 +225,15 @@ def _(D, eta, ista_step, lambd, n, np, p):
 
 @app.cell
 def _(K, ista_simulation, np, s0_samples, x_samples):
-    _VP, _residuals = ista_simulation(x_samples, s0_samples, K, momentum=False, ord=2)
+    _VP, _residuals = ista_simulation(x_samples, s0_samples, K, momentum=False, ord=np.inf)
 
-    # These come straight from the objective, so they are in squared units.
     print(
-        f"Summary statistics (squared, at K={K}):\n"
+        f"Summary statistics (at K={K}):\n"
         f"mean: {_VP['mean']:.6e}\n"
         f"min: {_VP['min']:.6e}\n"
         f"max: {_VP['max']:.6e}\n"
         f"median: {_VP['median']:.6e}\n"
     )
-
-    # Convert to ||r^k||_2 before any statistic: sqrt commutes with quantiles but
-    # not with the mean, so it has to be applied elementwise first.
-    _residuals = np.sqrt(_residuals)
 
     simulation_residuals_ista = np.mean(_residuals, axis=0)
     # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
@@ -257,8 +251,7 @@ def _(mo):
 
 @app.cell
 def _(K, ista_simulation, np, s0_samples, x_samples):
-    _, _residuals = ista_simulation(x_samples, s0_samples, K, momentum=True, ord=2)
-    _residuals = np.sqrt(_residuals)  # squared objective -> ||r^k||_2
+    _, _residuals = ista_simulation(x_samples, s0_samples, K, momentum=True, ord=np.inf)
     simulation_residuals_fista = np.mean(_residuals, axis=0)
     # Quantile 1.0 gives the in-sample worst case; indices are [90%, 50%, 10%, max].
     simulation_residual_quantiles_fista = np.quantile(_residuals, [0.90, 0.50, 0.10, 1.0], axis=0)
@@ -273,14 +266,14 @@ def _(mo):
     We now obtain worst-case guarantees by solving the verification problem
     with a MIP formulation, which gives the exact worst case. The following
     function rolls out the same `ista_step` recurrence over the horizon $K$
-    and maximizes the fixed-point residual at each iteration.
+    and maximizes $\|r^k\|_\infty$ at each iteration.
     """)
     return
 
 
 @app.cell
 def _(D, Verifier, eta, ista_step, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
-    def ista_verification(K, method, momentum=False, ord=2, **verifier_kwargs):
+    def ista_verification(K, method, momentum=False, ord=np.inf, **verifier_kwargs):
         """Solve the ISTA/FISTA verification problem for one backend.
 
         Builds a ``Verifier`` in ``method`` mode, registers the parameter box
@@ -290,8 +283,8 @@ def _(D, Verifier, eta, ista_step, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
         (``solver``, ``params``, ...) are forwarded to the ``Verifier``
         constructor.
 
-        ``ord`` defaults to ``2``. A 2-norm objective is squared, so the value is
-        square-rooted on return and the residuals are reported as $\\|r^k\\|_2$.
+        ``ord`` defaults to ``inf``, which keeps the MIP a MILP. A 2-norm
+        objective is squared, so its value is square-rooted on return.
         """
         VP = Verifier(method=method, **verifier_kwargs)
         x_param = VP.add_param(p, lb=x_lb, ub=x_ub)
@@ -317,19 +310,19 @@ def _(mo):
     ### MIP-VP
     We solve the exact MIP verification problem for both ISTA and its
     accelerated variant FISTA. The MIP searches over the measurement parameter
-    $x$ and initial iterate $z^0$, and maximizes the fixed-point residual at
-    each horizon.
+    $x$ and initial iterate $z^0$, and maximizes $\|r^k\|_\infty$ at each
+    horizon.
     """)
     return
 
 
 @app.cell
-def _(K, ista_verification, solver_params):
+def _(K, ista_verification, np, solver_params):
     _, all_residuals = ista_verification(
-        K, 'mip', momentum=False, solver='gurobi', params=solver_params,
+        K, 'mip', momentum=False, ord=np.inf, solver='gurobi', params=solver_params,
     )
     _, all_residuals_fista = ista_verification(
-        K, 'mip', momentum=True, solver='gurobi', params=solver_params,
+        K, 'mip', momentum=True, ord=np.inf, solver='gurobi', params=solver_params,
     )
     return all_residuals, all_residuals_fista
 
@@ -381,7 +374,8 @@ def _(K, L, certify_lasso_pepit_radius, eta, lambd, n, np, s0_lb, s0_ub, x_lb, x
         K=K, L=float(L), eta=float(eta), R=_pepit_radius, nonsmooth="convex",
         variant="fista",
     )
-    # PEPit's metric is ||x[k] - x[k-1]||^2, so square-root it to match ||r^k||_2.
+    # PEPit's metric is ||x[k] - x[k-1]||^2, so its square root bounds
+    # ||r^k||_2, and hence ||r^k||_inf, the norm the MIP maximizes.
     all_residuals_PEP = np.sqrt(np.asarray(_pep, dtype=float))
     all_residuals_PEP_fista = np.sqrt(np.asarray(_pep_fista, dtype=float))
     return all_residuals_PEP, all_residuals_PEP_fista
@@ -394,6 +388,9 @@ def _(mo):
 
     Now we plot the verification results against the PEPit bound and the
     in-sample simulation statistics, including the sample worst-case instance.
+    The simulation and MIP curves report $\|r^k\|_\infty$. PEPit bounds
+    $\|r^k\|_2$, which is also a bound on $\|r^k\|_\infty$ because
+    $\|v\|_\infty \le \|v\|_2$.
     """)
     return
 
@@ -410,7 +407,7 @@ def _(
 ):
     plt.figure()
     _ks = range(1, K+1)
-    plt.plot(_ks, all_residuals_PEP, label='ISTA (PEPit)')
+    plt.plot(_ks, all_residuals_PEP, label=r'ISTA (PEPit, bounds $\|r^k\|_2 \geq \|r^k\|_\infty$)')
     plt.plot(_ks, all_residuals, label='ISTA (MIP worst-case)')
     _avg_line, = plt.plot(_ks, simulation_residuals_ista, '--', label='ISTA (in-sample avg)')
     plt.fill_between(_ks, simulation_residual_quantiles_ista[2], simulation_residual_quantiles_ista[0], alpha=.18, label='ISTA sample 10%-90% band')
@@ -427,7 +424,7 @@ def _(
     plt.suptitle('sparse coding example')
     plt.yscale('log')
     plt.xlabel(r'$K$')
-    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_2$')
+    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_\infty$')
     plt.legend()
     return
 
@@ -452,7 +449,7 @@ def _(
 ):
     plt.figure()
     _ks = range(1, K+1)
-    plt.plot(_ks, all_residuals_PEP_fista, label='FISTA (PEPit)')
+    plt.plot(_ks, all_residuals_PEP_fista, label=r'FISTA (PEPit, bounds $\|r^k\|_2 \geq \|r^k\|_\infty$)')
     plt.plot(_ks, all_residuals_fista, label='FISTA (MIP worst-case)')
     _avg_line, = plt.plot(_ks, simulation_residuals_fista, '--', label='FISTA (in-sample avg)')
     plt.fill_between(_ks, simulation_residual_quantiles_fista[2], simulation_residual_quantiles_fista[0], alpha=.18, label='FISTA sample 10%-90% band')
@@ -469,7 +466,7 @@ def _(
     plt.suptitle('sparse coding FISTA example')
     plt.yscale('log')
     plt.xlabel(r'$K$')
-    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_2$')
+    plt.ylabel(r'Worst-case fixed-point residual $\|r^k\|_\infty$')
     plt.legend()
     return
 
