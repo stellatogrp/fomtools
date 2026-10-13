@@ -265,7 +265,9 @@ def _(
     v0_ub,
     x0_val,
 ):
-    def admm_verification(K, method, ord=np.inf, **verifier_kwargs):
+    def admm_verification(
+        K, method, ord=np.inf, obbt_params={"output_flag": False}, **verifier_kwargs
+    ):
         """Solve the portfolio ADMM verification problem for one backend.
 
         Builds a ``Verifier`` in ``method`` mode, registers the initial dual
@@ -277,8 +279,12 @@ def _(
 
         ``ord`` defaults to ``inf``, which keeps the MIP a MILP. A 2-norm
         objective is squared, so its value is square-rooted on return.
+
+        ``obbt_params`` defaults to silencing the HiGHS OBBT solver: ``Verifier``
+        forwards only the OBBT backend's own verbosity key from ``params``, so
+        Gurobi's ``OutputFlag`` does not reach it.
         """
-        VP = Verifier(method=method, **verifier_kwargs)
+        VP = Verifier(method=method, obbt_params=obbt_params, **verifier_kwargs)
         x = VP.iterate_trajectory(K + 1, collapse_expr="auto")
         v = VP.iterate_trajectory(K + 1, collapse_expr="auto")
         x[0] = VP.add_iterate(n, lb=x0_val, ub=x0_val)
