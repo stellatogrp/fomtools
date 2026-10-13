@@ -1,11 +1,12 @@
 import marimo
 
-__generated_with = "0.23.9"
+__generated_with = "0.25.1"
 app = marimo.App()
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
+    import marimo as mo
     import os
 
     import cvxpy as cp
@@ -18,7 +19,7 @@ def _():
     # When it isn't configured (e.g. a headless docs build), the codegen and
     # solve cells below skip with a message instead of raising.
     agent_available = os.environ.get("FOMTOOLS_CODEGEN_AGENT") == "1"
-    return CodegenConfig, TerminationSpec, agent_available, cp, fcpg, np
+    return CodegenConfig, TerminationSpec, agent_available, cp, fcpg, mo, np
 
 
 @app.cell(hide_code=True)
@@ -133,13 +134,6 @@ def _(agent_available, cp, nx, problem, result, rng, us, x0):
     else:
         print("Skipping solve: no generated CPG solver (see the previous cell).")
     return
-
-
-@app.cell
-def _():
-    import marimo as mo
-
-    return (mo,)
 
 
 if __name__ == "__main__":

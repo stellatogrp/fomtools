@@ -71,12 +71,12 @@ def _(mo):
     In this tutorial, we verify an ADMM method for a mean-variance portfolio optimization problem. Given a covariance matrix $\Sigma \succeq 0$, expected return vector $\mu$, and position limit $u_{\max}$, we solve
 
     \begin{array}{ll}
-        \text{minimize} & (1/2)x^T\Sigma x - \mu^T x \\
-        \text{subject to} & 0 \le x_i \le (u_{\max})_i,\quad i=1,\ldots,n, \\
-        & \mathbf{1}^T x = 1.
+        \text{minimize} & (1/2)z^T\Sigma z - \mu^T z \\
+        \text{subject to} & 0 \le z_i \le (u_{\max})_i,\quad i=1,\ldots,n, \\
+        & \mathbf{1}^T z = 1.
     \end{array}
 
-    The decision variable $x \in \mathbf{R}^n$ is the portfolio allocation. The verification problem searches over the initial dual iterate of ADMM while keeping the problem data fixed.
+    The decision variable $z \in \mathbf{R}^n$ is the portfolio allocation (`x` in the code). The verification problem searches over the initial dual iterate of ADMM while keeping the problem data fixed.
     """)
     return
 
@@ -99,25 +99,25 @@ def _(mo):
     mo.md(r"""
     ## First-order method: OSQP-style ADMM
 
-    We write the constraints as $l \le Ax \le u$, with
-    \[
+    We write the constraints as $l \le Az \le u$, with
+    $$
         A = \begin{bmatrix} I \\ \mathbf{1}^T \end{bmatrix},\quad
         l = \begin{bmatrix} 0 \\ 1 \end{bmatrix},\quad
         u = \begin{bmatrix} u_{\max} \\1 \end{bmatrix}.
-    \]
+    $$
 
     The ADMM recurrence is
 
     \begin{array}{rcl}
         w^{k+1} &=& \Pi_{[l,u]}(v^k), \\
-        x^{k+1} &=& (\Sigma + \sigma I + \rho A^TA)^{-1}
-            \left(\sigma x^k + \mu + \rho A^T(2w^{k+1}-v^k)\right), \\
-        v^{k+1} &=& v^k + Ax^{k+1} - w^{k+1},
+        z^{k+1} &=& (\Sigma + \sigma I + \rho A^TA)^{-1}
+            \left(\sigma z^k + \mu + \rho A^T(2w^{k+1}-v^k)\right), \\
+        v^{k+1} &=& v^k + Az^{k+1} - w^{k+1},
     \end{array}
 
-    which is a fixed-point iteration in terms of $z^k = (x^k, v^k)$ at iteration $k$.
+    which is a fixed-point iteration in the pair $(z^k, v^k)$.
 
-    We measure performance by Euclidean norm of combined fixed-point residual $z^{k+1} - z^k = (x^{k+1}-x^k,\; v^{k+1}-v^k)$.
+    We measure performance by the Euclidean norm of the combined fixed-point residual $r^k = (z^{k+1}-z^k,\; v^{k+1}-v^k)$.
     """)
     return
 

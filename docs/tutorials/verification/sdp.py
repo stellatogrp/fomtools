@@ -80,15 +80,15 @@ def _(mo):
     For each example, the VP has the form
 
     \begin{array}{ll}
-        \textnormal{maximize} & \|r^K\|_2^2 \\
-        \textnormal{subject to} & \{z^k\}_{k=0}^K \text{ given by algorithm} \\
+        \text{maximize} & \|r^K\|_2^2 \\
+        \text{subject to} & \{z^k\}_{k=0}^K \text{ given by algorithm} \\
         & z^0 \in \mathcal{Z} \\
         & x \in \mathcal{X},
     \end{array}
 
     where $r^K$ is the algorithm's fixed-point (or KKT) residual at iteration $K$.
-    The objective and the iterate updates (including ReLU, soft-thresholding,
-    and box projections) are quadratic, so the VP is a nonconvex quadratically
+    The objective and the iterate updates (including projections onto the
+    nonnegative orthant and onto boxes, and soft-thresholding) are quadratic, so the VP is a nonconvex quadratically
     constrained problem. The SDP formulation uses semidefinite lifting to relax
     these nonconvex quadratic constraints into convex linear matrix inequalities.
     Its optimal value is therefore a valid *upper* bound on the worst case,
@@ -199,7 +199,7 @@ def _(mo):
     # Nonnegative least squares
 
     Projected gradient descent (PGD) and its momentum variant applied to
-    $\min_{z \ge 0}\ (1/2)\|Az - x\|^2$, with $x \in [10, 11]^5$,
+    $\min_{z \ge 0}\ (1/2)\|Az - x\|_2^2$, with $x \in [10, 11]^5$,
     $z^0 \in [4, 6]^3$, and step size $\eta = 1/(2L)$. See the
     [NNLS tutorial](nnls.html) for the full setup.
     """)
@@ -352,7 +352,7 @@ def _(mo):
 
     ISTA and FISTA applied to
     $\min_z\ (1/2)\|Dz - x\|_2^2 + \lambda\|z\|_1$, with $x$ in the tightest
-    box containing the sampled measurements and $s^0 \in [-1, 1]^n$. See the
+    box containing the sampled measurements and $z^0 \in [-1, 1]^n$. See the
     [sparse coding tutorial](lasso.html) for the full setup.
     """)
     return
@@ -496,8 +496,8 @@ def _(mo):
     # Portfolio optimization
 
     OSQP-style ADMM applied to the mean-variance portfolio problem
-    $\min\ (1/2)x^T\Sigma x - \mu^T x$ subject to $0 \le x \le u_{\max}$ and
-    $\mathbf{1}^T x = 1$. The problem data is fixed, $x^0 = 0$, and the
+    $\min\ (1/2)z^T\Sigma z - \mu^T z$ subject to $0 \le z \le u_{\max}$ and
+    $\mathbf{1}^T z = 1$. The problem data is fixed, $z^0 = 0$, and the
     verifier searches over the initial dual iterate $v^0 \in [0, 1]^{n+1}$.
     See the [portfolio tutorial](portfolio.html) for the full setup.
     """)

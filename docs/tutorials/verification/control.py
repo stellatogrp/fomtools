@@ -86,7 +86,7 @@ def _(mo):
         & s_1 = x,
     \end{array}
 
-    with optimization variable $z = (u_1, \dots, u_{T-1}) \in \R^{(T-1) n_u}$ and parameter $x \in \R^{n_s}$.
+    with optimization variable $z = (u_1, \dots, u_{T-1}) \in \mathbf{R}^{(T-1) n_u}$ and parameter $x \in \mathbf{R}^{n_s}$.
     The verification problem searches over a bounded set of initial ADMM iterates and, depending on the experiment, either fixes $x$ or lets it vary over the prescribed box.
     """)
     return
@@ -354,13 +354,13 @@ def _(mo):
     Maximizing a squared Euclidean norm would make the verification problem a
     nonconvex MIQP. Instead, the MIP maximizes the infinity norm of the same
     OSQP-state residual
-    \[
+    $$
         r^k=(z^{k+1}-z^k,\;v^{k+1}-v^k).
-    \]
+    $$
     Since $r^k\in\mathbf{R}^{2n_{xz}}$, the norm inequality
-    \[
+    $$
         \|r^k\|_2^2 \le 2n_{xz}\|r^k\|_\infty^2
-    \]
+    $$
     converts the exact MIP value into a valid upper bound in the squared
     Euclidean units used by PEP and the simulations. The verification below
     rolls out the same `admm_step`, projecting onto an `IndBox` whose bounds
@@ -463,20 +463,20 @@ def _(mo):
     We compare the MIP result with a PEP that uses the same OSQP recurrence,
     including the projection-first ordering and the parameters $\sigma$ and
     $\rho$. For $M=I$, the linear solve is the proximal step
-    \[
+    $$
         z^{k+1}
-        = \operatorname{prox}_{f/(\sigma+\rho)}
+        = \mathbf{prox}_{f/(\sigma+\rho)}
         \left(
             \frac{\sigma z^k+\rho(2w^{k+1}-v^k)}
                  {\sigma+\rho}
         \right).
-    \]
+    $$
 
     PEP still considers the larger class of all $L$-smooth,
     $\mu$-strongly-convex functions and all convex indicator sets:
 
     \begin{array}{ll}
-        \textnormal{minimize} & f(x) + g(x),
+        \text{minimize} & f(z) + g(z),
     \end{array}
 
     so it does not retain the exact matrix $P$, dimension, or box geometry. We
@@ -486,9 +486,9 @@ def _(mo):
 
     For the radius-conditioned PEP comparison, we estimate the OSQP-state
     initial radius
-    \[
+    $$
         \|z^0-z^\star\|_2^2+\|v^0-v^\star\|_2^2 \le R^2
-    \]
+    $$
     from the same initial-state parameter set used by the MIP. Because the
     maximum below is taken over random initial iterates, it is an empirical
     radius rather than a certificate for every point in the initialization
@@ -595,7 +595,7 @@ def _(
     plt.suptitle('optimal control example')
     plt.yscale('log')
     plt.xlabel(r'$K$')
-    plt.ylabel(r'Worst-case squared Euclidean fixed-point residual')
+    plt.ylabel(r'Worst-case squared fixed-point residual $\|r^k\|_2^2$')
     plt.legend()
     return
 

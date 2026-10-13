@@ -72,17 +72,17 @@ def _(mo):
 
     Suppose that we are given a set of $n_s$ supply nodes and $n_d$ demand nodes, which constructs a bipartite graph with capacitated directed edges from supply nodes to demand nodes.
     Let $A_s$ and $A_d$ be submatrices corresponding to supply nodes and demand nodes, respectively.
-    For each edge $i$, let $c_i$ be the flow capacity, $\mu_i$ be the cost of sending a unit of flow, and $f_i$ be the variable representing the amount of flow sent.
+    For each edge $i$, let $c_i$ be the flow capacity, $\mu_i$ be the cost of sending a unit of flow, and $z_i$ be the variable representing the amount of flow sent.
     Finally, let $b_s \ge 0$ be the vector of supply amounts available at each supply node and $x \le 0$ be the vector of requested demand amount for each demand node.
 
     Consider the following minimum cost network flow problem:
 
     \begin{array}{ll}
-        \text{minimize} & \mu^T f \\
+        \text{minimize} & \mu^T z \\
         \text{subject to}
-        & A_s f \le b_s \\
-        & A_d f = x \\
-        & 0 \le f \le c.
+        & A_s z \le b_s \\
+        & A_d z = x \\
+        & 0 \le z \le c.
     \end{array}
 
     The demand vector $x$ is treated as the problem parameter. The verification problem will search over $x \in \mathcal{X}$ and over bounded initial primal-dual iterates.
@@ -173,12 +173,12 @@ def _(mo):
 
     \begin{array}{rcl}
         z^{k+1} &=& \Pi_{[0, c]} \big( z^k - \eta (\mu + A_s^T v^k - A_d^T w^k) \big) \\
-        v^{k+1} &=& \mathbf{prox}_{\mathbb{I}_{\mathbb{R}_+}} \big( v^k + \eta \big( - b_s + A_s (2 z^{k+1} - z^k) \big) \big) \\
+        v^{k+1} &=& \Pi_{\mathbf{R}_+} \big( v^k + \eta \big( - b_s + A_s (2 z^{k+1} - z^k) \big) \big) \\
         w^{k+1} &=& w^k + \eta \big( x - A_d (2 z^{k+1} - z^k) \big).
     \end{array}
 
-    Here $\Pi_{[0, c]}$ is projection onto the flow-capacity box and $\Pi_{\mathbb{R}_+}$ is pojection onto the nonnegative orthant.
-    We choose $\eta = 0.5 / \| \begin{bmatrix} - A_s^T & A_d^T \end{bmatrix} \|_2$.
+    Here $\Pi_{[0, c]}$ is projection onto the flow-capacity box (the `satlin` step) and $\Pi_{\mathbf{R}_+}$ is projection onto the nonnegative orthant (the `relu` step).
+    We choose $\eta = 0.5 / L$, where $L = \| \begin{bmatrix} - A_s^T & A_d^T \end{bmatrix} \|_2$.
 
     The performance metric is the infinity norm of the scaled KKT fixed-point residual induced by the PDHG update.
     """)
@@ -198,7 +198,7 @@ def _(mo):
     mo.md(r"""
     Every verification mode below (simulator and MIP-VP) drives this *same* recurrence and residual. In the current experiment, capacity, cost, and supply have zero-width bounds, so the MIP represents them as fixed symbolic parameters at their nominal values.
     Each cell rolls out the recurrence directly by iterating `pdhg_step` from the initial iterates $(z^0, v^0, w^0)$ over the horizon $K$, registering the scaled KKT residual at each step as an objective along the way.
-    Setting `momentum=True` applies the extrapolation $\tilde z^k = z^k + \frac{k-1}{k+2}(z^k - z^{k-1})$
+    Setting `momentum=True` applies the extrapolation $\tilde z^k = z^k + \beta_k(z^k - z^{k-1})$
     (see below) before the dual updates.
     """)
     return
@@ -330,10 +330,10 @@ def _(mo):
     the method extrapolates the flow iterate as
 
     $$
-        \tilde z^{k} = z^{k} + \frac{k-1}{k+2}(z^{k} - z^{k-1}),
+        \tilde z^{k} = z^{k} + \beta_k(z^{k} - z^{k-1}),
     $$
 
-    and uses $\tilde z^k$ in the dual updates. This reuses the same
+    with $\beta_k = (k-1)/(k+2)$ as in the NNLS tutorial, and uses $\tilde z^k$ in the dual updates. This reuses the same
     `pdhg_simulation` helper and the samples drawn above, with `momentum=True`.
     """)
     return
@@ -528,7 +528,7 @@ def _(mo):
 
     **There is no PEPit curve here**, unlike the NNLS tutorial. Two things would
     have to be built first. PEPit's PDHG template measures the plain iterate
-    difference $\|x^k-x^{k-1}\|^2 + \|u^k-u^{k-1}\|^2$, whereas `pdhg_step`
+    difference $\|z^k-z^{k-1}\|_2^2 + \|(v^k, w^k)-(v^{k-1}, w^{k-1})\|_2^2$, whereas `pdhg_step`
     measures the scaled KKT residual, which premultiplies those differences by
     the PDHG metric matrix ($1/\eta$ on the diagonal, $A_s^T$ and $A_d^T$ off
     it); with $\eta = 0.5/L$ the $1/\eta$ factor alone is $2L$, so the two

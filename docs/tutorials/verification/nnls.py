@@ -71,14 +71,14 @@ def _(mo):
     In this tutorial, we show how to use our package to verify the performance of first-order methods solving the nonnegative least-squares (NNLS) problem:
 
     \begin{array}{ll}
-        \text{minimize} & (1/2) \lVert Az - x \rVert^2 \\ \text{subject to} & z \ge 0,
+        \text{minimize} & (1/2) \|Az - x\|_2^2 \\ \text{subject to} & z \ge 0,
     \end{array}
 
-    where $A \in {\bf R}^{m \times n}$ with $m \ge n$, $z \in {\bf R}^n$ is the decision variable, and $x \in {\bf R}^m$ is the problem parameter.
+    where $A \in \mathbf{R}^{m \times n}$ with $m \ge n$, $z \in \mathbf{R}^n$ is the decision variable, and $x \in \mathbf{R}^m$ is the problem parameter.
 
     ## Problem parameters
 
-    In this example, we choose $m = 5, n = 3$, randomly sample $A$, and parameterize $x$ as a unit box $[10.0, 11.0]$.
+    In this example, we choose $m = 5, n = 3$, randomly sample $A$, and parameterize $x$ by the box $\mathcal{X} = [10, 11]^m$.
     """)
     return
 
@@ -96,19 +96,19 @@ def _(mo):
     mo.md(r"""
     ## Performance metric
 
-    Given the sequence of iterates $\{z^k\}_{k=0}^K$ generated from the algorithm of our choice, we quantify its performance through measuring how fast the fixed-point residual $z^K - z^{K-1}$ decreases, given the iteration budget $K>0$.
-    We impose the initial condition $z^0 \in \mathcal{Z} := [\texttt{z0\_lb},\, \texttt{z0\_ub}]$.
+    Given the sequence of iterates $\{z^k\}_{k=0}^K$ generated from the algorithm of our choice, we quantify its performance through measuring how fast the fixed-point residual $r^K = z^K - z^{K-1}$ decreases, given the iteration budget $K>0$.
+    We impose the initial condition $z^0 \in \mathcal{Z} := [z^0_\mathrm{lb},\, z^0_\mathrm{ub}]$ (`z0_lb`, `z0_ub` in the code).
 
     This amounts to finding the worst-case performance by solving the verification problem (VP) of the following form:
 
     \begin{array}{ll}
-        \textnormal{maximize} & \|z^K - z^{K-1}\| \\
-        \textnormal{subject to} & \{z^k\}_{k=0}^K \text{ given by algorithm} \\
+        \text{maximize} & \|r^K\|_2 \\
+        \text{subject to} & \{z^k\}_{k=0}^K \text{ given by algorithm} \\
         & z^0 \in \mathcal{Z} \\
         & x \in \mathcal{X},
     \end{array}
 
-    where $\mathcal{X} := [\texttt{x\_lb},\, \texttt{x\_ub}]$ is the space of problem parameters.
+    where $\mathcal{X} := [x_\mathrm{lb},\, x_\mathrm{ub}]$ (`x_lb`, `x_ub` in the code) is the space of problem parameters.
     """)
     return
 
@@ -127,20 +127,20 @@ def _(mo):
     We solve this problem using projected gradient descent with step size $\eta > 0$, whose iterations are given by
 
     \begin{array}{ll}
-        z^{k+1} = {\bf ReLU}(z^{k} - \eta A^T(Az^{k} - x)),
+        z^{k+1} = \Pi_{\mathbf{R}^n_+}(z^{k} - \eta A^T(Az^{k} - x)),
     \end{array}
 
-    where $\bf ReLU(v) = \max\{v, 0\}$ element-wise.
+    where $\Pi_{\mathbf{R}^n_+}(v) = \max\{v, 0\}$, taken element-wise, is the projection onto the nonnegative orthant (the `relu` step).
     We choose $\eta = 1/(2L)$, where $L$ is the maximum eigenvalue of $A^T A$.
 
-    We also consider a momentum variant of projected gradient descent, which follows the FISTA update:
+    We also consider a momentum variant of projected gradient descent with Nesterov-type extrapolation:
 
     \begin{array}{rcl}
-        w^{k+1} &=& {\bf ReLU}\left(z^{k} - \eta A^T(Az^{k} - x)\right), \\
-        z^{k+1} &=& w^{k+1} + \beta_k (w^{k+1} - w^{k}),
+        w^{k+1} &=& \Pi_{\mathbf{R}^n_+}\left(z^{k} - \eta A^T(Az^{k} - x)\right), \\
+        z^{k+1} &=& w^{k+1} + \beta_{k+1} (w^{k+1} - w^{k}),
     \end{array}
 
-    with $w^0 = z^0$ and $\beta_k = (k-1)/(k+2)$.
+    with $w^0 = z^0$ and $\beta_k = (k-1)/(k+2)$, so that $\beta_1 = 0$.
 
     The shared implementation used throughout this tutorial is:
 
@@ -159,7 +159,7 @@ def _(mo):
     ```
 
     Thus, `momentum=False` gives ordinary projected gradient descent, while
-    `momentum=True` applies the FISTA extrapolation before the next iteration.
+    `momentum=True` applies the momentum extrapolation before the next iteration.
     """)
     return
 
@@ -177,7 +177,7 @@ def _(mo):
     Every verification mode below (simulator and MIP-VP) drives this
     *same* `pgd_step` recurrence and residual; only the `Verifier` backend and
     whether $(x, z^0)$ are sampled instances or bounded search variables change.
-    Setting `momentum=True` selects the FISTA variant.
+    Setting `momentum=True` selects the momentum variant.
     """)
     return
 
@@ -405,15 +405,15 @@ def _(mo):
 
     $$R \;\ge\; \sup_{z^0 \in \mathcal{Z},\, x \in \mathcal{X}} \|z^0 - z^\star(x)\|_2 .$$
 
-    We find $R$ via solving optimization problem which gives maximum value of $\|z^0 - z^\star(x)\|$ for all $z^0 \in \mathcal{Z}$ and $x \in \mathcal{X}$.
-    Note that the NNLS solution map $x \mapsto z^\star(x)$ is piecewise linear; on each active set $\mathcal{I}$, its Jacobian is $(A_{\mathcal{I}}^\top A_{\mathcal{I}})^{-1} A_{\mathcal{I}}^\top$, so $\sigma_{\min}(A_{\mathcal{I}}) \ge \sigma_{\min}(A)$.
+    We find $R$ via solving optimization problem which gives maximum value of $\|z^0 - z^\star(x)\|_2$ for all $z^0 \in \mathcal{Z}$ and $x \in \mathcal{X}$.
+    Note that the NNLS solution map $x \mapsto z^\star(x)$ is piecewise linear; on each active set $\mathcal{I}$, its Jacobian is $(A_{\mathcal{I}}^T A_{\mathcal{I}})^{-1} A_{\mathcal{I}}^T$, so $\sigma_{\min}(A_{\mathcal{I}}) \ge \sigma_{\min}(A)$.
     This mapping is globally $\gamma$-Lipschitz with $\gamma = 1/\sigma_{\min}(A)$.
     Splitting the two box contributions with the triangle inequality gives the certified radius
 
     $$R = \max_{z^0 \in \mathcal{Z}} \|z^0 - z^\star(\bar{x})\|_2
-        \;+\; \gamma \cdot \operatorname{rad}(\mathcal{X}),$$
+        \;+\; \gamma \cdot \mathbf{rad}(\mathcal{X}),$$
 
-    where $\bar{x}$ is the center of the $x$-box and $\operatorname{rad}(\mathcal{X}) = \tfrac12\sqrt{\sum_j (\texttt{x\_ub}-\texttt{x\_lb})^2}$ is its circumradius.
+    where $\bar{x}$ is the center of the $x$-box and $\mathbf{rad}(\mathcal{X}) = \tfrac12\sqrt{\sum_j (x_\mathrm{ub}-x_\mathrm{lb})_j^2}$ is its circumradius.
     The first term is the distance from $z^\star(\bar{x})$ to the farthest box vertex, evaluated coordinatewise.
     This requires a single NNLS solve (at $\bar{x}$) and no sampling.
     """)
@@ -465,7 +465,7 @@ def _(mo):
     - **MIP-VP** — the *exact* worst case over the boxes, for this problem
       instance.
     - **PEPit** — the worst case over *every* $L$-smooth convex $f$ and convex
-      indicator $g$ with $\|z^0-z^\star\| \le R$. It bounds a whole function
+      indicator $g$ with $\|z^0-z^\star\|_2 \le R$. It bounds a whole function
       class rather than this instance, so it should sit above MIP-VP; here $R$
       comes from `certify_nnls_pepit_radius`, which covers the entire
       initial-condition box rather than just the drawn samples.

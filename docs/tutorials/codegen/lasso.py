@@ -68,19 +68,19 @@ def _(mo, textwrap):
 
     In this tutorial we benchmark iterative soft-thresholding for the Lasso problem:
 
-    \[
     \begin{array}{ll}
-    \text{minimize} & (1/2)\lVert Ds - x \rVert_2^2 + \lambda \lVert s \rVert_1,
+        \text{minimize} & (1/2)\|Dz - x\|_2^2 + \lambda \|z\|_1,
     \end{array}
-    \]
 
-    where \(D \in \mathbb{R}^{p \times n}\), \(s \in \mathbb{R}^n\), and \(x\) is the parameter.
+    where $D \in \mathbf{R}^{p \times n}$, $z \in \mathbf{R}^n$ is the decision variable, and $x \in \mathbf{R}^p$ is the parameter.
     The method is
 
-    \[
-    s^{k+1} =
-    \mathbf{soft}_{\lambda\eta}\left(s^k - \eta D^\top(Ds^k - x)\right).
-    \]
+    $$
+    z^{k+1} =
+    \mathbf{soft}_{\lambda\eta}\left(z^k - \eta D^T(Dz^k - x)\right),
+    $$
+
+    where $\mathbf{soft}_\kappa(v)_i = \mathbf{sign}(v_i)\max\{|v_i| - \kappa, 0\}$ is the soft-thresholding operator, applied element-wise.
 
     We compare a direct NumPy implementation with the verified generated C solver.
     The problem construction, ISTA step, and NumPy reference solver are shared with the [Lasso verification tutorial](../verification/lasso.html).
@@ -93,7 +93,7 @@ def _(mo, textwrap):
 @app.cell(hide_code=True)
 def _(mo, textwrap):
     mo.md(textwrap.dedent(r"""
-    We generate a small sparse dictionary \(D\), sample sparse signals, and use those samples to define the range of possible inputs \(x\).
+    We generate a small sparse dictionary $D$, sample sparse signals, and use those samples to define the range of possible inputs $x$.
     Both implementations run the same update rule for the same number of iterations.
     """)
     )

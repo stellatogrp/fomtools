@@ -1,7 +1,14 @@
 import marimo
 
-__generated_with = "0.14.16"
+__generated_with = "0.25.1"
 app = marimo.App()
+
+
+@app.cell
+def _():
+    import marimo as mo
+
+    return (mo,)
 
 
 @app.cell
@@ -18,38 +25,34 @@ def _():
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     In this tutorial we show how to use our package to verify projected gradient descent for the nonnegative least-squares problem:
 
     \begin{array}{ll}
-        \text{minimize} & (1/2) \lVert Az - x \rVert^2 \\ \text{subject to} & z \ge 0,
+        \text{minimize} & (1/2) \|Az - x\|_2^2 \\ \text{subject to} & z \ge 0,
     \end{array}
 
 
-    where $A \in {\bf R}^{m \times n}$, $m \ge n$, $z \in {\bf R}^n$ is the decision variable, and $x \in {\bf R}^m$ parameterizes the family.
+    where $A \in \mathbf{R}^{m \times n}$, $m \ge n$, $z \in \mathbf{R}^n$ is the decision variable, and $x \in \mathbf{R}^m$ parameterizes the family.
 
     For the first order method, we choose projected gradient descent with step size $\eta > 0$, with iterates given by
 
     \begin{array}{ll}
-        z^{k+1} = {\bf ReLU}(z^{k} - \eta A^T(Az^{k} - x)),
+        z^{k+1} = \Pi_{\mathbf{R}^n_+}(z^{k} - \eta A^T(Az^{k} - x)),
     \end{array}
 
-    where $\bf ReLU(v) = \max\{v, 0\}$ element-wise.
-    """
-    )
+    where $\Pi_{\mathbf{R}^n_+}(v) = \max\{v, 0\}$, taken element-wise, is the projection onto the nonnegative orthant (the `relu` step).
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     In this example, we choose $m = 5, n = 3$, randomly sample $A$, and parameterize $x$ as a unit box.
     We also choose $\eta = 0.5/L$, where $L$ is the maximum eigenvalue of $A^T A$.
     We initialize the algorithm with $z^0 = 0$.
-    """
-    )
+    """)
     return
 
 
@@ -104,8 +107,7 @@ def _(K, all_residuals, plt):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
+    mo.md(r"""
     ## Backend-aware collapsing with `iterate_trajectory`
 
     Writing an affine update such as `z[k] = M @ z[k-1] + c` produces a
@@ -127,8 +129,7 @@ def _(mo):
     The cell below illustrates the SDP effect on a soft-threshold (ISTA) chain,
     where the collapsed and separated formulations are genuinely different SDP
     relaxations.
-    """
-    )
+    """)
     return
 
 
@@ -165,13 +166,6 @@ def _(np):
     except Exception as exc:  # missing SDP solver in this environment
         print(f"(skipping SDP comparison: {exc})")
     return
-
-
-@app.cell
-def _():
-    import marimo as mo
-
-    return (mo,)
 
 
 @app.cell

@@ -70,13 +70,13 @@ def _(mo):
 
     In this tutorial, we verify first-order methods for the sparse coding example from Section 4.1 of [Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330).
 
-    Consider the following problem of recovering the signal $z^\star$: from its noisy measurement $x = D z^\star + \varepsilon \in {\bf R}^p$:
+    Consider the following problem of recovering the signal $z_\mathrm{true}$ from its noisy measurement $x = D z_\mathrm{true} + \varepsilon \in \mathbf{R}^p$:
 
     \begin{array}{ll}
-        \text{minimize} & (1/2) \lVert Dz - x \rVert_2^2 + \lambda \lVert z \rVert_1,
+        \text{minimize} & (1/2) \|Dz - x\|_2^2 + \lambda \|z\|_1,
     \end{array}
 
-    where $D \in {\bf R}^{p \times n}$ is the dictionary matrix, $\varepsilon \in {\bf R}^p$, $\lambda > 0$ is a sparsity-inducing regularization parameter, $z \in {\bf R}^n$ is the decision variable, and $x \in {\bf R}^p$ is the problem parameter.
+    where $D \in \mathbf{R}^{p \times n}$ is the dictionary matrix, $\varepsilon \in \mathbf{R}^p$, $\lambda > 0$ is a sparsity-inducing regularization parameter, $z \in \mathbf{R}^n$ is the decision variable, and $x \in \mathbf{R}^p$ is the problem parameter.
 
     ## First-order method: ISTA and FISTA
 
@@ -84,21 +84,22 @@ def _(mo):
     We provide the definition of ISTA iteration below:
 
     \begin{array}{ll}
-        s^{k+1} = {\cal T}_{\lambda \eta} ( (I - \eta D^T D) s^{k} + \eta D^T x),
+        z^{k+1} = \mathbf{soft}_{\lambda \eta}\left(z^{k} - \eta D^T(Dz^{k} - x)\right),
     \end{array}
 
-    where ${\cal T}_{\lambda}$ is a soft-thresholding operator applied element-wisely.
+    where $\mathbf{soft}_\kappa(v)_i = \mathbf{sign}(v_i)\max\{|v_i| - \kappa, 0\}$ is the soft-thresholding operator, applied element-wise (the `soft_threshold` step).
     We choose $\eta = 1/L$, where $L$ is the maximum eigenvalue of $D^T D$.
     The FISTA iteration can be written as
 
     \begin{array}{rcl}
-        y^{k} &=& {\cal T}_{\lambda \eta}\left(z^{k-1} - \eta D^T(Dz^{k-1} - x)\right), \\
-        z^{k} &=& y^{k} + \frac{t_{k-1}-1}{t_k}(y^{k} - y^{k-1}),
+        y^{k+1} &=& \mathbf{soft}_{\lambda \eta}\left(z^{k} - \eta D^T(Dz^{k} - x)\right), \\
+        z^{k+1} &=& y^{k+1} + \beta_{k+1}(y^{k+1} - y^{k}),
     \end{array}
 
-    where $t_0 = 1$ and $t_k = (1 + \sqrt{1 + 4t_{k-1}^2})/2$.
+    where $y^0 = z^0$, $t_0 = 1$, $t_k = (1 + \sqrt{1 + 4t_{k-1}^2})/2$, and $\beta_k = (t_{k-1}-1)/t_k$, so that $\beta_1 = 0$.
 
-    The performance metric is the infinity norm of the fixed-point residual between consecutive iterates.
+    The performance metric is the Euclidean norm $\|r^k\|_2$ of the fixed-point residual $r^k = y^k - y^{k-1}$ between consecutive proximal iterates.
+    For ISTA, $y^k = z^k$, so $r^k = z^k - z^{k-1}$.
     """)
     return
 
@@ -109,9 +110,9 @@ def _(mo):
     ## Problem parameters
 
     For the strongly convex example, we choose $p=20$ and $n=15$, and for the nonstrongly convex example, we choose $p = 15$, $n = 20$, and $\lambda = 10^{-1}$.
-    To construct $D$, we randomly sample from i.i.d. Gaussian ${\cal N}(0, 1/p)$ the $20$% nonzeros of $D$ and normalize its columns.
-    The true signal $z^\star$ is constructed by sampling each entry from i.i.d. Gaussian ${\cal N}(0, 1)$ with probability $0.1$ and setting $0$ otherwise. We sample $m = 100$ of those random sparse signals $z^\star$.
-    Finally, we let the parameter set $X$ to be the tightest hypercube containing all $x$'s.
+    To construct $D$, we randomly sample from i.i.d. Gaussian $\mathcal{N}(0, 1/p)$ the $20$% nonzeros of $D$ and normalize its columns.
+    The true signal $z_\mathrm{true}$ is constructed by sampling each entry from i.i.d. Gaussian $\mathcal{N}(0, 1)$ with probability $0.1$ and setting $0$ otherwise. We sample $m = 100$ of those random sparse signals $z_\mathrm{true}$.
+    Finally, we let the parameter set $\mathcal{X} = [x_\mathrm{lb}, x_\mathrm{ub}]$ be the tightest box containing all $x$'s.
     """)
     return
 
@@ -134,7 +135,7 @@ def _(mo):
     mo.md(r"""
     Every verification mode below (simulator and MIP-VP) drives this
     *same* `ista_step` recurrence and residual; only the `Verifier` backend and
-    whether $(x, s^0)$ are sampled instances or bounded search variables change.
+    whether $(x, z^0)$ are sampled instances or bounded search variables change.
     Setting `momentum=True` selects the FISTA variant.
     """)
     return
@@ -162,7 +163,7 @@ def _(mo):
     ## Simulator class
 
     We first simulate ISTA on given problem instances, which are parameterized by the parameter $x$.
-    Each problem instance is generated from randomly sampling $x$ from uniform distribution over $[\texttt{x\_lb}, \texttt{x\_ub}]$ and $s^0$ from uniform distribution over $[\texttt{s0\_lb}, \texttt{s0\_ub}]$. The samples are drawn once below and reused by every simulation cell so that all comparisons share the same instances.
+    Each problem instance is generated from randomly sampling $x$ from uniform distribution over $\mathcal{X} = [x_\mathrm{lb}, x_\mathrm{ub}]$ and the initial iterate $z^0$ from uniform distribution over $\mathcal{Z} = [z^0_\mathrm{lb}, z^0_\mathrm{ub}]$ (`s0_lb`, `s0_ub`, and `s0_samples` in the code). The samples are drawn once below and reused by every simulation cell so that all comparisons share the same instances.
     """)
     return
 
@@ -181,8 +182,8 @@ def _(mo):
     mo.md(r"""
     The simulation is run through the following function. The output of
     `_VP.solve()` is an array of size `(n_samples, K)` whose $i$-th row lists
-    the infinity norm of residuals for $k=1,\ldots,K$ of the $i$-th problem
-    instance.
+    the squared residual norms $\|r^k\|_2^2$ for $k=1,\ldots,K$ of the $i$-th
+    problem instance; we take the square root before computing statistics.
     """)
     return
 
@@ -316,7 +317,7 @@ def _(mo):
     ### MIP-VP
     We solve the exact MIP verification problem for both ISTA and its
     accelerated variant FISTA. The MIP searches over the measurement parameter
-    $x$ and initial iterate $s^0$, and maximizes the fixed-point residual at
+    $x$ and initial iterate $z^0$, and maximizes the fixed-point residual at
     each horizon.
     """)
     return
@@ -355,8 +356,8 @@ def _(mo):
     small $K$ plotted here: $\beta_2 = 0.282$ vs $0.250$,
     $\beta_3 = 0.434$ vs $0.400$), and the performance metric is the difference
     of the *proximal* iterates $y^k - y^{k-1}$ rather than of the extrapolated
-    ones, which is the residual `ista_step` returns. Since $y^0 = z^0 = s^0$ in
-    the notebook, the same initial condition $\|z^0-z^\star\| \le R$ covers
+    ones, which is the residual `ista_step` returns. Since $y^0 = z^0$ in
+    the notebook, the same initial condition $\|z^0-z^\star\|_2 \le R$ covers
     both sequences.
     """)
     return
