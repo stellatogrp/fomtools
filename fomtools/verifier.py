@@ -52,7 +52,6 @@ class Verifier(object):
         solver="highs",
         obbt_solver="auto",
         params=None,
-        obbt_params=None,
         rlt_cuts=False,
         triangle_cuts=False,
         ineq_product_cuts=True,
@@ -82,14 +81,9 @@ class Verifier(object):
             (Gurobi or HiGHS) and disables OBBT otherwise. Disable
             explicitly with ``None``.
         params : dict, optional
-            Solver-specific parameters forwarded to the canonicalizer.
-        obbt_params : dict, optional
-            Solver-specific parameters for the OBBT bound-tightening solver
-            (e.g. ``{"TimeLimit": 10}``). When omitted, ``params`` is reused if
-            ``obbt_solver`` is the same backend as ``solver``. Either way the
-            bound-tightening solves are silenced by default; pass the backend's
-            own output option (``{"OutputFlag": 1}`` for Gurobi,
-            ``{"output_flag": True}`` for HiGHS) to get a per-subproblem log.
+            Solver-specific parameters forwarded to the canonicalizer. Only the
+            verbosity key (``OutputFlag`` for Gurobi, ``output_flag`` for HiGHS)
+            is inherited by the OBBT solver, unless ``obbt_params`` is given.
         rlt_cuts : bool, default False
             SDP-only: when True, add RLT cuts between cone-mate index
             pairs (paper §4.5 eq 18). No effect for ``method != "sdp"``.
@@ -216,32 +210,6 @@ class Verifier(object):
             )
 
         return summary_statistics[item]
-
-    _SOLVER_ALIASES = {"grb": "gurobi"}
-
-    @classmethod
-    def _same_backend(cls, solver: str, obbt_solver: str) -> bool:
-        """
-        Return whether two solver identifiers refer to the same backend.
-
-        Parameters
-        ----------
-        solver : str
-            Case-insensitive solver identifier.
-        obbt_solver : str
-            Case-insensitive solver identifier used for OBBT.
-
-        Returns
-        -------
-        bool
-            True when both names (after alias resolution) select the same solver.
-        """
-
-        def norm(name):
-            key = name.lower()
-            return cls._SOLVER_ALIASES.get(key, key)
-
-        return norm(solver) == norm(obbt_solver)
 
     @staticmethod
     def _get_canonicalizer(

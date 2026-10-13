@@ -4,7 +4,6 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fomtools"
-requires-python = ">=3.12"
 description = "FOMTools: A Python Toolbox for Analysis of First-Order Methods"
 readme = "README.md"
 license = { text = "Apache 2.0" }
