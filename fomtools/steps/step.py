@@ -7,7 +7,7 @@ class Step:
     """
     A base class for thresholding and activation steps. This class
     defines a common interface for step-like operators that transform
-    inputs element wise.
+    inputs element-wise.
 
     A step represents the relation: output = f(arg), where f is the step
     function (e.g., ReLU, soft threshold, saturated linear).
@@ -20,10 +20,10 @@ class Step:
         Left-hand side (output) linear expression. Bounds on the output
         are stored in ``output.lb`` and ``output.ub``.
     relax_binary_vars : bool
-        If true, binary decision variables associated with the operator
+        If True, binary decision variables associated with the operator
         are relaxed to take continuous values.
     skip_obbt : bool
-        If true, OBBT bound tightening is skipped for this step type.
+        If True, OBBT bound tightening is skipped for this step type.
         Override in subclasses that compute bounds analytically.
     obbt_output : bool
         If true, OBBT is also run on the step's output leaves once the step's
@@ -39,7 +39,7 @@ class Step:
 
     When ``update_bounds(lb, ub)`` is called with tightened input bounds,
     subclasses should update both ``self.lb``/``self.ub`` (input) and
-    ``self.output.lb``/``self.output.ub`` (output, via applying the step function).
+    ``self.output.lb``/``self.output.ub`` (output, by applying the step function).
     """
 
     skip_obbt: bool = False
@@ -62,7 +62,7 @@ class Step:
     @property
     def output_leaves(self) -> list[LinearExpression]:
         """Leaves this step introduces and that must be registered with the
-        canonicalizer / step-decomposer.
+        canonicalizer/step decomposer.
 
         Default: ``[self.output]`` (the output is itself a leaf). Steps that expose
         a non-leaf composite ``output`` (currently only partial-projection

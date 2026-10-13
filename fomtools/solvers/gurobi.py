@@ -78,7 +78,7 @@ class GurobiSolver(MIPSolver):
 
         This method creates a Gurobi model in which all integrality
         constraints are relaxed to continuous domains and optimizes
-        it. It then clears any cached ``relaxed_model`` property by
+        it. It then clears any cached ``relaxed_model`` property
         so that future accesses re-expose the freshly computed
         object.
         """
@@ -117,9 +117,9 @@ class GurobiSolver(MIPSolver):
         given ``LinearExpression``.
 
         This method wraps ``model.addVar`` to create one or more decision variables
-        whose shape matches that of provided ``LinearExpression``. It also records
+        whose shape matches that of the provided ``LinearExpression``. It also records
         the mapping between the ``LinearExpression`` object and its associated Gurobi
-        variable for subsequent reference. The created variable(s) are of specified
+        variable for subsequent reference. The created variable(s) have the specified
         bounds and types.
 
         Parameters
@@ -155,7 +155,7 @@ class GurobiSolver(MIPSolver):
 
         Registers ``param_stack_var`` in ``self.vector_var_map`` as the
         horizontal stack of the variables associated with each element of
-        ``param_list``.  This is useful to building block-structured vectors
+        ``param_list``. This is useful for building block-structured vectors
         from previously created components.
 
         Parameters
@@ -195,7 +195,7 @@ class GurobiSolver(MIPSolver):
         Parameters
         ----------
         expression: LinearExpression
-            A leaf ``LinearExpression`` object. with a single entry in
+            A leaf ``LinearExpression`` object with a single entry in
             ``expression.decomposition_dict``.
 
         Returns
@@ -229,20 +229,20 @@ class GurobiSolver(MIPSolver):
             \sum_{i}^{N} matrix_i @ variable_i
         $$
 
-        The resulting object is a Gurobi linear expressions with the same dimensinoality as
+        The resulting object is a Gurobi linear expression with the same dimensionality as
         the input ``expression``, and can be directly used in model constraints or
         objective functions.
 
         Parameters
         ----------
         expression: LinearExpression
-            The LinearExpression object to be converted into its corresponding Gurobi form.
+            The LinearExpression object to be converted into its corresponding Gurobi representation.
 
         Returns
         -------
         gp.MLinExpr
             The Gurobi linear expression corresponding to the input ``expression``, representing
-            its solver-ide linear form.
+            its solver-side linear form.
         """
         gp_expr = np.zeros(expression.ndim)
         for k, v in expression.decomposition_dict.items():
@@ -282,7 +282,7 @@ class GurobiSolver(MIPSolver):
         ----------
         expression: LinearExpression
             A ``LinearExpression`` object registered with the solver whose
-            underlying variables bound are to be updated.
+            underlying variable bounds are to be updated.
 
         lb: float or np.ndarray
             New lower bound(s).
@@ -302,7 +302,7 @@ class GurobiSolver(MIPSolver):
         Parameters
         ----------
         constraint: Constraint | gp.TempConstr
-            A Gurobi constraint expression compatible. Typical form includes
+            A compatible Gurobi constraint expression. Typical forms include
             comparisons like ``lhs == rhs``, ``lhs <= rhs``, where ``lhs``,
             and ``rhs`` are of type ``LinearExpression`` or ``gp.MLinExpr``.
 
@@ -313,7 +313,7 @@ class GurobiSolver(MIPSolver):
         try:
             self.model.addConstr(constraint)
         except gp.GurobiError:
-            # Expression on the right hand side of the constraint object is always 0
+            # Expression on the right-hand side of the constraint object is always 0.
             lhs = self.expression_to_solver(constraint.lhs)
             match constraint.operator:
                 case "=":
@@ -329,7 +329,7 @@ class GurobiSolver(MIPSolver):
         Parameters
         ----------
         expression: LinearExpression or 0
-            A ``LinearExpression`` object registered with the solver repesenting the
+            A ``LinearExpression`` object registered with the solver representing the
             optimization objective, or 0 if setting a zero objective.
 
         sense: {"minimize", "maximize"}
@@ -487,7 +487,7 @@ class GurobiSolver(MIPSolver):
         Tuple[gp.MVar, np.ndarray]
             A single Gurobi matrix variable formed by horizontally stacking the
             individual ``gp.MVar`` objects corresponding to each element of
-            the input ``LinearExpression``, and a numpy array containing the
+            the input ``LinearExpression``, and a NumPy array containing the
             current values of those stacked variables.
         """
         # If no relaxed model currently exists, build and solve it first.

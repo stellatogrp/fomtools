@@ -74,10 +74,12 @@ docs = [
        "fomtools[gurobi]",
        "marimo",
        "matplotlib",
-       "mkdocs",
+       "mkdocs>=1.6,<2",
        "mkdocstrings-python",
        "mkdocs-marimo",
        "mkdocs-material",
+       "networkx",
+       "pepit",
        "pymdown-extensions"
 ]
 

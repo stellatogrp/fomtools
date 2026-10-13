@@ -31,16 +31,16 @@ class SaturatedLinear(Step):
     ub : np.ndarray
         Upper bounds on the INPUT (arg), before saturation is applied.
     relax_binary_vars : bool
-        If true, binary decision variables associated with the operator
+        If True, binary decision variables associated with the operator
         are relaxed to take continuous values.
     l : np.ndarray[float] | LinearExpression
         The lower saturation bound of the saturated linear operator.
         Can be either a numeric value or a LinearExpression object whose
-        lower bounds acts as the lower saturation bound.
+        lower bound acts as the lower saturation bound.
     u : np.ndarray[float] | LinearExpression
         The upper saturation bound of the saturated linear operator.
         Can be either a numeric value or a LinearExpression object whose
-        upper bounds acts as the upper saturation bound.
+        upper bound acts as the upper saturation bound.
     """
 
     def __init__(
@@ -93,16 +93,16 @@ class SaturatedLinear(Step):
     def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
         """
         Update the bounds of the left-hand side after applying
-        Saturated Linear Unit activation.
+        the Saturated Linear Unit activation.
 
         Parameters
         ----------
         lb: float or np.ndarray
-            The new lower bound(s) before applying Saturated Linear
+            The new lower bound(s) before applying the Saturated Linear
             Unit.
 
         ub: float or np.ndarray
-            The new upper bound(s) before applying Saturated Linear
+            The new upper bound(s) before applying the Saturated Linear
             Unit.
 
         """

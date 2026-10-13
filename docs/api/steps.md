@@ -1,4 +1,7 @@
-## Step Operators
+# Step operators
+
+Step operators are the building blocks of a first-order method, covering
+affine steps, ReLU, saturated linear, and soft thresholding.
 
 ::: fomtools.steps.step.Step
 ::: fomtools.steps.affine.Affine

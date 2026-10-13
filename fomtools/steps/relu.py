@@ -16,7 +16,7 @@ class Relu(Step):
         (\phi(v,x))_i = \mathbf{ReLU}(a^T y) = \max\{a^T y, 0\}.
     $$
 
-    It sets all the negative values to zero while keeping the positive ones unchanged.
+    It sets all negative values to zero while keeping the positive ones unchanged.
 
     Attributes
     ----------
@@ -27,7 +27,7 @@ class Relu(Step):
     ub : np.ndarray
         Upper bounds on the INPUT (arg), before ReLU is applied.
     relax_binary_vars : bool
-        If true, binary decision variables associated with the operator
+        If True, binary decision variables associated with the operator
         are relaxed to take continuous values.
     idx_with_binary_vars : set[int]
         Indices corresponding to binary decision variables.
@@ -90,7 +90,7 @@ class Relu(Step):
     @staticmethod
     def _get_ranges(ranges: Tuple[int, int] | List[Tuple[int, int]]) -> set[int]:
         """
-        Return the set of integers covered by one or more of half-open intervals.
+        Return the set of integers covered by one or more half-open intervals.
 
         Parameters
         ----------
@@ -178,12 +178,12 @@ class Relu(Step):
         Parameters
         ----------
         x: np.ndarray
-            A 1-D array of vlaues on which to apply the activation.
+            A 1-D array of values on which to apply the activation.
 
         Returns
         -------
         np.ndarray
-            A new array where elements are positions specified in
+            A new array where elements at positions specified in
             ``self.proj_indices`` are passed through ReLU, while
             all other elements are left unchanged.
         """
@@ -203,7 +203,7 @@ class Relu(Step):
     def update_bounds(self, lb: float | np.ndarray, ub: float | np.ndarray):
         """
         Update the bounds of the left-hand side after applying
-        ReLU activation.
+        the ReLU activation.
 
         Parameters
         ----------

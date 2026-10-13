@@ -134,28 +134,31 @@ class TerminationSpec(BaseModel):
 class CodegenConfig(BaseModel):
     """Top-level knobs controlling a code-generation run.
 
-    Parameters
+    Attributes
     ----------
-    version:
+    version : Version
         Embedded (no malloc / division-light) or large-scale.
-    backend:
+    backend : Backend
         Target language. ``CUDA`` / ``OPENMP`` are only meaningful with
         ``version == LARGE_SCALE``; ``C`` pairs with ``EMBEDDED``.
-    termination:
+    termination : TerminationSpec
         Loop termination criterion.
-    dtype:
+    solve_method : SolveMethod
+        Linear-system solution strategy. ``AUTO`` selects an appropriate
+        direct or iterative method from the version, backend, and problem size.
+    dtype : {"float64", "float32"}
         Floating-point type emitted in the C ABI (``"float64"`` or
         ``"float32"``). Large-scale GPU backends commonly prefer ``float32``.
-    tol_verify:
+    tol_verify : float or None
         Tolerance used by the equivalence harness when comparing generated-code
         output against the Python reference oracle. When left unset it defaults
         by dtype (1e-6 for float64, 1e-4 for float32, since single precision
         cannot meet a 1e-6 gate); set it explicitly to override.
-    num_verify_samples:
+    num_verify_samples : int
         Number of random parameter instances drawn for the golden verify data.
-    seed:
+    seed : int
         RNG seed for reproducible verify-sample generation.
-    cg_auto_min_dim:
+    cg_auto_min_dim : int
         Dimension threshold for the ``AUTO`` → CG upgrade on the large-scale
         CUDA backend (see :class:`SolveMethod`). Raise it to keep more systems
         on a direct factorization; lower it to prefer CG for smaller SPD

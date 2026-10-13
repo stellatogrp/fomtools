@@ -13,26 +13,42 @@ class Quadratic(ProxableFunction):
     Represents
 
     $$
-        f(x) = \tfrac{1}{2}\,x^\top Q x + q^\top x,
+        f(x) = \tfrac{1}{2}\,x^\top Q x + q^\top x.
     $$
 
-    with $Q \in \mathbb{R}^{n \times n}$ positive semidefinite. The linear
-    term ``q`` may be numeric data or a :class:`LinearExpression`
-    parameter — the verification-side lowering treats both uniformly via
-    ``LinearExpression`` arithmetic.
+    Convex and smooth.
+
+    Parameters
+    ----------
+    Q : np.ndarray or scipy.sparse matrix
+        Symmetric positive semidefinite matrix of shape ``(n, n)``. Sparse input
+        is kept sparse (CSR).
+    q : float, np.ndarray, or LinearExpression
+        Linear term of shape ``(n,)``. A ``LinearExpression`` is treated as a
+        parameter by the verification lowering.
+
+    Raises
+    ------
+    ValueError
+        If ``Q`` is not square, not symmetric, or not positive semidefinite
+        (up to a numerical tolerance), or an array ``q`` has the wrong shape.
+
+    See Also
+    --------
+    LeastSquares : The case $Q = A^\top A$, $q = -A^\top b$.
+    SqL2Norm : The case $Q = I$, $q = 0$.
 
     Notes
     -----
-    The proximal operator is the unique smooth-stationarity solution
+    **Proximal operator.** The unique solution $u$ of the linear system
 
     $$
-        (I + \gamma Q)\, u \;=\; \text{arg} - \gamma q,
+        (I + \gamma Q)\, u = v - \gamma q.
     $$
 
-    which is a single linear system. The :meth:`prox` numpy reference
-    uses :func:`numpy.linalg.solve`; the verification-side lowering posts
-    the equality directly and lets the solver handle it — no inverse or
-    pseudoinverse is formed.
+    **Verification lowering.** ``prox_quadratic`` posts this single linear
+    equality on a fresh iterate $u$; no inverse is formed and no duals or
+    complementarity constraints are introduced.
     """
 
     def __init__(
@@ -69,9 +85,8 @@ class Quadratic(ProxableFunction):
         r"""
         Evaluate $f(x) = \tfrac{1}{2}\,x^\top Q x + q^\top x$.
 
-        Numeric ``q`` only — passing a ``LinearExpression`` for ``q``
-        here is supported only by the verification-side lowering, not
-        this numpy reference.
+        Requires numeric ``q``; a ``LinearExpression`` ``q`` is supported only by
+        the verification lowering.
 
         Parameters
         ----------
@@ -81,12 +96,12 @@ class Quadratic(ProxableFunction):
         Returns
         -------
         float
-            The function value.
+            The function value $f(x)$.
 
         Raises
         ------
         TypeError
-            If ``self.q`` is a :class:`LinearExpression`.
+            If ``q`` is a ``LinearExpression``.
         """
         if hasattr(self.q, "decomposition_dict"):
             raise TypeError(
@@ -97,22 +112,25 @@ class Quadratic(ProxableFunction):
 
     def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Compute the proximal point.
+        Compute $\operatorname{prox}_{\gamma f}(\text{arg})$.
 
-        Solves $(I + \gamma Q)\, u = \text{arg} - \gamma q$ via
-        :func:`numpy.linalg.solve`.
+        Solves $(I + \gamma Q)\, u = \text{arg} - \gamma q$ directly (sparse
+        solve when ``Q`` is sparse).
+
+        Requires numeric ``q``; a ``LinearExpression`` ``q`` is supported only by
+        the verification lowering.
 
         Parameters
         ----------
         arg : np.ndarray
             Input point.
         gamma : float, default 1.0
-            Proximal step size.
+            Step size $\gamma > 0$.
 
         Returns
         -------
         np.ndarray
-            The proximal point ``u``.
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{arg})$.
         """
         rhs = arg - gamma * self.q
         if spa.issparse(self.Q):
@@ -125,9 +143,12 @@ class Quadratic(ProxableFunction):
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""
-        Compute the gradient of $f$ at $x$: $\nabla f(x) = Qx + q$.
+        Compute the gradient of $f$ at ``x``.
 
-        Numeric ``q`` only.
+        $\nabla f(x) = Qx + q$.
+
+        Requires numeric ``q``; a ``LinearExpression`` ``q`` is supported only by
+        the verification lowering.
 
         Parameters
         ----------
@@ -137,12 +158,12 @@ class Quadratic(ProxableFunction):
         Returns
         -------
         np.ndarray
-            The gradient.
+            The gradient $\nabla f(x)$.
 
         Raises
         ------
         TypeError
-            If ``self.q`` is a :class:`LinearExpression`.
+            If ``q`` is a ``LinearExpression``.
         """
         if hasattr(self.q, "decomposition_dict"):
             raise TypeError(

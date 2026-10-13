@@ -15,17 +15,24 @@ embedded C project in which
 CVXPYgen is extended from the outside (no fork): the integration registers a
 solver named `'FOMTOOLS'` in CVXPYgen's dispatch at runtime.
 
+The [CVXPYgen MPC notebook](cvxpygen_mpc.html) works through the whole flow on a
+model-predictive-control problem, from the CVXPY model to the generated C
+project.
+
 ## Requirements
 
 ```bash
-pip install 'fomtools[cvxpygen]'   # cvxpy, cvxpygen, osqp
+pip install -e '.[cvxpygen,codegen]'   # run from the repository root
 ```
 
-Building the Python wrapper additionally needs `cmake` and `pip` available in
+Building the Python wrapper additionally needs `cmake` on `PATH` and `pip` in
 the environment (CVXPYgen builds the extension module with
-`python -m pip install`). Generating the solver body requires a coding-agent
-driver: set `FOMTOOLS_CODEGEN_AGENT=1` to use the Claude agent, or pass an
-explicit `driver=`.
+`python -m pip install`); the `cvxpygen` extra installs `pip`. With the default
+`wrapper=True`, `generate_solver` checks for both before any code generation
+and raises a `RuntimeError` naming what is missing; pass `wrapper=False` to emit
+the C code only. Generating the solver body requires a coding-agent driver: set
+`FOMTOOLS_CODEGEN_AGENT=1` to use the Claude agent, or pass an explicit
+`driver=`.
 
 ## The seamless flow
 
@@ -50,7 +57,7 @@ problem = cp.Problem(
 result = fcpg.generate_solver(
     problem,
     "out_qp",                          # CVXPYgen layout: c/, cpg_solver.py, ...
-    fom="admm",                        # or "pdhg", or a custom builder
+    fom="admm",                        # use "pdhg" for LPs, or a custom builder
     param_bounds={q: (-1.0, 1.0)},     # verified parameter range
     config=CodegenConfig(termination=TerminationSpec(max_iters=2000)),
 )
@@ -93,7 +100,7 @@ so builders written against the earlier API keep working unchanged.
 
 | Path | Builder returns | Emits | Runtime settings |
 |---|---|---|---|
-| `rolled` (default) | `FomSpec` with `next_state` | one iteration, repeated `max_iters` times | `max_iter`, `tol`, `check_termination` |
+| `rolled` (default) | `FomSpec` with `next_state` | one iteration, repeated `max_iters` times | `max_iter`; `tol`, `check_termination` only under `INF_NORM_CHANGE` |
 | `scheduled` | `ScheduledFomSpec` | one iteration plus a table per varying coefficient | same, with `max_iter` **capped** at the table length |
 | `unrolled` | `FomSpec` with `next_state=None` and `iterates` | the whole recorded run as one pass | none |
 
@@ -186,11 +193,16 @@ computed by the bridge from the canonical data and the returned solution.
 Which `cpg_set_solver_*` functions exist depends on the generation path, because
 a solver only advertises settings it can actually honor:
 
-- **Rolled**: `cpg_set_solver_max_iter`, `cpg_set_solver_tol` and
-  `cpg_set_solver_check_termination` (check every N iterations, 0 = disabled).
-  All three are read by the bridge on every solve, so they can be tuned without
-  regenerating.
-- **Scheduled**: the same three, except that `max_iter` is capped in the bridge
+- **Rolled**: always `cpg_set_solver_max_iter` (or
+  `problem.solve(method='CPG', max_iter=...)`). `cpg_set_solver_tol` and
+  `cpg_set_solver_check_termination` (check every N iterations, 0 = disabled)
+  exist only when the solver was generated with
+  `TerminationSpec(kind=TerminationKind.INF_NORM_CHANGE, ...)`. Under the
+  default `MAX_ITERS` the residual check is compiled out, so these settings are
+  not emitted and a runtime `tol=` is rejected rather than silently ignored.
+  Every setting that exists is read by the bridge on every solve, so it can be
+  tuned without regenerating.
+- **Scheduled**: the same settings, except that `max_iter` is capped in the bridge
   at the length of the coefficient tables. Past their end the emitted accessors
   clamp to the last entry, which would freeze the coefficients rather than
   continue the method, so raising `max_iter` beyond the generated horizon has no

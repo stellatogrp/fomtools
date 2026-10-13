@@ -89,7 +89,7 @@ class Constraint:
             If the expressions `lhs` and `rhs` are not of the same shape.
 
         TypeError
-           If `rhs` is not a LinearExpression object, NumPy array or a list.
+            If `rhs` is not a LinearExpression object, NumPy array or a list.
         """
         try:
             # If rhs is a scalar, broadcast it to the dimension of the lhs expression

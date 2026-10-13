@@ -1,11 +1,12 @@
 import marimo
 
-__generated_with = "0.23.0"
+__generated_with = "0.25.1"
 app = marimo.App()
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
+    import marimo as mo
     import os
 
     import cvxpy as cp
@@ -18,23 +19,23 @@ def _():
     # When it isn't configured (e.g. a headless docs build), the codegen and
     # solve cells below skip with a message instead of raising.
     agent_available = os.environ.get("FOMTOOLS_CODEGEN_AGENT") == "1"
-
-    return CodegenConfig, TerminationSpec, agent_available, cp, fcpg, np
+    return CodegenConfig, TerminationSpec, agent_available, cp, fcpg, mo, np
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    CVXPYgen integration example: embedded MPC solver from a CVXPY model.
+    # MPC with CVXPYgen and a generated solver
 
-    Models a small MPC QP in CVXPY (parametric initial state entering the equality
-    right-hand sides, parametric linear cost) and generates a single embedded C
-    project: CVXPYgen canonicalization + a fomtools ADMM solver.
+    In this tutorial we model a small model predictive control (MPC) problem in CVXPY and turn it into an embedded C solver.
+    [CVXPYgen](https://github.com/cvxgrp/cvxpygen) generates the code that maps the problem parameter to the data of a quadratic program, and FOMTools generates the first-order method that solves that quadratic program.
+    Both end up in one C project with a Python wrapper, so the CVXPY problem can be solved through the generated code with `problem.solve(method="CPG")`.
 
-    Requires `pip install 'fomtools[cvxpygen]'` and a coding-agent driver
-    (FOMTOOLS_CODEGEN_AGENT=1 for the Claude agent).
-
-    Run from this directory:  python cvxpygen_mpc.py
+    Running the whole notebook needs the `cvxpygen` and `codegen` extras (`pip install 'fomtools[cvxpygen,codegen]'`) and `cmake` on your `PATH`, which CVXPYgen uses to build the Python wrapper.
+    The solver is written by an LLM coding agent and then verified against a Python reference, so generating it also needs a configured coding agent.
+    Set `FOMTOOLS_CODEGEN_AGENT=1` before starting marimo to use the Claude agent.
+    Without it, the generation and solve cells below print a message and skip, and the rest of the notebook still runs.
+    The solver is written to `mpc_solver/` relative to the working directory, so start marimo (or `python cvxpygen_mpc.py`) from this directory.
     """)
     return
 
@@ -42,7 +43,12 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    MPC problem data
+    ## Problem data
+
+    The plant is a linear system $s_{t+1} = A s_t + B u_t$ with state $s_t \in \mathbf{R}^{n_s}$ and input $u_t \in \mathbf{R}^{n_u}$, where $n_s = 4$ and $n_u = 2$.
+    We draw $A$ and $B$ at random and scale $A$ to spectral radius $0.9$, so the uncontrolled system is stable.
+    The horizon is $T = 8$, the stage costs are $Q = I$ and $R = 0.1 I$, and the terminal cost is $Q_T = 10 I$.
+    In the code, $A$, $B$, $Q_T$, $n_s$, $n_u$, and $T$ are `Ad`, `Bd`, `QN`, `nx`, `nu`, and `N`.
     """)
     return
 
@@ -61,7 +67,20 @@ def _(np):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    CVXPY model with the initial state as a parameter
+    ## The CVXPY model
+
+    Given an initial state $x \in \mathbf{R}^{n_s}$, the MPC problem is
+
+    \begin{array}{ll}
+        \text{minimize} & s_T^T Q_T s_T + \sum_{t=0}^{T-1} \left( s_t^T Q s_t + u_t^T R u_t \right) \\
+        \text{subject to} & s_{t+1} = A s_t + B u_t, \quad t = 0, \dots, T-1 \\
+        & \|s_t\|_\infty \le 5, \quad \|u_t\|_\infty \le 1, \quad t = 0, \dots, T-1 \\
+        & s_0 = x,
+    \end{array}
+
+    with variables $s_0, \dots, s_T$ and $u_0, \dots, u_{T-1}$ (`xs` and `us` in the code).
+    The initial state $x$ is a CVXPY `Parameter` named `x0`, so CVXPYgen treats it as data that can change between solves.
+    The value assigned to it here is only a placeholder; the solve cell below sets a new one.
     """)
     return
 
@@ -89,7 +108,29 @@ def _(Ad, Bd, N, Q, QN, R, cp, nu, nx, rng):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Generate the embedded solver
+    ## Generating the solver
+
+    A single call to `generate_solver` runs both code generators.
+    CVXPYgen first reduces the problem to the quadratic program
+
+    \begin{array}{ll}
+        \text{minimize} & (1/2) z^T P z + q^T z \\
+        \text{subject to} & l(x) \le M z \le u(x),
+    \end{array}
+
+    where $z$ stacks the states, the inputs, and the auxiliary variables CVXPYgen introduces.
+    Only the bounds $l(x)$ and $u(x)$ depend on $x$, through the constraint $s_0 = x$, so $P$, $q$, and $M$ are fixed and stored in the generated C code.
+
+    FOMTools then records one iteration of the ADMM method used by OSQP (`fom="admm"`, with OSQP's default parameters) on this quadratic program.
+    The ADMM linear system has a constant matrix, so it is factored once at generation time and each iteration only needs triangular solves.
+    A coding agent writes the iteration in C, and FOMTools compiles it and compares its iterates with the Python reference for several values of $x$ drawn from the box in `param_bounds`, here $x \in [-1, 1]^{n_s}$.
+    If the comparison fails, the agent sees the error and tries again.
+    Once it passes, CVXPYgen builds the Python wrapper with CMake.
+    The whole step takes a few minutes, most of it spent by the agent.
+
+    The solver runs a fixed $2000$ iterations (`TerminationSpec(max_iters=2000)`).
+    The iteration count is a runtime setting, so it can be changed later without regenerating the code.
+    The generated project is written to `mpc_solver/`, and the agent's solver loop is in `mpc_solver/c/solver_code/src/fom_solver.c`.
     """)
     return
 
@@ -117,7 +158,12 @@ def _(CodegenConfig, TerminationSpec, agent_available, fcpg, problem, x0):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Solve through the generated code
+    ## Solving through the generated code
+
+    `generate_solver` registers the generated code with the problem as the solve method `"CPG"`.
+    We draw a new initial state inside the verified box, solve through the generated C code, and print the first input $u_0$, which is the input an MPC controller applies before re-solving at the next time step.
+    As a check, we then solve the same problem with OSQP at tight tolerances.
+    After $2000$ iterations the two inputs agree to within $10^{-10}$.
     """)
     return
 
@@ -134,13 +180,6 @@ def _(agent_available, cp, nx, problem, result, rng, us, x0):
     else:
         print("Skipping solve: no generated CPG solver (see the previous cell).")
     return
-
-
-@app.cell
-def _():
-    import marimo as mo
-
-    return (mo,)
 
 
 if __name__ == "__main__":

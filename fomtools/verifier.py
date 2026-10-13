@@ -1002,6 +1002,36 @@ class Verifier(object):
         return output
 
     def fixed_point(self, n_dim, operator, lb=-np.inf, ub=np.inf):
+        """
+        Encode a fixed point of an operator as a new iterate.
+
+        Creates a new iterate ``z_star`` of dimension `n_dim`, applies
+        `operator` to it, and constrains ``z_star == operator(z_star)``.
+        Used to encode distance-to-optimality objectives, where `z_star`
+        represents an optimal solution of the parametric problem.
+
+        Parameters
+        ----------
+        n_dim: int
+            Dimension of the fixed-point iterate.
+
+        operator: Callable[[LinearExpression], LinearExpression]
+            The algorithm operator `T`, applied to the new iterate to
+            build the fixed-point constraint ``z_star == T(z_star)``.
+
+        lb: float, default -np.inf
+            Lower bound of the fixed-point iterate. Must hold for every
+            parameter in the declared parameter set.
+
+        ub: float, default np.inf
+            Upper bound of the fixed-point iterate. Must hold for every
+            parameter in the declared parameter set.
+
+        Returns
+        -------
+        LinearExpression
+            The fixed-point iterate ``z_star``.
+        """
         z_star = self.add_iterate(n_dim, lb=lb, ub=ub)
         s_star = operator(z_star)
         self.add_constraint(z_star == s_star)
