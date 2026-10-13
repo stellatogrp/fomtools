@@ -90,7 +90,7 @@ def test_boxpgd_sdp_satlin_vs_relus(vp_sdp):
     Test manual saturated linear decomposition into ReLUs.
 
     Manually implements: satlin(x, l, u) = relu(x - l) - relu(x - u) + l
-    and verifies that the SDP objective matches the automatic decomposition.
+    and verifies that the automatic decomposition is no looser.
     """
     n = 2
     np.random.seed(0)
@@ -156,8 +156,8 @@ def test_boxpgd_sdp_satlin_vs_relus(vp_sdp):
     assert result_manual >= 0, "Two-norm squared should be non-negative"
     assert result_auto >= 0, "Two-norm squared should be non-negative"
 
-    # Results should nearly match
-    assert np.abs(result_manual - result_auto) <= TEST_EPS, (
-        f"Manual ({result_manual}) and automatic ({result_auto}) decomposition "
-        f"results should match within tolerance {TEST_EPS}"
+    # The automatic decomposition also registers the hull of the composite
+    # satlin map, so it can only be tighter than the bare ReLUs.
+    assert result_auto <= result_manual + TEST_EPS, (
+        f"Automatic ({result_auto}) decomposition should be no looser than manual ({result_manual})"
     )

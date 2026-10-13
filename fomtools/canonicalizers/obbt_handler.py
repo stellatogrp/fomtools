@@ -7,6 +7,7 @@ from fomtools.canonicalizers.canonicalizer import Canonicalizer
 from fomtools.constraint import Constraint, is_binary_free
 from fomtools.linearexpression import LinearExpression
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
+from fomtools.utils.envelopes import relu_upper_envelope, softthreshold_envelope
 from fomtools.utils.math_utils import repair_crossed_bounds
 
 log = logging.getLogger(__name__)
@@ -249,12 +250,8 @@ class OBBTHandler(Canonicalizer):
             elif step.lb[i] > 0:
                 constraints.append(_output == _arg)
             else:
-                constraints.extend(
-                    [
-                        _output <= step.ub[i] / (step.ub[i] - step.lb[i]) * (_arg - step.lb[i]),
-                        _output >= _arg,
-                    ]
-                )
+                constraints.append(_output >= _arg)
+                constraints.extend(relu_upper_envelope(_output, _arg, step.lb[i], step.ub[i]))
         self._add_binary_free(constraints)
 
     def canonicalize_saturatedlinear(self, step: SaturatedLinear) -> None:
@@ -282,18 +279,14 @@ class OBBTHandler(Canonicalizer):
                         output >= (u - l) / (ub - l) * (arg - l) + l,
                     ]
                 )
-            elif lb < l and ub < u:
+            elif lb < l and ub <= u:
                 constraints.extend(
                     [output >= arg, output <= ((ub - l) / (ub - lb)) * (arg - ub) + ub]
                 )
-            elif lb > l and ub > u:
+            elif lb >= l and ub > u:
                 constraints.extend(
                     [output <= arg, output >= ((u - lb) / (ub - lb) * (arg - lb) + lb)]
                 )
-            # No else: boundary cases (e.g. lb == l with ub > u, or lb < l with
-            # ub == u) intentionally add no envelope row — they are measure-zero
-            # and the variable's box bounds remain a valid relaxation. This
-            # mirrors MIP.canonicalize_saturatedlinear, which has the same gap.
         self._add_binary_free(constraints)
 
     def canonicalize_softthreshold(self, step: SoftThreshold) -> None:
@@ -313,33 +306,10 @@ class OBBTHandler(Canonicalizer):
                 constraints.append(output == arg + step.lambd)
             elif lb >= -step.lambd and ub <= step.lambd:
                 constraints.append(output == 0)
-            elif lb < -step.lambd and ub > step.lambd:
-                constraints.extend(
-                    [
-                        output >= arg - step.lambd,
-                        output <= arg + step.lambd,
-                        output <= output_ub / (ub + step.lambd) * (arg + step.lambd),
-                        output >= output_lb / (lb - step.lambd) * (arg - step.lambd),
-                    ]
-                )
-            elif -step.lambd <= lb <= step.lambd < ub:
-                constraints.extend(
-                    [
-                        output >= 0,
-                        output <= output_ub / (ub - lb) * (arg - lb),
-                        output >= arg - step.lambd,
-                    ]
-                )
-            elif step.lambd >= ub >= -step.lambd >= lb:
-                constraints.extend(
-                    [
-                        output <= 0,
-                        output >= output_lb / (lb - ub) * (arg - ub),
-                        output <= arg + step.lambd,
-                    ]
-                )
             else:
-                raise RuntimeError("Unreachable code")
+                constraints.extend(
+                    softthreshold_envelope(output, arg, lb, ub, output_lb, output_ub, step.lambd)
+                )
         self._add_binary_free(constraints)
 
     _CANONICALIZERS: ClassVar[dict] = {

@@ -19,10 +19,10 @@ authors = [
 ]
 
 dependencies = [
-       "gurobipy>=12.0.1",
        "cvxpy",
        "highspy",
        "numpy",
+       "pydantic",
        "pyyaml",
        "scipy",
 ]
@@ -32,25 +32,30 @@ fomtools-codegen = "fomtools.codegen.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["fomtools*"]
 
 [tool.setuptools.package-data]
 "fomtools.codegen.agent" = ["agents.yaml"]
 
 [project.optional-dependencies]
+gurobi = ["gurobipy>=12.0.1"]
 gpu = ["cupy-cuda12x"]
 
 # Code generation. The Claude Agent SDK is only needed to *run* the LLM coding
 # agent; extracting the IR, scaffolding, building, and the ctypes wrapper need
 # none of this (the wrapper uses the stdlib ``ctypes``). The Pi backend is a CLI
 # (https://pi.dev), installed separately, so it needs no Python dependency here.
-codegen = ["claude-agent-sdk", "openai-codex", "pydantic"]
+codegen = ["claude-agent-sdk", "openai-codex"]
 
 # CVXPYgen integration (fomtools.cvxpygen): model in CVXPY, canonicalize with
 # CVXPYgen's generated C code, solve with a fomtools-generated embedded FOM.
 # Pinned to the cvxpygen 1.x internal API (solver-interface seam).
-cvxpygen = ["cvxpygen>=1.0,<2", "osqp"]
+# cvxpygen installs the compiled wrapper with `python -m pip`, which a uv
+# environment lacks unless asked for.
+cvxpygen = ["cvxpygen>=1.0,<2", "osqp", "pip"]
 
 dev = [
+       "fomtools[gurobi]",
        "pytest",
        "pre-commit",
        "ruff",
@@ -58,9 +63,8 @@ dev = [
        "ipdb",
        "hydra-core",
        "pandas",
-       "pydantic",
        "networkx",
-       "pepit",
+       "pip",
 ]
 
 # jax 0.11.2 removed jax.experimental.hijax.HiPrimitive, which flax (<=0.12.9)
@@ -68,16 +72,14 @@ dev = [
 nn = ["torch", "jax<0.11.2", "flax"]
 
 docs = [
+       "fomtools[gurobi]",
        "marimo",
        "matplotlib",
        "mkdocs>=1.6,<2",
        "mkdocstrings-python",
        "mkdocs-marimo",
        "mkdocs-material",
-       "pydantic",
-       "pymdown-extensions",
-       "networkx",
-       "pepit",
+       "pymdown-extensions"
 ]
 
 [tool.mypy]
@@ -94,7 +96,7 @@ markers = [
 ]
 
 [tool.ruff]
-target-version = "py313"
+target-version = "py312"
 line-length = 100
 exclude = ["build", "docs", "*__init__.py"]
 

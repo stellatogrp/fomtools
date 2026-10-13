@@ -127,11 +127,8 @@ def test_obbt_preserves_mip_optimum(solver, op):
     assert abs(opt_ob - opt_no) <= 1e-4
 
 
-# NOTE: the convex_hull_cuts (Huchette) subsystem only supports ReLU and
-# soft-threshold; it raises AttributeError on SaturatedLinear independently of
-# OBBT, so satlin is excluded here. Huchette cuts are out of scope for OBBT.
 @pytest.mark.parametrize("solver", SOLVERS)
-@pytest.mark.parametrize("op", ["softthreshold", "relu"])
+@pytest.mark.parametrize("op", ["softthreshold", "relu", "satlin"])
 def test_obbt_preserves_mip_optimum_with_convex_hull_cuts(solver, op):
     if solver == "highs":
         pytest.skip("convex_hull_cuts path uses Gurobi-specific relaxation")
@@ -467,7 +464,7 @@ def test_relu_cut_bounds_use_obbt_bounds():
 
 
 def test_obbt_inherits_output_flag_only():
-    v = Verifier(params={"OutputFlag": 0, "TimeLimit": 5})
+    v = Verifier(solver="gurobi", params={"OutputFlag": 0, "TimeLimit": 5})
     model = v.obbt_handler.solver.model
     assert model.Params.OutputFlag == 0
     # Main-solve options are not forwarded to the OBBT LPs.
@@ -475,7 +472,7 @@ def test_obbt_inherits_output_flag_only():
 
 
 def test_obbt_params_override():
-    v = Verifier(params={"OutputFlag": 0}, obbt_params={"OutputFlag": 1})
+    v = Verifier(solver="gurobi", params={"OutputFlag": 0}, obbt_params={"OutputFlag": 1})
     assert v.obbt_handler.solver.model.Params.OutputFlag == 1
 
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
+import shutil
 import warnings
 from typing import Any, Callable
 
@@ -21,6 +23,30 @@ from fomtools.cvxpygen.interface import (
 # call site, so the user sees their own generate_solver(...) line regardless of
 # how many internal wrappers (e.g. fomtools.cvxpygen.__init__) sit in between.
 _FOMTOOLS_PREFIX = os.path.dirname(os.path.dirname(__file__))
+
+
+def _check_wrapper_toolchain() -> None:
+    """Fail before any code generation if cvxpygen cannot build its wrapper.
+
+    cvxpygen compiles the Python extension with ``cmake`` and installs it with
+    ``python -m pip``. When either is missing it only prints the failure and the
+    caller later gets ``ImportError: cannot import name 'cpg_module'`` — after
+    the coding agent has already run. A ``uv`` environment has no pip unless it
+    is asked for, so this is the common case.
+    """
+    missing = []
+    if importlib.util.find_spec("pip") is None:
+        missing.append("pip in this Python environment (e.g. `uv pip install pip`)")
+    if shutil.which("cmake") is None:
+        missing.append("cmake on PATH")
+    if missing:
+        raise RuntimeError(
+            "generate_solver(..., wrapper=True) needs "
+            + " and ".join(missing)
+            + ": cvxpygen builds the Python wrapper with cmake and installs it with "
+            "'python -m pip'. Install them, or pass wrapper=False to generate the C "
+            "code only."
+        )
 
 
 def generate_solver(
@@ -78,9 +104,13 @@ def generate_solver(
         _OPENMP`` pragmas, so it compiles and verifies serially out of the box
         and threads once the CMake build adds ``-fopenmp``. The CUDA build
         emits ``.cu`` translation units and needs a CUDA-enabled toolchain / GPU.
-        ``max_iter``, ``tol`` and ``check_termination`` are emitted as runtime
-        cvxpygen settings (tune them via ``cpg_set_solver_*`` without
-        regenerating) for a rolled or scheduled FOM — a scheduled one caps
+        ``max_iter`` is emitted as a runtime cvxpygen setting (tune it via
+        ``cpg_set_solver_max_iter`` or ``problem.solve(method='CPG',
+        max_iter=...)`` without regenerating) for a rolled or scheduled FOM;
+        ``tol`` and ``check_termination`` are emitted too when the termination
+        kind is ``INF_NORM_CHANGE``, the only kind whose generated loop checks a
+        residual (under the default ``MAX_ITERS`` the check is compiled out, so
+        a runtime ``tol`` is rejected rather than ignored). A scheduled one caps
         ``max_iter`` at the length of its coefficient tables, past which the
         emitted accessors would clamp and freeze the coefficients. An unrolled
         FOM exposes no runtime settings: its body is the whole run executed
@@ -109,6 +139,8 @@ def generate_solver(
     CodegenResult
         The fomtools code-generation result (IR, timing, verification log).
     """
+    if wrapper:
+        _check_wrapper_toolchain()
     register()
     from cvxpygen import cpg
 

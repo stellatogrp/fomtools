@@ -50,6 +50,31 @@ way, for example `pip install -e ".[dev,docs,nn]"`:
 | `codegen`  | Running the LLM coding agent behind `fomtools-codegen`.                      |
 | `cvxpygen` | The `fomtools.cvxpygen` integration (`cvxpy`, `cvxpygen`, `osqp`).           |
 
+## Optional extras
+
+The base install uses HiGHS as the default MIP solver. Additional solver
+backends and features are available as extras:
+
+| Extra      | Description                                       |
+|------------|---------------------------------------------------|
+| `gurobi`   | Gurobi solver backend (`pip install fomtools[gurobi]`) |
+| `codegen`  | LLM coding-agent backends for code generation     |
+| `gpu`      | CuPy for GPU-accelerated SDP solving              |
+| `cvxpygen` | CVXPYgen integration                              |
+| `nn`       | Neural-network verification (PyTorch, JAX, Flax)  |
+| `dev`      | Development tools (includes Gurobi)               |
+| `docs`     | Documentation build dependencies                  |
+
+To use Gurobi as the solver backend:
+
+    pip install fomtools[gurobi]
+
+Then pass `solver="gurobi"` to the `Verifier`:
+
+```python
+vp = Verifier(solver="gurobi")
+```
+
 ## Using a different Python version than the system default
 If your Python version is not 3.12 or later, or if  you're getting errors when using a non-tested
 Python version, we recommend using the [uv](https://github.com/astral-sh/uv) tool to create a virtual

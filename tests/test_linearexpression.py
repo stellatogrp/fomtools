@@ -346,3 +346,23 @@ def test_solve_linexpr_preserves_const_rank_ndim_one(M_is_sparse):
 
     assert out.const.shape == (n,)
     assert np.isclose(out.const[0], 0.625)
+
+
+def test_bound_propagation_with_infinite_leaf_bounds_is_nan_free():
+    """Regression: an unbounded leaf (e.g. the output of a linear solve) made the
+    interval midpoint inf - inf = NaN, and NaN spread to every later bound."""
+    import warnings
+
+    import scipy.sparse as spa
+
+    x = LinearExpression.from_int(
+        3, lb=np.array([-np.inf, 0.0, -1.0]), ub=np.array([np.inf, 1.0, 2.0])
+    )
+    A = np.array([[1.0, 0.0, 0.0], [0.0, 2.0, -1.0], [0.0, 0.0, 0.0], [-1.0, 1.0, 0.0]])
+    for coeff in (A, spa.csr_matrix(A)):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            lb, ub = (coeff @ x).bound_propagation()
+        assert not np.isnan(lb).any() and not np.isnan(ub).any()
+        np.testing.assert_array_equal(lb, [-np.inf, -2.0, 0.0, -np.inf])
+        np.testing.assert_array_equal(ub, [np.inf, 3.0, 0.0, np.inf])

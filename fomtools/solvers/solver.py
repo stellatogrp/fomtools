@@ -33,6 +33,21 @@ class Solver(object):
         if solver_params is not None:
             self.set_solver_params(solver_params)
 
+    # Name of the backend's verbosity option, if it has one (set by subclasses).
+    VERBOSITY_KEY: str | None = None
+
+    @classmethod
+    def verbosity_params(cls, params: dict | None) -> dict | None:
+        """
+        The verbosity option from ``params``, if it names this backend's option.
+
+        Used to pass only the output setting of the main solver's options on to a
+        secondary solver of the same backend (e.g. the OBBT LP).
+        """
+        if not params or cls.VERBOSITY_KEY is None or cls.VERBOSITY_KEY not in params:
+            return None
+        return {cls.VERBOSITY_KEY: params[cls.VERBOSITY_KEY]}
+
     def set_solver_params(self, solver_params):
         """
         Apply a dictionary of solver parameters.

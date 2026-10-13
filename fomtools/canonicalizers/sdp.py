@@ -7,8 +7,6 @@ import scipy.sparse as spa
 from fomtools.canonicalizers.canonicalizer import Canonicalizer
 from fomtools.constraint import Constraint
 from fomtools.linearexpression import LinearExpression
-from fomtools.solvers.clarabel import ClarabelSolver
-from fomtools.solvers.cuclarabel import CuClarabelSolver
 from fomtools.steps import Affine, Relu
 from fomtools.utils.math_utils import repair_crossed_bounds
 from fomtools.utils.range_utils import process_1d_ranges, process_2d_ranges
@@ -2105,6 +2103,8 @@ class SDP(Canonicalizer):
         Aineq_all = self.Aineq_matrices + self._cut_ineq_matrices
         bineq_all = self.bineq_upperbounds + self._cut_bineq_upperbounds
 
+        from fomtools.solvers.clarabel import ClarabelSolver
+
         solver = ClarabelSolver(solver_params=self.solver_params)
         solver.setup_clarabel_data(
             self.get_sdp_var_dim(),
@@ -2147,6 +2147,8 @@ class SDP(Canonicalizer):
         self._rebuild_cuts_if_dirty()
         Aineq_all = self.Aineq_matrices + self._cut_ineq_matrices
         bineq_all = self.bineq_upperbounds + self._cut_bineq_upperbounds
+
+        from fomtools.solvers.cuclarabel import CuClarabelSolver
 
         solver = CuClarabelSolver(solver_params=self.solver_params)
         solver.setup_clarabel_data(

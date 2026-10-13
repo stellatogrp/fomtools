@@ -26,6 +26,11 @@ class GurobiSolver(MIPSolver):
 
     """
 
+    VERBOSITY_KEY = "OutputFlag"
+    # Defaults applied under the user's parameters. MIPFocus 2 (prove optimality)
+    # closes the bound of the verification MIPs much faster than the balanced default.
+    DEFAULT_PARAMS = {"MIPFocus": 2}
+
     def __init__(self, solver_params=None):
         """
         Initialize an instance of the `GurobiSolver` class.
@@ -33,9 +38,13 @@ class GurobiSolver(MIPSolver):
         Parameters
         ----------
         solver_params
+            Gurobi parameters; they override ``DEFAULT_PARAMS``.
         """
         self.model = gp.Model()
-        super().__init__(solver_params)
+        user = solver_params or {}
+        # Apply the user's verbosity first, so a silenced model does not log the defaults.
+        verbosity = {k: user[k] for k in (self.VERBOSITY_KEY,) if k in user}
+        super().__init__({**verbosity, **self.DEFAULT_PARAMS, **user})
 
     def __getitem__(self, item):
         return getattr(self.model, item)
@@ -78,6 +87,30 @@ class GurobiSolver(MIPSolver):
 
         self.__dict__.pop("relaxed_model", None)
 
+    def set_starts(self, starts: list) -> None:
+        """
+        Provide MIP starts, one ``{leaf: value}`` map each. Gurobi tries every start
+        and keeps the best feasible one; leaves a start omits are completed by Gurobi.
+        """
+        if not starts:
+            return
+        self.model.NumStart = len(starts)
+        self.model.update()
+        for number, start in enumerate(starts):
+            self.model.Params.StartNumber = number
+            for leaf, value in start.items():
+                if leaf in self.vector_var_map:
+                    self.vector_var_map[leaf].Start = np.asarray(value, dtype=float).reshape(-1)
+        self.model.update()
+
+    def has_solution(self) -> bool:
+        """Whether the last solve produced a feasible solution."""
+        return self.model.SolCount > 0
+
+    def relaxed_is_optimal(self) -> bool:
+        """Whether the last ``relax_model`` solve ended optimal."""
+        return self._relaxed_model.Status == gp.GRB.OPTIMAL
+
     def add_var(self, var: LinearExpression, lb: float = -np.inf, ub: float = np.inf) -> gp.Var:
         """
         Create and register a Gurobi matrix variable corresponding to the
@@ -108,6 +141,9 @@ class GurobiSolver(MIPSolver):
             self.vector_var_map[k] = self.model.addMVar(
                 var.ndim, lb=lb, ub=ub, vtype=gp.GRB.BINARY if var.is_binary else gp.GRB.CONTINUOUS
             )
+            priority = getattr(var, "branch_priority", 0)
+            if var.is_binary and priority:
+                self.vector_var_map[k].BranchPriority = priority
         self.model.update()
 
     def add_param_stack_var(

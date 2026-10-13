@@ -1,4 +1,5 @@
 import logging
+import time
 import warnings
 from typing import List, Sequence
 
@@ -20,6 +21,7 @@ from fomtools.linearexpression import LinearExpression, stack
 from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.sets import Set
+from fomtools.solvers.factory import is_mip_solver, solver_class
 from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
 from fomtools.stepdecomposers.simulator_step_decomposer import SimulatorStepDecomposer
 from fomtools.steps import (
@@ -47,8 +49,8 @@ class Verifier(object):
         self,
         theory_func=None,
         method="mip",
-        solver="gurobi",
-        obbt_solver="gurobi",
+        solver="highs",
+        obbt_solver="auto",
         params=None,
         obbt_params=None,
         rlt_cuts=False,
@@ -72,11 +74,13 @@ class Verifier(object):
             Theoretical convergence function used by ``theory_bound``.
         method : {"mip", "sdp", "simulator"}, default "mip"
             Canonicalization method for the verification problem.
-        solver : str, default "gurobi"
-            Solver backend identifier (e.g., "gurobi", "highs", "clarabel").
-        obbt_solver : str or None, default "gurobi"
-            Solver used by the OBBT bound-tightening handler. Disable with
-            ``None``.
+        solver : str, default "highs"
+            Solver backend identifier (e.g., "highs", "gurobi", "clarabel").
+        obbt_solver : str or None, default "auto"
+            Solver used by the OBBT bound-tightening handler. ``"auto"``
+            (the default) uses ``solver`` when it is a valid OBBT backend
+            (Gurobi or HiGHS) and disables OBBT otherwise. Disable
+            explicitly with ``None``.
         params : dict, optional
             Solver-specific parameters forwarded to the canonicalizer.
         obbt_params : dict, optional
@@ -152,11 +156,10 @@ class Verifier(object):
             cross_cut=cross_cut,
             subgrad_mono_cut=subgrad_mono_cut,
         )
-        # Share the construction-time params with the OBBT solver when it is the
-        # same backend as the main solver; otherwise the params may not be valid
-        # for it (e.g. Gurobi OBBT under an SDP method).
-        if obbt_params is None and obbt_solver and self._same_backend(solver, obbt_solver):
-            obbt_params = params
+        if obbt_solver == "auto":
+            obbt_solver = solver if is_mip_solver(solver) else None
+        if obbt_solver and obbt_params is None:
+            obbt_params = self._obbt_params_from(params, obbt_solver)
         self.obbt_handler = (
             OBBTHandler(solver=obbt_solver, solver_params=obbt_params) if obbt_solver else None
         )
@@ -342,16 +345,8 @@ class Verifier(object):
         The rest of ``params`` (time limits, gaps, SDP-solver options) is not forwarded:
         it targets the main solve and may be invalid for the OBBT backend.
         """
-        if not params:
-            return None
-        match obbt_solver.lower():
-            case "gurobi" | "grb":
-                key = "OutputFlag"
-            case "highs":
-                key = "output_flag"
-            case _:
-                return None
-        return {key: params[key]} if key in params else None
+        cls = solver_class(obbt_solver)
+        return cls.verbosity_params(params) if cls is not None else None
 
     @staticmethod
     def _get_step_decomposer(method: str):
@@ -616,6 +611,33 @@ class Verifier(object):
             self._tighten_constraint_bounds(constr)
         self.canonicalizer.add_constraint(constr)
 
+    def _add_cuts(self, cuts: List[Constraint]) -> None:
+        """
+        Add valid linear cuts to the model and, if OBBT is enabled, to the OBBT LP.
+
+        Like :meth:`add_constraint` for a batch, except that OBBT runs only once on
+        the union of the leaves the cuts touch, rather than once per cut.
+
+        Parameters
+        ----------
+        cuts : List[Constraint]
+            Linear, binary-free constraints valid for every feasible point.
+
+        Returns
+        -------
+        None
+        """
+        for cut in cuts:
+            self.canonicalizer.add_constraint(cut)
+        if not self.use_obbt_handler:
+            return
+        self.obbt_handler.add_constraints(cuts)
+        leaves = {}
+        for cut in cuts:
+            for leaf in cut.lhs.decomposition_dict:
+                leaves.setdefault(id(leaf), leaf)
+        self._tighten_leaf_bounds(leaves.values())
+
     def complementarity(
         self, expr1: LinearExpression, expr2: LinearExpression
     ) -> ComplementarityConstraint:
@@ -686,7 +708,24 @@ class Verifier(object):
         -------
         None
         """
-        for leaf_expr in constr.lhs.decomposition_dict.keys():
+        self._tighten_leaf_bounds(constr.lhs.decomposition_dict.keys())
+
+    def _tighten_leaf_bounds(self, leaves) -> None:
+        """
+        Run OBBT once on each of ``leaves`` and propagate the tightened bounds to
+        the ``LinearExpression``, the main canonicalizer's solver and the OBBT
+        handler's solver.
+
+        Parameters
+        ----------
+        leaves : Iterable[LinearExpression]
+            The leaf expressions to tighten.
+
+        Returns
+        -------
+        None
+        """
+        for leaf_expr in leaves:
             # Get current bounds
             lb, ub = leaf_expr.lb, leaf_expr.ub
 
@@ -1179,7 +1218,14 @@ class Verifier(object):
             case _:
                 raise ValueError(f"Unsupported norm order: {ord}. Use 1, 2, np.inf, or 'inf'.")
 
-    def solve(self, **kwargs) -> float:
+    def solve(
+        self,
+        convex_hull_cuts: bool = False,
+        cut_rounds: int = 1,
+        tighten_objective_bounds: bool | None = None,
+        warm_start: bool = True,
+        **kwargs,
+    ) -> float:
         """
         Solve the optimization problem.
 
@@ -1189,11 +1235,36 @@ class Verifier(object):
 
         Parameters
         ----------
+        convex_hull_cuts : bool, default False
+            MIP only. Before solving, separate the root LP optimum from the convex
+            hulls of the ReLU, saturated linear and soft-threshold steps and add
+            the most violated hull inequality of every unstable component. The
+            cuts stay in the model, so later solves (e.g. at the next ``K``) keep
+            them and separate on top of them. With OBBT enabled, each round of
+            cuts is also added to the OBBT LP, followed by one OBBT pass over the
+            leaves the cuts touch.
+        cut_rounds : int, default 1
+            Maximum number of separation rounds per solve; each round re-solves
+            the relaxation with the previous cuts. Stops early once no cut is
+            violated. Small values (1 to 3) are recommended.
+        tighten_objective_bounds : bool or None, default None
+            MIP with an infinity-norm objective and OBBT only. Before solving
+            (and after any cut rounds), replace the interval-propagation bounds
+            of the residual, from which the objective's big-M constants are
+            built, by its range over the OBBT LP, padded slightly outward. The
+            optimum is unchanged; the relaxation gets tighter. Statistics are
+            stored on ``objective_bound_stats``. ``None`` tightens whenever an
+            OBBT solver is attached and skips silently otherwise; ``True`` also
+            warns when it cannot tighten; ``False`` keeps the interval bounds.
+        warm_start : bool, default True
+            MIP only. Give the solver up to two starts: the worst case of the
+            previous solve (normally ``K - 1``) run through the current steps,
+            and the worst of the samples given to ``set_start_samples``.
+            Solvers without MIP starts ignore them. Statistics are stored on
+            ``canonicalizer.warm_start_stats``.
         **kwargs
             Keyword arguments forwarded to the canonicalizer's
-            ``solve_model``. Reserved flags consumed by FOMTools (e.g.
-            ``convex_hull_cuts``) bind to their named parameters; any
-            remaining keyword is passed **verbatim** to the active
+            ``solve_model``. Any keyword is passed **verbatim** to the active
             backend solver as a native option (e.g. ``TimeLimit=10`` or
             ``MIPGap=1e-4`` for Gurobi, ``max_iter=500`` for
             Clarabel/cvxpy). These solve-time options override matching
@@ -1207,7 +1278,59 @@ class Verifier(object):
             The objective value for the current solution, if the
             model was solved to optimality.
         """
+        # ``cut_stats`` has one entry per round that added cuts; ``separation_stats``
+        # one per round that ran, including a final round that found nothing.
+        self.cut_stats = []
+        self.separation_stats = []
+        if convex_hull_cuts and self.method == "mip":
+            for _ in range(cut_rounds):
+                start = time.perf_counter()
+                cuts = self.canonicalizer.separate_hull_cuts()
+                separate_time = time.perf_counter() - start
+                self.separation_stats.append(dict(self.canonicalizer.last_separation_stats))
+                if not cuts:
+                    break
+                start = time.perf_counter()
+                self._add_cuts(cuts)
+                self.cut_stats.append(
+                    dict(
+                        cuts=len(cuts),
+                        separate_time=separate_time,
+                        obbt_time=time.perf_counter() - start,
+                        **self.canonicalizer.last_separation_stats,
+                    )
+                )
+        self.objective_bound_stats = None
+        # None (the default) tightens whenever an OBBT solver is attached and skips
+        # silently otherwise; True also warns when it cannot tighten; False disables.
+        if tighten_objective_bounds is not False and self.method == "mip":
+            if not self.use_obbt_handler:
+                if tighten_objective_bounds:
+                    warnings.warn(
+                        "tighten_objective_bounds needs an OBBT solver (obbt_solver=...); "
+                        "keeping the interval bounds."
+                    )
+            else:
+                self.objective_bound_stats = self.canonicalizer.tighten_objective_bounds()
+        if self.method == "mip":
+            return self.canonicalizer.solve_model(warm_start=warm_start, **kwargs)
         return self.canonicalizer.solve_model(**kwargs)
+
+    def set_start_samples(self, samples: dict) -> None:
+        """
+        Samples of parameters (and free initial iterates) for the sample-max MIP start.
+
+        At every MIP solve the worst of these samples, run through the current
+        steps, is given to the solver as a start next to the sequential one.
+
+        Parameters
+        ----------
+        samples : dict[LinearExpression, np.ndarray]
+            ``(n, ndim)`` samples per parameter or initial iterate, with the same
+            ``n``. Inputs fixed by their bounds need no samples.
+        """
+        if self.method == "mip":
+            self.canonicalizer.set_start_samples(samples)
 
     def post_process(self, target_expr, ref_expr, residuals):
         """

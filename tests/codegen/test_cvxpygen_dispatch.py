@@ -443,11 +443,28 @@ def _qp_problem():
 
 
 @pytest.mark.parametrize("kind", ["rolled", "scheduled"])
-def test_looping_solvers_expose_all_three_settings(kind):
-    term = CodegenConfig(termination=TerminationSpec(max_iters=250)).termination
+def test_looping_solvers_with_a_tolerance_expose_all_three_settings(kind):
+    term = CodegenConfig(
+        termination=TerminationSpec(
+            kind=TerminationKind.INF_NORM_CHANGE, max_iters=250, tol=1e-5, check_termination=5
+        )
+    ).termination
     stgs = interface._settings_for(kind, term)
 
     assert set(stgs) == {"max_iter", "tol", "check_termination"}
+    assert stgs["max_iter"].default == "250"
+    assert float(stgs["tol"].default) == 1e-5
+    assert stgs["check_termination"].default == "5"
+
+
+@pytest.mark.parametrize("kind", ["rolled", "scheduled"])
+def test_max_iters_solvers_expose_only_max_iter(kind):
+    """Regression: under MAX_ITERS the tolerance check is compiled out
+    (FOM_USE_TOL 0), so a runtime ``tol`` was accepted and silently ignored."""
+    term = CodegenConfig(termination=TerminationSpec(max_iters=250)).termination
+    stgs = interface._settings_for(kind, term)
+
+    assert set(stgs) == {"max_iter"}
     assert stgs["max_iter"].default == "250"
 
 
@@ -472,7 +489,7 @@ def test_the_interface_drops_the_settings_struct_when_there_are_none():
 def test_the_interface_keeps_the_settings_struct_for_a_looping_solver():
     iface = _canonicalize_with("admm", _qp_problem())
 
-    assert set(iface.stgs) == {"max_iter", "tol", "check_termination"}
+    assert set(iface.stgs) == {"max_iter"}
     assert iface.stgs_requires_extra_struct_type is True
 
 
