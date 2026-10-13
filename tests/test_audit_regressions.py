@@ -56,8 +56,21 @@ def test_gurobi_rejects_bad_status_even_with_finite_value(status_name):
         ("kSolveError", 3.0, False),
     ],
 )
-def test_highs_status_bound(has_incumbent, status_name, bound, accepted):
+@pytest.mark.parametrize("optional_statuses", [False, True])
+def test_highs_status_bound(
+    monkeypatch, has_incumbent, status_name, bound, accepted, optional_statuses
+):
     import highspy as hp
+
+    if not optional_statuses:
+        older_statuses = SimpleNamespace(
+            **{
+                name: getattr(hp.HighsModelStatus, name)
+                for name in dir(hp.HighsModelStatus)
+                if name.startswith("k") and name not in {"kHighsInterrupt", "kMemoryLimit"}
+            }
+        )
+        monkeypatch.setattr(hp, "HighsModelStatus", older_statuses)
 
     solver = HiGHSSolver.__new__(HiGHSSolver)
     info = SimpleNamespace(

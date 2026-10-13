@@ -83,11 +83,14 @@ class HiGHSSolver(MIPSolver):
             hp.HighsModelStatus.kIterationLimit,
             hp.HighsModelStatus.kSolutionLimit,
             hp.HighsModelStatus.kInterrupt,
-            hp.HighsModelStatus.kHighsInterrupt,
-            hp.HighsModelStatus.kMemoryLimit,
             hp.HighsModelStatus.kObjectiveBound,
             hp.HighsModelStatus.kObjectiveTarget,
         }
+        # These termination codes are absent from older supported HiGHS releases.
+        for name in ("kHighsInterrupt", "kMemoryLimit"):
+            value = getattr(hp.HighsModelStatus, name, None)
+            if value is not None:
+                usable.add(value)
         info = self.model.getInfo()
         if status not in usable or not info.valid:
             raise RuntimeError(f"HiGHS terminated with status {status}; no usable best bound.")
