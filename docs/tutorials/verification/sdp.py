@@ -107,7 +107,10 @@ def _(mo):
     operators, and set the objective. Only the `Verifier` constructor changes:
 
     ```python
-    VP = Verifier(method='sdp', solver='clarabel', obbt_solver='highs')
+    VP = Verifier(
+        method='sdp', solver='clarabel', obbt_solver='highs',
+        obbt_params={'output_flag': False},
+    )
     ```
 
     A few practical points apply to every section below:
@@ -124,6 +127,8 @@ def _(mo):
       typically loosens as $K$ grows.
     - **Solvers.** The SDP is solved by Clarabel. Optimization-based bound
       tightening (OBBT) uses HiGHS, so this notebook does not need Gurobi.
+      `obbt_params={'output_flag': False}` silences the HiGHS log of each
+      bound-tightening LP.
 
     We compare each SDP bound with simulations of the same algorithm on
     $10^4$ instances drawn uniformly from the same sets the verifier
@@ -241,13 +246,16 @@ def _(
     z0_lb_nnls,
     z0_ub_nnls,
 ):
-    def pgd_sdp_verification(K, momentum=False, **verifier_kwargs):
+    def pgd_sdp_verification(
+        K, momentum=False, obbt_params={'output_flag': False}, **verifier_kwargs
+    ):
         """Solve the PGD verification problem as an SDP for horizons 1, ..., K.
 
         Returns ``(VP, residuals)``, with one upper bound on $\\|r^k\\|_2$ per
-        horizon. Extra ``verifier_kwargs`` are forwarded to ``Verifier``.
+        horizon. Extra ``verifier_kwargs`` are forwarded to ``Verifier``;
+        ``obbt_params`` defaults to silencing the HiGHS OBBT solver.
         """
-        VP = Verifier(method='sdp', **verifier_kwargs)
+        VP = Verifier(method='sdp', obbt_params=obbt_params, **verifier_kwargs)
         x_param = VP.add_param(m_nnls, lb=x_lb_nnls, ub=x_ub_nnls)
         z = VP.iterate_trajectory(K + 1, collapse_expr='auto')
         z[0] = VP.add_iterate(n_nnls, lb=z0_lb_nnls, ub=z0_ub_nnls)
@@ -395,13 +403,16 @@ def _(
     x_lb_lasso,
     x_ub_lasso,
 ):
-    def ista_sdp_verification(K, momentum=False, **verifier_kwargs):
+    def ista_sdp_verification(
+        K, momentum=False, obbt_params={'output_flag': False}, **verifier_kwargs
+    ):
         """Solve the ISTA/FISTA verification problem as an SDP for horizons 1, ..., K.
 
         Returns ``(VP, residuals)``, with one upper bound on $\\|r^k\\|_2$ per
-        horizon. Extra ``verifier_kwargs`` are forwarded to ``Verifier``.
+        horizon. Extra ``verifier_kwargs`` are forwarded to ``Verifier``;
+        ``obbt_params`` defaults to silencing the HiGHS OBBT solver.
         """
-        VP = Verifier(method='sdp', **verifier_kwargs)
+        VP = Verifier(method='sdp', obbt_params=obbt_params, **verifier_kwargs)
         x_param = VP.add_param(p_lasso, lb=x_lb_lasso, ub=x_ub_lasso)
         z = VP.iterate_trajectory(K + 1, collapse_expr='auto')
         z[0] = VP.add_iterate(n_lasso, lb=s0_lb_lasso, ub=s0_ub_lasso)
@@ -551,13 +562,14 @@ def _(
     v0_ub_port,
     x0_port,
 ):
-    def portfolio_sdp_verification(K, **verifier_kwargs):
+    def portfolio_sdp_verification(K, obbt_params={'output_flag': False}, **verifier_kwargs):
         """Solve the portfolio ADMM verification problem as an SDP for horizons 1, ..., K.
 
         Returns ``(VP, residuals)``, with one upper bound on $\\|r^k\\|_2$ per
-        horizon. Extra ``verifier_kwargs`` are forwarded to ``Verifier``.
+        horizon. Extra ``verifier_kwargs`` are forwarded to ``Verifier``;
+        ``obbt_params`` defaults to silencing the HiGHS OBBT solver.
         """
-        VP = Verifier(method='sdp', **verifier_kwargs)
+        VP = Verifier(method='sdp', obbt_params=obbt_params, **verifier_kwargs)
         x = VP.iterate_trajectory(K + 1, collapse_expr='auto')
         v = VP.iterate_trajectory(K + 1, collapse_expr='auto')
         x[0] = VP.add_iterate(n_port, lb=x0_port, ub=x0_port)
@@ -725,13 +737,16 @@ def _(
     z0_lb_net,
     z0_ub_net,
 ):
-    def pdhg_sdp_verification(K, momentum=False, **verifier_kwargs):
+    def pdhg_sdp_verification(
+        K, momentum=False, obbt_params={'output_flag': False}, **verifier_kwargs
+    ):
         """Solve the PDHG verification problem as an SDP for horizons 1, ..., K.
 
         Returns ``(VP, residuals)``, with one upper bound on $\\|r^k\\|_2$ per
-        horizon. Extra ``verifier_kwargs`` are forwarded to ``Verifier``.
+        horizon. Extra ``verifier_kwargs`` are forwarded to ``Verifier``;
+        ``obbt_params`` defaults to silencing the HiGHS OBBT solver.
         """
-        VP = Verifier(method='sdp', **verifier_kwargs)
+        VP = Verifier(method='sdp', obbt_params=obbt_params, **verifier_kwargs)
         x_param = VP.add_param(n_d_net, lb=x_lb_net, ub=x_ub_net)
 
         z = VP.iterate_trajectory(K + 1, collapse_expr='auto')
@@ -959,13 +974,14 @@ def _(
     z0_lb_ctrl,
     z0_ub_ctrl,
 ):
-    def control_sdp_verification(K, **verifier_kwargs):
+    def control_sdp_verification(K, obbt_params={'output_flag': False}, **verifier_kwargs):
         """Solve the optimal-control ADMM verification problem as an SDP for horizons 1, ..., K.
 
         Returns ``(VP, residuals)``, with one upper bound on $\\|r^k\\|_2$ per
-        horizon. Extra ``verifier_kwargs`` are forwarded to ``Verifier``.
+        horizon. Extra ``verifier_kwargs`` are forwarded to ``Verifier``;
+        ``obbt_params`` defaults to silencing the HiGHS OBBT solver.
         """
-        VP = Verifier(method='sdp', **verifier_kwargs)
+        VP = Verifier(method='sdp', obbt_params=obbt_params, **verifier_kwargs)
         if fix_initial_x_ctrl:
             x_param = VP.add_param(n_s_ctrl, lb=x_init_ctrl, ub=x_init_ctrl)
         else:
