@@ -86,6 +86,15 @@ class MIPSolver(Solver):
         Backends that support them override this.
         """
 
+    def get_best_bound(self) -> float:
+        """Return a finite bound on the optimum, or raise ``RuntimeError``.
+
+        The bound is an upper bound for maximization and a lower bound for
+        minimization, subject to the backend's numerical tolerances. A feasible
+        incumbent is neither required nor a substitute for this bound.
+        """
+        raise NotImplementedError
+
     def has_solution(self) -> bool:
         """Whether the last solve produced a feasible solution."""
         raise NotImplementedError

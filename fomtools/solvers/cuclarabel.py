@@ -141,5 +141,12 @@ class CuClarabelSolver(ClarabelSolver):
             global sol = Clarabel.solve!(solver)
         """)
 
-        obj_val = float(jl.sol.obj_val)
-        return -obj_val
+        self.solution = jl.sol
+        if jl.sol.status != jl.Clarabel.SOLVED:
+            raise RuntimeError(
+                f"CuClarabel terminated with {jl.sol.status}; no accepted SDP bound."
+            )
+        bound = -float(jl.sol.obj_val_dual)
+        if not np.isfinite(bound):
+            raise RuntimeError("CuClarabel returned a nonfinite SDP dual objective.")
+        return bound

@@ -55,11 +55,11 @@ def test_sparse_manipulations():
     assert np.allclose(A_orig.todense(), efficient_csc_pad(A_orig, (3, 3)).todense())
 
     # all of these should fail
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         efficient_csc_pad(A_orig, (2, 2))
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         efficient_csc_pad(A_orig, (2, 3))
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         efficient_csc_pad(A_orig, (3, 2))
