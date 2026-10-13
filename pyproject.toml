@@ -78,6 +78,8 @@ docs = [
        "mkdocstrings-python",
        "mkdocs-marimo",
        "mkdocs-material",
+       "networkx",
+       "pepit",
        "pymdown-extensions"
 ]
 

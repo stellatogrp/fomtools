@@ -222,9 +222,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Locally generated marimo tutorial pages
-docs/tutorials/**/*.html
-
 # C extensions
 *.so
 

@@ -894,6 +894,8 @@ docs = [
     { name = "mkdocs-marimo" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings-python" },
+    { name = "networkx" },
+    { name = "pepit" },
     { name = "pymdown-extensions" },
 ]
 gpu = [
@@ -929,10 +931,12 @@ requires-dist = [
     { name = "mkdocs-material", marker = "extra == 'docs'" },
     { name = "mkdocstrings-python", marker = "extra == 'docs'" },
     { name = "networkx", marker = "extra == 'dev'" },
+    { name = "networkx", marker = "extra == 'docs'" },
     { name = "numpy" },
     { name = "openai-codex", marker = "extra == 'codegen'" },
     { name = "osqp", marker = "extra == 'cvxpygen'" },
     { name = "pandas", marker = "extra == 'dev'" },
+    { name = "pepit", marker = "extra == 'docs'" },
     { name = "pip", marker = "extra == 'cvxpygen'" },
     { name = "pip", marker = "extra == 'dev'" },
     { name = "pre-commit", marker = "extra == 'dev'" },
@@ -2710,6 +2714,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d3/d7/e80a05bdd029132df03a2f5d61a8f016549000adc9e5c4f7c6436752c9ff/pdaqp-0.6.7.tar.gz", hash = "sha256:69518e2819cc2030830b10328de2a5f8dbbaec37832e8c12915116a03d9137bc", size = 215136, upload-time = "2025-07-15T21:45:45.094Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a1/a2/307cd9734cd7b2320d02f7bbf1a07eff2b129a571e2550a798af567f5c40/pdaqp-0.6.7-py3-none-any.whl", hash = "sha256:24d6b3c53bc0b95828194a20ac320da88d2f22179242d92d20d87c38224c4ef9", size = 7786, upload-time = "2025-07-15T21:45:38.029Z" },
+]
+
+[[package]]
+name = "pepit"
+version = "0.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cvxpy" },
+    { name = "pandas" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/33/c9/c6626fc326e82cb368a5f3ce431f0993e5a1e2f16c6316af92e32086c005/pepit-0.5.1.tar.gz", hash = "sha256:54aa5e81e6ada1296bd71063934e64e746ae00fd37ab4a78112b0479a3f78315", size = 212068, upload-time = "2026-03-16T21:34:39.545Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d1/3b/d8d2bab71441dbe17f78c5ca3e7ecab0e6c47275a67999d4d7b4aea36856/pepit-0.5.1-py3-none-any.whl", hash = "sha256:81fd87402410306e5f34a16d1c83542e610189577e44f5ec8d67553a38b1845b", size = 415436, upload-time = "2026-03-16T21:34:37.893Z" },
 ]
 
 [[package]]

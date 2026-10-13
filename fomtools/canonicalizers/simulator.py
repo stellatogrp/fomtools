@@ -65,7 +65,7 @@ class _ActivationStep:
 # single stacked linear solve. These build the ``activation(batch) -> out``
 # closures consumed by ``Simulator.register_subproblem_step``: batched solver-free
 # projections (simplex / ℓ1-ball / ℓ∞-norm), Condat's O(n) total-variation
-    # algorithm, and per-sample parameterized cvxpy solves (polyhedral projection,
+# algorithm, and per-sample parameterized cvxpy solves (polyhedral projection,
 # inequality QP/LP). ``batch`` is the assembled input ``(N, d)`` and ``out`` is
 # ``(N, n)``.
 # ----------------------------------------------------------------------------
