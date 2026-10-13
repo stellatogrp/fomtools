@@ -2063,19 +2063,29 @@ class SDP(Canonicalizer):
         for cone_indices in self.psd_cone_indices:
             idx = sorted(cone_indices)
             constraints += [X[np.ix_(idx, idx)] >> 0]
-        prob = cp.Problem(obj, constraints)
+        self.last_problem = prob = cp.Problem(obj, constraints)
         # `solver` is fixed to CLARABEL below (it is a named arg of cvxpy's
         # Problem.solve, so a user `solver=` kwarg would collide there);
         # solve-time options override construction-time params.
         merged = {**(self.solver_params or {}), **solver_kwargs}
         try:
             res = prob.solve(solver=cp.CLARABEL, **merged)
-        except (TypeError, cp.error.SolverError) as e:
-            # cvxpy raises TypeError for an unrecognized option name or a
-            # wrong-typed value (and SolverError on some backends/versions).
-            # Other failures (e.g. genuine solver errors) propagate untouched.
+        except TypeError as e:
             raise ValueError(f"Invalid cvxpy/Clarabel solver option in {merged}: {e}") from e
-        return res
+        except cp.error.SolverError as e:
+            raise RuntimeError(f"CVXPY/Clarabel failed to solve the SDP: {e}") from e
+        if prob.status != cp.OPTIMAL or res is None or not np.isfinite(res):
+            raise RuntimeError(f"CVXPY terminated with {prob.status}; no accepted SDP bound.")
+        # For this linear maximization SDP, the dual objective is b^T lambda.
+        # PSD constraints have zero right-hand sides. Keep the Problem for
+        # status, primal, and dual inspection; acceptance is numerical.
+        rhs = list(self.beq_consts) + list(bineq_all)
+        if any(c.dual_value is None for c in constraints[: len(rhs)]):
+            raise RuntimeError("CVXPY returned no SDP dual solution.")
+        bound = float(sum(b * float(c.dual_value) for b, c in zip(rhs, constraints)))
+        if not np.isfinite(bound):
+            raise RuntimeError("CVXPY returned a nonfinite SDP dual objective.")
+        return bound
 
     def solve_via_clarabel(self, **solver_kwargs):
         """
@@ -2115,6 +2125,7 @@ class SDP(Canonicalizer):
             bineq_all,
             self.psd_cone_indices,
         )
+        self.last_solver = solver
         return solver.solve(**solver_kwargs)
 
     def solve_via_cuclarabel(self, **solver_kwargs):
@@ -2160,6 +2171,7 @@ class SDP(Canonicalizer):
             bineq_all,
             self.psd_cone_indices,
         )
+        self.last_solver = solver
         return solver.solve(**solver_kwargs)
 
 

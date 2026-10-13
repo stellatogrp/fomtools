@@ -20,8 +20,15 @@ class HiGHSSolver(MIPSolver):
         super().__init__(solver_params)
 
     def __getitem__(self, item):
-        val = {"objVal": self.model.getInfo().objective_function_value}
-        return val[item]
+        if item == "objBound":
+            return self.get_best_bound()
+        if item == "status":
+            return self.model.getModelStatus()
+        if item == "objVal":
+            if not self.has_solution():
+                raise RuntimeError("HiGHS has no feasible incumbent.")
+            return self.model.getInfo().objective_function_value
+        raise KeyError(item)
 
     def set_param(self, param: str, val):
         """
@@ -67,6 +74,33 @@ class HiGHSSolver(MIPSolver):
         self._relaxed_model.optimize()
 
         self.__dict__.pop("relaxed_model", None)
+
+    def get_best_bound(self) -> float:
+        status = self.model.getModelStatus()
+        usable = {
+            hp.HighsModelStatus.kOptimal,
+            hp.HighsModelStatus.kTimeLimit,
+            hp.HighsModelStatus.kIterationLimit,
+            hp.HighsModelStatus.kSolutionLimit,
+            hp.HighsModelStatus.kInterrupt,
+            hp.HighsModelStatus.kHighsInterrupt,
+            hp.HighsModelStatus.kMemoryLimit,
+            hp.HighsModelStatus.kObjectiveBound,
+            hp.HighsModelStatus.kObjectiveTarget,
+        }
+        info = self.model.getInfo()
+        if status not in usable or not info.valid:
+            raise RuntimeError(f"HiGHS terminated with status {status}; no usable best bound.")
+        is_mip = any(t != hp.HighsVarType.kContinuous for t in self.model.getLp().integrality_)
+        if is_mip:
+            bound = info.mip_dual_bound
+        elif status == hp.HighsModelStatus.kOptimal and self.has_solution():
+            bound = info.objective_function_value
+        else:
+            raise RuntimeError(f"HiGHS status {status} has no available LP best bound.")
+        if not np.isfinite(bound):
+            raise RuntimeError(f"HiGHS status {status} has no finite best bound.")
+        return float(bound)
 
     def has_solution(self) -> bool:
         """Whether the last solve produced a feasible solution."""
@@ -275,7 +309,6 @@ class HiGHSSolver(MIPSolver):
         except TypeError:
             self.model.setObjective(self.expression_to_solver(expression)[0], sense=sense)
 
-
     # sum_squares (quadratic) constraints are unsupported on HiGHS; the rejecting
     # default in MIPSolver.add_sum_squares_constr applies (it names the solver, so no
     # HiGHS-specific override is needed).
@@ -314,7 +347,9 @@ class HiGHSSolver(MIPSolver):
             A 1-D array of shape ``(expression.ndim,)`` containing the evaluated values
             of the expression at the current model solution.
         """
-        out = 0
+        if not self.has_solution():
+            raise RuntimeError("No feasible incumbent available.")
+        out = np.array(expression.const, dtype=float, copy=True)
         for k, v in expression.decomposition_dict.items():
             out += v @ np.array([self.model.val(i) for i in self.vector_var_map[k]])
         return out
