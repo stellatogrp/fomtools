@@ -5,11 +5,11 @@ This is the high-level entry point used by ``Verifier.codegen`` and the CLI.
 Flow:
 
 1. Extract the IR and scaffold the solver directory.
-2. Phase A — the agent translates the spec into the target language and iterates
-   until ``make verify`` passes (numerical equivalence to the reference oracle).
-3. If ``run_phase_b`` is set, measure the baseline (Python reference time + the
-   initial generated-C time + a profiling breakdown), then enter the
-   performance-optimization phase: the agent iteratively profiles, optimizes, and
+2. Translation phase — the agent translates the spec into the target language and
+   iterates until ``make verify`` passes (numerical equivalence to the reference oracle).
+3. If ``code_optimization`` is set, measure the baseline (Python reference time + the
+   translated generated-C time + a profiling breakdown), then enter the code
+   optimization phase: the agent iteratively profiles, optimizes, and
    re-verifies. We re-verify afterward as a hard correctness gate and re-measure.
 4. Assemble a :class:`~fomtools.codegen.harness.TimingReport` (speedups +
    profiling) and attach it to the result.
@@ -63,8 +63,8 @@ class CodegenResult:
     def success(self) -> bool:
         """Whether a correct, verified solver was produced.
 
-        The optimization phase never fails the run: if it does not yield a
-        faster, still-correct solver, the verified Phase A solver is shipped
+        The code optimization phase never fails the run: if it does not yield a
+        faster, still-correct solver, the verified translated solver is shipped
         instead. Use :attr:`optimization_kept` to see whether an optimization
         was actually adopted.
         """
@@ -72,7 +72,7 @@ class CodegenResult:
 
     @property
     def optimization_kept(self) -> bool:
-        """True iff Phase B produced a faster, still-correct solver that was kept."""
+        """True iff the code optimization phase produced a faster, still-correct solver that was kept."""
         return self.optimize is not None and self.optimize.success
 
 
@@ -84,17 +84,18 @@ def _bench_mean_us(out_dir: Path) -> float | None:
 
 
 def optimization_is_faster(
-    c_phase_b: float | None, c_phase_a: float | None, tol: float = 1.02
+    c_optimized: float | None, c_translated: float | None, tol: float = 1.02
 ) -> bool:
-    """Decide whether to keep a Phase-B solver based on head-to-head timing.
+    """Decide whether to keep the optimized solver based on head-to-head timing.
 
-    Keeps Phase B only if it is at least as fast as Phase A within a small
+    Keeps the optimized solver only if it is at least as fast as the translated
+    solver within a small
     tolerance (``tol``) that absorbs benchmark noise. Returns ``False`` if either
     measurement is missing.
     """
-    if c_phase_b is None or c_phase_a is None:
+    if c_optimized is None or c_translated is None:
         return False
-    return c_phase_b <= c_phase_a * tol
+    return c_optimized <= c_translated * tol
 
 
 def _write_agent_transcripts(out_dir: Path, translate, optimize) -> None:
@@ -104,11 +105,11 @@ def _write_agent_transcripts(out_dir: Path, translate, optimize) -> None:
     agent's full reasoning exists nowhere after the process exits. Best-effort:
     failing to write a transcript must never fail a successful generation.
     """
-    for name, result in (("a_translate", translate), ("b_optimize", optimize)):
+    for name, result in (("translation", translate), ("code_optimization", optimize)):
         if result is None or not getattr(result, "agent_log", ""):
             continue
         try:
-            (out_dir / f"agent_phase_{name}.log").write_text(result.agent_log)
+            (out_dir / f"agent_{name}.log").write_text(result.agent_log)
         except OSError:
             pass
 
@@ -221,7 +222,7 @@ def generate_code(
     state=None,
     params=None,
     name: str = "fom",
-    run_phase_b: bool = False,
+    code_optimization: bool = False,
     profile: bool = False,
     schedules: dict | None = None,
     iterates=None,
@@ -263,9 +264,9 @@ def generate_code(
         :func:`fomtools.codegen.agent.get_default_driver`.
     name:
         FOM name used for file naming.
-    run_phase_b:
-        Run the iterative performance-optimization phase after a successful,
-        verified translation.
+    code_optimization:
+        Run the code optimization phase (iterative profile-guided rewriting)
+        after a successful, verified translation.
     profile:
         Collect before/after timing + a profiling breakdown (needs a C
         compiler). Always skipped silently when no compiler is available.
@@ -314,7 +315,10 @@ def generate_code(
 
         driver = get_default_driver(config)
 
-    from fomtools.codegen.agent.prompts import phase_a_instructions, phase_b_instructions
+    from fomtools.codegen.agent.prompts import (
+        code_optimization_instructions,
+        translation_instructions,
+    )
 
     # The agent may edit only the solver body; restore all deterministic files
     # (Makefile, headers, numeric data, factorized solve, sparse matvecs) before
@@ -322,16 +326,16 @@ def generate_code(
     def restore_deterministic_files():
         target.scaffold(ir, out_dir)
 
-    # --- Phase A: faithful translation ---------------------------------------
-    task_a = AgentTask(
+    # --- Translation phase ----------------------------------------------------
+    translation_task = AgentTask(
         workdir=out_dir,
         solver_rel_path=target.solver_source_path(),
         verify_cmd=target.verify_command(),
-        instructions=phase_a_instructions(ir, target),
-        phase="A_translate",
+        instructions=translation_instructions(ir, target),
+        phase="translation",
         restore_hook=restore_deterministic_files,
     )
-    translate = driver.run(task_a)
+    translate = driver.run(translation_task)
 
     timing = TimingReport() if profile else None
     have_cc = find_compiler() is not None
@@ -345,66 +349,66 @@ def generate_code(
         except Exception:
             timing.python_us = None
         timing.c_initial_us = _bench_mean_us(out_dir)
-        timing.c_final_us = timing.c_initial_us  # updated after phase B
+        timing.c_final_us = timing.c_initial_us  # updated after code optimization
         try:
             timing.profile = run_profile(out_dir)
         except Exception:
             timing.profile = []
 
-    # --- Phase B: iterative performance optimization -------------------------
+    # --- Code optimization phase ---------------------------------------------
     optimize = None
     optimization_diff = None
     optimizations_md = None
-    if run_phase_b and translate.success:
+    if code_optimization and translate.success:
         solver_path = out_dir / target.solver_source_path()
-        phase_a_source = solver_path.read_text()  # known-good fallback
+        translated_source = solver_path.read_text()  # known-good fallback
 
-        task_b = AgentTask(
+        optimization_task = AgentTask(
             workdir=out_dir,
             solver_rel_path=target.solver_source_path(),
             verify_cmd=target.verify_command(),
-            instructions=phase_b_instructions(ir, target),
-            phase="B_optimize",
+            instructions=code_optimization_instructions(ir, target),
+            phase="code_optimization",
             max_turns=config.agent_optimize_max_turns,
             bench_cmd=["make", "bench"],
             restore_hook=restore_deterministic_files,
         )
-        optimize = driver.run(task_b)
+        optimize = driver.run(optimization_task)
         restore_deterministic_files()  # discard any non-solver edits
-        phase_b_source = solver_path.read_text()
-        changed = phase_b_source != phase_a_source
+        optimized_source = solver_path.read_text()
+        changed = optimized_source != translated_source
         notes: list[str] = []
 
         # Gate 1 (correctness): the optimized solver must still verify. If it
-        # broke (or never verified), fall back to the known-good Phase A solver.
+        # broke (or never verified), fall back to the known-good translated solver.
         recheck = build_and_verify(out_dir, target) if (optimize.success and changed) else None
         correct = bool(optimize.success and (recheck is None or recheck.success))
         if not correct and changed:
-            solver_path.write_text(phase_a_source)
-            phase_b_source = phase_a_source
+            solver_path.write_text(translated_source)
+            optimized_source = translated_source
             changed = False
-            notes.append("[optimization not kept: phase-B solver failed verification]")
+            notes.append("[optimization not kept: the optimized solver failed verification]")
             if recheck and not recheck.success:
                 notes.append(recheck.output)
 
         # Gate 2 (performance): keep a *changed* solver only if it is at least as
-        # fast as Phase A, measured head-to-head now (timings are noisy, so a
+        # fast as the translated solver, measured head-to-head now (timings are noisy, so a
         # small tolerance avoids discarding genuine wins). Otherwise ship the
-        # faster Phase A solver — the optimization phase never regresses speed.
+        # faster translated solver — the code optimization phase never regresses speed.
         kept = changed and correct
         if profile and have_cc and timing is not None and changed and correct:
-            c_phase_b = _bench_mean_us(out_dir)
-            solver_path.write_text(phase_a_source)
-            c_phase_a = _bench_mean_us(out_dir)
-            if optimization_is_faster(c_phase_b, c_phase_a):
-                solver_path.write_text(phase_b_source)
-                timing.c_initial_us, timing.c_final_us = c_phase_a, c_phase_b
+            c_optimized = _bench_mean_us(out_dir)
+            solver_path.write_text(translated_source)
+            c_translated = _bench_mean_us(out_dir)
+            if optimization_is_faster(c_optimized, c_translated):
+                solver_path.write_text(optimized_source)
+                timing.c_initial_us, timing.c_final_us = c_translated, c_optimized
             else:
                 kept = False
-                timing.c_initial_us = timing.c_final_us = c_phase_a
+                timing.c_initial_us = timing.c_final_us = c_translated
                 notes.append(
-                    f"[optimization not kept: phase-B build ({c_phase_b} us) was not "
-                    f"faster than phase A ({c_phase_a} us)]"
+                    f"[optimization not kept: the optimized build ({c_optimized} us) was not "
+                    f"faster than the translated solver ({c_translated} us)]"
                 )
 
         if profile and have_cc and timing is not None:
@@ -414,7 +418,7 @@ def generate_code(
                 pass
 
         if not changed and not notes:
-            notes.append("[no source change from the optimization phase]")
+            notes.append("[no source change from the code optimization phase]")
 
         optimize = AgentResult(
             success=kept,
@@ -425,10 +429,10 @@ def generate_code(
             truncated=optimize.truncated,
         )
 
-        # Record exactly what changed (diff phase A -> final) + the agent's notes.
+        # Record exactly what changed (diff translated -> final) + the agent's notes.
         final_source = solver_path.read_text()
         optimization_diff = unified_solver_diff(
-            phase_a_source, final_source, target.solver_source_path()
+            translated_source, final_source, target.solver_source_path()
         )
         # The agent's own output only: the combined log interleaves compiler and
         # verify output, and carries the pipeline's bracketed notes appended above.
@@ -454,7 +458,7 @@ def generate_code(
             optimize_succeeded=optimize.success,
             caveats=caveats,
         )
-    # Always persist the raw agent output, phase B or not.
+    # Always persist the raw agent output, code optimization phase or not.
     _write_agent_transcripts(out_dir, translate, optimize)
 
     # Always emit a clean, marker-free production copy of the final solver.

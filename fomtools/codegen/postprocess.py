@@ -7,8 +7,8 @@ Two outputs after a run:
   shipped build, so this is purely a cleaner, dependency-free source for
   embedding into other codebases — behaviour and performance are identical.
 * An **optimization report** (``OPTIMIZATIONS.md``) recording the timing summary,
-  the agent's own notes, and a unified diff of the solver from the initial
-  (phase A) to the optimized (phase B) version — a durable record of exactly
+  the agent's own notes, and a unified diff of the solver from the translated
+  version to the one after the code optimization phase — a durable record of exactly
   what changed.
 """
 
@@ -75,11 +75,11 @@ def write_production_variant(out_dir: str | Path, solver_rel_path: str) -> Path:
 
 
 def unified_solver_diff(before: str, after: str, filename: str) -> str:
-    """Unified diff of the solver source (phase A -> optimized)."""
+    """Unified diff of the solver source (translated -> optimized)."""
     diff = difflib.unified_diff(
         before.splitlines(keepends=True),
         after.splitlines(keepends=True),
-        fromfile=f"{filename} (phase A)",
+        fromfile=f"{filename} (translated)",
         tofile=f"{filename} (optimized)",
     )
     return "".join(diff)
@@ -185,7 +185,9 @@ def write_optimization_report(
     if timing_summary:
         lines += ["## Timing", "", "```", timing_summary, "```", ""]
     status = (
-        "kept (re-verified correct)" if optimize_succeeded else "not kept (reverted to phase A)"
+        "kept (re-verified correct)"
+        if optimize_succeeded
+        else "not kept (reverted to the translated solver)"
     )
     lines += [f"Optimization outcome: **{status}**.", ""]
     if caveats:

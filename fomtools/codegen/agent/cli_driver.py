@@ -212,7 +212,7 @@ class CliAgentDriver(AgentDriver):
         behaviour when no config supplies a budget.
         """
         config = getattr(self, "config", None)
-        key = "agent_optimize_timeout_s" if phase == "B_optimize" else "agent_timeout_s"
+        key = "agent_optimize_timeout_s" if phase == "code_optimization" else "agent_timeout_s"
         value = getattr(config, key, None)
         return int(value) if value else None
 

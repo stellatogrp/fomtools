@@ -89,7 +89,7 @@ def test_optimization_report_written(tmp_path, requires_compiler):
         config=case["config"],
         driver=StubAgentDriver(GOLDEN),
         name="ista",
-        run_phase_b=True,
+        code_optimization=True,
         profile=True,
     )
     md = result.optimizations_md

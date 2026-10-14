@@ -199,27 +199,27 @@ solver = Solver()
 out = solver.solve(p0=b)          # {"x", "iter", "residual", "status"}
 ```
 
-## Performance: timing, profiling, and the optimization loop
+## Performance: timing, profiling, and the code optimization phase
 
-Pass `run_phase_b=True, profile=True` (the default for the `fomtools-codegen`
+Pass `code_optimization=True, profile=True` (the default for the `fomtools-codegen`
 CLI with `--driver agent`) to (a) measure the speed of the generated solver
-against the Python reference, and (b) enter an iterative, profile-guided
-optimization phase:
+against the Python reference, and (b) enter the code optimization phase, an
+iterative, profile-guided rewrite of the solver:
 
 ```python
 result = vp.codegen(
     "out/ista", iterates=z, name="ista",
-    run_phase_b=True, profile=True,
+    code_optimization=True, profile=True,
 )
 print(result.timing.summary())
 ```
 
-After Phase A verifies, the orchestrator records a baseline (Python reference
-time, the initial generated-C time, and a profiling breakdown). Then the agent
+After the translation phase verifies, the orchestrator records a baseline (Python
+reference time, the translated generated-C time, and a profiling breakdown). Then the agent
 runs a loop: **profile → optimize the hottest region → `make verify` (correctness
 is re-checked every round) → `make bench` → repeat** until gains level off. A
 change that breaks verification is never kept, and if the whole phase leaves the
-solver regressed, the verified Phase-A solver is restored automatically.
+solver regressed, the verified translated solver is restored automatically.
 
 `result.timing` (a `TimingReport`) holds `python_us`, `c_initial_us`,
 `c_final_us`, the speedup factors (`speedup_codegen`, `speedup_optimization`,
@@ -229,11 +229,11 @@ them, e.g.:
 ```
 Timing summary (per solve):
   Python reference (before codegen):   1328.250 us
-  Generated C (initial, phase A):         1.753 us
-  Generated C (optimized, phase B):       1.640 us
-  Speedup from codegen (Py -> C):         757.7x
-  Speedup from optimization (A -> B):       1.07x
-  Total speedup (Py -> optimized C):      810.0x
+  Generated C (translated):              1.753 us
+  Generated C (optimized):               1.640 us
+  Speedup from codegen (Py -> C):       757.7x
+  Speedup from code optimization:       1.07x
+  Total speedup (Py -> optimized C):    809.9x
 Profiling breakdown (hottest first):
   soft_threshold              20.246 us   51.21%  (1000000 calls)
   state_update                19.288 us   48.79%  (1000000 calls)
@@ -247,11 +247,11 @@ production solver.
 
 ### What changed, and a marker-free production build
 
-When Phase B runs, two extra artifacts are written:
+When the code optimization phase runs, two extra artifacts are written:
 
 - `OPTIMIZATIONS.md` — a durable record of the run: the timing summary, the
-  agent's own notes, and a **unified diff of the solver** from the initial
-  (phase A) version to the optimized one, so you can see exactly what was
+  agent's own notes, and a **unified diff of the solver** from the translated
+  version to the optimized one, so you can see exactly what was
   changed. Also available programmatically as `result.optimization_diff`.
 - `release/fom_solver.c` — a **production copy with the profiling markers and
   the `fom_profile.h` include stripped**. The markers are already no-ops outside
@@ -280,7 +280,7 @@ Likewise, every `matrix @ vector` product in the iteration is emitted as a
 **sparse CSR** operation (`fom_apply_<name>` in `fom_ops.c`) when the matrix is
 structured — the OSQP/MPC selection, dynamics, and state-update blocks are highly
 sparse — and dense only when the matrix genuinely is. Together these make the
-*initial* generated solver fast natively (no reliance on the optimization phase
+*initial* generated solver fast natively (no reliance on the code optimization phase
 to recover structure): on the MPC example the un-optimized C solver already runs
 ~29× faster than the NumPy reference.
 

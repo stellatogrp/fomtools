@@ -37,7 +37,7 @@ from fomtools.codegen import generate_code
 # From a full recording (auto-rolls when stationary):
 result = generate_code(verifier, None, "out/ista",
     config=config, iterates=z, name="ista",
-    run_phase_b=False, profile=False, roll=True)
+    code_optimization=False, profile=False, roll=True)
 
 # From a single stationary iteration:
 result = generate_code(verifier, next_state, "out/ista",
@@ -141,8 +141,8 @@ reciprocals). Override with `CodegenConfig(solve_method="LDLT"/"LU"/"CG")`.
 
 ### Agent Phases
 
-- **Phase A**: translate IR to C -> verify against oracle
-- **Phase B** (optional, `run_phase_b=True, profile=True`): profile -> optimize hottest region -> re-verify -> repeat until gains level off. A perf regression restores the Phase A solver.
+- **Translation phase**: translate IR to C -> verify against oracle (gate 1)
+- **Code optimization phase** (optional, `code_optimization=True, profile=True`): profile -> optimize hottest region -> re-verify -> repeat until gains level off. The optimized solver ships only if it passes the same check (gate 2) and is not slower; otherwise the translated solver is restored.
 
 ## CLI Reference
 

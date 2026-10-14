@@ -1,11 +1,11 @@
-"""Prompt construction for the coding-agent phases."""
+"""Prompt construction for the coding-agent phases (translation and code optimization)."""
 
 from __future__ import annotations
 
 from fomtools.codegen.ir import FomIR
 from fomtools.codegen.targets import TargetDescriptor
 
-# Delimiters the optimization agent wraps its summary in, so
+# Delimiters the code optimization agent wraps its summary in, so
 # fomtools.codegen.postprocess can lift it out exactly rather than guessing at a
 # phrase. Imported there; keep the two in step.
 _SUMMARY_BEGIN = "FOMTOOLS-SUMMARY-BEGIN"
@@ -14,8 +14,8 @@ SUMMARY_BEGIN = _SUMMARY_BEGIN
 SUMMARY_END = _SUMMARY_END
 
 
-def phase_a_instructions(ir: FomIR, target: TargetDescriptor) -> str:
-    """Initial faithful-translation instructions."""
+def translation_instructions(ir: FomIR, target: TargetDescriptor) -> str:
+    """Instructions for the translation phase: a faithful translation of the spec."""
     verify = " ".join(target.verify_command())
     src = target.solver_source_path()
     ops_src = target.ops_source_path()
@@ -76,8 +76,8 @@ the fastest correct implementation.
 """
 
 
-def phase_b_instructions(ir: FomIR, target: TargetDescriptor) -> str:
-    """Iterative performance-optimization instructions (profile-guided)."""
+def code_optimization_instructions(ir: FomIR, target: TargetDescriptor) -> str:
+    """Instructions for the code optimization phase (profile-guided rewriting)."""
     verify = " ".join(target.verify_command())
     src = target.solver_source_path()
     ops_src = target.ops_source_path()
