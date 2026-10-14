@@ -85,6 +85,27 @@ Note: use a *relative* `code_dir` — CVXPYgen registers the wrapper by importin
   propagated bounds) and records the method in a `Verifier` — see
   `fomtools/cvxpygen/builders.py` for the built-ins as templates.
 
+## Equilibration
+
+By default (`auto_equilibrate=True`) the canonical QP is Ruiz-equilibrated
+before the FOM is built, as OSQP does: diagonal scalings `D` (variables) and
+`E` (constraint rows) from ten passes over the KKT matrix `[[P, A'], [A, 0]]`,
+and a cost scaling `c`. The solver iterates on `c D P D`, `c D q`, `E A D`,
+`E l`, `E u`; the bridge scales the parameters in and the solution out
+(`x = D x~`, `y = E y~ / c`), so `problem.solve(method='CPG')` returns the
+original problem's primal and dual solution, and the reported residuals are
+those of the original problem. The parameter bounds the generated code is
+verified on are scaled exactly. Pass `auto_equilibrate=False` to build the FOM
+on the canonical QP unchanged (`fomtools.cvxpygen.scaling` has the routines).
+
+## Code optimization
+
+`code_optimization=True` runs the code optimization phase after translation
+(see the code generation tutorial): the coding agent rewrites the translated
+solver for speed, and the rewrite is kept only if it passes verification again
+and is benchmarked faster. Its budget comes from `config`
+(`agent_optimize_timeout_s`, `agent_optimize_max_turns`).
+
 ## The three generation paths
 
 A builder declares which path it wants with `@fom_builder(...)`, mirroring the
@@ -213,6 +234,9 @@ a solver only advertises settings it can actually honor:
   with `dtype='float64'` (the canonical CVXPYgen data is double precision).
 - One solver instance per binary (the bridge globals are unprefixed, as in
   CVXPYgen's statically-allocated backends).
+- With equilibration on, a runtime `tol` compares successive iterates of the
+  *scaled* problem; the reported residuals are always those of the original
+  problem.
 - Each `cpg_solve()` cold-starts the FOM from its initial state
   (`fom_update_params` resets the iterate), so an anchored method's anchor is
   always the zero vector.

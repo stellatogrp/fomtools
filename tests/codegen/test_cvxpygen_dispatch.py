@@ -577,3 +577,33 @@ def test_generate_solver_does_not_warn_about_stationarity(requires_compiler, tmp
 
     assert result.success, result.translate.log
     assert not [w for w in caught if STATIONARITY_WARNING in str(w.message)]
+
+
+@pytest.mark.parametrize("code_optimization", [False, True])
+def test_code_optimization_reaches_the_generator(captured_codegen, tmp_path, code_optimization):
+    interface._run_codegen(
+        _rolled_builder(_admm_qp()),
+        "rolled",
+        tmp_path,
+        CodegenConfig(termination=TerminationSpec(max_iters=20)),
+        driver=None,
+        code_optimization=code_optimization,
+    )
+    call = captured_codegen[0]
+    assert call["code_optimization"] is code_optimization
+    # Profiling turns on the head-to-head benchmark that decides whether the
+    # optimized solver is kept.
+    assert call["profile"] is code_optimization
+
+
+@pytest.mark.parametrize("code_optimization", [False, True])
+def test_scheduled_path_forwards_code_optimization(captured_codegen, tmp_path, code_optimization):
+    interface._run_codegen(
+        _scheduled_builder(_admm_qp()),
+        "scheduled",
+        tmp_path,
+        CodegenConfig(termination=TerminationSpec(max_iters=20)),
+        driver=None,
+        code_optimization=code_optimization,
+    )
+    assert captured_codegen[0]["code_optimization"] is code_optimization

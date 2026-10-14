@@ -63,6 +63,8 @@ def generate_solver(
     prefix: str = "",
     wrapper: bool = True,
     enable_settings: tuple[str, ...] = (),
+    code_optimization: bool = False,
+    auto_equilibrate: bool = True,
 ) -> CodegenResult:
     """Generate an embedded solver for a parametric CVXPY problem.
 
@@ -130,6 +132,21 @@ def generate_solver(
         for an embedded target — and because the iteration count is then fixed at
         code-generation time, so ``cpg_set_solver_max_iter`` no longer applies.
         Ignored by rolled and scheduled builders.
+    code_optimization:
+        Run the code optimization phase after translation: the coding agent
+        rewrites the translated solver for speed, the rewrite is re-verified and
+        benchmarked, and it is kept only if it passes and is faster. Its budget
+        comes from ``config`` (``agent_optimize_timeout_s``,
+        ``agent_optimize_max_turns``).
+    auto_equilibrate:
+        Ruiz-equilibrate the canonical QP before the FOM is built (default):
+        the solver iterates on ``c D P D``, ``c D q``, ``E A D``, ``E l``, ``E u``
+        (see :mod:`fomtools.cvxpygen.scaling`), and the generated bridge scales
+        the parameters in and the solution out, so ``problem.solve`` returns the
+        original problem's primal and dual solution and the reported residuals
+        are those of the original problem. A runtime ``tol`` compares
+        successive iterates of the scaled problem. ``False`` builds the FOM on
+        the canonical QP unchanged.
     prefix, wrapper, enable_settings:
         Forwarded to ``cvxpygen.cpg.generate_code``. ``wrapper=True`` compiles
         the Python extension module so ``problem.solve(method='CPG')`` works.
@@ -152,6 +169,8 @@ def generate_solver(
         param_bounds=param_bounds,
         bound_margin=bound_margin,
         allow_unrolled=allow_unrolled,
+        code_optimization=code_optimization,
+        auto_equilibrate=auto_equilibrate,
     )
     with pending_options(options):
         cpg.generate_code(
