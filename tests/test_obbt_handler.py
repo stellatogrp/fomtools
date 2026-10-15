@@ -367,6 +367,73 @@ def test_repair_crossed_bounds_rejects_empty_interval():
         repair_crossed_bounds(np.array([1e6 + 1.0]), np.array([1e6]), tol=1e-7)
 
 
+def test_repair_crossed_bounds_buffers_only_crossed_entries():
+    lb = np.array([0.5 + 5e-7, 0.0, 3.0 + 2e-6])
+    ub = np.array([0.5, 1.0, 3.0])
+    new_lb, new_ub = repair_crossed_bounds(lb, ub, tol=1e-6, buffer=1e-6)
+    # Crossed entries are swapped and widened by buffer * max(1, |bound|).
+    pad = 1e-6 * np.array([1.0, 3.0 + 2e-6])
+    np.testing.assert_allclose(new_lb[[0, 2]], ub[[0, 2]] - pad, rtol=0, atol=1e-15)
+    np.testing.assert_allclose(new_ub[[0, 2]], lb[[0, 2]] + pad, rtol=0, atol=1e-15)
+    # The uncrossed entry is untouched.
+    assert (new_lb[1], new_ub[1]) == (0.0, 1.0)
+    with pytest.raises(ValueError, match="cross"):
+        repair_crossed_bounds(np.array([1e-3]), np.array([0.0]), tol=1e-6, buffer=1e-6)
+
+
+class _StubLPSolver:
+    """Returns a fixed optimal value per (sense, entry) for OBBTHandler.obbt."""
+
+    def __init__(self, values):
+        self.values, self.key = values, None
+
+    def set_objective(self, expr, sense=None):
+        self.key = (sense, expr)
+
+    def optimize(self):
+        pass
+
+    def is_optimal(self):
+        return True
+
+    def __getitem__(self, item):
+        assert item == "objVal"
+        return self.values[self.key]
+
+
+class _StubExpr(list):
+    @property
+    def ndim(self):
+        return len(self)
+
+
+def _stub_handler(values):
+    from fomtools.canonicalizers.obbt_handler import OBBTHandler
+
+    handler = OBBTHandler.__new__(OBBTHandler)
+    handler.solver = _StubLPSolver(values)
+    handler.crossing_tol, handler.crossing_repairs = 1e-6, 0
+    return handler
+
+
+def test_obbt_buffers_noise_crossing():
+    # Entry "a" is a single point whose LP min lands 5e-7 above its LP max.
+    values = {("minimize", "a"): 0.2 + 5e-7, ("maximize", "a"): 0.2,
+              ("minimize", "b"): -1.0, ("maximize", "b"): 1.0}
+    handler = _stub_handler(values)
+    lb, ub = handler.obbt(_StubExpr(["a", "b"]), np.full(2, -5.0), np.full(2, 5.0))
+    assert lb[0] <= 0.2 and ub[0] >= 0.2 + 5e-7
+    assert lb[0] >= 0.2 - 2e-6 and ub[0] <= 0.2 + 2e-6
+    assert (lb[1], ub[1]) == (-1.0, 1.0)
+    assert handler.crossing_repairs == 1
+
+
+def test_obbt_still_rejects_large_crossing():
+    values = {("minimize", "a"): 0.2 + 1e-3, ("maximize", "a"): 0.2}
+    with pytest.raises(ValueError, match="cross"):
+        _stub_handler(values).obbt(_StubExpr(["a"]), np.full(1, -5.0), np.full(1, 5.0))
+
+
 @pytest.mark.parametrize(
     "P, expected",
     [

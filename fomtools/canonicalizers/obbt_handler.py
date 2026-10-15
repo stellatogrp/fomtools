@@ -27,9 +27,16 @@ class OBBTHandler(Canonicalizer):
     solver : Solver
         A ready-to-use instance of a subclass of :class:`Solver`
         (e.g., ``gurobi.Gurobi()``).
+    crossing_tol : float
+        Largest relative crossing ``min > max`` of an OBBT bound pair treated as
+        LP solver noise; such entries are swapped and buffered outward by the
+        same amount. Defaults to Gurobi's default feasibility and optimality
+        tolerances.
+    crossing_repairs : int
+        Number of bound entries repaired this way so far.
     """
 
-    def __init__(self, solver: str, solver_params: dict = None):
+    def __init__(self, solver: str, solver_params: dict = None, crossing_tol: float = 1e-6):
         """
         Initialize an instance of :class:`OBBTHandler`.
 
@@ -43,8 +50,12 @@ class OBBTHandler(Canonicalizer):
         solver_params : dict or None, optional
             Parameters passed verbatim to the OBBT solver (e.g.
             ``{"OutputFlag": 0}`` for Gurobi).
+        crossing_tol : float, default 1e-6
+            See the class attribute of the same name.
         """
         super().__init__(solver_params=solver_params, solver=solver)
+        self.crossing_tol = crossing_tol
+        self.crossing_repairs = 0
 
     def add_var(self, var: LinearExpression) -> None:
         """
@@ -175,10 +186,24 @@ class OBBTHandler(Canonicalizer):
 
         # Both the raw LP bounds (min/max solves for the same index) and their
         # intersection with the input bounds can cross by solver noise (e.g.
-        # input ub = 0, LP lb = 2e-17); repair so downstream bound_propagation
-        # does not raise. Crossings beyond the tolerance raise (genuine bug).
-        lb_out, ub_out = repair_crossed_bounds(lb_out, ub_out)
-        return repair_crossed_bounds(np.maximum(lb, lb_out), np.minimum(ub, ub_out))
+        # input ub = 0, LP lb = 2e-17), up to the LP tolerances. Swap such
+        # entries and buffer them outward by the tolerance so the interval
+        # stays valid. Crossings beyond the tolerance raise (genuine bug).
+        lb_out, ub_out = self._repair(lb_out, ub_out)
+        return self._repair(np.maximum(lb, lb_out), np.minimum(ub, ub_out))
+
+    def _repair(self, lb: np.ndarray, ub: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """``repair_crossed_bounds`` at the LP tolerance, counting and logging repairs."""
+        lb, ub = np.asarray(lb, dtype=float), np.asarray(ub, dtype=float)
+        crossed = lb > ub
+        if np.any(crossed):
+            self.crossing_repairs += int(crossed.sum())
+            log.info(
+                "OBBT: repaired %d crossed bound(s), largest crossing %.3e",
+                int(crossed.sum()),
+                float(np.max(lb - ub)),
+            )
+        return repair_crossed_bounds(lb, ub, tol=self.crossing_tol, buffer=self.crossing_tol)
 
     # ------------------------------------------------------------------
     # Linear (binary-free) canonicalization of steps into the OBBT LP.
