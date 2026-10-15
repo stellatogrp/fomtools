@@ -98,6 +98,14 @@ those of the original problem. The parameter bounds the generated code is
 verified on are scaled exactly. Pass `auto_equilibrate=False` to build the FOM
 on the canonical QP unchanged (`fomtools.cvxpygen.scaling` has the routines).
 
+The cost scaling `c` is fixed at generation time, so it is computed from the
+largest `|q|` the parameter bounds allow, not from the current `q`. Very wide
+`param_bounds` (or a large `bound_margin`) on parameters entering `q` can
+therefore shrink `c` and flatten `P`: the solution is still correct, but
+convergence can be slower than without equilibration. The parameter bounds now
+affect conditioning as well as verification, so keep them as tight as the
+application allows.
+
 ## Code optimization
 
 `code_optimization=True` runs the code optimization phase after translation

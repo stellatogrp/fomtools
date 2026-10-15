@@ -48,8 +48,20 @@ def test_a_bash_timeout_is_capped_at_the_time_left():
     clock.now = 570  # 30 s left
     out = _call(budget.before_tool, "Bash", {"command": "make bench", "timeout": 600_000})
     spec = out["hookSpecificOutput"]
-    assert spec["permissionDecision"] == "allow"
     assert spec["updatedInput"] == {"command": "make bench", "timeout": 30_000}
+    # A timeout rewrite must not approve the command past the permission check.
+    assert "permissionDecision" not in spec
+
+
+@pytest.mark.parametrize("timeout", ["soon", None, [1]])
+def test_a_non_numeric_bash_timeout_is_replaced(timeout):
+    budget, clock = _budget(600)
+    clock.now = 570
+    spec = _call(budget.before_tool, "Bash", {"command": "make", "timeout": timeout})[
+        "hookSpecificOutput"
+    ]
+    assert spec["updatedInput"]["timeout"] == 30_000
+    assert "permissionDecision" not in spec
 
 
 def test_a_bash_command_with_no_timeout_gets_one():

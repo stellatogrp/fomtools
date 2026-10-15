@@ -8,7 +8,8 @@ the clock around every tool call, through the SDK's public hook API
 * after each tool call (``PostToolUse``) the agent is told how much time is
   left, so it can pace itself;
 * before each tool call (``PreToolUse``) a ``Bash`` command's timeout is capped
-  at the time left, so no single command outlives the budget; once the budget is
+  at the time left (by rewriting its input only; the permission decision is left
+  to the driver's permission mode), so no single command outlives the budget; once the budget is
   spent every tool is denied with an instruction to wrap up; and once a short
   grace period after that has also passed, the session is ended.
 
@@ -37,6 +38,14 @@ def _fmt(seconds: float) -> str:
     seconds = max(0, int(seconds))
     minutes, secs = divmod(seconds, 60)
     return f"{minutes}m {secs:02d}s" if minutes else f"{secs}s"
+
+
+def _as_ms(value: Any) -> int | None:
+    """A Bash ``timeout`` as an int, or ``None`` if missing or not a number."""
+    try:
+        return None if value is None else int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 @dataclass
@@ -99,13 +108,15 @@ class TimeBudget:
         tool_input = dict((input_data or {}).get("tool_input") or {})
         if (input_data or {}).get("tool_name") == "Bash":
             cap_ms = max(_BASH_MIN_TIMEOUT_MS, min(_BASH_MAX_TIMEOUT_MS, int(left * 1000)))
-            requested = tool_input.get("timeout")
-            if requested is None or int(requested) > cap_ms:
+            requested = _as_ms(tool_input.get("timeout"))
+            if requested is None or requested > cap_ms:
                 tool_input["timeout"] = cap_ms
+                # No permissionDecision: an explicit "allow" would skip the
+                # normal permission check, and a timeout rewrite must not
+                # widen what the agent may run.
                 return {
                     "hookSpecificOutput": {
                         "hookEventName": "PreToolUse",
-                        "permissionDecision": "allow",
                         "updatedInput": tool_input,
                     }
                 }

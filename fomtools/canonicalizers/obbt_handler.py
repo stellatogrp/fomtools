@@ -190,7 +190,11 @@ class OBBTHandler(Canonicalizer):
         # entries and buffer them outward by the tolerance so the interval
         # stays valid. Crossings beyond the tolerance raise (genuine bug).
         lb_out, ub_out = self._repair(lb_out, ub_out)
-        return self._repair(np.maximum(lb, lb_out), np.minimum(ub, ub_out))
+        lb_new, ub_new = self._repair(np.maximum(lb, lb_out), np.minimum(ub, ub_out))
+        # The buffer must not loosen the input bounds (e.g. a ReLU output's
+        # lb = 0). The repaired interval always meets [lb, ub], so this clip
+        # cannot cross it again.
+        return np.maximum(lb_new, lb), np.minimum(ub_new, ub)
 
     def _repair(self, lb: np.ndarray, ub: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """``repair_crossed_bounds`` at the LP tolerance, counting and logging repairs."""

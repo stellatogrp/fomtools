@@ -418,13 +418,27 @@ def _stub_handler(values):
 
 def test_obbt_buffers_noise_crossing():
     # Entry "a" is a single point whose LP min lands 5e-7 above its LP max.
-    values = {("minimize", "a"): 0.2 + 5e-7, ("maximize", "a"): 0.2,
-              ("minimize", "b"): -1.0, ("maximize", "b"): 1.0}
+    values = {
+        ("minimize", "a"): 0.2 + 5e-7,
+        ("maximize", "a"): 0.2,
+        ("minimize", "b"): -1.0,
+        ("maximize", "b"): 1.0,
+    }
     handler = _stub_handler(values)
     lb, ub = handler.obbt(_StubExpr(["a", "b"]), np.full(2, -5.0), np.full(2, 5.0))
     assert lb[0] <= 0.2 and ub[0] >= 0.2 + 5e-7
     assert lb[0] >= 0.2 - 2e-6 and ub[0] <= 0.2 + 2e-6
     assert (lb[1], ub[1]) == (-1.0, 1.0)
+    assert handler.crossing_repairs == 1
+
+
+def test_obbt_buffer_does_not_loosen_input_bounds():
+    # A ReLU-style output with input bounds [0, 0]: the LP min lands at 2e-17,
+    # crossing the input ub. Buffering must not push the result below lb = 0.
+    values = {("minimize", "a"): 2e-17, ("maximize", "a"): 2e-17}
+    handler = _stub_handler(values)
+    lb, ub = handler.obbt(_StubExpr(["a"]), np.zeros(1), np.zeros(1))
+    assert (lb[0], ub[0]) == (0.0, 0.0)
     assert handler.crossing_repairs == 1
 
 

@@ -48,7 +48,7 @@ class Scaling:
 def _col_inf_norms(M: spa.spmatrix, size: int) -> np.ndarray:
     if M.shape[0] == 0 or M.nnz == 0:
         return np.zeros(size)
-    return np.asarray(abs(spa.csc_matrix(M)).max(axis=0).todense()).ravel()
+    return np.asarray(abs(M).max(axis=0).todense()).ravel()
 
 
 def _clip(norms: np.ndarray) -> np.ndarray:
@@ -62,7 +62,9 @@ def ruiz_kkt(
 
     ``q_abs`` is an elementwise bound on ``|q|`` over the values ``q`` can take
     (the cost scaling must not depend on the parameter values, since it is baked
-    into the solver); ``None`` treats ``q`` as zero.
+    into the solver); ``None`` treats ``q`` as zero. A loose bound can let
+    ``max |q|`` dominate the cost scaling and shrink ``c`` (down to the 1e-4
+    clip), flattening ``P``: still correct, but possibly slower to converge.
     """
     P, A = spa.csc_matrix(P), spa.csc_matrix(A)
     n, m = P.shape[0], A.shape[0]
@@ -70,22 +72,24 @@ def ruiz_kkt(
     D, E, c = np.ones(n), np.ones(m), 1.0
     # As OSQP's scale_data: each pass equilibrates the KKT matrix of the
     # *currently* scaled problem (the cost scaling included), then rescales the
-    # cost, so the two interact pass by pass.
+    # cost, so the two interact pass by pass. The scaled matrices are updated in
+    # place by each pass's increments rather than rebuilt from P and A.
+    Ps, As = P.copy(), A.copy()
     for _ in range(iters):
-        Ps = c * (spa.diags(D) @ P @ spa.diags(D))
-        As = spa.diags(E) @ A @ spa.diags(D)
         # KKT column norms: variable columns see P and A, row columns see A'.
         norm_x = np.maximum(_col_inf_norms(Ps, n), _col_inf_norms(As, n))
         norm_y = _col_inf_norms(As.T, m)
-        D = D / np.sqrt(_clip(norm_x))
-        E = E / np.sqrt(_clip(norm_y))
+        dD, dE = 1.0 / np.sqrt(_clip(norm_x)), 1.0 / np.sqrt(_clip(norm_y))
+        D, E = D * dD, E * dE
+        Ps = (spa.diags(dD) @ Ps @ spa.diags(dD)).tocsc()
+        As = (spa.diags(dE) @ As @ spa.diags(dD)).tocsc()
 
-        Ps = c * (spa.diags(D) @ P @ spa.diags(D))
         mean_p = float(np.mean(_col_inf_norms(Ps, n))) if n else 0.0
         max_q = float(np.max(c * D * q_abs)) if n else 0.0
         scale = max(mean_p, max_q)
         if scale > 0:
-            c = c / float(np.clip(scale, _NORM_MIN, _NORM_MAX))
+            dc = 1.0 / float(np.clip(scale, _NORM_MIN, _NORM_MAX))
+            c, Ps = c * dc, dc * Ps
     return Scaling(D=D, E=E, c=c)
 
 

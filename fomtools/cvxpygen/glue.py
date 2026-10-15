@@ -96,7 +96,12 @@ def _settings_block(prefix: str, settings: tuple[str, ...], schedule_len: int | 
 
 
 def _piece_dims(qp: QPData) -> dict[str, tuple[str, int, int]]:
-    """Map each canonical piece to (Canon_Params member, offset, length)."""
+    """Map each canonical piece to (Canon_Params member, offset, length).
+
+    The offset of a constraint piece is also its first row in the equilibration
+    scaling ``E`` (equality rows first, then inequality rows), which
+    :func:`_param_copy_line` relies on to index ``bridge_E``.
+    """
     return {
         "q": ("q", 0, qp.n),
         "b": ("l", 0, qp.n_eq),
@@ -130,9 +135,11 @@ def _param_copy_line(piece: str, index: int, src: str, offset: int, scaled: bool
     elif piece == "q":
         rhs = f"bridge_c * bridge_D[i] * {value}"
     else:
-        # b and u_ineq rows; cvxpygen's +/-1e30 infinities stay infinite.
+        # b and u_ineq rows; cvxpygen's +/-1e30 infinities stay infinite. The
+        # Canon_Params offset doubles as the row offset into E (see _piece_dims).
         e = f"bridge_E[{offset} + i]" if offset else "bridge_E[i]"
-        rhs = f"(({value} >= {CVXPYGEN_INF:g} || {value} <= -{CVXPYGEN_INF:g}) ? {value} : {e} * {value})"
+        inf = f"{CVXPYGEN_INF:g}"
+        rhs = f"(({value} >= {inf} || {value} <= -{inf}) ? {value} : {e} * {value})"
     return f"    fom_params.p{index}[i] = (fom_float)({rhs});"
 
 
@@ -267,6 +274,10 @@ extern void {fn}(void);
 
     copies = []
     dims = _piece_dims(qp)
+    if scaling is not None:
+        # _param_copy_line indexes bridge_E by the Canon_Params offset.
+        assert dims["b"][1] == 0 and dims["u_ineq"][1] == qp.n_eq, dims
+        assert len(scaling.E) == qp.n_eq + qp.n_ineq == m, (len(scaling.E), m)
     for i, piece in enumerate(spec.param_copy):
         member, offset, length = dims[piece]
         src = f"{prefix}Canon_Params.{member}" + (f" + {offset}" if offset else "")
