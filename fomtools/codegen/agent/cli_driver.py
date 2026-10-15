@@ -195,18 +195,25 @@ class CliAgentDriver(AgentDriver):
         # the subprocess cwd would be doubled.
         workdir = str(Path(task.workdir).resolve())
         self._truncated = False
+
+        def attempt_timeout() -> int | None:
+            # Each attempt gets what is left of the phase budget.
+            budget = task.extra.get("budget")
+            return max(1, int(budget.remaining())) if budget is not None else None
+
         return run_verify_loop(
             task,
             lambda prompt, max_turns: self._invoke_agent(
-                self._build_argv(workdir, prompt), workdir, timeout=self._timeout_for(task.phase)
+                self._build_argv(workdir, prompt), workdir, timeout=attempt_timeout()
             ),
             max_attempts=self.max_attempts,
             max_turns=self.max_turns,
             truncated_probe=lambda: self._truncated,
+            budget_s=self._timeout_for(task.phase),
         )
 
     def _timeout_for(self, phase: str) -> int | None:
-        """Wall-clock budget for one attempt, from the codegen config if present.
+        """Wall-clock budget for the phase, from the codegen config if present.
 
         Returns ``None`` to run unbounded, preserving this driver's historical
         behaviour when no config supplies a budget.

@@ -47,17 +47,25 @@ def has_profiling_markers(source: str) -> bool:
     return bool(_PROFILE_INCLUDE_RE.search(source) or "FOM_PROF_BEGIN" in source)
 
 
-def write_production_variant(out_dir: str | Path, solver_rel_path: str) -> Path:
+def write_production_variant(
+    out_dir: str | Path, solver_rel_path: str, extra_rel_paths: tuple[str, ...] = ()
+) -> Path:
     """Write a marker-free production copy of the solver under ``release/``.
+
+    ``extra_rel_paths`` are other sources the code optimization phase may have
+    rewritten (the linear solve); each gets a marker-free copy beside the solver,
+    which ``make release`` compiles.
 
     Returns the path to the emitted production source.
     """
     out_dir = Path(out_dir)
-    src = (out_dir / solver_rel_path).read_text()
-    clean = strip_profiling(src)
-
     release = out_dir / "release"
     release.mkdir(parents=True, exist_ok=True)
+    for rel in extra_rel_paths:
+        (release / Path(rel).name).write_text(strip_profiling((out_dir / rel).read_text()))
+
+    src = (out_dir / solver_rel_path).read_text()
+    clean = strip_profiling(src)
     name = Path(solver_rel_path).name
     dest = release / name
     dest.write_text(clean)
@@ -75,7 +83,7 @@ def write_production_variant(out_dir: str | Path, solver_rel_path: str) -> Path:
 
 
 def unified_solver_diff(before: str, after: str, filename: str) -> str:
-    """Unified diff of the solver source (translated -> optimized)."""
+    """Unified diff of one source file (translated -> optimized)."""
     diff = difflib.unified_diff(
         before.splitlines(keepends=True),
         after.splitlines(keepends=True),
@@ -198,7 +206,7 @@ def write_optimization_report(
     if diff.strip():
         lines += ["```diff", diff.rstrip(), "```", ""]
     else:
-        lines += ["_No changes to the solver source (it was already optimal or unchanged)._", ""]
+        lines += ["_No changes to the generated sources (already optimal or unchanged)._", ""]
     if agent_notes.strip():
         lines += ["## Agent notes", "", "```", agent_notes.strip(), "```", ""]
     path = out_dir / "OPTIMIZATIONS.md"

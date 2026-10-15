@@ -636,6 +636,67 @@ class EmbeddedCTarget(TargetDescriptor):
             samples.append({"params": pvals, "solution": res.solution, "iters": res.iters})
         return samples
 
+    #: Right-hand sides per factorization in the direct linear-solve check.
+    _LINSOLVE_CHECK_RHS = 3
+
+    def _checked_factorizations(self, ir: FomIR) -> list:
+        """Direct factorizations whose C solve ``make verify`` checks on its own.
+
+        Only when the code optimization phase may rewrite the linear solve
+        (:meth:`optimization_editable_paths`): the end-to-end check sees a solve
+        only through the whole iteration, so a rewrite is also held directly to
+        the factorization's reference solve. CG is iterative, so its C and
+        reference results differ legitimately; it is checked end to end only.
+        """
+        if self.linsolve_source_path() not in self.optimization_editable_paths():
+            return []
+        return [(name, fac) for name, fac in ir.factorizations.items() if fac.method != "cg"]
+
+    def _linsolve_check_data(self, ir: FomIR) -> list[str]:
+        lines = []
+        rng = np.random.default_rng(self.config.seed + 1)
+        k = self._LINSOLVE_CHECK_RHS
+        for name, fac in self._checked_factorizations(ir):
+            up = name.upper()
+            rhs = rng.standard_normal((k, fac.dim))
+            sol = np.vstack([fac.solve(b) for b in rhs])
+            lines.append(_c_array_2d(f"FOM_VERIFY_LS_{up}_B", rhs, f"[{k}][{fac.dim}]"))
+            lines.append(_c_array_2d(f"FOM_VERIFY_LS_{up}_X", sol, f"[{k}][{fac.dim}]"))
+            lines.append("")
+        return lines
+
+    def _linsolve_check_main(self, ir: FomIR) -> list[str]:
+        """Check each ``fom_lin_solve_<name>`` against its reference solve."""
+        lines = []
+        k = self._LINSOLVE_CHECK_RHS
+        for name, fac in self._checked_factorizations(ir):
+            up = name.upper()
+            lines += [
+                "    {",
+                f"        /* fom_lin_solve_{name}: direct check against the reference solve. */",
+                f"        static fom_float x[{fac.dim}];",
+                "        int r;",
+                f"        for (r = 0; r < {k}; ++r) {{",
+                "            fom_float err = 0.0, scale = 1.0;",
+                f"            fom_lin_solve_{name}(FOM_VERIFY_LS_{up}_B[r], x);",
+                f"            for (j = 0; j < {fac.dim}; ++j) {{",
+                f"                fom_float d = x[j] - FOM_VERIFY_LS_{up}_X[r][j];",
+                f"                fom_float a = FOM_VERIFY_LS_{up}_X[r][j];",
+                "                if (d < 0) d = -d;",
+                "                if (a < 0) a = -a;",
+                "                if (d > err) err = d;",
+                "                if (1.0 + a > scale) scale = 1.0 + a;",
+                "            }",
+                "            if (err > tol * scale) {",
+                f'                printf("VERIFY FAILED: fom_lin_solve_{name} differs from its "',
+                '                       "reference solve by %.3e on right-hand side %d\\n", (double)err, r);',
+                "                return 1;",
+                "            }",
+                "        }",
+                "    }",
+            ]
+        return lines
+
     def _verify_data(self, ir: FomIR) -> str:
         samples = self._sample_params(ir)
         n = len(samples)
@@ -665,7 +726,9 @@ class EmbeddedCTarget(TargetDescriptor):
         iters = np.array([s["iters"] for s in samples], dtype=int)
         body = ", ".join(str(int(v)) for v in iters)
         lines.append(f"static const fom_int FOM_VERIFY_ITERS[{n}] = {{{body}}};")
-        lines += ["", "#endif /* FOM_VERIFY_DATA_H */", ""]
+        lines.append("")
+        lines += self._linsolve_check_data(ir)
+        lines += ["#endif /* FOM_VERIFY_DATA_H */", ""]
         return "\n".join(lines)
 
     def _verify_update_block(self, ir: FomIR, sample: str, indent: str) -> str:
@@ -719,6 +782,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 "#include <stdio.h>",
                 "#include <math.h>",
                 '#include "fom_solver.h"',
+                *(['#include "fom_linsolve.h"'] if self._checked_factorizations(ir) else []),
                 '#include "verify_data.h"',
                 "",
                 "int main(void) {",
@@ -729,6 +793,8 @@ class EmbeddedCTarget(TargetDescriptor):
                 f"    fom_float tol = (fom_float){_fmt_float(tol)};",
                 "    fom_float worst = 0.0;",
                 "    int failures = 0;",
+                "",
+                *self._linsolve_check_main(ir),
                 "",
                 "    fom_set_default_settings(&settings);",
                 "    fom_setup(&work, &settings);",
@@ -947,9 +1013,9 @@ class EmbeddedCTarget(TargetDescriptor):
                 "\t./verify_bin",
                 "",
                 "# Build the shared library from the marker-free production source.",
-                "release: release/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c",
+                "release: release/fom_solver.c src/fom_data.c release/fom_linsolve.c src/fom_ops.c",
                 "\t$(CC) $(CFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
-                "src/fom_linsolve.c src/fom_ops.c -o libfomsolver.$(LIBEXT) -lm",
+                "release/fom_linsolve.c src/fom_ops.c -o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "bench: $(SRC) test/bench_main.c",
                 "\t$(CC) $(BENCHFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",

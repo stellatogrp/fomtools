@@ -8,6 +8,7 @@ in CI without any model calls or network access.
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from fomtools.codegen.agent.driver import AgentDriver, AgentResult, AgentTask
@@ -27,7 +28,11 @@ class StubAgentDriver(AgentDriver):
 
     """
 
-    def __init__(self, solver_source: str | Path):
+    def __init__(
+        self,
+        solver_source: str | Path,
+        extra_sources: dict[str, str | Callable[[str], str]] | None = None,
+    ):
         """Resolve and store the solver source to write on every :meth:`run`.
 
         Parameters
@@ -38,7 +43,14 @@ class StubAgentDriver(AgentDriver):
             is treated as a path only when it has no newlines, is under 4096
             characters, and names an existing file; otherwise it is taken as
             source text verbatim.
+        extra_sources : dict, optional
+            Other files to write on every run, keyed by path relative to the
+            workspace: either the text to write, or a callable that maps the
+            file's current text to the new one (e.g. to rewrite the generated
+            linear solve). Lets tests exercise edits the pipeline must keep or
+            revert.
         """
+        self._extra = dict(extra_sources or {})
         if isinstance(solver_source, Path):
             self._source = solver_source.read_text()
             return
@@ -76,6 +88,9 @@ class StubAgentDriver(AgentDriver):
         target = task.workdir / task.solver_rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(self._source)
+        for rel, source in self._extra.items():
+            path = task.workdir / rel
+            path.write_text(source(path.read_text()) if callable(source) else source)
 
         if task.restore_hook is not None:
             task.restore_hook()

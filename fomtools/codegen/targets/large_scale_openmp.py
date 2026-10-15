@@ -54,9 +54,9 @@ class OpenMpTarget(EmbeddedCTarget):
                 "\t$(CC) $(CFLAGS) $(OMPFLAGS) -Itest $(SRC) test/verify_main.c -o verify_bin -lm",
                 "\t./verify_bin",
                 "",
-                "release: release/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c",
+                "release: release/fom_solver.c src/fom_data.c release/fom_linsolve.c src/fom_ops.c",
                 "\t$(CC) $(CFLAGS) $(OMPFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
-                "src/fom_linsolve.c src/fom_ops.c -o libfomsolver.$(LIBEXT) -lm",
+                "release/fom_linsolve.c src/fom_ops.c -o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "bench: $(SRC) test/bench_main.c",
                 "\t$(CC) $(BENCHFLAGS) $(OMPFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",
