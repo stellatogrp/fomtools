@@ -266,7 +266,9 @@ reference time, the translated generated-C time, and a profiling breakdown). The
 runs a loop: **profile → optimize the hottest region → `make verify` (correctness
 is re-checked every round) → `make bench` → repeat** until gains level off. A
 change that breaks verification is never kept, and if the whole phase leaves the
-solver regressed, the verified translated solver is restored automatically.
+solver regressed, the verified translated solver is restored automatically. The
+files the agent may rewrite, and how each is checked, are described
+[below](#what-the-agent-may-rewrite-and-how-it-is-checked).
 
 `result.timing` (a `TimingReport`) holds `python_us`, `c_initial_us`,
 `c_final_us`, the speedup factors (`speedup_codegen`, `speedup_optimization`,
@@ -297,15 +299,74 @@ production solver.
 When the code optimization phase runs, two extra artifacts are written:
 
 - `OPTIMIZATIONS.md` — a durable record of the run: the timing summary, the
-  agent's own notes, and a **unified diff of the solver** from the translated
-  version to the optimized one, so you can see exactly what was
-  changed. Also available programmatically as `result.optimization_diff`.
-- `release/fom_solver.c` — a **production copy with the profiling markers and
-  the `fom_profile.h` include stripped**. The markers are already no-ops outside
-  `make profile`, so this is behaviour- and performance-identical; it is just a
-  clean, dependency-free source for embedding. Build it with `make release`
-  (which links the shared library from `release/`), or drop it in for
-  `src/fom_solver.c`.
+  agent's own notes, a **unified diff of every rewritten source** from the
+  translated version to the optimized one, so you can see exactly what was
+  changed, and a **kernel-check table** (see below). Also available
+  programmatically as `result.optimization_diff` and `result.kernel_checks`.
+- `release/fom_solver.c` (with `release/fom_linsolve.c` and `release/fom_ops.c`)
+  — a **production copy with the profiling markers and the `fom_profile.h`
+  include stripped**. The markers are already no-ops outside `make profile`, so
+  this is behaviour- and performance-identical; it is just a clean,
+  dependency-free source for embedding. Build it with `make release` (which links
+  the shared library from `release/`), or drop it in for the `src/` files.
+
+### What the agent may rewrite, and how it is checked
+
+The translation phase writes only `src/fom_solver.c`. The code optimization
+phase may also rewrite the two linear parts of the solver, where most of the time
+goes. The package restores every other file before each check, so the numeric
+data cannot change:
+
+| file | in the code optimization phase | checked by `make verify` |
+|---|---|---|
+| `src/fom_solver.c` (the iteration) | rewritten by the agent | end to end, against the Python reference on sampled parameters |
+| `src/fom_linsolve.c` (linear solves) | rewritten by the agent | each `fom_lin_solve_<name>` against the reference solve of its factorization, on random right-hand sides |
+| `src/fom_ops.c` (matrix-vector products) | rewritten by the agent | each `fom_apply_<name>` exactly against its matrix (below) |
+| `src/fom_data.c`, `include/`, `test/`, `Makefile` | package only | — |
+
+A matrix-vector routine is a linear map, so it can be checked for **every**
+input, not just sampled ones. `make verify` runs each `fom_apply_<name>` next to a
+package-written reference (`test/ops_ref.c`) that reads the same `fom_data.c`
+arrays, starting both from the same nonzero `out` (so the routine must still
+accumulate, `out += M @ x`):
+
+- on **every unit vector** when the matrix is small enough
+  (`cols × (nnz + rows) ≤ 1e8`): this recovers the routine's matrix column by
+  column, and a wrong coefficient is reported by its entry;
+- on **two random vectors** always, which also catches a routine that branches
+  on its input; above the budget these are the whole check.
+
+The check stores no matrix-sized data: the expected values are computed in C from
+`fom_data.c`, and the only stored data are the random probe vectors.
+
+Only code inside `fom_apply_<name>` goes through this check, so three rules keep
+every coefficient there. A rewrite that breaks one is discarded:
+
+- the solver may not read the `FOM_MAT_<name>` data of a matrix it multiplies
+  by; it calls `fom_apply_<name>`;
+- the solver and `fom_ops.c` may not add floating-point literals other than
+  `0.0`, `0.5`, `1.0` and `2.0` (coefficients come from `fom_data.c`);
+- `fom_setup` and `fom_update_params` may not add calls to `fom_apply_*`, which
+  is how a matrix would be rebuilt by probing it.
+
+Literals and setup calls the translated file already had are exempt. `make
+verify` reports these rules while the agent works; the pipeline applies them
+again when it collects the rewrite, and that check decides.
+
+`OPTIMIZATIONS.md` records the outcome for the shipped `fom_ops.c`:
+
+```
+| matrix | shape | nnz | rewritten | check | probes | max error |
+|---|---|---|---|---|---|---|
+| `t0_state` | 140x228 | 228 | no | basis | 230 | 0.000e+00 |
+| `su_state` | 228x228 | 228 | yes | basis | 230 | 0.000e+00 |
+```
+
+followed by any rule violations found in the collected rewrite.
+`result.kernel_checks` holds the same rows.
+
+On the large-scale CUDA target only `fom_solver.cu` is editable: verify there
+needs a GPU to run, so a rewritten solve or product could not be checked.
 
 ## Linear solves: factorized, never inverted
 
@@ -319,12 +380,13 @@ reciprocals). The factors live in `src/fom_linsolve.c` and are called as
 side and calls them. `CodegenConfig(solve_method=...)` can force `LDLT`/`LU`;
 `CG` (an indirect method for large/GPU problems) is reserved for a future
 backend. The choice can depend on problem type and the CPU/GPU target — but a
-matrix inverse is never formed or stored. The LDLᵀ factorization uses a
-fill-reducing (reverse Cuthill–McKee) ordering so the factor stays sparse (on the
-MPC KKT, 552 vs 19600 dense entries).
+matrix inverse is never formed or stored. The LDLᵀ factorization (by QDLDL)
+uses a fill-reducing approximate-minimum-degree ordering so the factor stays
+sparse (on the MPC KKT, 552 vs 19600 dense entries).
 
 Likewise, every `matrix @ vector` product in the iteration is emitted as a
-**sparse CSR** operation (`fom_apply_<name>` in `fom_ops.c`) when the matrix is
+**sparse CSR** operation (`fom_apply_<name>` in `fom_ops.c`, over CSR arrays in
+`fom_data.c`) when the matrix is
 structured — the OSQP/MPC selection, dynamics, and state-update blocks are highly
 sparse — and dense only when the matrix genuinely is. Together these make the
 *initial* generated solver fast natively (no reliance on the code optimization phase
