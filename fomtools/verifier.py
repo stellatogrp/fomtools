@@ -1087,8 +1087,8 @@ class Verifier(object):
             expr_list = [expr_list]
 
         lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
-        self.objective = (tuple(expr_list), np.inf)
         self.canonicalizer.set_infinity_norm_objective(expr_list, list(lb), list(ub))
+        self.objective = (tuple(expr_list), np.inf)
 
     def set_two_norm_objective(self, expr_list: Sequence[LinearExpression] | LinearExpression):
         """
@@ -1108,8 +1108,8 @@ class Verifier(object):
             expr_list = [expr_list]
 
         lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
-        self.objective = (tuple(expr_list), 2)
         self.canonicalizer.set_two_norm_objective(expr_list, list(lb), list(ub))
+        self.objective = (tuple(expr_list), 2)
 
     def set_one_norm_objective(
         self, expr_list: Sequence[LinearExpression] | LinearExpression
@@ -1128,8 +1128,8 @@ class Verifier(object):
         except TypeError:
             expr_list = [expr_list]
 
-        self.objective = (tuple(expr_list), 1)
         self.canonicalizer.set_one_norm_objective(expr_list)
+        self.objective = (tuple(expr_list), 1)
 
     def set_objective_norm(
         self,

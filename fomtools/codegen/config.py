@@ -109,7 +109,10 @@ class TerminationSpec(BaseModel):
         their (static) iteration accounting from it and every loop needs a guard.
     tol:
         Tolerance for the ``INF_NORM_CHANGE`` and ``OBJECTIVE`` criteria. Ignored
-        for ``MAX_ITERS``. Must be positive when the criterion uses it.
+        for ``MAX_ITERS``. Must be positive when the criterion uses it. For
+        ``OBJECTIVE`` it bounds the verification objective as the verifier defines
+        it, so with a 2-norm objective (``ord=2``) it bounds the SQUARED norm:
+        ``tol=1e-6`` stops once ``||r||_2 <= 1e-3``, not ``1e-6``.
     check_termination:
         How often the criterion is evaluated (the name and semantics follow
         OSQP's setting): ``N`` checks every ``N`` iterations (residual computed
