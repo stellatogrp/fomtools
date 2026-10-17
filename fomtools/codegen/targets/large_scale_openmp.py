@@ -43,6 +43,8 @@ class OpenMpTarget(EmbeddedCTarget):
                 "OMPFLAGS ?=",
                 "BENCHFLAGS ?= -O3 -Iinclude",
                 "SRC = src/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c",
+                "# Package-written reference matvecs for verify's direct check of fom_ops.c.",
+                "VERIFY_SRC = $(wildcard test/ops_ref.c)",
                 "",
                 "UNAME_S := $(shell uname -s)",
                 "ifeq ($(UNAME_S),Darwin)",
@@ -53,13 +55,15 @@ class OpenMpTarget(EmbeddedCTarget):
                 "",
                 ".PHONY: verify bench profile lib release clean objective_guard",
                 "",
-                f"verify:{guard} $(SRC) test/verify_main.c",
-                "\t$(CC) $(CFLAGS) $(OMPFLAGS) -Itest $(SRC) test/verify_main.c -o verify_bin -lm",
+                f"verify:{guard} $(SRC) $(VERIFY_SRC) test/verify_main.c",
+                "\t$(CC) $(CFLAGS) $(OMPFLAGS) -Itest $(SRC) $(VERIFY_SRC) test/verify_main.c "
+                "-o verify_bin -lm",
                 "\t./verify_bin",
                 "",
-                "release: release/fom_solver.c src/fom_data.c release/fom_linsolve.c src/fom_ops.c",
+                "release: release/fom_solver.c src/fom_data.c release/fom_linsolve.c "
+                "release/fom_ops.c",
                 "\t$(CC) $(CFLAGS) $(OMPFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
-                "release/fom_linsolve.c src/fom_ops.c -o libfomsolver.$(LIBEXT) -lm",
+                "release/fom_linsolve.c release/fom_ops.c -o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "bench: $(SRC) test/bench_main.c",
                 "\t$(CC) $(BENCHFLAGS) $(OMPFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",

@@ -53,7 +53,7 @@ def write_production_variant(
     """Write a marker-free production copy of the solver under ``release/``.
 
     ``extra_rel_paths`` are other sources the code optimization phase may have
-    rewritten (the linear solve); each gets a marker-free copy beside the solver,
+    rewritten (the linear solves, the matrix-vector products); each gets a marker-free copy beside the solver,
     which ``make release`` compiles.
 
     Returns the path to the emitted production source.

@@ -80,7 +80,8 @@ def _static_issues(target, optimized: dict[str, str], translated: dict[str, str]
     """Target invariant violations (e.g. division, malloc) in rewritten non-solver sources.
 
     The solver is held to these by its prompt and verify, as before; a rewritten
-    linear solve is new ground for the agent, so it is also checked here.
+    linear solve or matrix-vector product is new ground for the agent, so it is
+    also checked here.
     """
     issues = []
     for rel, text in optimized.items():
@@ -348,8 +349,8 @@ def generate_code(
     def restore_deterministic_files():
         target.scaffold(ir, out_dir)
 
-    # In the code optimization phase the agent may also rewrite the linear solve
-    # (target.optimization_editable_paths()): restore everything else, and keep
+    # In the code optimization phase the agent may also rewrite the linear solves
+    # and the matrix-vector products (target.optimization_editable_paths()): restore everything else, and keep
     # what it wrote to those files.
     editable = tuple(target.optimization_editable_paths())
 

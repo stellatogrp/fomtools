@@ -113,12 +113,17 @@ def code_optimization_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     notes_block = f"\n{notes}\n" if notes else ""
     editable = target.optimization_editable_paths()
     if linsolve_src in editable:
+        both = ops_src in editable
+        others = f"`{linsolve_src}` (the linear solves, usually the hottest code)"
+        if both:
+            others += f" and `{ops_src}` (the matrix-vector products)"
+        fixed = "" if both else f", and `{ops_src}`"
         scope = f"""\
-You may edit `{src}` and `{linsolve_src}` (the linear solves, usually the
-hottest code). Everything else — the Makefile, build flags, headers (including
-the `fom_lin_solve_<name>` signatures in `include/fom_linsolve.h`), numeric data
-in `src/fom_data.c`, and `{ops_src}` — is fixed and restored automatically before
-every check, so changes to it are discarded (don't waste turns editing it).
+You may edit `{src}` and {others}. Everything else — the Makefile, build flags,
+headers (including the `fom_lin_solve_<name>` and `fom_apply_<name>` signatures
+in `include/`), numeric data in `src/fom_data.c`{fixed} — is fixed and restored
+automatically before every check, so changes to it are discarded (don't waste
+turns editing it).
 
 `{linsolve_src}` holds each solve's precomputed factorization (permutation,
 unit-lower factor, reciprocal diagonal) as static data plus the routine that
@@ -129,6 +134,19 @@ folding the permutation into the factor, fusing the gather/scatter — but each
 that factorization: never form, store, or use a matrix inverse. `{verify}` also
 checks every `fom_lin_solve_<name>` directly against its reference solve. To
 profile inside it, `#include "fom_profile.h"` there."""
+        if both:
+            scope += f"""
+
+`{ops_src}` implements each `fom_apply_<name>(x, out)` (out += M @ x) over the
+matrix data in `src/fom_data.c`. Put any specialized matrix-vector kernel HERE,
+inside the `fom_apply_<name>` it replaces — e.g. exploiting Toeplitz, Hadamard,
+banded or block structure, unrolling a small block, or a better sparse loop — and
+call it from `{src}`; do not write matrix-vector loops in `{src}`. Read the
+coefficients from `src/fom_data.c` (or values derived from them at setup); never
+hardcode them. `{verify}` checks every `fom_apply_<name>` directly against its
+matrix, column by column (probing each unit vector) and on random vectors, so a
+kernel must apply exactly `M` for every input and must keep accumulating into
+`out`."""
     else:
         scope = f"""\
 Edit ONLY `{src}`: the Makefile, build flags, headers, numeric data,

@@ -227,6 +227,12 @@ class EmbeddedCTarget(TargetDescriptor):
         (out / self.ops_source_path()).write_text(self._ops_source(ir))
         (out / "src" / "fom_data.c").write_text(self._data_source(ir))
         (out / "src" / "fom_profile.c").write_text(self._profile_source())
+        if self._checked_ops(ir):
+            (out / "test" / "ops_ref.h").write_text(self._ops_ref_header(ir))
+            (out / "test" / "ops_ref.c").write_text(self._ops_ref_source(ir))
+        else:
+            for rel in ("test/ops_ref.h", "test/ops_ref.c"):
+                (out / rel).unlink(missing_ok=True)
         (out / "test" / "verify_data.h").write_text(self._verify_data(ir))
         (out / "test" / "verify_main.c").write_text(self._verify_main(ir))
         (out / "test" / "bench_main.c").write_text(self._bench_main(ir))
@@ -512,45 +518,93 @@ class EmbeddedCTarget(TargetDescriptor):
     def _ops_source(self, ir: FomIR) -> str:
         lines = ['#include "fom_ops.h"', '#include "fom_data.h"', ""]
         for name in _matvec_matrix_names(ir):
-            md = ir.matrices[name]
-            shape = md.shape
-            rows = shape[0]
-            cols = shape[1] if len(shape) > 1 else 1
-            if _is_csr(md):
-                mat = f"FOM_MAT_{name}"
-                lines += [
-                    f"void fom_apply_{name}(const fom_float *x, fom_float *out) {{",
-                    "    fom_int i, p;",
-                ]
-                # Rows are independent (each writes a distinct out[i]) -> parallel.
-                lines += self._omp_for("private(p)")
-                lines += [
-                    f"    for (i = 0; i < {rows}; ++i) {{",
-                    "        fom_float s = 0.0;",
-                    f"        for (p = {mat}_ROWPTR[i]; p < {mat}_ROWPTR[i + 1]; ++p) "
-                    f"s += {mat}_VALS[p] * x[{mat}_COLIDX[p]];",
-                    "        out[i] += s;",
-                    "    }",
-                    "}",
-                    "",
-                ]
-            else:
-                lines += [
-                    f"void fom_apply_{name}(const fom_float *x, fom_float *out) {{",
-                    "    fom_int i, j;",
-                ]
-                lines += self._omp_for("private(j)")
-                lines += [
-                    f"    for (i = 0; i < {rows}; ++i) {{",
-                    "        fom_float s = 0.0;",
-                    f"        for (j = 0; j < {cols}; ++j) s += FOM_MAT_{name}[i * {cols} + j] * x[j];",
-                    "        out[i] += s;",
-                    "    }",
-                    "}",
-                    "",
-                ]
+            lines += self._apply_routine(name, ir.matrices[name], f"fom_apply_{name}")
         lines += self._objective_source(ir)
         return "\n".join(lines)
+
+    def _apply_routine(self, name: str, md, fname: str) -> list[str]:
+        """``void <fname>(x, out)``: ``out += M @ x``, reading ``M`` from ``fom_data.c``
+        (CSR if structurally sparse, dense otherwise)."""
+        shape = md.shape
+        rows = shape[0]
+        cols = shape[1] if len(shape) > 1 else 1
+        mat = f"FOM_MAT_{name}"
+        if _is_csr(md):
+            lines = [
+                f"void {fname}(const fom_float *x, fom_float *out) {{",
+                "    fom_int i, p;",
+            ]
+            # Rows are independent (each writes a distinct out[i]) -> parallel.
+            lines += self._omp_for("private(p)")
+            lines += [
+                f"    for (i = 0; i < {rows}; ++i) {{",
+                "        fom_float s = 0.0;",
+                f"        for (p = {mat}_ROWPTR[i]; p < {mat}_ROWPTR[i + 1]; ++p) "
+                f"s += {mat}_VALS[p] * x[{mat}_COLIDX[p]];",
+                "        out[i] += s;",
+                "    }",
+                "}",
+                "",
+            ]
+        else:
+            lines = [
+                f"void {fname}(const fom_float *x, fom_float *out) {{",
+                "    fom_int i, j;",
+            ]
+            lines += self._omp_for("private(j)")
+            lines += [
+                f"    for (i = 0; i < {rows}; ++i) {{",
+                "        fom_float s = 0.0;",
+                f"        for (j = 0; j < {cols}; ++j) s += {mat}[i * {cols} + j] * x[j];",
+                "        out[i] += s;",
+                "    }",
+                "}",
+                "",
+            ]
+        return lines
+
+    # -- reference matvecs for the direct check of a rewritten fom_ops.c ---
+    def _checked_ops(self, ir: FomIR) -> list[str]:
+        """Matrices whose ``fom_apply_<name>`` ``make verify`` checks on its own.
+
+        Only when the code optimization phase may rewrite ``fom_ops.c``
+        (:meth:`optimization_editable_paths`): each routine is held to a
+        package-written reference over the same ``fom_data.c`` arrays, so a
+        rewrite cannot change the matrix it applies.
+        """
+        if self.ops_source_path() not in self.optimization_editable_paths():
+            return []
+        return _matvec_matrix_names(ir)
+
+    def _ops_ref_header(self, ir: FomIR) -> str:
+        lines = [
+            "#ifndef FOM_OPS_REF_H",
+            "#define FOM_OPS_REF_H",
+            "",
+            '#include "fom_workspace.h"',
+            "",
+            "/* Package-written reference matvecs (out += M @ x), the ones generated",
+            "   into fom_ops.c before any rewrite. Built into the verify binary only. */",
+        ]
+        lines += [
+            f"void fom_ref_apply_{name}(const fom_float *x, fom_float *out);"
+            for name in self._checked_ops(ir)
+        ]
+        lines += ["", "#endif /* FOM_OPS_REF_H */", ""]
+        return "\n".join(lines)
+
+    def _ops_ref_source(self, ir: FomIR) -> str:
+        lines = ['#include "ops_ref.h"', '#include "fom_data.h"', ""]
+        for name in self._checked_ops(ir):
+            lines += self._apply_routine(name, ir.matrices[name], f"fom_ref_apply_{name}")
+        return "\n".join(lines)
+
+    def _ops_basis_probes(self, md) -> bool:
+        """Probe every unit vector (an exact check) when it fits the work budget."""
+        rows = md.shape[0]
+        cols = md.shape[1] if len(md.shape) > 1 else 1
+        nnz = md.nnz() if _is_csr(md) else rows * cols
+        return cols * (nnz + rows) <= self._OPS_PROBE_BUDGET
 
     # -- verification objective ----------------------------------------------
     def _objective_arrays(self, ir: FomIR, storage: str = "static const") -> list[str]:
@@ -862,6 +916,15 @@ class EmbeddedCTarget(TargetDescriptor):
     #: Right-hand sides per factorization in the direct linear-solve check.
     _LINSOLVE_CHECK_RHS = 3
 
+    #: Random probes per matrix in the direct matvec check. They run on top of the
+    #: unit-vector probes (which alone miss a routine that branches on its input)
+    #: and are the whole check for a matrix over the probe budget.
+    _OPS_CHECK_RANDOM = 2
+
+    #: Work budget (about ``cols * (nnz + rows)``) up to which the matvec check
+    #: probes every unit vector, recovering the routine's matrix column by column.
+    _OPS_PROBE_BUDGET = 1e8
+
     def _checked_factorizations(self, ir: FomIR) -> list:
         """Direct factorizations whose C solve ``make verify`` checks on its own.
 
@@ -944,6 +1007,76 @@ class EmbeddedCTarget(TargetDescriptor):
             out.append((check, max_iter, [oracle.solve(param_values=s["params"]) for s in samples]))
         return out
 
+    def _ops_check_data(self, ir: FomIR) -> list[str]:
+        """Random probe vectors only: O(cols) per matrix, never a reference output."""
+        lines = []
+        rng = np.random.default_rng(self.config.seed + 2)
+        k = self._OPS_CHECK_RANDOM
+        for name in self._checked_ops(ir):
+            md = ir.matrices[name]
+            cols = md.shape[1] if len(md.shape) > 1 else 1
+            probes = rng.standard_normal((k, cols))
+            lines.append(_c_array_2d(f"FOM_VERIFY_OP_{name.upper()}_X", probes, f"[{k}][{cols}]"))
+            lines.append("")
+        return lines
+
+    def _ops_check_main(self, ir: FomIR) -> list[str]:
+        """Check each ``fom_apply_<name>`` against the package's reference matvec.
+
+        Both start from the same nonzero ``out``, so the accumulate semantics are
+        checked too. Unit-vector probes (when within budget) compare the routine's
+        matrix with ``M`` entry by entry; the random probes follow.
+        """
+        lines = []
+        k = self._OPS_CHECK_RANDOM
+        for name in self._checked_ops(ir):
+            md = ir.matrices[name]
+            rows = md.shape[0]
+            cols = md.shape[1] if len(md.shape) > 1 else 1
+            nb = cols if self._ops_basis_probes(md) else 0
+            mode = "basis" if nb else "random"
+            up = name.upper()
+            lines += [
+                "    {",
+                f"        /* fom_apply_{name}: direct check against its matrix. */",
+                f"        static fom_float x[{cols}], got[{rows}], ref[{rows}];",
+                "        fom_float worst_op = 0.0;",
+                "        int r, i, c;",
+                f"        for (r = 0; r < {nb + k}; ++r) {{",
+                "            fom_float err = 0.0, scale = 1.0;",
+                "            int bad = 0;",
+                f"            for (c = 0; c < {cols}; ++c)",
+                f"                x[c] = (r < {nb}) ? (fom_float)(c == r) "
+                f": FOM_VERIFY_OP_{up}_X[r - {nb}][c];",
+                f"            for (i = 0; i < {rows}; ++i) got[i] = ref[i] = (fom_float)(i % 7 - 3);",
+                f"            fom_apply_{name}(x, got);",
+                f"            fom_ref_apply_{name}(x, ref);",
+                f"            for (i = 0; i < {rows}; ++i) {{",
+                "                fom_float d = got[i] - ref[i];",
+                "                fom_float a = ref[i];",
+                "                if (d < 0) d = -d;",
+                "                if (a < 0) a = -a;",
+                "                if (d > err) { err = d; bad = i; }",
+                "                if (1.0 + a > scale) scale = 1.0 + a;",
+                "            }",
+                "            if (err > worst_op) worst_op = err;",
+                "            if (err > tol * scale) {",
+                f"                if (r < {nb})",
+                f'                    printf("VERIFY FAILED: fom_apply_{name} entry (%d, %d) is "',
+                '                           "off by %.3e from its matrix\\n", bad, r, (double)err);',
+                "                else",
+                f'                    printf("VERIFY FAILED: fom_apply_{name} differs from its "',
+                '                           "matrix by %.3e in row %d on random probe %d\\n",',
+                f"                           (double)err, bad, r - {nb});",
+                "                return 1;",
+                "            }",
+                "        }",
+                f'        printf("OPSCHECK name={name} mode={mode} probes={nb + k} '
+                'max_err=%.3e\\n", (double)worst_op);',
+                "    }",
+            ]
+        return lines
+
     def _verify_data(self, ir: FomIR) -> str:
         samples = self._sample_params(ir)
         n = len(samples)
@@ -975,6 +1108,7 @@ class EmbeddedCTarget(TargetDescriptor):
         lines.append(f"static const fom_int FOM_VERIFY_ITERS[{n}] = {{{body}}};")
         lines += self._verify_objective_data(ir, samples)
         lines.append("")
+        lines += self._ops_check_data(ir)
         lines += self._linsolve_check_data(ir)
         lines += ["#endif /* FOM_VERIFY_DATA_H */", ""]
         return "\n".join(lines)
@@ -1138,6 +1272,11 @@ class EmbeddedCTarget(TargetDescriptor):
                 "#include <math.h>",
                 '#include "fom_solver.h"',
                 *(['#include "fom_linsolve.h"'] if self._checked_factorizations(ir) else []),
+                *(
+                    ['#include "fom_ops.h"', '#include "ops_ref.h"']
+                    if self._checked_ops(ir)
+                    else []
+                ),
                 '#include "verify_data.h"',
                 "",
                 *(self._verify_stop_helper() if objective else []),
@@ -1151,6 +1290,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 "    int failures = 0;",
                 *(["    int stop_failures = 0;", "    fom_int stop_status;"] if objective else []),
                 "",
+                *self._ops_check_main(ir),
                 *self._linsolve_check_main(ir),
                 "",
                 "    fom_set_default_settings(&settings);",
@@ -1392,6 +1532,8 @@ class EmbeddedCTarget(TargetDescriptor):
                 "CFLAGS ?= -O2 -Wall -Iinclude",
                 "BENCHFLAGS ?= -O3 -Iinclude",
                 "SRC = src/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c",
+                "# Package-written reference matvecs for verify's direct check of fom_ops.c.",
+                "VERIFY_SRC = $(wildcard test/ops_ref.c)",
                 "",
                 "UNAME_S := $(shell uname -s)",
                 "ifeq ($(UNAME_S),Darwin)",
@@ -1402,14 +1544,15 @@ class EmbeddedCTarget(TargetDescriptor):
                 "",
                 ".PHONY: verify bench profile lib release clean objective_guard",
                 "",
-                f"verify:{guard} $(SRC) test/verify_main.c",
-                "\t$(CC) $(CFLAGS) -Itest $(SRC) test/verify_main.c -o verify_bin -lm",
+                f"verify:{guard} $(SRC) $(VERIFY_SRC) test/verify_main.c",
+                "\t$(CC) $(CFLAGS) -Itest $(SRC) $(VERIFY_SRC) test/verify_main.c -o verify_bin -lm",
                 "\t./verify_bin",
                 "",
                 "# Build the shared library from the marker-free production source.",
-                "release: release/fom_solver.c src/fom_data.c release/fom_linsolve.c src/fom_ops.c",
+                "release: release/fom_solver.c src/fom_data.c release/fom_linsolve.c "
+                "release/fom_ops.c",
                 "\t$(CC) $(CFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
-                "release/fom_linsolve.c src/fom_ops.c -o libfomsolver.$(LIBEXT) -lm",
+                "release/fom_linsolve.c release/fom_ops.c -o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "bench: $(SRC) test/bench_main.c",
                 "\t$(CC) $(BENCHFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",
