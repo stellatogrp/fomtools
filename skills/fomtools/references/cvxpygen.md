@@ -100,7 +100,8 @@ cpg_set_solver_check_termination(N);     // likewise
 ### Stopping on OSQP's residuals
 
 The built-in builders set `max(||Ax - clamp(Ax, l, u)||_inf, ||Px + q + A'y||_inf)`
-(unscaled when `QPData.unscale = (D, E, c)` is set) as the verification objective,
+(in original units under `auto_equilibrate`, via `QPData.unscale = (D, E, c)` set
+by `scale_qp`) as the verification objective,
 so `TerminationKind.OBJECTIVE` is OSQP's test with `eps_abs = tol`, `eps_rel = 0`,
 `scaled_termination = False`:
 

@@ -258,9 +258,10 @@ problem.solve(method="CPG", tol=1e-5, check_termination=10)
 
 The residuals are tested every `check_termination` iterations (default 25) and at
 `max_iter`, and the `pri_res` / `dua_res` the bridge reports are the two halves
-of the objective at the stop. For an equilibrated QP (`QPData.unscale` holding the
-diagonal scalings `D`, `E` and the cost scaling `c`) the objective is measured in
-the original problem's units, the same units the bridge reports. A custom builder
+of the objective at the stop. With `auto_equilibrate` (the default) the FOM iterates
+on the Ruiz-equilibrated QP, and `scale_qp` records its scalings in
+`QPData.unscale = (D, E, c)`, so the objective is still measured in the original
+problem's units, the same units the bridge reports. A custom builder
 can reuse `fomtools.cvxpygen.builders.set_residual_objective(v, qp, exprs, x, y)`
 on the primal and dual iterate its iteration produces.
 
