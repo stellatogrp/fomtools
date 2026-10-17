@@ -76,6 +76,20 @@ class CodegenResult:
         return self.optimize is not None and self.optimize.success
 
 
+def _static_issues(target, optimized: dict[str, str], translated: dict[str, str]) -> list[str]:
+    """Target invariant violations (e.g. division, malloc) in rewritten non-solver sources.
+
+    The solver is held to these by its prompt and verify, as before; a rewritten
+    linear solve is new ground for the agent, so it is also checked here.
+    """
+    issues = []
+    for rel, text in optimized.items():
+        if rel == target.solver_source_path() or text == translated.get(rel):
+            continue
+        issues += [f"[optimization not kept: {rel}: {v}]" for v in target.static_checks(text)]
+    return issues
+
+
 def _bench_mean_us(out_dir: Path) -> float | None:
     try:
         return run_bench(out_dir).mean_us
@@ -326,6 +340,23 @@ def generate_code(
     def restore_deterministic_files():
         target.scaffold(ir, out_dir)
 
+    # In the code optimization phase the agent may also rewrite the linear solve
+    # (target.optimization_editable_paths()): restore everything else, and keep
+    # what it wrote to those files.
+    editable = tuple(target.optimization_editable_paths())
+
+    def read_editable() -> dict[str, str]:
+        return {rel: (out_dir / rel).read_text() for rel in editable}
+
+    def write_editable(sources: dict[str, str]) -> None:
+        for rel, text in sources.items():
+            (out_dir / rel).write_text(text)
+
+    def restore_all_but_editable():
+        kept = read_editable()
+        target.scaffold(ir, out_dir)
+        write_editable(kept)
+
     # --- Translation phase ----------------------------------------------------
     translation_task = AgentTask(
         workdir=out_dir,
@@ -360,8 +391,7 @@ def generate_code(
     optimization_diff = None
     optimizations_md = None
     if code_optimization and translate.success:
-        solver_path = out_dir / target.solver_source_path()
-        translated_source = solver_path.read_text()  # known-good fallback
+        translated_sources = read_editable()  # known-good fallback
 
         optimization_task = AgentTask(
             workdir=out_dir,
@@ -371,25 +401,35 @@ def generate_code(
             phase="code_optimization",
             max_turns=config.agent_optimize_max_turns,
             bench_cmd=["make", "bench"],
-            restore_hook=restore_deterministic_files,
+            restore_hook=restore_all_but_editable,
+            extra={"editable_paths": editable},
         )
         optimize = driver.run(optimization_task)
-        restore_deterministic_files()  # discard any non-solver edits
-        optimized_source = solver_path.read_text()
-        changed = optimized_source != translated_source
+        restore_all_but_editable()  # discard edits outside the editable sources
+        optimized_sources = read_editable()
+        changed = optimized_sources != translated_sources
         notes: list[str] = []
 
-        # Gate 1 (correctness): the optimized solver must still verify. If it
-        # broke (or never verified), fall back to the known-good translated solver.
+        # Gate 1 (correctness): the optimized sources must still verify (and, on
+        # the embedded target, pass its static checks). If they broke (or never
+        # verified), fall back to the known-good translated sources.
         recheck = build_and_verify(out_dir, target) if (optimize.success and changed) else None
-        correct = bool(optimize.success and (recheck is None or recheck.success))
+        static_issues = (
+            _static_issues(target, optimized_sources, translated_sources)
+            if (optimize.success and changed)
+            else []
+        )
+        correct = bool(
+            optimize.success and (recheck is None or recheck.success) and not static_issues
+        )
         if not correct and changed:
-            solver_path.write_text(translated_source)
-            optimized_source = translated_source
+            write_editable(translated_sources)
+            optimized_sources = translated_sources
             changed = False
-            notes.append("[optimization not kept: the optimized solver failed verification]")
+            notes.append("[optimization not kept: the optimized sources failed verification]")
             if recheck and not recheck.success:
                 notes.append(recheck.output)
+            notes.extend(static_issues)
 
         # Gate 2 (performance): keep a *changed* solver only if it is at least as
         # fast as the translated solver, measured head-to-head now (timings are noisy, so a
@@ -398,10 +438,10 @@ def generate_code(
         kept = changed and correct
         if profile and have_cc and timing is not None and changed and correct:
             c_optimized = _bench_mean_us(out_dir)
-            solver_path.write_text(translated_source)
+            write_editable(translated_sources)
             c_translated = _bench_mean_us(out_dir)
             if optimization_is_faster(c_optimized, c_translated):
-                solver_path.write_text(optimized_source)
+                write_editable(optimized_sources)
                 timing.c_initial_us, timing.c_final_us = c_translated, c_optimized
             else:
                 kept = False
@@ -425,14 +465,16 @@ def generate_code(
             log=optimize.log + ("\n" + "\n".join(notes) if notes else ""),
             agent_log=optimize.agent_log,
             turns_used=optimize.turns_used,
-            artifacts=[solver_path],
+            artifacts=[out_dir / rel for rel in editable],
             truncated=optimize.truncated,
         )
 
-        # Record exactly what changed (diff translated -> final) + the agent's notes.
-        final_source = solver_path.read_text()
-        optimization_diff = unified_solver_diff(
-            translated_source, final_source, target.solver_source_path()
+        # Record exactly what changed (diff translated -> final, per editable
+        # source) + the agent's notes.
+        final_sources = read_editable()
+        optimization_diff = "".join(
+            unified_solver_diff(translated_sources[rel], final_sources[rel], rel)
+            for rel in editable
         )
         # The agent's own output only: the combined log interleaves compiler and
         # verify output, and carries the pipeline's bracketed notes appended above.
@@ -464,7 +506,11 @@ def generate_code(
     # Always emit a clean, marker-free production copy of the final solver.
     production_path = None
     if translate.success:
-        production_path = write_production_variant(out_dir, target.solver_source_path())
+        production_path = write_production_variant(
+            out_dir,
+            target.solver_source_path(),
+            tuple(rel for rel in editable if rel != target.solver_source_path()),
+        )
 
     return CodegenResult(
         ir=ir,

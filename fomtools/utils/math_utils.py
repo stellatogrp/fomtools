@@ -34,7 +34,9 @@ def norm(x, norm_type):
             return np.sqrt(np.sum(np.power(x, 2)))
 
 
-def repair_crossed_bounds(lb, ub, tol: float = 1e-7) -> tuple[np.ndarray, np.ndarray]:
+def repair_crossed_bounds(
+    lb, ub, tol: float = 1e-7, buffer: float = 0.0
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Repair elementwise crossed bounds ``lb > ub`` by swapping them.
 
@@ -53,6 +55,11 @@ def repair_crossed_bounds(lb, ub, tol: float = 1e-7) -> tuple[np.ndarray, np.nda
     tol : float, default 1e-7
         Largest crossing ``lb - ub`` treated as solver noise, scaled by
         ``max(1, |lb|, |ub|)``.
+    buffer : float, default 0.0
+        Relative outward padding, scaled like ``tol``, applied to the repaired
+        (crossed) entries only. A crossing within an LP solver's tolerance means
+        each computed bound is only accurate to that tolerance, so widening the
+        swapped interval by it keeps the bound valid.
 
     Returns
     -------
@@ -72,4 +79,8 @@ def repair_crossed_bounds(lb, ub, tol: float = 1e-7) -> tuple[np.ndarray, np.nda
         raise ValueError(
             f"Bounds cross by more than tol={tol}: max(lb - ub) = {np.max(lb - ub):.3e}"
         )
-    return np.minimum(lb, ub), np.maximum(lb, ub)
+    lo, hi = np.minimum(lb, ub), np.maximum(lb, ub)
+    if buffer > 0:
+        pad = np.where(lb > ub, buffer * scale, 0.0)
+        lo, hi = lo - pad, hi + pad
+    return lo, hi

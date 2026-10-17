@@ -70,6 +70,11 @@ class CudaTarget(EmbeddedCTarget):
     def ops_source_path(self) -> str:
         return "src/fom_ops.cu"
 
+    def optimization_editable_paths(self) -> tuple[str, ...]:
+        """Only the solver: without a GPU, verify only compiles the CUDA sources,
+        so a rewritten linear solve could not be checked."""
+        return (self.solver_source_path(),)
+
     def linsolve_source_path(self) -> str:
         return "src/fom_linsolve.cu"
 

@@ -183,9 +183,12 @@ class CodegenConfig(BaseModel):
         ge=1,
         default=600,
         description=(
-            "Wall-clock budget, in seconds, for one coding-agent attempt at the "
-            "translation phase. The phase is a bounded task, so the default is "
-            "generous for it."
+            "Wall-clock budget, in seconds, for the translation phase, shared by "
+            "all of its agent attempts. The agent is told the time left after each "
+            "tool call, a shell command cannot outlive it, and once it is spent the "
+            "agent is stopped (after a short grace period to write its summary) "
+            "and no further attempt starts. The phase is a bounded task, so the "
+            "default is generous for it."
         ),
     )
     agent_optimize_max_turns: int = Field(
@@ -203,12 +206,13 @@ class CodegenConfig(BaseModel):
         ge=1,
         default=1800,
         description=(
-            "Wall-clock budget, in seconds, for one coding-agent attempt at the "
-            "code optimization phase. Larger than the translation budget because the "
-            "phase is open-ended: profile, rewrite, re-verify, benchmark, repeat. "
-            "An attempt killed part-way still leaves whatever it had written on "
-            "disk (which the pipeline re-verifies), but loses the agent's own "
-            "summary of what it did and why."
+            "Wall-clock budget, in seconds, for the code optimization phase, "
+            "enforced as for agent_timeout_s. Larger than the translation budget "
+            "because the phase is open-ended: profile, rewrite, re-verify, "
+            "benchmark, repeat. A stopped agent still leaves whatever it had "
+            "written on disk, which the pipeline re-verifies and benchmarks. The "
+            "gates that run after the agent (verify, benchmark, profile) take "
+            "seconds and are outside the budget."
         ),
     )
     cg_auto_min_dim: int = Field(

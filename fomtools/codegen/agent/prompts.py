@@ -84,12 +84,34 @@ def code_optimization_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     linsolve_src = target.linsolve_source_path()
     notes = target.agent_notes()
     notes_block = f"\n{notes}\n" if notes else ""
+    editable = target.optimization_editable_paths()
+    if linsolve_src in editable:
+        scope = f"""\
+You may edit `{src}` and `{linsolve_src}` (the linear solves, usually the
+hottest code). Everything else — the Makefile, build flags, headers (including
+the `fom_lin_solve_<name>` signatures in `include/fom_linsolve.h`), numeric data
+in `src/fom_data.c`, and `{ops_src}` — is fixed and restored automatically before
+every check, so changes to it are discarded (don't waste turns editing it).
+
+`{linsolve_src}` holds each solve's precomputed factorization (permutation,
+unit-lower factor, reciprocal diagonal) as static data plus the routine that
+applies it. You may restructure both — e.g. a dense or fully unrolled
+triangular solve for a small or dense factor, a blocked/supernodal layout,
+folding the permutation into the factor, fusing the gather/scatter — but each
+`fom_lin_solve_<name>` must still solve the SAME system `M x = b` by applying
+that factorization: never form, store, or use a matrix inverse. `{verify}` also
+checks every `fom_lin_solve_<name>` directly against its reference solve. To
+profile inside it, `#include "fom_profile.h"` there."""
+    else:
+        scope = f"""\
+Edit ONLY `{src}`: the Makefile, build flags, headers, numeric data,
+`{linsolve_src}`, and `{ops_src}` are fixed and restored automatically before
+every check, so changes to them are discarded (don't waste turns editing them)."""
     return f"""\
 The solver `{src}` already passes `{verify}`. Now make it as FAST as possible
-WITHOUT ever breaking correctness. Edit ONLY `{src}`: the Makefile, build flags,
-headers, numeric data, `{linsolve_src}`, and `{ops_src}` are fixed and restored
-automatically before every check, so changes to them are discarded (don't waste
-turns editing them). Work as a tight, profile-guided loop:
+WITHOUT ever breaking correctness. {scope}
+
+Work as a tight, profile-guided loop:
 
 1. PROFILE. Run `make profile`. It prints, per instrumented region, a line
    `PROF region=<name> total_us=<t> calls=<n> pct=<%>` sorted hottest-first, and
@@ -112,8 +134,8 @@ turns editing them). Work as a tight, profile-guided loop:
 5. Repeat from step 1 until further changes give no meaningful improvement
    (e.g. two rounds with < ~2% gain) or the code is clearly optimal.
 
-Keep the target constraints throughout (embedded: no dynamic allocation,
-division-free).
+Keep the target constraints throughout, in every file you edit (embedded: no
+dynamic allocation, division-free).
 {notes_block}
 In your FINAL version, KEEP `FOM_PROF_BEGIN/END` markers around
 the main computational regions (they are no-ops in production) so that

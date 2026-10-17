@@ -182,6 +182,7 @@ def run_verify_loop(
     max_attempts: int = 5,
     max_turns: int = 16,
     truncated_probe: Callable[[], bool] | None = None,
+    budget_s: float | None = None,
 ) -> AgentResult:
     """Drive a real coding backend against ``task.verify_cmd`` until it passes.
 
@@ -210,6 +211,12 @@ def run_verify_loop(
         attempt was cut short by a wall-clock budget. Its result is recorded on
         :attr:`AgentResult.truncated`, so a caller can say so rather than
         presenting a half-finished run as a complete one.
+    budget_s:
+        Wall-clock budget, in seconds, for the whole phase: every attempt shares
+        it, and no new attempt starts once it is spent. It is published to the
+        backend as ``task.extra["budget"]`` (a
+        :class:`~fomtools.codegen.agent.budget.TimeBudget`) so an attempt can
+        enforce the time left. ``None`` leaves the phase unbounded.
 
     Returns
     -------
@@ -233,7 +240,22 @@ def run_verify_loop(
     # Larger turn budget for the open-ended code optimization phase.
     turns = task.max_turns if task.phase == "code_optimization" else max(max_turns, 20)
 
+    budget = None
+    if budget_s is not None:
+        from fomtools.codegen.agent.budget import TimeBudget
+
+        budget = TimeBudget.starting_now(float(budget_s))
+        task.extra["budget"] = budget
+
+    attempts_made = 0
     for attempt in range(max_attempts):
+        if budget is not None and attempt > 0 and budget.remaining() <= 0:
+            log_parts.append(
+                f"\n[fomtools: the {budget_s:g}s budget for this phase is spent; "
+                "no further attempts.]\n"
+            )
+            break
+        attempts_made = attempt + 1
         log_parts.append(f"\n===== agent attempt {attempt + 1} =====\n")
         # The agent hitting its turn cap (or any transient error) must not crash
         # the run: capture it and let the authoritative verify below decide,
@@ -275,15 +297,17 @@ def run_verify_loop(
             + output[:4000]
             + "..."
             + output[-4000:]
-            + "\nFix `"
-            + task.solver_rel_path
-            + "` and make it pass."
+            + "\nFix "
+            + ", ".join(
+                f"`{rel}`" for rel in task.extra.get("editable_paths", (task.solver_rel_path,))
+            )
+            + " and make it pass."
         )
 
     return AgentResult(
         success=False,
         log="".join(log_parts),
         agent_log="".join(agent_parts),
-        turns_used=max_attempts,
+        turns_used=attempts_made,
         truncated=bool(truncated_probe and truncated_probe()),
     )

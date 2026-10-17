@@ -50,8 +50,19 @@ class TargetDescriptor(ABC):
         return "src/fom_ops.c"
 
     def linsolve_source_path(self) -> str:
-        """Relative path of the deterministic linear-solve source."""
+        """Relative path of the generated linear-solve source."""
         return "src/fom_linsolve.c"
+
+    def optimization_editable_paths(self) -> tuple[str, ...]:
+        """Sources the code optimization phase may rewrite.
+
+        The solver and the linear solve, which is usually where the time goes:
+        both are re-verified, the solve also directly against its matrix (see
+        the generated ``test/verify_main.c``), and kept only if faster. Every
+        other file is restored from the generator. The translation phase may
+        write only the solver.
+        """
+        return (self.solver_source_path(), self.linsolve_source_path())
 
     def agent_notes(self) -> str:
         """Target-specific guidance appended to the coding-agent prompts.

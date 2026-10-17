@@ -141,7 +141,8 @@ def test_large_scale_openmp_through_bridge(requires_compiler, tmp_path, monkeypa
 
 
 @pytest.mark.requires_compiler
-def test_generate_solver_end_to_end(requires_compiler, tmp_path, monkeypatch):
+@pytest.mark.parametrize("auto_equilibrate", [True, False])
+def test_generate_solver_end_to_end(requires_compiler, tmp_path, monkeypatch, auto_equilibrate):
     if shutil.which("cmake") is None:
         pytest.skip("cmake not available")
     if importlib.util.find_spec("pip") is None:
@@ -151,7 +152,10 @@ def test_generate_solver_end_to_end(requires_compiler, tmp_path, monkeypatch):
     # to the working directory, so use a relative code_dir.
     monkeypatch.chdir(tmp_path)
     problem, q, x = _build_problem()
-    code_dir = "cpg_fomtools"
+    # Distinct module names and symbol prefixes: both parametrizations load
+    # their compiled wrapper into this one process.
+    tag = "eq" if auto_equilibrate else "plain"
+    code_dir = f"cpg_fomtools_{tag}"
 
     result = generate_solver(
         problem,
@@ -161,8 +165,14 @@ def test_generate_solver_end_to_end(requires_compiler, tmp_path, monkeypatch):
         config=CodegenConfig(termination=TerminationSpec(max_iters=2000)),
         driver=StubAgentDriver(GOLDEN),
         wrapper=True,
+        prefix=tag,
+        auto_equilibrate=auto_equilibrate,
     )
     assert result.success
+    assert (
+        "bridge_D"
+        in (tmp_path / code_dir / "c" / "solver_code" / "src" / "cpg_fom_bridge.c").read_text()
+    ) is auto_equilibrate
 
     # Generated layout: fomtools solver + bridge inside cvxpygen's solver_code.
     solver_code = tmp_path / code_dir / "c" / "solver_code"
