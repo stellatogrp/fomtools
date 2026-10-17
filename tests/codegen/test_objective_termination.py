@@ -703,8 +703,11 @@ def test_float32_rolled_ista_verifies(tmp_path, requires_compiler):
     assert "typedef float fom_float;" in (tmp_path / "include" / "fom_workspace.h").read_text()
 
 
-def test_scheduled_objective_verifies(tmp_path, requires_compiler):
-    case = build_scheduled_objective(extrapolated=True)
+@pytest.mark.parametrize(
+    "version, backend", [(Version.EMBEDDED, Backend.C), (Version.LARGE_SCALE, Backend.OPENMP)]
+)
+def test_scheduled_objective_verifies(tmp_path, requires_compiler, version, backend):
+    case = build_scheduled_objective(extrapolated=True, version=version, backend=backend)
     result = generate_code(
         case["build"],
         out_dir=tmp_path,
@@ -717,7 +720,10 @@ def test_scheduled_objective_verifies(tmp_path, requires_compiler):
     assert result.ir.is_scheduled
 
 
-def test_unrolled_objective_verifies(tmp_path, requires_compiler):
+@pytest.mark.parametrize(
+    "version, backend", [(Version.EMBEDDED, Backend.C), (Version.LARGE_SCALE, Backend.OPENMP)]
+)
+def test_unrolled_objective_verifies(tmp_path, requires_compiler, version, backend):
     ex = fista_example()
     v, its = ex["verifier"], ex["iterates"]
     v.set_objective_norm(its[-1] - its[-2], np.inf)
@@ -725,7 +731,7 @@ def test_unrolled_objective_verifies(tmp_path, requires_compiler):
         v,
         None,
         tmp_path,
-        config=objective_config(tol=1e-3),
+        config=objective_config(tol=1e-3, version=version, backend=backend),
         driver=StubAgentDriver(FISTA_GOLDEN),
         name="fista",
         iterates=its,
@@ -754,6 +760,31 @@ def test_tape_that_rolls_stops_within_the_recorded_horizon(tmp_path, requires_co
     assert not result.ir.unrolled and result.ir.termination.max_iters == 30
     res = ReferenceOracle(result.ir).solve(param_values={"p0": case["data"]["b"]})
     assert res.iters <= 30
+
+
+@pytest.mark.parametrize("norm", ["inf", "2"])
+def test_openmp_reductions_compile(tmp_path, requires_compiler, norm):
+    """The objective's OpenMP reductions are real pragmas, not just comments:
+    compile the ops source with OpenMP on (front end only where the toolchain
+    has no runtime, as Apple clang)."""
+    import subprocess
+
+    case = build_scheduled_objective(
+        extrapolated=True,
+        ord={"inf": np.inf, "2": 2}[norm],
+        version=Version.LARGE_SCALE,
+        backend=Backend.OPENMP,
+    )
+    ir = extract_scheduled_ir(case["build"], case["schedules"], config=case["config"])
+    scaffold(ir, tmp_path, case["config"])
+    ops = (tmp_path / "src" / "fom_ops.c").read_text()
+    assert ("reduction(max : r)" in ops) == (norm == "inf")
+    for flags in (["-fopenmp"], ["-Xclang", "-fopenmp"]):
+        cmd = [requires_compiler, "-Werror", "-Wall", "-Iinclude", *flags, "-c", "src/fom_ops.c"]
+        proc = subprocess.run(cmd + ["-o", "ops.o"], cwd=tmp_path, capture_output=True, text=True)
+        if proc.returncode == 0:
+            return
+    pytest.skip(f"no OpenMP-capable compiler front end: {proc.stderr[-300:]}")
 
 
 def test_verify_rejects_a_solver_that_never_calls_fom_objective(tmp_path, requires_compiler):
