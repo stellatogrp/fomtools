@@ -21,9 +21,10 @@ import re
 from pathlib import Path
 
 import numpy as np
+import scipy.sparse as spa
 
 from fomtools.codegen import spec
-from fomtools.codegen.ir import ActivationKind, FomIR
+from fomtools.codegen.ir import ActivationKind, FomIR, csr_arrays
 from fomtools.codegen.oracle import ReferenceOracle
 from fomtools.codegen.targets.base import TargetDescriptor, strip_c_comments_and_strings
 
@@ -50,20 +51,39 @@ def _c_int_array(name: str, values, storage: str = "static const") -> str:
     return f"{storage} fom_int {name}[{flat.size}] = {{{body}}};"
 
 
-def _csr_from_dense(A: np.ndarray, tol: float = 1e-12):
-    """Return (rowptr, colidx, vals) CSR arrays of a dense matrix."""
-    A = np.atleast_2d(np.asarray(A, dtype=float))
-    rows, cols = A.shape
-    rowptr = [0]
-    colidx: list[int] = []
-    vals: list[float] = []
-    for i in range(rows):
-        for j in range(cols):
-            if abs(A[i, j]) > tol:
-                colidx.append(j)
-                vals.append(A[i, j])
-        rowptr.append(len(colidx))
-    return rowptr, colidx, vals
+def _strict_triangle(csc) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``(indptr, indices, data)`` of a triangular CSC factor without its diagonal.
+
+    The emitted solves keep the diagonal elsewhere (unit for ``L``, the reciprocals
+    ``UINV`` for ``U``), so their inner loops touch off-diagonal entries only and
+    need no per-entry branch.
+    """
+    m = spa.csc_matrix((csc.data, csc.indices, csc.indptr), shape=(csc.n_rows, csc.n_cols))
+    m = (m - spa.diags(m.diagonal())).tocsc()
+    m.eliminate_zeros()
+    m.sort_indices()
+    return m.indptr, m.indices, m.data
+
+
+def _factor_arrays(name: str, fac) -> list[str]:
+    """The constant arrays of a direct factorization: permutation, the strictly
+    lower ``L``, and the reciprocal pivots (LDL^T) or the strictly upper ``U`` and
+    reciprocal diagonal (LU)."""
+    up = name.upper()
+    lines = [_c_int_array(f"FOM_FAC_{up}_PERM", fac.perm)]
+    indptr, indices, data = _strict_triangle(fac.L)
+    lines.append(_c_int_array(f"FOM_FAC_{up}_L_INDPTR", indptr))
+    lines.append(_c_int_array(f"FOM_FAC_{up}_L_INDICES", indices))
+    lines.append(_c_array(f"FOM_FAC_{up}_L_DATA", data))
+    if fac.method == "ldlt":
+        lines.append(_c_array(f"FOM_FAC_{up}_DINV", fac.dinv))
+    else:
+        indptr, indices, data = _strict_triangle(fac.U)
+        lines.append(_c_int_array(f"FOM_FAC_{up}_U_INDPTR", indptr))
+        lines.append(_c_int_array(f"FOM_FAC_{up}_U_INDICES", indices))
+        lines.append(_c_array(f"FOM_FAC_{up}_U_DATA", data))
+        lines.append(_c_array(f"FOM_FAC_{up}_UINV", fac.uinv))
+    return lines
 
 
 def _matvec_matrix_names(ir: FomIR) -> list[str]:
@@ -85,7 +105,7 @@ def _is_csr(md) -> bool:
     rows = shape[0]
     cols = shape[1] if len(shape) > 1 else 1
     size = rows * cols
-    nnz = int(np.count_nonzero(np.abs(md.array) > 1e-12))
+    nnz = md.nnz()
     return size >= 16 and 2 * nnz < size
 
 
@@ -348,7 +368,7 @@ class EmbeddedCTarget(TargetDescriptor):
         for name, md in ir.matrices.items():
             if name in csr:
                 continue  # emitted as CSR in fom_ops.c
-            lines.append(_c_array(f"FOM_MAT_{name}", md.array, storage="const"))
+            lines.append(_c_array(f"FOM_MAT_{name}", md.dense(), storage="const"))
             lines.append("")
         return "\n".join(lines)
 
@@ -387,7 +407,7 @@ class EmbeddedCTarget(TargetDescriptor):
             cols = shape[1] if len(shape) > 1 else 1
             up = name.upper()
             if _is_csr(md):
-                rowptr, colidx, vals = _csr_from_dense(md.array)
+                rowptr, colidx, vals = md.csr()
                 lines.append(_c_int_array(f"FOM_OP_{up}_ROWPTR", rowptr))
                 lines.append(_c_int_array(f"FOM_OP_{up}_COLIDX", colidx))
                 lines.append(_c_array(f"FOM_OP_{up}_VALS", vals))
@@ -461,7 +481,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 lines.append(
                     f"/* ---- solve '{name}' (CG, preconditioned conjugate gradient) ---- */"
                 )
-                rowptr, colidx, vals = _csr_from_dense(fac.A.to_dense())
+                rowptr, colidx, vals = csr_arrays(fac.A.to_scipy())
                 lines.append(_c_int_array(f"FOM_FAC_{up}_A_ROWPTR", rowptr))
                 lines.append(_c_int_array(f"FOM_FAC_{up}_A_COLIDX", colidx))
                 lines.append(_c_array(f"FOM_FAC_{up}_A_VALS", vals))
@@ -471,17 +491,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 lines.append("")
                 continue
             lines.append(f"/* ---- factorization '{name}' ({fac.method.upper()}) ---- */")
-            lines.append(_c_int_array(f"FOM_FAC_{up}_PERM", fac.perm))
-            lines.append(_c_int_array(f"FOM_FAC_{up}_L_INDPTR", fac.L.indptr))
-            lines.append(_c_int_array(f"FOM_FAC_{up}_L_INDICES", fac.L.indices))
-            lines.append(_c_array(f"FOM_FAC_{up}_L_DATA", fac.L.data))
-            if fac.method == "ldlt":
-                lines.append(_c_array(f"FOM_FAC_{up}_DINV", fac.dinv))
-            else:
-                lines.append(_c_int_array(f"FOM_FAC_{up}_U_INDPTR", fac.U.indptr))
-                lines.append(_c_int_array(f"FOM_FAC_{up}_U_INDICES", fac.U.indices))
-                lines.append(_c_array(f"FOM_FAC_{up}_U_DATA", fac.U.data))
-                lines.append(_c_array(f"FOM_FAC_{up}_UINV", fac.uinv))
+            lines += _factor_arrays(name, fac)
             lines.append("")
             lines.append(self._solve_routine(name, fac))
             lines.append("")
@@ -497,14 +507,14 @@ class EmbeddedCTarget(TargetDescriptor):
         out = [
             f"{prefix}void {fname}(const fom_float *b, fom_float *x) {{",
             f"    fom_float y[{n}];",
-            "    fom_int i, j, p, r;",
+            "    fom_int i, j, p;",
             f"    for (i = 0; i < {n}; ++i) y[i] = b[FOM_FAC_{up}_PERM[i]];",
-            "    /* forward solve: unit lower-triangular L y = P^T b */",
+            "    /* forward solve: unit lower-triangular L y = P^T b (L stored without",
+            "       its unit diagonal) */",
             f"    for (j = 0; j < {n}; ++j) {{",
-            f"        for (p = FOM_FAC_{up}_L_INDPTR[j]; p < FOM_FAC_{up}_L_INDPTR[j + 1]; ++p) {{",
-            f"            r = FOM_FAC_{up}_L_INDICES[p];",
-            f"            if (r != j) y[r] -= FOM_FAC_{up}_L_DATA[p] * y[j];",
-            "        }",
+            "        const fom_float yj = y[j];",
+            f"        for (p = FOM_FAC_{up}_L_INDPTR[j]; p < FOM_FAC_{up}_L_INDPTR[j + 1]; ++p)",
+            f"            y[FOM_FAC_{up}_L_INDICES[p]] -= FOM_FAC_{up}_L_DATA[p] * yj;",
             "    }",
         ]
         if fac.method == "ldlt":
@@ -513,10 +523,10 @@ class EmbeddedCTarget(TargetDescriptor):
                 f"    for (i = 0; i < {n}; ++i) y[i] *= FOM_FAC_{up}_DINV[i];",
                 "    /* backward solve in place: unit upper-triangular L^T y = y */",
                 f"    for (j = {n} - 1; j >= 0; --j) {{",
-                f"        for (p = FOM_FAC_{up}_L_INDPTR[j]; p < FOM_FAC_{up}_L_INDPTR[j + 1]; ++p) {{",
-                f"            r = FOM_FAC_{up}_L_INDICES[p];",
-                f"            if (r > j) y[j] -= FOM_FAC_{up}_L_DATA[p] * y[r];",
-                "        }",
+                "        fom_float acc = y[j];",
+                f"        for (p = FOM_FAC_{up}_L_INDPTR[j]; p < FOM_FAC_{up}_L_INDPTR[j + 1]; ++p)",
+                f"            acc -= FOM_FAC_{up}_L_DATA[p] * y[FOM_FAC_{up}_L_INDICES[p]];",
+                "        y[j] = acc;",
                 "    }",
                 "    /* symmetric scatter: x[perm[i]] = y[i] */",
                 f"    for (i = 0; i < {n}; ++i) x[FOM_FAC_{up}_PERM[i]] = y[i];",
@@ -524,14 +534,13 @@ class EmbeddedCTarget(TargetDescriptor):
             ]
         else:
             out += [
-                "    /* backward solve: upper-triangular U x = y (reciprocal diagonal) */",
+                "    /* backward solve: upper-triangular U x = y (U stored without its",
+                "       diagonal, which is applied through the reciprocals UINV) */",
                 f"    for (j = {n} - 1; j >= 0; --j) {{",
-                f"        fom_float xj = y[j] * FOM_FAC_{up}_UINV[j];",
+                f"        const fom_float xj = y[j] * FOM_FAC_{up}_UINV[j];",
                 "        x[j] = xj;",
-                f"        for (p = FOM_FAC_{up}_U_INDPTR[j]; p < FOM_FAC_{up}_U_INDPTR[j + 1]; ++p) {{",
-                f"            r = FOM_FAC_{up}_U_INDICES[p];",
-                "            if (r < j) y[r] -= FOM_FAC_" + up + "_U_DATA[p] * xj;",
-                "        }",
+                f"        for (p = FOM_FAC_{up}_U_INDPTR[j]; p < FOM_FAC_{up}_U_INDPTR[j + 1]; ++p)",
+                f"            y[FOM_FAC_{up}_U_INDICES[p]] -= FOM_FAC_{up}_U_DATA[p] * xj;",
                 "    }",
                 "}",
             ]
@@ -951,10 +960,19 @@ class EmbeddedCTarget(TargetDescriptor):
                 '#include "verify_data.h"',
                 "",
                 "/* Benchmark: time full solves (each = the complete iteration loop).",
-                "   Usage: bench_bin [num_solves]. Prints a parseable BENCH line and,",
-                "   when built with -DFOM_PROFILE, a per-region PROF breakdown. */",
+                "   Usage: bench_bin [num_solves]. Without num_solves it times up to",
+                "   FOM_BENCH_MAX_SOLVES solves but stops after FOM_BENCH_BUDGET_NS of timed",
+                "   solving (at least FOM_BENCH_MIN_SOLVES), so one bench of a slow solver",
+                "   cannot use up a caller's time budget. Prints a parseable BENCH line",
+                "   and, when built with -DFOM_PROFILE, a per-region PROF breakdown. */",
+                "#define FOM_BENCH_MAX_SOLVES 5000",
+                "#define FOM_BENCH_MIN_SOLVES 5",
+                "#define FOM_BENCH_BUDGET_NS 2.0e9",
+                "",
                 "int main(int argc, char **argv) {",
-                "    int reps = (argc > 1) ? atoi(argv[1]) : 5000;",
+                "    int reps = (argc > 1) ? atoi(argv[1]) : FOM_BENCH_MAX_SOLVES;",
+                "    double budget_ns = (argc > 1) ? 0.0 : FOM_BENCH_BUDGET_NS;",
+                "    int done = 0;",
                 "    FomWorkspace work;",
                 "    FomSettings settings;",
                 "    FomParams params;",
@@ -980,10 +998,13 @@ class EmbeddedCTarget(TargetDescriptor):
                 "        double dt = fom_now_ns() - t0;",
                 "        total += dt;",
                 "        if (dt < best) best = dt;",
+                "        ++done;",
+                "        if (budget_ns > 0.0 && total >= budget_ns && done >= FOM_BENCH_MIN_SOLVES)",
+                "            break;",
                 "    }",
                 "",
                 '    printf("BENCH solves=%d total_us=%.4f mean_us=%.6f min_us=%.6f\\n",',
-                "           reps, total / 1000.0, (total / 1000.0) / (double)reps, best / 1000.0);",
+                "           done, total / 1000.0, (total / 1000.0) / (double)done, best / 1000.0);",
                 "    fom_prof_report();",
                 "    return 0;",
                 "}",

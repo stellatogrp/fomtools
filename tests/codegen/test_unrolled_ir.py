@@ -268,7 +268,7 @@ def test_the_gate_catches_a_corrupted_body():
         ir,
         matrices={
             **ir.matrices,
-            victim: MatrixData(name=victim, array=np.zeros_like(ir.matrices[victim].array)),
+            victim: MatrixData(name=victim, array=0 * ir.matrices[victim].array),
         },
     )
     with pytest.raises(UnrolledFidelityError, match="does not reproduce the recorded tape"):

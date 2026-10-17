@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import scipy.sparse as spa
 
 from fomtools.codegen.config import TerminationKind, TerminationSpec
 from fomtools.codegen.factorize import CSC, Factorization
@@ -86,7 +87,11 @@ def ir_to_dict(ir: FomIR) -> dict:
         "body": [_step_to_dict(s) for s in ir.body],
         "state_update": _linop_to_dict(ir.state_update),
         "matrices": {
-            name: {"shape": list(md.shape), "sparse": md.sparse_pattern is not None}
+            name: {
+                "shape": list(md.shape),
+                "sparse": md.sparse_pattern is not None,
+                "storage": "csr" if md.is_sparse else "dense",
+            }
             for name, md in ir.matrices.items()
         },
         "schedules": {name: {"len": int(len(values))} for name, values in ir.schedules.items()},
@@ -104,7 +109,13 @@ def save(ir: FomIR, directory: str | Path) -> tuple[Path, Path]:
 
     arrays: dict[str, np.ndarray] = {}
     for name, md in ir.matrices.items():
-        arrays[f"mat::{name}"] = md.array
+        if md.is_sparse:  # stored as CSR: a dense copy grows with the square of the size
+            m = md.array.tocsr()
+            arrays[f"mat::{name}::indptr"] = m.indptr
+            arrays[f"mat::{name}::indices"] = m.indices
+            arrays[f"mat::{name}::data"] = m.data
+        else:
+            arrays[f"mat::{name}"] = md.array
         if md.sparse_pattern is not None:
             rows, cols = md.sparse_pattern
             arrays[f"sp_rows::{name}"] = np.asarray(rows)
@@ -139,7 +150,17 @@ def load(directory: str | Path) -> FomIR:
 
     matrices: dict[str, MatrixData] = {}
     for name in spec["matrices"]:
-        array = npz[f"mat::{name}"]
+        if spec["matrices"][name].get("storage") == "csr":
+            array = spa.csr_matrix(
+                (
+                    npz[f"mat::{name}::data"],
+                    npz[f"mat::{name}::indices"],
+                    npz[f"mat::{name}::indptr"],
+                ),
+                shape=tuple(spec["matrices"][name]["shape"]),
+            )
+        else:
+            array = npz[f"mat::{name}"]
         pattern = None
         if spec["matrices"][name]["sparse"]:
             pattern = (npz[f"sp_rows::{name}"], npz[f"sp_cols::{name}"])

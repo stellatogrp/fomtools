@@ -93,6 +93,11 @@ class ActivationKind(str, Enum):
     SATURATED_LINEAR = "saturated_linear"
 
 
+#: Magnitude below which a stored coefficient is treated as structurally zero
+#: when emitting it (CSR arrays, nonzero counts).
+EMIT_ZERO_TOL = 1e-12
+
+
 @dataclass(frozen=True)
 class MatrixData:
     """A named numeric coefficient block (matrix) or vector (const).
@@ -103,31 +108,70 @@ class MatrixData:
         Stable symbolic identifier used by both the IR and the emitted code
         (e.g. ``"A0"``, ``"const0"``).
     array:
-        The dense values. Sparse inputs are densified here for the embedded
-        backend; :attr:`sparse_pattern` records the original structure when it
-        matters for large-scale spMV emission.
+        The values: a 1-D ``ndarray`` for vectors (constants, clip bounds), and a
+        2-D matrix for coefficient blocks, held as a SciPy CSR matrix when it was
+        extracted sparse. Coefficient blocks of large problems are almost all
+        zeros, so they are never densified; use :meth:`dense` and :meth:`csr`
+        where a specific form is needed.
     sparse_pattern:
         Optional ``(rows, cols)`` index arrays of the structurally non-zero
         entries, retained from a sparse source for downstream spMV codegen.
     """
 
     name: str
-    array: np.ndarray
+    array: np.ndarray | spa.csr_matrix
     sparse_pattern: tuple[np.ndarray, np.ndarray] | None = None
 
     @property
     def shape(self) -> tuple[int, ...]:
         return self.array.shape
 
+    @property
+    def is_sparse(self) -> bool:
+        return spa.issparse(self.array)
+
+    def dense(self) -> np.ndarray:
+        """The values as a dense ``ndarray`` (only for small blocks)."""
+        return self.array.toarray() if self.is_sparse else np.asarray(self.array, dtype=float)
+
+    def csr(self, tol: float = EMIT_ZERO_TOL) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """``(rowptr, colidx, vals)`` of the entries larger than ``tol`` in magnitude."""
+        return csr_arrays(self.array, tol)
+
+    def nnz(self, tol: float = EMIT_ZERO_TOL) -> int:
+        """Number of entries larger than ``tol`` in magnitude."""
+        values = self.array.data if self.is_sparse else np.asarray(self.array)
+        return int(np.count_nonzero(np.abs(values) > tol))
+
     @classmethod
     def from_coeff(cls, name: str, coeff: np.ndarray | spa.spmatrix) -> "MatrixData":
-        """Build from a (possibly sparse) coefficient, densifying for storage
-        while preserving the sparsity pattern."""
+        """Build from a (possibly sparse) coefficient, stored as CSR either way so
+        every coefficient block has one storage (and one rounding in the oracle);
+        a sparse input also records its pattern."""
         if spa.issparse(coeff):
-            coo = coeff.tocoo()
-            dense = np.asarray(coeff.todense(), dtype=float)
-            return cls(name=name, array=dense, sparse_pattern=(coo.row, coo.col))
-        return cls(name=name, array=np.atleast_2d(np.asarray(coeff, dtype=float)))
+            m = spa.csr_matrix(coeff, dtype=float)
+            coo = m.tocoo()
+            return cls(name=name, array=m, sparse_pattern=(coo.row, coo.col))
+        return cls(name=name, array=spa.csr_matrix(np.atleast_2d(np.asarray(coeff, dtype=float))))
+
+
+def csr_arrays(matrix, tol: float = EMIT_ZERO_TOL) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``(rowptr, colidx, vals)`` of a dense or sparse matrix's entries larger than
+    ``tol`` in magnitude, rows in order and columns sorted within each row."""
+    if spa.issparse(matrix):
+        m = spa.csr_matrix(matrix, dtype=float, copy=True)
+    else:
+        m = spa.csr_matrix(np.atleast_2d(np.asarray(matrix, dtype=float)))
+    m.data[np.abs(m.data) <= tol] = 0.0
+    m.eliminate_zeros()
+    m.sort_indices()
+    return m.indptr, m.indices, m.data
+
+
+def max_abs(values) -> float:
+    """Largest magnitude of a dense or sparse array (0 for an empty one)."""
+    data = values.data if spa.issparse(values) else np.asarray(values)
+    return float(np.max(np.abs(data))) if data.size else 0.0
 
 
 @dataclass(frozen=True)
