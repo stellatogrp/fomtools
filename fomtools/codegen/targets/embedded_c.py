@@ -21,6 +21,7 @@ import re
 from pathlib import Path
 
 import numpy as np
+import scipy.sparse as spa
 
 from fomtools.codegen import spec
 from fomtools.codegen.ir import ActivationKind, FomIR
@@ -64,6 +65,41 @@ def _csr_from_dense(A: np.ndarray, tol: float = 1e-12):
                 vals.append(A[i, j])
         rowptr.append(len(colidx))
     return rowptr, colidx, vals
+
+
+def _strict_triangle(csc) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``(indptr, indices, data)`` of a triangular CSC factor without its diagonal.
+
+    The emitted solves keep the diagonal elsewhere (unit for ``L``, the reciprocals
+    ``UINV`` for ``U``), so their inner loops touch off-diagonal entries only and
+    need no per-entry branch.
+    """
+    m = spa.csc_matrix((csc.data, csc.indices, csc.indptr), shape=(csc.n_rows, csc.n_cols))
+    m = (m - spa.diags(m.diagonal())).tocsc()
+    m.eliminate_zeros()
+    m.sort_indices()
+    return m.indptr, m.indices, m.data
+
+
+def _factor_arrays(name: str, fac) -> list[str]:
+    """The constant arrays of a direct factorization: permutation, the strictly
+    lower ``L``, and the reciprocal pivots (LDL^T) or the strictly upper ``U`` and
+    reciprocal diagonal (LU)."""
+    up = name.upper()
+    lines = [_c_int_array(f"FOM_FAC_{up}_PERM", fac.perm)]
+    indptr, indices, data = _strict_triangle(fac.L)
+    lines.append(_c_int_array(f"FOM_FAC_{up}_L_INDPTR", indptr))
+    lines.append(_c_int_array(f"FOM_FAC_{up}_L_INDICES", indices))
+    lines.append(_c_array(f"FOM_FAC_{up}_L_DATA", data))
+    if fac.method == "ldlt":
+        lines.append(_c_array(f"FOM_FAC_{up}_DINV", fac.dinv))
+    else:
+        indptr, indices, data = _strict_triangle(fac.U)
+        lines.append(_c_int_array(f"FOM_FAC_{up}_U_INDPTR", indptr))
+        lines.append(_c_int_array(f"FOM_FAC_{up}_U_INDICES", indices))
+        lines.append(_c_array(f"FOM_FAC_{up}_U_DATA", data))
+        lines.append(_c_array(f"FOM_FAC_{up}_UINV", fac.uinv))
+    return lines
 
 
 def _matvec_matrix_names(ir: FomIR) -> list[str]:
@@ -471,17 +507,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 lines.append("")
                 continue
             lines.append(f"/* ---- factorization '{name}' ({fac.method.upper()}) ---- */")
-            lines.append(_c_int_array(f"FOM_FAC_{up}_PERM", fac.perm))
-            lines.append(_c_int_array(f"FOM_FAC_{up}_L_INDPTR", fac.L.indptr))
-            lines.append(_c_int_array(f"FOM_FAC_{up}_L_INDICES", fac.L.indices))
-            lines.append(_c_array(f"FOM_FAC_{up}_L_DATA", fac.L.data))
-            if fac.method == "ldlt":
-                lines.append(_c_array(f"FOM_FAC_{up}_DINV", fac.dinv))
-            else:
-                lines.append(_c_int_array(f"FOM_FAC_{up}_U_INDPTR", fac.U.indptr))
-                lines.append(_c_int_array(f"FOM_FAC_{up}_U_INDICES", fac.U.indices))
-                lines.append(_c_array(f"FOM_FAC_{up}_U_DATA", fac.U.data))
-                lines.append(_c_array(f"FOM_FAC_{up}_UINV", fac.uinv))
+            lines += _factor_arrays(name, fac)
             lines.append("")
             lines.append(self._solve_routine(name, fac))
             lines.append("")
@@ -497,14 +523,14 @@ class EmbeddedCTarget(TargetDescriptor):
         out = [
             f"{prefix}void {fname}(const fom_float *b, fom_float *x) {{",
             f"    fom_float y[{n}];",
-            "    fom_int i, j, p, r;",
+            "    fom_int i, j, p;",
             f"    for (i = 0; i < {n}; ++i) y[i] = b[FOM_FAC_{up}_PERM[i]];",
-            "    /* forward solve: unit lower-triangular L y = P^T b */",
+            "    /* forward solve: unit lower-triangular L y = P^T b (L stored without",
+            "       its unit diagonal) */",
             f"    for (j = 0; j < {n}; ++j) {{",
-            f"        for (p = FOM_FAC_{up}_L_INDPTR[j]; p < FOM_FAC_{up}_L_INDPTR[j + 1]; ++p) {{",
-            f"            r = FOM_FAC_{up}_L_INDICES[p];",
-            f"            if (r != j) y[r] -= FOM_FAC_{up}_L_DATA[p] * y[j];",
-            "        }",
+            "        const fom_float yj = y[j];",
+            f"        for (p = FOM_FAC_{up}_L_INDPTR[j]; p < FOM_FAC_{up}_L_INDPTR[j + 1]; ++p)",
+            f"            y[FOM_FAC_{up}_L_INDICES[p]] -= FOM_FAC_{up}_L_DATA[p] * yj;",
             "    }",
         ]
         if fac.method == "ldlt":
@@ -513,10 +539,10 @@ class EmbeddedCTarget(TargetDescriptor):
                 f"    for (i = 0; i < {n}; ++i) y[i] *= FOM_FAC_{up}_DINV[i];",
                 "    /* backward solve in place: unit upper-triangular L^T y = y */",
                 f"    for (j = {n} - 1; j >= 0; --j) {{",
-                f"        for (p = FOM_FAC_{up}_L_INDPTR[j]; p < FOM_FAC_{up}_L_INDPTR[j + 1]; ++p) {{",
-                f"            r = FOM_FAC_{up}_L_INDICES[p];",
-                f"            if (r > j) y[j] -= FOM_FAC_{up}_L_DATA[p] * y[r];",
-                "        }",
+                "        fom_float acc = y[j];",
+                f"        for (p = FOM_FAC_{up}_L_INDPTR[j]; p < FOM_FAC_{up}_L_INDPTR[j + 1]; ++p)",
+                f"            acc -= FOM_FAC_{up}_L_DATA[p] * y[FOM_FAC_{up}_L_INDICES[p]];",
+                "        y[j] = acc;",
                 "    }",
                 "    /* symmetric scatter: x[perm[i]] = y[i] */",
                 f"    for (i = 0; i < {n}; ++i) x[FOM_FAC_{up}_PERM[i]] = y[i];",
@@ -524,14 +550,13 @@ class EmbeddedCTarget(TargetDescriptor):
             ]
         else:
             out += [
-                "    /* backward solve: upper-triangular U x = y (reciprocal diagonal) */",
+                "    /* backward solve: upper-triangular U x = y (U stored without its",
+                "       diagonal, which is applied through the reciprocals UINV) */",
                 f"    for (j = {n} - 1; j >= 0; --j) {{",
-                f"        fom_float xj = y[j] * FOM_FAC_{up}_UINV[j];",
+                f"        const fom_float xj = y[j] * FOM_FAC_{up}_UINV[j];",
                 "        x[j] = xj;",
-                f"        for (p = FOM_FAC_{up}_U_INDPTR[j]; p < FOM_FAC_{up}_U_INDPTR[j + 1]; ++p) {{",
-                f"            r = FOM_FAC_{up}_U_INDICES[p];",
-                "            if (r < j) y[r] -= FOM_FAC_" + up + "_U_DATA[p] * xj;",
-                "        }",
+                f"        for (p = FOM_FAC_{up}_U_INDPTR[j]; p < FOM_FAC_{up}_U_INDPTR[j + 1]; ++p)",
+                f"            y[FOM_FAC_{up}_U_INDICES[p]] -= FOM_FAC_{up}_U_DATA[p] * xj;",
                 "    }",
                 "}",
             ]

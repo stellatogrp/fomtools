@@ -47,6 +47,7 @@ from fomtools.codegen.targets.embedded_c import (
     _c_array,
     _c_int_array,
     _csr_from_dense,
+    _factor_arrays,
     _fmt_float,
     _is_csr,
     _matvec_matrix_names,
@@ -270,17 +271,7 @@ class CudaTarget(EmbeddedCTarget):
                 f"/* ---- factorization '{name}' ({fac.method.upper()}, host: triangular"
                 " solves are sequential) ---- */"
             )
-            lines.append(_c_int_array(f"FOM_FAC_{up}_PERM", fac.perm))
-            lines.append(_c_int_array(f"FOM_FAC_{up}_L_INDPTR", fac.L.indptr))
-            lines.append(_c_int_array(f"FOM_FAC_{up}_L_INDICES", fac.L.indices))
-            lines.append(_c_array(f"FOM_FAC_{up}_L_DATA", fac.L.data))
-            if fac.method == "ldlt":
-                lines.append(_c_array(f"FOM_FAC_{up}_DINV", fac.dinv))
-            else:
-                lines.append(_c_int_array(f"FOM_FAC_{up}_U_INDPTR", fac.U.indptr))
-                lines.append(_c_int_array(f"FOM_FAC_{up}_U_INDICES", fac.U.indices))
-                lines.append(_c_array(f"FOM_FAC_{up}_U_DATA", fac.U.data))
-                lines.append(_c_array(f"FOM_FAC_{up}_UINV", fac.uinv))
+            lines += _factor_arrays(name, fac)
             lines.append("")
             lines.append(
                 self._solve_routine(
