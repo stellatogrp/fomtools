@@ -124,18 +124,20 @@ def _settings_for(kind: str, term) -> dict:
     The rolled and scheduled paths always honor ``max_iter`` (a scheduled
     solver's is additionally capped in the bridge at the length of its
     coefficient tables). ``tol`` and ``check_termination`` exist only when the
-    solver was generated with the ``INF_NORM_CHANGE`` criterion: under
-    ``MAX_ITERS`` the emitted header sets ``FOM_USE_TOL 0`` and the residual
-    check is compiled out, so a ``tol`` setting would be accepted and silently
-    ignored (``problem.solve(method='CPG', tol=1e-4)`` ran every iteration).
-    Leaving it out makes cvxpygen reject the keyword instead. Both stay
-    runtime-tunable when present (the bridge copies them into the FomWorkspace
-    each solve).
+    solver was generated with a criterion that has them: ``INF_NORM_CHANGE``,
+    or ``OBJECTIVE``, where the built-in builders stop on OSQP's unscaled
+    residuals, ``max(||Ax - clamp(Ax, l, u)||_inf, ||Px + q + A'y||_inf) <= tol``
+    (default interval 25). Under ``MAX_ITERS`` the emitted header sets
+    ``FOM_USE_TOL 0`` and the residual check is compiled out, so a ``tol``
+    setting would be accepted and silently ignored
+    (``problem.solve(method='CPG', tol=1e-4)`` ran every iteration). Leaving it
+    out makes cvxpygen reject the keyword instead. Both stay runtime-tunable when
+    present (the bridge copies them into the FomWorkspace each solve).
     """
     if kind == "unrolled":
         return {}
     settings = {"max_iter": Setting(type="cpg_int", default=str(term.max_iters))}
-    if term.kind == TerminationKind.INF_NORM_CHANGE:
+    if term.kind in (TerminationKind.INF_NORM_CHANGE, TerminationKind.OBJECTIVE):
         settings["tol"] = Setting(type="cpg_float", default=repr(float(term.tol)))
         settings["check_termination"] = Setting(type="cpg_int", default=str(term.check_termination))
     return settings
