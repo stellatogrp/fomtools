@@ -64,7 +64,7 @@ def test_ldlt_reconstructs_permuted_matrix():
     assert np.allclose(np.triu(L, 1), 0.0)
 
 
-def test_rcm_ordering_reduces_fill():
+def test_fill_reducing_order_keeps_factor_sparse():
     # On a structured KKT, the fill-reducing order yields far fewer nonzeros
     # than the dense lower triangle.
     M = _kkt(20, 12, 9)
@@ -211,17 +211,29 @@ def test_singular_matrix_raises():
         factorize(S)
 
 
+def _natural_order_ldlt(M):
+    """Up-looking LDL^T without pivoting or reordering (dense, test-only)."""
+    n = M.shape[0]
+    L, d = np.eye(n), np.zeros(n)
+    for j in range(n):
+        d[j] = M[j, j] - (L[j, :j] ** 2 * d[:j]).sum()
+        L[j + 1 :, j] = (M[j + 1 :, j] - (L[j + 1 :, :j] * (L[j, :j] * d[:j])).sum(axis=1)) / d[j]
+    return L, d
+
+
 def test_unstable_no_pivot_ldlt_falls_back_via_backward_error(monkeypatch):
     # Defeat the fill-reducing reordering (which would otherwise move the bad
     # pivot away) so the no-pivot LDL^T genuinely loses accuracy; the backward-
     # error gate must then reject it and AUTO must use pivoted LU.
     import fomtools.codegen.factorize as fz
 
-    monkeypatch.setattr(fz, "reverse_cuthill_mckee", lambda pat, **k: np.arange(pat.shape[0]))
     M = np.array([[1e-11, 1.0, 0.5], [1.0, 1.0, 2.0], [0.5, 2.0, -1.0]])
     # no-pivot LDL^T on M proceeds but is inaccurate (backward error ~ 4e-6).
-    L, d = fz._ldlt_no_pivot(M)
+    L, d = _natural_order_ldlt(M)
     assert fz._ldlt_backward_error(L, d, M) > 1e-7
+    monkeypatch.setattr(
+        fz, "_ldlt_factor", lambda Ms: (np.arange(Ms.shape[0]), spa.csc_matrix(L), d)
+    )
     f = factorize(M)  # AUTO
     assert f.method == "lu"  # gate rejected the inaccurate LDL^T
     b = np.array([1.0, 2.0, 3.0])
@@ -233,3 +245,24 @@ def test_forced_ldlt_on_non_quasidefinite_raises():
     M = np.array([[0.0, 1.0], [1.0, 0.0]])
     with pytest.raises(ValueError, match="not numerically viable|quasidefinite"):
         factorize(M, method="ldlt")
+
+
+def test_ldlt_never_densifies_large_sparse_kkt():
+    # A 20,000-dimensional quasidefinite KKT: the old dense path needed a
+    # 3.2 GB dense copy and O(n^3) work; the sparse factor takes well under a
+    # second and stays sparse.
+    n, m = 12000, 8000
+    rng = np.random.default_rng(0)
+    # Banded constraints (each row couples a few neighbouring variables), so the
+    # factor of a good ordering stays sparse; a random A is an expander and fills.
+    cols = np.minimum(np.arange(m)[:, None] * n // m + np.arange(4), n - 1)
+    A = spa.csc_matrix((rng.normal(size=4 * m), (np.repeat(np.arange(m), 4), cols.ravel())), (m, n))
+    K = spa.bmat(
+        [[spa.eye(n) * 1.0 + 1e-6 * spa.eye(n), A.T], [A, -0.1 * spa.eye(m)]], format="csc"
+    )
+    f = factorize(K)
+    assert f.method == "ldlt"
+    assert f.L.nnz < 50 * K.shape[0]
+    b = rng.normal(size=K.shape[0])
+    x = f.solve(b)
+    assert np.linalg.norm(K @ x - b) <= 1e-8 * np.linalg.norm(b)
