@@ -89,7 +89,7 @@ def _static_issues(target, ir, optimized: dict[str, str], translated: dict[str, 
     for rel, text in optimized.items():
         if text == translated.get(rel):
             continue
-        found = target.kernel_checks(rel, text, ir)
+        found = target.kernel_checks(rel, text, ir, translated.get(rel))
         if rel != target.solver_source_path():
             found = target.static_checks(text) + found
         issues += [f"[optimization not kept: {rel}: {v}]" for v in found]
@@ -418,7 +418,14 @@ def generate_code(
             restore_hook=restore_all_but_editable,
             extra={"editable_paths": editable},
         )
-        optimize = driver.run(optimization_task)
+        # While the agent works, `make verify` also applies the kernel rules, so it
+        # sees a violation as it makes it; Gate 1 below applies them again and
+        # decides. The shipped directory carries no such config.
+        target.write_kernel_check_config(out_dir, ir, translated_sources)
+        try:
+            optimize = driver.run(optimization_task)
+        finally:
+            target.remove_kernel_check_config(out_dir)
         restore_all_but_editable()  # discard edits outside the editable sources
         optimized_sources = read_editable()
         changed = optimized_sources != translated_sources

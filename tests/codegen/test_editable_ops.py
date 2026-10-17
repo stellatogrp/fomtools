@@ -32,7 +32,7 @@ MARK = "/* rewritten by the code optimization phase */"
 CONFIG = CodegenConfig(termination=TerminationSpec(max_iters=400))
 
 # A coefficient of t0_state that the 8 sampled end-to-end solves never excite:
-# off by 1e-2, the whole-solver check still passes (see the gap test below).
+# off by 1, the whole-solver check still passes (see the gap test below).
 RARE_MATRIX, RARE_COL = "t0_state", 56
 
 
@@ -47,16 +47,17 @@ def _same_ops(text: str) -> str:
     return MARK + "\n" + text
 
 
-def _perturbed_ops(name: str, col: int, delta: float = 1e-2):
-    """A rewrite of ``fom_apply_<name>`` with entry ``(0, col)`` off by ``delta``."""
+def _perturbed_ops(name: str, col: int):
+    """A rewrite of ``fom_apply_<name>`` with entry ``(0, col)`` off by one.
+
+    Written without a float literal, so it gets past the kernel rules and only
+    the numerical checks can catch it."""
 
     def rewrite(text: str) -> str:
         sig = f"void fom_apply_{name}(const fom_float *x, fom_float *out) {{"
         head, rest = text.split(sig, 1)
         body, tail = rest.split("\n}\n", 1)
-        return (
-            MARK + "\n" + head + sig + body + f"\n    out[0] += {delta!r} * x[{col}];\n}}\n" + tail
-        )
+        return MARK + "\n" + head + sig + body + f"\n    out[0] += x[{col}];\n}}\n" + tail
 
     return rewrite
 
@@ -228,7 +229,62 @@ def test_an_optimized_solver_with_its_own_matvec_is_rejected(tmp_path, mpc, requ
         code_optimization=True,
     )
     assert result.success
-    assert "VERIFY OK" in result.optimize.log  # numerically correct ...
-    assert not result.optimization_kept  # ... but not traceable to the checked routine
+    # Numerically the same products, but outside the checked routine: `make verify`
+    # flags it while the agent works, and the collection gate rejects it.
+    assert "VERIFY FAILED: kernel rule: src/fom_solver.c" in result.optimize.log
+    assert not result.optimization_kept
     assert "the solver reads FOM_MAT_t0_state directly" in result.optimize.log
     assert (tmp_path / "src" / "fom_solver.c").read_text() == golden
+
+
+def test_make_verify_applies_the_kernel_rules_while_configured(tmp_path, mpc, requires_compiler):
+    import fomtools.codegen.kernel_rules as kernel_rules
+
+    _, ir = mpc
+    target = get_target(CONFIG)
+    scaffold(ir, tmp_path, CONFIG)
+    script = tmp_path / "test" / "kernel_check.py"
+    assert script.read_text() == Path(kernel_rules.__file__).read_text()
+    (tmp_path / "src" / "fom_solver.c").write_text(GOLDEN.read_text())
+    ops = tmp_path / OPS
+    ops.write_text(ops.read_text() + "\nfom_float fom_unused(void) { return 0.37; }\n")
+
+    # No config (translation phase, shipped directory): verify ignores the rules.
+    assert "VERIFY OK" in _verify(tmp_path).stdout
+    # Configured (code optimization phase): the agent's verify reports the rule.
+    target.write_kernel_check_config(tmp_path, ir, {OPS: ops.read_text().replace("0.37", "0.0")})
+    proc = _verify(tmp_path)
+    assert proc.returncode != 0
+    assert "VERIFY FAILED: kernel rule: src/fom_ops.c: floating-point literal '0.37'" in proc.stdout
+    target.remove_kernel_check_config(tmp_path)
+    assert not (tmp_path / "test" / "kernel_check.json").exists()
+
+
+def test_the_pipeline_gate_decides_even_without_the_verify_step(tmp_path, mpc, requires_compiler):
+    # An agent that deletes the config gets past its own verify, but the
+    # collection gate applies the same rules and reverts the rewrite.
+    ex, _ = mpc
+
+    class DeletesConfig(StubAgentDriver):
+        def run(self, task):
+            (task.workdir / "test" / "kernel_check.json").unlink(missing_ok=True)
+            return super().run(task)
+
+    def with_literal(text: str) -> str:
+        return MARK + "\n" + text + "\nfom_float fom_unused(void) { return 0.37; }\n"
+
+    result = generate_code(
+        ex["verifier"],
+        ex["next_state"],
+        tmp_path,
+        config=CONFIG,
+        driver=DeletesConfig(GOLDEN, extra_sources={OPS: with_literal}),
+        name="mpc",
+        code_optimization=True,
+    )
+    assert not result.optimization_kept
+    assert "[optimization not kept: src/fom_ops.c: floating-point literal '0.37'" in (
+        result.optimize.log
+    )
+    assert MARK not in (tmp_path / OPS).read_text()
+    assert not (tmp_path / "test" / "kernel_check.json").exists()  # nothing shipped

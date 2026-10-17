@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from fomtools.codegen.ir import FomIR
 from fomtools.codegen.targets.base import objective_violations
-from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
+from fomtools.codegen.targets.embedded_c import _KERNEL_CHECK_RECIPE, EmbeddedCTarget
 
 
 class OpenMpTarget(EmbeddedCTarget):
@@ -56,6 +56,7 @@ class OpenMpTarget(EmbeddedCTarget):
                 ".PHONY: verify bench profile lib release clean objective_guard",
                 "",
                 f"verify:{guard} $(SRC) $(VERIFY_SRC) test/verify_main.c",
+                _KERNEL_CHECK_RECIPE,
                 "\t$(CC) $(CFLAGS) $(OMPFLAGS) -Itest $(SRC) $(VERIFY_SRC) test/verify_main.c "
                 "-o verify_bin -lm",
                 "\t./verify_bin",

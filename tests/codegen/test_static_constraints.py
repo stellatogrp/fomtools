@@ -116,3 +116,29 @@ def test_kernel_checks_skip_other_files_and_cuda(target, mpc_ir):
     assert target.kernel_checks("src/fom_linsolve.c", source, mpc_ir) == []
     cuda = get_target(CodegenConfig(version=Version.LARGE_SCALE, backend=Backend.CUDA))
     assert cuda.kernel_checks(cuda.solver_source_path(), source, mpc_ir) == []
+
+
+def test_literals_already_in_the_translated_file_are_exempt(target, mpc_ir):
+    baseline = "fom_float eps(void){ return 1e-12; }"
+    rewrite = "fom_float eps(void){ return 1e-12; }\nfom_float c(void){ return 0.37; }"
+    violations = target.kernel_checks("src/fom_solver.c", rewrite, mpc_ir, baseline)
+    assert len(violations) == 1 and "'0.37'" in violations[0]
+
+
+def test_new_fom_apply_calls_at_setup_are_flagged(target, mpc_ir):
+    source = """
+    void fom_setup(FomWorkspace *work, const FomSettings *settings) {
+        int j;
+        for (j = 0; j < 3; ++j) { if (1) { fom_apply_t0_state(work->state, work->acc); } }
+    }
+    void fom_update_params(FomWorkspace *work, const FomParams *params) {
+        fom_apply_t0_p_p0(work->params.p0, work->acc);
+    }
+    fom_int fom_solve(FomWorkspace *work) { fom_apply_su_state(work->state, work->acc); return 0; }
+    """
+    violations = target.kernel_checks("src/fom_solver.c", source, mpc_ir)
+    assert any("fom_apply_t0_state is called from fom_setup" in v for v in violations)
+    assert any("fom_apply_t0_p_p0 is called from fom_setup" in v for v in violations)
+    assert not any("su_state" in v for v in violations)  # in the iteration: fine
+    # Already done by the translated solver: exempt.
+    assert target.kernel_checks("src/fom_solver.c", source, mpc_ir, source) == []

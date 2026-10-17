@@ -18,6 +18,7 @@ from pathlib import Path
 
 from fomtools.codegen.config import CodegenConfig
 from fomtools.codegen.ir import FomIR
+from fomtools.codegen.kernel_rules import strip_c_comments_and_strings  # noqa: F401 (re-export)
 
 
 class TargetDescriptor(ABC):
@@ -74,14 +75,25 @@ class TargetDescriptor(ABC):
         """
         return ""
 
-    def kernel_checks(self, rel: str, source: str, ir) -> list[str]:
+    def kernel_checks(self, rel: str, source: str, ir, baseline: str | None = None) -> list[str]:
         """Violations of the rules that keep rewritten kernels checkable (empty = OK).
 
-        Run on each source the code optimization phase changed. Default: none.
-        Targets whose matrix-vector products are editable and checked against
-        the package's matrices override this.
+        Run on each source the code optimization phase changed; ``baseline`` is
+        its translated version. Default: none. Targets whose matrix-vector
+        products are editable and checked against the package's matrices
+        override this (see :mod:`fomtools.codegen.kernel_rules`).
         """
         return []
+
+    def write_kernel_check_config(self, out_dir, ir, baselines: dict[str, str]) -> None:
+        """Let ``make verify`` apply :meth:`kernel_checks` while the agent works.
+
+        Called when the code optimization phase starts, with the translated
+        sources as ``baselines``. Default: nothing to write.
+        """
+
+    def remove_kernel_check_config(self, out_dir) -> None:
+        """Undo :meth:`write_kernel_check_config` once the phase is over."""
 
     def static_checks(self, source: str, ir: FomIR | None = None) -> list[str]:
         """Return a list of invariant violations in ``source`` (empty = OK).
@@ -91,11 +103,6 @@ class TargetDescriptor(ABC):
         their own invariants.
         """
         return objective_violations(source, ir)
-
-
-_C_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
-_C_LINE_COMMENT = re.compile(r"//[^\n]*")
-_C_STRING = re.compile(r'"(?:\\.|[^"\\])*"')
 
 
 def objective_violations(source: str, ir: FomIR | None) -> list[str]:
@@ -122,13 +129,3 @@ def objective_violations(source: str, ir: FomIR | None) -> list[str]:
         )
     return violations
 
-
-def strip_c_comments_and_strings(source: str) -> str:
-    """Remove C comments and string literals so token checks don't false-match.
-
-    Comments/strings are replaced with spaces (preserving rough offsets).
-    """
-    source = _C_BLOCK_COMMENT.sub(" ", source)
-    source = _C_LINE_COMMENT.sub(" ", source)
-    source = _C_STRING.sub(" ", source)
-    return source

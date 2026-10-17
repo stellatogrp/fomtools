@@ -17,6 +17,7 @@ The coding agent (or a golden fixture) supplies ``src/fom_solver.c``.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import replace
 from pathlib import Path
@@ -24,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import scipy.sparse as spa
 
-from fomtools.codegen import spec
+from fomtools.codegen import kernel_rules, spec
 from fomtools.codegen.ir import ActivationKind, FomIR, csr_arrays
 from fomtools.codegen.objective import objective_c_params, objective_c_source
 from fomtools.codegen.oracle import ReferenceOracle
@@ -37,6 +38,19 @@ from fomtools.codegen.targets.base import (
 
 def _fmt_float(x: float) -> str:
     return f"{float(x):.17g}"
+
+
+#: Written while the code optimization phase runs (and removed after), so that
+#: ``make verify`` also applies the kernel rules to the agent's rewrite.
+_KERNEL_CHECK_CONFIG = "test/kernel_check.json"
+
+
+#: ``make verify`` step that applies the kernel rules while a config is present
+#: (only during the code optimization phase, and only if python3 is available).
+_KERNEL_CHECK_RECIPE = (
+    f"\t@if [ -f {_KERNEL_CHECK_CONFIG} ] && command -v python3 >/dev/null; then "
+    f"python3 test/kernel_check.py {_KERNEL_CHECK_CONFIG}; fi"
+)
 
 
 def _c_array(
@@ -147,17 +161,6 @@ def _matvec_matrix_names(ir: FomIR) -> list[str]:
     return names
 
 
-#: A floating-point literal (decimal point and/or exponent, optional suffix), not
-#: part of an identifier or of a longer number.
-_C_FLOAT_LITERAL = re.compile(
-    r"(?<![\w.])((?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?|\d+[eE][-+]?\d+)[fFlL]?(?![\w.])"
-)
-
-#: Float literals a rewritten kernel may still contain: structural constants, not
-#: coefficients (zeroing, unit steps, doubling and halving).
-_ALLOWED_FLOAT_LITERALS = frozenset({0.0, 0.5, 1.0, 2.0})
-
-
 def _is_csr(md) -> bool:
     """Emit a matrix as sparse CSR when it is large and structurally sparse."""
     shape = md.shape
@@ -241,8 +244,9 @@ class EmbeddedCTarget(TargetDescriptor):
         if self._checked_ops(ir):
             (out / "test" / "ops_ref.h").write_text(self._ops_ref_header(ir))
             (out / "test" / "ops_ref.c").write_text(self._ops_ref_source(ir))
+            (out / "test" / "kernel_check.py").write_text(Path(kernel_rules.__file__).read_text())
         else:
-            for rel in ("test/ops_ref.h", "test/ops_ref.c"):
+            for rel in ("test/ops_ref.h", "test/ops_ref.c", "test/kernel_check.py"):
                 (out / rel).unlink(missing_ok=True)
         (out / "test" / "verify_data.h").write_text(self._verify_data(ir))
         (out / "test" / "verify_main.c").write_text(self._verify_main(ir))
@@ -1556,6 +1560,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 ".PHONY: verify bench profile lib release clean objective_guard",
                 "",
                 f"verify:{guard} $(SRC) $(VERIFY_SRC) test/verify_main.c",
+                _KERNEL_CHECK_RECIPE,
                 "\t$(CC) $(CFLAGS) -Itest $(SRC) $(VERIFY_SRC) test/verify_main.c -o verify_bin -lm",
                 "\t./verify_bin",
                 "",
@@ -1636,39 +1641,37 @@ class EmbeddedCTarget(TargetDescriptor):
         )
 
     # -- static checks -----------------------------------------------------
-    def kernel_checks(self, rel: str, source: str, ir: FomIR) -> list[str]:
-        """Keep a rewrite's coefficients tied to the package's checked data.
+    def kernel_checks(
+        self, rel: str, source: str, ir: FomIR, baseline: str | None = None
+    ) -> list[str]:
+        """The :mod:`~fomtools.codegen.kernel_rules` for a rewritten solver or ``fom_ops.c``.
 
-        In a rewritten ``fom_ops.c`` or solver, a floating-point literal other
-        than a structural constant (0, 0.5, 1, 2) is a hardcoded coefficient the
-        direct matvec check cannot trace to ``fom_data.c``. A rewritten solver
-        must also apply every matvec matrix through ``fom_apply_<name>`` (which
-        verify checks against the matrix), so it may not read that matrix's
-        ``FOM_MAT_<name>`` data itself.
+        Only where ``fom_ops.c`` is editable (and so checked against the matrices):
+        the rules keep coefficients inside the routines that check covers.
         """
+        kind = self._kernel_rule_kinds().get(rel)
+        if kind is None:
+            return []
+        return kernel_rules.check(kind, source, _matvec_matrix_names(ir), baseline)
+
+    def _kernel_rule_kinds(self) -> dict[str, str]:
         if self.ops_source_path() not in self.optimization_editable_paths():
-            return []
-        if rel not in (self.solver_source_path(), self.ops_source_path()):
-            return []
-        code = strip_c_comments_and_strings(source)
-        violations = [
-            f"floating-point literal '{lit}' looks like a hardcoded coefficient; "
-            "read coefficients from fom_data.c"
-            for lit in dict.fromkeys(
-                m.group(0)
-                for m in _C_FLOAT_LITERAL.finditer(code)
-                if float(m.group(1)) not in _ALLOWED_FLOAT_LITERALS
-            )
+            return {}
+        return {self.solver_source_path(): "solver", self.ops_source_path(): "ops"}
+
+    def write_kernel_check_config(self, out_dir, ir: FomIR, baselines: dict[str, str]) -> None:
+        kinds = self._kernel_rule_kinds()
+        if not kinds:
+            return
+        files = [
+            {"path": rel, "kind": kind, "baseline": baselines.get(rel)}
+            for rel, kind in kinds.items()
         ]
-        if rel == self.solver_source_path():
-            for name in _matvec_matrix_names(ir):
-                pattern = rf"\bFOM_MAT_{re.escape(name)}(?:_(?:ROWPTR|COLIDX|VALS))?\b"
-                if re.search(pattern, code):
-                    violations.append(
-                        f"the solver reads FOM_MAT_{name} directly; apply it with "
-                        f"fom_apply_{name}, which verify checks against the matrix"
-                    )
-        return violations
+        config = {"matvec": _matvec_matrix_names(ir), "files": files}
+        (Path(out_dir) / _KERNEL_CHECK_CONFIG).write_text(json.dumps(config, indent=1))
+
+    def remove_kernel_check_config(self, out_dir) -> None:
+        (Path(out_dir) / _KERNEL_CHECK_CONFIG).unlink(missing_ok=True)
 
     def static_checks(self, source: str, ir: FomIR | None = None) -> list[str]:
         violations = objective_violations(source, ir)
