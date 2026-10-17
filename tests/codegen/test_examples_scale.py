@@ -117,4 +117,40 @@ def test_pdhg_scaled_emits_csr_and_verifies(tmp_path, requires_compiler):
     assert result.translate.success, result.translate.log
     assert "VERIFY OK" in result.translate.log
     # at least one matvec is emitted as CSR (the sparse A-derived blocks)
-    assert "ROWPTR" in (tmp_path / "src" / "fom_ops.c").read_text()
+    assert "ROWPTR" in (tmp_path / "src" / "fom_data.c").read_text()
+
+
+def test_scaffold_never_densifies_csr_matrices(tmp_path, monkeypatch):
+    # Sparse matvec blocks go to fom_data.c as CSR and nowhere else: emitting one
+    # dense costs O(rows * cols) memory and file size, which at scale is the
+    # difference between megabytes and gigabytes.
+    from fomtools.codegen.emit import scaffold
+    from fomtools.codegen.ir import MatrixData
+    from fomtools.codegen.targets.embedded_c import _is_csr, _matvec_matrix_names
+
+    ex = pdhg_lp_example(n=600, m=400, density=0.01)
+    cfg = CodegenConfig(termination=TerminationSpec(max_iters=5))
+    ir = extract_ir(ex["verifier"], ex["next_state"], config=cfg, name="pdhg_lp")
+    csr = [n for n in _matvec_matrix_names(ir) if _is_csr(ir.matrices[n])]
+    assert csr
+
+    dense = MatrixData.dense
+
+    def guarded(self):
+        assert not (self.name in csr and _is_csr(self)), f"densified CSR matrix {self.name}"
+        return dense(self)
+
+    monkeypatch.setattr(MatrixData, "dense", guarded)
+    scaffold(ir, tmp_path, cfg)
+
+    data = (tmp_path / "src" / "fom_data.c").read_text()
+    ops = (tmp_path / "src" / "fom_ops.c").read_text()
+    for name in csr:
+        assert f"FOM_MAT_{name}_VALS[" in data
+        assert f"FOM_MAT_{name}[" not in data
+    assert "static const" not in ops  # code only: the data is package-owned
+    # Bounded by the stored entries, not by rows * cols.
+    nnz = sum(md.nnz() for md in ir.matrices.values())
+    dense_size = sum(int(np.prod(ir.matrices[n].shape)) for n in csr)
+    assert nnz < dense_size // 10
+    assert len(data) < 60 * (nnz + sum(md.shape[0] for md in ir.matrices.values()))

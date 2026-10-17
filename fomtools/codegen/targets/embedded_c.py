@@ -47,8 +47,8 @@ def _c_array(
     return f"{storage} {ctype} {name}[{flat.size}] = {{{body}}};"
 
 
-def _c_extern(name: str) -> str:
-    return f"extern const fom_float {name}[];"
+def _c_extern(name: str, ctype: str = "fom_float") -> str:
+    return f"extern const {ctype} {name}[];"
 
 
 def _c_int_array(name: str, values, storage: str = "static const") -> str:
@@ -172,6 +172,12 @@ def _c_int_array_2d(name: str, rows, decl_dims: str) -> str:
 
 class EmbeddedCTarget(TargetDescriptor):
     name = "embedded_c"
+
+    #: Emit the CSR arrays of sparse matvec matrices into the package-owned
+    #: ``fom_data.c`` (read by ``fom_ops.c``), so a rewritten ``fom_ops.c`` cannot
+    #: change the data it is checked against. CUDA keeps them device-side in
+    #: ``fom_ops.cu`` instead, to avoid a second (host) copy.
+    csr_in_data = True
 
     #: Annotate data-parallel loops (matrix-vector products and the CG kernels)
     #: with optional OpenMP pragmas. Off for the embedded target (kept simple and
@@ -388,7 +394,16 @@ class EmbeddedCTarget(TargetDescriptor):
         csr |= _objective_only_names(ir)  # emitted with fom_objective in fom_ops.c
         for name, md in ir.matrices.items():
             if name in csr:
-                continue  # sparse matvec matrices live in fom_ops.c as CSR
+                if self.csr_in_data:
+                    rows, cols = md.shape[0], md.shape[1] if len(md.shape) > 1 else 1
+                    lines.append(f"#define FOM_MAT_{name}_ROWS {rows}")
+                    lines.append(f"#define FOM_MAT_{name}_COLS {cols}")
+                    lines.append(f"#define FOM_MAT_{name}_NNZ {md.nnz()}")
+                    lines.append(_c_extern(f"FOM_MAT_{name}_ROWPTR", "fom_int"))
+                    lines.append(_c_extern(f"FOM_MAT_{name}_COLIDX", "fom_int"))
+                    lines.append(_c_extern(f"FOM_MAT_{name}_VALS"))
+                    lines.append("")
+                continue  # sparse matvec matrices are stored as CSR only
             shape = md.shape
             rows = shape[0]
             cols = shape[1] if len(shape) > 1 else 1
@@ -429,7 +444,13 @@ class EmbeddedCTarget(TargetDescriptor):
             lines.append("")
         for name, md in ir.matrices.items():
             if name in csr:
-                continue  # emitted as CSR in fom_ops.c
+                if self.csr_in_data:  # CSR only: never densified
+                    rowptr, colidx, vals = md.csr()
+                    lines.append(_c_int_array(f"FOM_MAT_{name}_ROWPTR", rowptr, storage="const"))
+                    lines.append(_c_int_array(f"FOM_MAT_{name}_COLIDX", colidx, storage="const"))
+                    lines.append(_c_array(f"FOM_MAT_{name}_VALS", vals, storage="const"))
+                    lines.append("")
+                continue
             lines.append(_c_array(f"FOM_MAT_{name}", md.dense(), storage="const"))
             lines.append("")
         return "\n".join(lines)
@@ -495,12 +516,8 @@ class EmbeddedCTarget(TargetDescriptor):
             shape = md.shape
             rows = shape[0]
             cols = shape[1] if len(shape) > 1 else 1
-            up = name.upper()
             if _is_csr(md):
-                rowptr, colidx, vals = md.csr()
-                lines.append(_c_int_array(f"FOM_OP_{up}_ROWPTR", rowptr))
-                lines.append(_c_int_array(f"FOM_OP_{up}_COLIDX", colidx))
-                lines.append(_c_array(f"FOM_OP_{up}_VALS", vals))
+                mat = f"FOM_MAT_{name}"
                 lines += [
                     f"void fom_apply_{name}(const fom_float *x, fom_float *out) {{",
                     "    fom_int i, p;",
@@ -510,8 +527,8 @@ class EmbeddedCTarget(TargetDescriptor):
                 lines += [
                     f"    for (i = 0; i < {rows}; ++i) {{",
                     "        fom_float s = 0.0;",
-                    f"        for (p = FOM_OP_{up}_ROWPTR[i]; p < FOM_OP_{up}_ROWPTR[i + 1]; ++p) "
-                    f"s += FOM_OP_{up}_VALS[p] * x[FOM_OP_{up}_COLIDX[p]];",
+                    f"        for (p = {mat}_ROWPTR[i]; p < {mat}_ROWPTR[i + 1]; ++p) "
+                    f"s += {mat}_VALS[p] * x[{mat}_COLIDX[p]];",
                     "        out[i] += s;",
                     "    }",
                     "}",

@@ -66,6 +66,9 @@ _DEVICE_CONST = "__device__ static const"
 class CudaTarget(EmbeddedCTarget):
     name = "large_scale_cuda"
 
+    #: Sparse matvec data stays in device memory in fom_ops.cu (no host copy).
+    csr_in_data = False
+
     def solver_source_path(self) -> str:
         return "src/fom_solver.cu"
 
