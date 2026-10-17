@@ -76,18 +76,23 @@ class CodegenResult:
         return self.optimize is not None and self.optimize.success
 
 
-def _static_issues(target, optimized: dict[str, str], translated: dict[str, str]) -> list[str]:
-    """Target invariant violations (e.g. division, malloc) in rewritten non-solver sources.
+def _static_issues(target, ir, optimized: dict[str, str], translated: dict[str, str]) -> list[str]:
+    """Invariant violations in the sources the code optimization phase rewrote.
 
-    The solver is held to these by its prompt and verify, as before; a rewritten
-    linear solve or matrix-vector product is new ground for the agent, so it is
-    also checked here.
+    Target invariants (e.g. division, malloc) on rewritten non-solver sources:
+    the solver is held to these by its prompt and verify, as before, while a
+    rewritten linear solve or matrix-vector product is new ground for the agent.
+    And, on every rewritten source, the rules that keep its kernels tied to the
+    checked data (:meth:`~fomtools.codegen.targets.base.TargetDescriptor.kernel_checks`).
     """
     issues = []
     for rel, text in optimized.items():
-        if rel == target.solver_source_path() or text == translated.get(rel):
+        if text == translated.get(rel):
             continue
-        issues += [f"[optimization not kept: {rel}: {v}]" for v in target.static_checks(text)]
+        found = target.kernel_checks(rel, text, ir)
+        if rel != target.solver_source_path():
+            found = target.static_checks(text) + found
+        issues += [f"[optimization not kept: {rel}: {v}]" for v in found]
     return issues
 
 
@@ -424,7 +429,7 @@ def generate_code(
         # verified), fall back to the known-good translated sources.
         recheck = build_and_verify(out_dir, target) if (optimize.success and changed) else None
         static_issues = (
-            _static_issues(target, optimized_sources, translated_sources)
+            _static_issues(target, ir, optimized_sources, translated_sources)
             if (optimize.success and changed)
             else []
         )

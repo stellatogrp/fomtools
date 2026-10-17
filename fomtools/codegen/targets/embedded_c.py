@@ -147,6 +147,17 @@ def _matvec_matrix_names(ir: FomIR) -> list[str]:
     return names
 
 
+#: A floating-point literal (decimal point and/or exponent, optional suffix), not
+#: part of an identifier or of a longer number.
+_C_FLOAT_LITERAL = re.compile(
+    r"(?<![\w.])((?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?|\d+[eE][-+]?\d+)[fFlL]?(?![\w.])"
+)
+
+#: Float literals a rewritten kernel may still contain: structural constants, not
+#: coefficients (zeroing, unit steps, doubling and halving).
+_ALLOWED_FLOAT_LITERALS = frozenset({0.0, 0.5, 1.0, 2.0})
+
+
 def _is_csr(md) -> bool:
     """Emit a matrix as sparse CSR when it is large and structurally sparse."""
     shape = md.shape
@@ -1625,6 +1636,40 @@ class EmbeddedCTarget(TargetDescriptor):
         )
 
     # -- static checks -----------------------------------------------------
+    def kernel_checks(self, rel: str, source: str, ir: FomIR) -> list[str]:
+        """Keep a rewrite's coefficients tied to the package's checked data.
+
+        In a rewritten ``fom_ops.c`` or solver, a floating-point literal other
+        than a structural constant (0, 0.5, 1, 2) is a hardcoded coefficient the
+        direct matvec check cannot trace to ``fom_data.c``. A rewritten solver
+        must also apply every matvec matrix through ``fom_apply_<name>`` (which
+        verify checks against the matrix), so it may not read that matrix's
+        ``FOM_MAT_<name>`` data itself.
+        """
+        if self.ops_source_path() not in self.optimization_editable_paths():
+            return []
+        if rel not in (self.solver_source_path(), self.ops_source_path()):
+            return []
+        code = strip_c_comments_and_strings(source)
+        violations = [
+            f"floating-point literal '{lit}' looks like a hardcoded coefficient; "
+            "read coefficients from fom_data.c"
+            for lit in dict.fromkeys(
+                m.group(0)
+                for m in _C_FLOAT_LITERAL.finditer(code)
+                if float(m.group(1)) not in _ALLOWED_FLOAT_LITERALS
+            )
+        ]
+        if rel == self.solver_source_path():
+            for name in _matvec_matrix_names(ir):
+                pattern = rf"\bFOM_MAT_{re.escape(name)}(?:_(?:ROWPTR|COLIDX|VALS))?\b"
+                if re.search(pattern, code):
+                    violations.append(
+                        f"the solver reads FOM_MAT_{name} directly; apply it with "
+                        f"fom_apply_{name}, which verify checks against the matrix"
+                    )
+        return violations
+
     def static_checks(self, source: str, ir: FomIR | None = None) -> list[str]:
         violations = objective_violations(source, ir)
         code = strip_c_comments_and_strings(source)

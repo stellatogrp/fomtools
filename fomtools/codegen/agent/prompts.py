@@ -146,7 +146,12 @@ coefficients from `src/fom_data.c` (or values derived from them at setup); never
 hardcode them. `{verify}` checks every `fom_apply_<name>` directly against its
 matrix, column by column (probing each unit vector) and on random vectors, so a
 kernel must apply exactly `M` for every input and must keep accumulating into
-`out`."""
+`out`. Two rules are checked when your rewrite is collected, and a rewrite that
+breaks either is discarded: `{src}` must not read the `FOM_MAT_<name>` data of
+any matrix it multiplies by (call `fom_apply_<name>` instead), and neither
+`{src}` nor `{ops_src}` may contain floating-point literals other than `0.0`,
+`0.5`, `1.0` and `2.0`. Do not call `fom_apply_<name>` on unit vectors to rebuild
+a matrix inside `{src}`."""
     else:
         scope = f"""\
 Edit ONLY `{src}`: the Makefile, build flags, headers, numeric data,

@@ -186,3 +186,49 @@ def test_ops_are_checked_and_editable_only_off_cuda(mpc):
     assert cuda.optimization_editable_paths() == (cuda.solver_source_path(),)
     assert "fom_ref_apply_" not in cuda._verify_main(ir)
     assert "Edit ONLY" in code_optimization_instructions(ir, cuda)
+
+
+def test_a_hardcoded_coefficient_in_ops_is_rejected(tmp_path, mpc, requires_compiler):
+    # Numerically right (adds 0.37 * 0), but a literal coefficient is untraceable.
+    def with_literal(text: str) -> str:
+        return MARK + "\n" + text + "\nfom_float fom_unused_scale(void) { return 0.37 * 0; }\n"
+
+    result = _generate(tmp_path, mpc, with_literal)
+    assert not result.optimization_kept
+    assert "floating-point literal '0.37'" in result.optimize.log
+    assert MARK not in (tmp_path / OPS).read_text()
+
+
+def test_an_optimized_solver_with_its_own_matvec_is_rejected(tmp_path, mpc, requires_compiler):
+    # Same numbers as the golden, but t0_state applied by an inline loop over
+    # its CSR data instead of the checked fom_apply_t0_state.
+    inline = (
+        "{ fom_int i, p; for (i = 0; i < FOM_MAT_t0_state_ROWS; ++i) "
+        "for (p = FOM_MAT_t0_state_ROWPTR[i]; p < FOM_MAT_t0_state_ROWPTR[i + 1]; ++p) "
+        "work->acc[i] += FOM_MAT_t0_state_VALS[p] * work->state[FOM_MAT_t0_state_COLIDX[p]]; }"
+    )
+    golden = GOLDEN.read_text()
+    call = "fom_apply_t0_state(work->state, work->acc);"
+    assert golden.count(call) == 1
+    ex, _ = mpc
+
+    class TwoPhaseStub(StubAgentDriver):
+        def run(self, task):
+            if task.phase == "code_optimization":
+                self._source = golden.replace(call, inline)
+            return super().run(task)
+
+    result = generate_code(
+        ex["verifier"],
+        ex["next_state"],
+        tmp_path,
+        config=CONFIG,
+        driver=TwoPhaseStub(GOLDEN),
+        name="mpc",
+        code_optimization=True,
+    )
+    assert result.success
+    assert "VERIFY OK" in result.optimize.log  # numerically correct ...
+    assert not result.optimization_kept  # ... but not traceable to the checked routine
+    assert "the solver reads FOM_MAT_t0_state directly" in result.optimize.log
+    assert (tmp_path / "src" / "fom_solver.c").read_text() == golden

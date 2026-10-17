@@ -55,3 +55,64 @@ def test_strip_comments_helper():
     assert "d/e" not in stripped
     assert "f/g" not in stripped
     assert "a" in stripped and "c" in stripped and "h" in stripped
+
+
+# -- kernel checks: rewrites stay tied to the checked data ---------------------
+@pytest.fixture(scope="module")
+def mpc_ir():
+    from fomtools.codegen.examples import mpc_osqp_example
+    from fomtools.codegen.extract import extract_ir
+
+    ex = mpc_osqp_example(nx=2, nu=1, N=3)
+    return extract_ir(ex["verifier"], ex["next_state"], config=CodegenConfig(), name="mpc")
+
+
+def test_float_literals_flagged_in_rewritten_ops(target, mpc_ir):
+    source = "void f(const fom_float *x, fom_float *out){ out[0] += 0.37 * x[1] + 1e-3f; }"
+    violations = target.kernel_checks("src/fom_ops.c", source, mpc_ir)
+    assert any("'0.37'" in v for v in violations)
+    assert any("'1e-3f'" in v for v in violations)
+
+
+def test_structural_literals_and_integers_allowed(target, mpc_ir):
+    source = """
+    /* 3.14 in a comment is fine */
+    void f(const fom_float *x, fom_float *out){
+        out[0] += 0.0 + 0.5 * x[1] + 1.0 * x[2] - 2.0 * x[3] + x[12] + 2. ;
+    }
+    """
+    assert target.kernel_checks("src/fom_ops.c", source, mpc_ir) == []
+
+
+def test_solver_may_not_read_matvec_matrix_data(target, mpc_ir):
+    source = """
+    void g(FomWorkspace *work){
+        work->acc[0] += FOM_MAT_t0_state[0] * work->state[0];
+        work->acc[1] += FOM_MAT_t0_p_p0_VALS[0];
+    }
+    """
+    violations = target.kernel_checks("src/fom_solver.c", source, mpc_ir)
+    assert any("FOM_MAT_t0_state directly" in v for v in violations)
+    assert any("FOM_MAT_t0_p_p0 directly" in v for v in violations)
+
+
+def test_solver_may_read_clip_bounds_and_dimensions(target, mpc_ir):
+    source = """
+    void g(FomWorkspace *work){
+        int i;
+        fom_apply_t0_state(work->state, work->acc);
+        for (i = 0; i < FOM_MAT_t0_state_ROWS; ++i)
+            if (work->t1[i] < FOM_MAT_t1_lo[i]) work->t1[i] = FOM_MAT_t1_lo[i];
+    }
+    """
+    assert target.kernel_checks("src/fom_solver.c", source, mpc_ir) == []
+
+
+def test_kernel_checks_skip_other_files_and_cuda(target, mpc_ir):
+    from fomtools.codegen.config import Backend, Version
+    from fomtools.codegen.targets import get_target
+
+    source = "fom_float f(void){ return 0.37 * FOM_MAT_t0_state[0]; }"
+    assert target.kernel_checks("src/fom_linsolve.c", source, mpc_ir) == []
+    cuda = get_target(CodegenConfig(version=Version.LARGE_SCALE, backend=Backend.CUDA))
+    assert cuda.kernel_checks(cuda.solver_source_path(), source, mpc_ir) == []

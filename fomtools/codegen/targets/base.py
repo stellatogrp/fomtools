@@ -74,6 +74,15 @@ class TargetDescriptor(ABC):
         """
         return ""
 
+    def kernel_checks(self, rel: str, source: str, ir) -> list[str]:
+        """Violations of the rules that keep rewritten kernels checkable (empty = OK).
+
+        Run on each source the code optimization phase changed. Default: none.
+        Targets whose matrix-vector products are editable and checked against
+        the package's matrices override this.
+        """
+        return []
+
     def static_checks(self, source: str, ir: FomIR | None = None) -> list[str]:
         """Return a list of invariant violations in ``source`` (empty = OK).
 
