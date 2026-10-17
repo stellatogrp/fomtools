@@ -40,7 +40,9 @@ from fomtools.cvxpygen.builders import (  # noqa: E402
     build_pdhg_lp,
     build_relaxed_admm_qp,
 )
-from fomtools.cvxpygen.qpdata import CVXPYGEN_INF  # noqa: E402
+from fomtools.cvxpygen.qpdata import CVXPYGEN_INF, extract_qp_data  # noqa: E402
+from fomtools.cvxpygen.scaling import _scale_finite, ruiz_for, scale_qp  # noqa: E402
+from tests.codegen.conftest import cvxpygen_canonicalize  # noqa: E402
 from tests.codegen.test_cvxpygen_dispatch import _admm_qp, _pdhg_lp  # noqa: E402
 from tests.codegen.test_cvxpygen_e2e import _build_problem  # noqa: E402
 
@@ -178,6 +180,42 @@ def test_objective_is_measured_in_the_original_units():
         )
 
 
+def test_auto_equilibration_unscales_the_objective():
+    """scale_qp records (D, E, c), so a builder on Ruiz-equilibrated data stops
+    on the original problem's residuals, which is what the bridge reports."""
+    qp = _admm_qp(seed=4)
+    s = ruiz_for(qp)
+    scaled = scale_qp(qp, s)
+    D, E, c = scaled.unscale
+    np.testing.assert_array_equal(D, s.D)
+    np.testing.assert_array_equal(E, s.E)
+    assert c == s.c
+    assert max(np.max(np.abs(s.D - 1.0)), np.max(np.abs(s.E - 1.0)), abs(s.c - 1.0)) > 1e-2
+
+    spec = build_admm_qp(scaled)
+    ir = rolled_ir(spec, objective_config(tol=1e-9))
+    scale = {"q": s.c * s.D, "b": s.E[: qp.n_eq], "u_ineq": s.E[qp.n_eq :]}
+    rng = np.random.default_rng(6)
+    for _ in range(2):
+        original = draw_pieces(qp, rng)
+        pieces = {k: _scale_finite(v, scale[k]) for k, v in original.items()}
+        res = check_trajectory(
+            ir, spec, scaled, pieces, unscale=scaled.unscale, unscaled_qp=qp, unscaled=original
+        )
+
+    # Without the recorded scaling the objective would be the scaled residual,
+    # which is not what the bridge reports.
+    plain = rolled_ir(
+        build_admm_qp(dataclasses.replace(scaled, unscale=None)), objective_config(tol=1e-9)
+    )
+    other = ReferenceOracle(
+        dataclasses.replace(
+            plain, termination=plain.termination.model_copy(update={"check_termination": 1})
+        )
+    ).solve(param_values=param_values(plain, spec.param_copy, pieces))
+    assert not np.allclose([r for _, r in other.objectives], [r for _, r in res.objectives])
+
+
 def test_stop_agrees_with_the_bridge_residuals():
     """At the oracle's stop, the residuals the bridge reports are within tol
     exactly when the solver says FOM_SOLVED, and their max is the reported
@@ -239,15 +277,25 @@ def test_generated_solver_verifies_with_objective_termination(
     )
     assert result.success, result.translate.log
     assert result.ir.termination.uses_objective
+    # make verify ran both the direct linear-solve check (the KKT factorization
+    # the optimizer may rewrite) and the objective stop checks.
+    solver_code = tmp_path / "cpg_obj" / "c" / "solver_code"
+    data = (solver_code / "test" / "verify_data.h").read_text()
+    assert "FOM_VERIFY_LS_T0_B" in data and "FOM_VERIFY_OBJECTIVE 1" in data
+    assert "VERIFY OK" in result.translate.log
     cpg_solve = (tmp_path / "cpg_obj" / "c" / "src" / "cpg_solve.c").read_text()
     assert "cpg_set_solver_tol" in cpg_solve
     assert "cpg_set_solver_check_termination" in cpg_solve
 
 
 @pytest.mark.requires_compiler
-def test_cvxpy_solve_stops_on_the_residuals(requires_compiler, tmp_path, monkeypatch):
+@pytest.mark.parametrize("auto_equilibrate", [True, False])
+def test_cvxpy_solve_stops_on_the_residuals(
+    requires_compiler, tmp_path, monkeypatch, auto_equilibrate
+):
     """Through the compiled Python wrapper: the solve stops where the oracle
-    does, and the residuals the bridge reports are the objective at the stop."""
+    does, and the residuals the bridge reports, in the original units, are the
+    objective at the stop, with and without auto equilibration."""
     if shutil.which("cmake") is None:
         pytest.skip("cmake not available")
     if importlib.util.find_spec("pip") is None:
@@ -256,17 +304,23 @@ def test_cvxpy_solve_stops_on_the_residuals(requires_compiler, tmp_path, monkeyp
     problem, q, x = _build_problem()
     result = generate_solver(
         problem,
-        "cpg_obj_wrap",
+        f"cpg_obj_wrap_{int(auto_equilibrate)}",
         fom="admm",
         param_bounds={q: (-1.0, 1.0)},
         config=objective_config(max_iters=4000, tol=1e-6),
         driver=StubAgentDriver(GOLDEN),
         wrapper=True,
+        auto_equilibrate=auto_equilibrate,
         # The extension's pybind types are named after the prefix; another test
         # in the same process may already have registered the unprefixed ones.
-        prefix="objterm",
+        prefix=f"objterm{int(auto_equilibrate)}",
     )
     assert result.success
+    # The solver's parameter is the canonical q, scaled by c D when equilibrated,
+    # exactly as the interface derives it.
+    canon, _ = cvxpygen_canonicalize(problem)
+    qp = extract_qp_data(canon, param_bounds={q: (-1.0, 1.0)})
+    s = ruiz_for(qp) if auto_equilibrate else None
     for q_val, tol, check in (
         (0.1 * np.ones(3), 1e-6, 25),
         (np.array([0.8, -0.5, 0.3]), 1e-6, 7),
@@ -283,7 +337,7 @@ def test_cvxpy_solve_stops_on_the_residuals(requires_compiler, tmp_path, monkeyp
                     update={"tol": tol, "check_termination": check}
                 ),
             )
-        ).solve(param_values={"p0": q_val})
+        ).solve(param_values={"p0": q_val if s is None else s.c * s.D * q_val})
         assert iters == expected.iters
         assert max(stats["pri_res"], stats["dua_res"]) == pytest.approx(
             expected.residual, rel=1e-6, abs=1e-12

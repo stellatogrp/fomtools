@@ -110,7 +110,11 @@ def _scale_finite(values: np.ndarray, scale: np.ndarray) -> np.ndarray:
 
 
 def scale_qp(qp: QPData, s: Scaling) -> QPData:
-    """The equilibrated copy of ``qp`` (data, and the bounds of its parametric pieces)."""
+    """The equilibrated copy of ``qp`` (data, and the bounds of its parametric pieces).
+
+    The copy records ``(D, E, c)`` in ``unscale``, so the builders measure their
+    residual objective in the original problem's units, as the bridge reports it.
+    """
     n_eq = qp.n_eq
     E_eq, E_in = s.E[:n_eq], s.E[n_eq:]
     piece_scale = {"q": s.c * s.D, "b": E_eq, "u_ineq": E_in}
@@ -128,4 +132,5 @@ def scale_qp(qp: QPData, s: Scaling) -> QPData:
         u_ineq=_scale_finite(qp.u_ineq, E_in),
         d=s.c * qp.d,
         bounds=bounds,
+        unscale=(s.D, s.E, s.c),
     )
