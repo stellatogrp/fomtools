@@ -230,6 +230,40 @@ a solver only advertises settings it can actually honor:
   struct at all for such a solver, and `CPG_Info.iter` reports the number of
   iterations the straight-line body performs.
 
+`tol` and `check_termination` exist only when the termination kind uses them
+(`INF_NORM_CHANGE` or `OBJECTIVE`); under the default `MAX_ITERS` the check is
+compiled out, so CVXPYgen rejects a runtime `tol` rather than ignoring it.
+
+### Stopping on OSQP's residuals
+
+The built-in builders set OSQP's residuals as the verification objective,
+
+```
+max(||Ax - clamp(Ax, l, u)||_inf, ||Px + q + A'y||_inf)
+```
+
+(`|A_eq x - b|` on the equality rows, `max(A_in x - u, 0)` on the inequality
+rows), so `TerminationKind.OBJECTIVE` stops exactly where OSQP would with
+`eps_abs = tol`, `eps_rel = 0` and `scaled_termination = False`:
+
+```python
+from fomtools.codegen import CodegenConfig, TerminationKind, TerminationSpec
+
+config = CodegenConfig(
+    termination=TerminationSpec(kind=TerminationKind.OBJECTIVE, max_iters=4000, tol=1e-6)
+)
+result = fcpg.generate_solver(problem, "out_qp", fom="admm", config=config)
+problem.solve(method="CPG", tol=1e-5, check_termination=10)
+```
+
+The residuals are tested every `check_termination` iterations (default 25) and at
+`max_iter`, and the `pri_res` / `dua_res` the bridge reports are the two halves
+of the objective at the stop. For an equilibrated QP (`QPData.unscale` holding the
+diagonal scalings `D`, `E` and the cost scaling `c`) the objective is measured in
+the original problem's units, the same units the bridge reports. A custom builder
+can reuse `fomtools.cvxpygen.builders.set_residual_objective(v, qp, exprs, x, y)`
+on the primal and dual iterate its iteration produces.
+
 ## Limitations
 
 - Parameters may enter only the canonical **vectors**: the objective's linear

@@ -93,15 +93,35 @@ cpg_update_q(values);     // update parameter
 cpg_solve();              // run canonicalization + FOM
 // results in CPG_Result
 cpg_set_solver_max_iter(N);
-cpg_set_solver_tol(tol);
+cpg_set_solver_tol(tol);                 // INF_NORM_CHANGE / OBJECTIVE kinds only
+cpg_set_solver_check_termination(N);     // likewise
 ```
+
+### Stopping on OSQP's residuals
+
+The built-in builders set `max(||Ax - clamp(Ax, l, u)||_inf, ||Px + q + A'y||_inf)`
+(unscaled when `QPData.unscale = (D, E, c)` is set) as the verification objective,
+so `TerminationKind.OBJECTIVE` is OSQP's test with `eps_abs = tol`, `eps_rel = 0`,
+`scaled_termination = False`:
+
+```python
+config = CodegenConfig(
+    termination=TerminationSpec(kind=TerminationKind.OBJECTIVE, max_iters=4000, tol=1e-6)
+)  # checked every 25 iterations (default) and at max_iter
+result = fcpg.generate_solver(problem, "out_qp", fom="admm", config=config)
+problem.solve(method="CPG", tol=1e-5, check_termination=10)
+```
+
+The bridge's `pri_res` / `dua_res` are the two halves of the objective at the stop.
+Custom builders can call `builders.set_residual_objective(v, qp, exprs, x, y)`.
 
 ## Limitations (v1)
 
 - Parameters may enter only canonical **vectors** (q, l, u), not P or A matrices.
   Parameter-dependent P/A raises `NotImplementedError`.
-- The FOM must be **stationary** (one iteration repeated). Schedules not yet wired.
-- Embedded C target only (float64).
+- Varying coefficients go through a scheduled builder (`relaxed_admm`) or an
+  unrolled one (`allow_unrolled=True`).
+- Embedded C and large-scale OpenMP / CUDA targets, float64 only.
 - One solver instance per binary.
-- Residuals are `||x_k - x_{k-1}||_inf`, not primal/dual constraint violations.
+- Reported residuals are OSQP's primal / dual residuals, computed by the bridge.
 - Each `cpg_solve()` cold-starts the FOM.

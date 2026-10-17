@@ -120,6 +120,22 @@ config = CodegenConfig(
 result = vp.codegen_rolled("out/ista", next_state=z[1], config=config)
 ```
 
+To stop on the verified metric itself, set the objective on the recording and use
+`TerminationKind.OBJECTIVE` (checked every 25 iterations by default and at the
+last one; `ord=2` is the squared norm, as in verification):
+
+```python
+vp.set_objective_norm(z[K] - z[K - 1], ord=np.inf)
+config = CodegenConfig(
+    termination=TerminationSpec(kind=TerminationKind.OBJECTIVE, max_iters=K, tol=1e-6),
+)
+result = vp.codegen("out/ista", iterates=z, config=config)  # stops by K if r^K <= tol is verified
+```
+
+The objective may read `w^K`, `w^{K-1}`, parameters, and ReLU steps recorded after
+the loop (`max(Ax - u, 0)`); anything else raises `ObjectiveExtractionError` with
+the fix. See `references/codegen.md`.
+
 ### Performance Profiling
 
 ```python

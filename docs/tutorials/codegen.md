@@ -147,9 +147,10 @@ assert result.success
 ```
 
 Generating from a recorded run runs that run, so there is no horizon to stop short
-of and `codegen` rejects a tolerance-based criterion rather than quietly ignoring
-it. Reach for `codegen_rolled` when you want a stopping rule, or `codegen` when
-you want the algorithm you recorded.
+of and `codegen` rejects the infinity-norm criterion rather than quietly ignoring
+it. Reach for `codegen_rolled` when you want that stopping rule, or `codegen` when
+you want the algorithm you recorded. The verification objective (next section) is
+the exception: `codegen` accepts it.
 
 `TerminationSpec` also takes `check_termination` (named after OSQP's setting):
 the residual is computed and tested only every `check_termination` iterations,
@@ -159,6 +160,51 @@ time for direct-method FOMs, and checking less often overshoots the stopping
 point by up to `check_termination - 1` full iterations. Raise it only for
 matrix-free methods on large problems, where a single iteration is cheap
 relative to a pass over the state.
+
+### Stopping on the verification objective
+
+`TerminationKind.INF_NORM_CHANGE` stops on `||x_k - x_{k-1}||_inf` over the whole
+state, which is not the quantity you verified when your objective reads a scaled
+or partial iterate, or is a KKT residual. `TerminationKind.OBJECTIVE` stops on the
+objective itself, the one set with `set_objective_norm`, in the norm it was set
+with (`ord=2` is the squared two-norm, as in verification):
+
+```python
+vp.set_objective_norm(H @ (z[K] - z[K - 1]), ord=np.inf)
+
+config = CodegenConfig(
+    termination=TerminationSpec(kind=TerminationKind.OBJECTIVE, max_iters=K, tol=1e-6),
+)
+result = vp.codegen("out/ista", iterates=z, config=config)
+```
+
+The solver tests `r^k <= tol` every `check_termination` iterations (default 25)
+and always at the last one, and reports `r^k` in `solution.residual`. The test is
+then exactly the certified quantity: if verification shows `r^K <= tol` over the
+whole parameter set, the generated solver is guaranteed to stop by iteration `K`
+with `FOM_SOLVED`. It also means experiments can time every solver at the same
+tolerance without searching over iteration counts.
+
+The objective is written at iteration `K` in terms of `w^K` and `w^{K-1}`, and is
+mapped exactly onto what the loop holds at the end of an iteration: the new and
+current state, the parameters, the step outputs of the iteration (when the
+objective is written on the iteration the solver was extracted from), and ReLU
+steps recorded after the loop for one-sided terms such as `max(Ax - u, 0)`. A row
+holding a ReLU must hold only that term. An objective written after the loop, as
+above, needs the recorded iterates to locate iteration `K`; `codegen` has them,
+and `codegen_rolled` takes them through `iterates=`. Anything the loop does not
+carry (an iterate older than `w^{K-1}`, an iterate accumulated as a non-leaf
+expression, a parameter the iteration never reads) raises
+`ObjectiveExtractionError` saying what to change: carry the older iterate in the
+state, or record the iterates with `iterate_trajectory`.
+
+The metric is generated as `fom_objective(...)` next to the matrix-vector
+products, in the files the coding agent may not edit, and the agent's loop only
+decides when to call it. `make verify` checks the stopping iteration, the
+objective value and the status against the reference oracle, at the default
+settings and at other runtime `check_termination` and `max_iter`. An unrolled run
+(one that does not roll back up) evaluates the objective once, after its single
+pass.
 
 This requires a coding agent. Enable the real Claude Agent SDK driver with
 `FOMTOOLS_CODEGEN_AGENT=1` (needs authentication), or pass an explicit driver
@@ -197,6 +243,7 @@ from fom_solver import Solver
 
 solver = Solver()
 out = solver.solve(p0=b)          # {"x", "iter", "residual", "status"}
+solver.update_settings(tol=1e-8, check_termination=10, max_iter=500)  # runtime
 ```
 
 ## Performance: timing, profiling, and the code optimization phase
@@ -426,6 +473,7 @@ fomtools-codegen --example dr        --out out/dr    --scaffold-only
 fomtools-codegen --example mpc       --out out/mpc   --driver agent   # OSQP MPC, larger
 fomtools-codegen --example fista     --out out/fista --scaffold-only  # a recorded run
 fomtools-codegen --example scheduled --out out/sched --scaffold-only  # a declared coefficient
+fomtools-codegen --module my_fom.py  --out out/mine  --tol 1e-6 --objective  # stop on the objective
 ```
 
 The built-in `mpc` example is a model-predictive-control QP solved with **OSQP's
@@ -444,7 +492,9 @@ both side by side is the quickest way to see what declaring a coefficient buys.
 
 `--scaffold-only` emits everything except the solver body (useful to inspect the
 spec and data before invoking the agent). `--no-roll` keeps a recorded run
-unrolled even when it could be rolled back up.
+unrolled even when it could be rolled back up. `--tol` alone stops on the
+infinity-norm change; with `--objective` it stops on the verification objective
+the module set on its recording, and `--check-termination N` sets the interval.
 
 A custom FOM can be supplied with `--module mymodule.py`, where the module defines
 `build_fom()` returning a dict. Which key you provide selects the path:
