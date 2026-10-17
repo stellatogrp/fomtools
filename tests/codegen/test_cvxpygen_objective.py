@@ -262,6 +262,9 @@ def test_cvxpy_solve_stops_on_the_residuals(requires_compiler, tmp_path, monkeyp
         config=objective_config(max_iters=4000, tol=1e-6),
         driver=StubAgentDriver(GOLDEN),
         wrapper=True,
+        # The extension's pybind types are named after the prefix; another test
+        # in the same process may already have registered the unprefixed ones.
+        prefix="objterm",
     )
     assert result.success
     for q_val, tol, check in (
