@@ -54,6 +54,7 @@ from fomtools.codegen.ir import (
     UnrolledBlowupError,
     UnrolledFidelityError,
 )
+from fomtools.codegen.objective import ObjectiveExtractionError
 from fomtools.codegen.oracle import check_stationary, check_unrolled, sample_param_values
 
 __all__ = ["extract_unrolled_ir"]
@@ -87,22 +88,39 @@ _BLOWUP_MIN_TERMS = 200
 _BLOWUP_MIN_STEPS = 10
 
 
-def _require_max_iters(config: CodegenConfig) -> None:
-    """Reject a tolerance-based criterion, whether or not the recording rolls.
+def _require_supported_termination(config: CodegenConfig) -> None:
+    """Reject the infinity-norm change criterion, whether or not the recording rolls.
 
     Checked up front rather than per branch: generating from a tape means
     generating the run that was recorded, and a rolled result keeps that same
-    horizon, so an early exit is not honored either way.
+    horizon. The verification objective is the exception: it is the metric the
+    recording was verified on, so stopping on it within the recorded horizon is
+    the certified stopping time. A rolled result tests it at the check interval
+    and at the horizon; an unrolled single pass evaluates it once, at the end,
+    and reports it.
     """
-    if config.termination.kind != TerminationKind.MAX_ITERS:
+    if config.termination.kind == TerminationKind.INF_NORM_CHANGE:
         raise ValueError(
             f"termination kind {config.termination.kind.value!r} cannot be combined with "
             "code generation from a recorded tape: the generated solver runs the run that "
             "was recorded, so there is no criterion to evaluate against a horizon the "
-            "recording does not have. Use TerminationKind.MAX_ITERS, or generate a rolled "
-            "solver directly from one iteration, where the criterion is evaluated every "
-            "iteration."
+            "recording does not have. Use TerminationKind.MAX_ITERS, TerminationKind."
+            "OBJECTIVE (the verification objective, within the recorded horizon), or "
+            "generate a rolled solver directly from one iteration, where the criterion is "
+            "evaluated every iteration."
         )
+
+
+def _horizon(config: CodegenConfig, max_iters: int) -> TerminationSpec:
+    """The termination of an IR generated from a tape: the recorded horizon.
+
+    Fixed-count by default; an ``OBJECTIVE`` criterion keeps its tolerance and
+    check interval and gets the horizon as its ``max_iters``.
+    """
+    term = config.termination
+    if term.uses_objective:
+        return term.model_copy(update={"max_iters": max_iters})
+    return TerminationSpec(kind=TerminationKind.MAX_ITERS, max_iters=max_iters)
 
 
 def _term_counts(ir: FomIR) -> list[int]:
@@ -150,14 +168,16 @@ def _try_roll(
     is a size optimization, and running a different number of iterations would
     make it a change of behavior.
     """
-    rolled_config = config.model_copy(
-        update={
-            "termination": TerminationSpec(kind=TerminationKind.MAX_ITERS, max_iters=len(groups))
-        }
-    )
+    rolled_config = config.model_copy(update={"termination": _horizon(config, len(groups))})
     try:
         rolled = extract_ir(
-            verifier, groups[0], state=state, params=params, config=rolled_config, name=name
+            verifier,
+            groups[0],
+            state=state,
+            params=params,
+            config=rolled_config,
+            name=name,
+            iterates=groups,
         )
     except _REAL_FAILURES:
         # Subclasses of NonStationaryFOMError that report something wrong rather
@@ -166,6 +186,12 @@ def _try_roll(
         raise
     except NonStationaryFOMError:
         # Iteration one is not extractable on its own; nothing to roll.
+        return None
+    except ObjectiveExtractionError as err:
+        # The objective reads something only the whole run carries (say, a step
+        # output of the last iteration). The unrolled body keeps every
+        # iteration's outputs, so it can still evaluate it.
+        log.info("%s: not rolling, the objective needs the unrolled run: %s", name, err)
         return None
 
     # The multi-seed confirmation runs whether or not the caller supplied values.
@@ -213,8 +239,11 @@ def extract_unrolled_ir(
         sequence of expressions. A leading entry that is the *initial* iterate is
         recognized and dropped, so both conventions work.
     config:
-        Code-generation configuration. Its termination is replaced by a single
-        pass; a tolerance-based kind is rejected.
+        Code-generation configuration. Its termination is replaced by the
+        recorded horizon (a single pass when unrolled). ``OBJECTIVE`` keeps its
+        tolerance and check interval: a rolled result stops on the verification
+        objective within the horizon, an unrolled one evaluates it once at the
+        end. ``INF_NORM_CHANGE`` is rejected.
     state, params:
         Optional explicit leaf lists, as for
         :func:`~fomtools.codegen.extract.extract_ir`.
@@ -243,7 +272,7 @@ def extract_unrolled_ir(
         :attr:`~fomtools.codegen.ir.FomIR.unrolled` says which.
     """
     config = config or CodegenConfig()
-    _require_max_iters(config)
+    _require_supported_termination(config)
 
     groups = normalize_iterates(verifier, iterates)
     if not groups:
@@ -271,10 +300,9 @@ def extract_unrolled_ir(
         groups[-1],
         state=state,
         params=params,
-        config=config.model_copy(
-            update={"termination": TerminationSpec(kind=TerminationKind.MAX_ITERS, max_iters=1)}
-        ),
+        config=config.model_copy(update={"termination": _horizon(config, 1)}),
         name=name,
+        iterates=groups,
     )
     _check_no_blowup(ir, len(groups))
     log.info(

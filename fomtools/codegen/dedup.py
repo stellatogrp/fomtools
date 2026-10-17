@@ -120,4 +120,13 @@ def dedup_matrices(ir: FomIR) -> FomIR:
             for step in ir.body
         ),
         state_update=_rewrite_linop(ir.state_update, alias),
+        objective=None
+        if ir.objective is None
+        else replace(
+            ir.objective,
+            blocks=tuple(
+                replace(block, linear_op=_rewrite_linop(block.linear_op, alias))
+                for block in ir.objective.blocks
+            ),
+        ),
     )

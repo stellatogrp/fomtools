@@ -72,10 +72,28 @@ class TerminationKind(str, Enum):
     ``MAX_ITERS`` runs a fixed iteration count (exactly matches the verifier /
     simulator semantics, so it is the most robust to verify). ``INF_NORM_CHANGE``
     additionally stops early once ``||x_k - x_{k-1}||_inf <= tol``.
+
+    ``OBJECTIVE`` stops early once the *verification objective* ``r^k`` -- the
+    performance metric set with :meth:`~fomtools.verifier.Verifier.set_objective_norm`,
+    e.g. a fixed-point or KKT residual, in the norm it was set with -- is at most
+    ``tol``. The stopping test is then exactly the certified quantity: if
+    verification shows ``r^K <= tol`` over the whole parameter set, the generated
+    solver stops within ``K`` iterations. The norm follows the verifier's
+    convention, so ``ord=2`` is the *squared* two-norm and ``tol`` bounds it.
     """
 
     MAX_ITERS = "max_iters"
     INF_NORM_CHANGE = "inf_norm_change"
+    OBJECTIVE = "objective"
+
+
+#: Default ``check_termination`` per criterion. The infinity-norm change is fused
+#: into the state copy, so checking it every iteration is nearly free. The
+#: verification objective costs its own matrix-vector products (a KKT residual
+#: reads the problem data again), so it is checked every 25 iterations, as OSQP
+#: does by default.
+_CHECK_TERMINATION_DEFAULTS = {"objective": 25}
+_TOL_KINDS = (TerminationKind.INF_NORM_CHANGE, TerminationKind.OBJECTIVE)
 
 
 class TerminationSpec(BaseModel):
@@ -84,23 +102,32 @@ class TerminationSpec(BaseModel):
     Parameters
     ----------
     kind:
-        Either fixed iteration count or infinity-norm change with early exit.
+        Fixed iteration count, infinity-norm change, or the verification
+        objective, each with early exit except the first.
     max_iters:
         Hard upper bound on iterations. Always required: embedded targets size
         their (static) iteration accounting from it and every loop needs a guard.
     tol:
-        Tolerance for the ``INF_NORM_CHANGE`` criterion. Ignored for
-        ``MAX_ITERS``. Must be positive when the criterion uses it.
+        Tolerance for the ``INF_NORM_CHANGE`` and ``OBJECTIVE`` criteria. Ignored
+        for ``MAX_ITERS``. Must be positive when the criterion uses it.
     check_termination:
-        How often the ``INF_NORM_CHANGE`` criterion is evaluated (the name and
-        semantics follow OSQP's setting): ``N`` checks every ``N`` iterations
-        (residual computed only then), ``0`` disables checking entirely (the
-        loop runs ``max_iters``; equivalent to ``MAX_ITERS`` but keeps the
-        criterion recorded). The default is 1 because the generated check is an
+        How often the criterion is evaluated (the name and semantics follow
+        OSQP's setting): ``N`` checks every ``N`` iterations (residual computed
+        only then), ``0`` disables early exit. Ignored for ``MAX_ITERS``.
+
+        For ``INF_NORM_CHANGE`` the default is 1 because the generated check is an
         infinity norm fused into the state copy (measured 1-2.5% of iteration
         time for direct-method FOMs), not extra residual matvecs; raise it for
-        matrix-free methods on large problems where iterations are cheap.
-        Ignored for ``MAX_ITERS``.
+        matrix-free methods on large problems where iterations are cheap. With
+        ``0`` the loop runs ``max_iters`` (equivalent to ``MAX_ITERS`` but keeps
+        the criterion recorded).
+
+        For ``OBJECTIVE`` the default is 25: the objective costs its own
+        matrix-vector products. The objective is also evaluated and tested at the
+        last iteration (``k == max_iter``), whatever ``N`` is, so the reported
+        residual is always the objective at the returned iterate and a solver run
+        to a verified horizon reports ``FOM_SOLVED``. With ``0`` it is evaluated
+        only there.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -108,27 +135,66 @@ class TerminationSpec(BaseModel):
     kind: TerminationKind = TerminationKind.MAX_ITERS
     max_iters: int = Field(ge=1, default=1000, description="Hard upper bound on iterations.")
     tol: float | None = Field(
-        default=None, description="Tolerance for the ``INF_NORM_CHANGE`` criterion."
+        default=None,
+        description="Tolerance for the ``INF_NORM_CHANGE`` and ``OBJECTIVE`` criteria.",
     )
     check_termination: int = Field(
-        ge=0, default=1, description="How often the ``INF_NORM_CHANGE`` criterion is evaluated."
+        ge=0,
+        default=1,
+        description=(
+            "How often the termination criterion is evaluated (default 1 for "
+            "``INF_NORM_CHANGE``, 25 for ``OBJECTIVE``)."
+        ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_check_termination(cls, data):
+        # The default interval depends on the criterion, so fill it here rather
+        # than in the field.
+        if isinstance(data, dict) and data.get("check_termination") is None:
+            data = dict(data)
+            data.pop("check_termination", None)
+            kind = TerminationKind(data.get("kind", TerminationKind.MAX_ITERS))
+            if kind.value in _CHECK_TERMINATION_DEFAULTS:
+                data["check_termination"] = _CHECK_TERMINATION_DEFAULTS[kind.value]
+        return data
 
     @model_validator(mode="after")
     def _check_tol(self) -> "TerminationSpec":
-        if self.kind == TerminationKind.INF_NORM_CHANGE and (self.tol is None or self.tol <= 0):
-            raise ValueError("tol must be a positive float for the inf_norm_change criterion")
+        if self.kind in _TOL_KINDS and (self.tol is None or self.tol <= 0):
+            raise ValueError(f"tol must be a positive float for the {self.kind.value} criterion")
         return self
 
     @property
     def uses_tolerance(self) -> bool:
-        """Whether the loop checks the tolerance criterion at all.
+        """Whether the loop checks the infinity-norm change criterion at all.
 
         Single source of truth shared by the emitted header (``FOM_USE_TOL``)
         and the reference oracle, so the generated code and the verification
         ground truth can never disagree on when early exit is possible.
         """
         return self.kind == TerminationKind.INF_NORM_CHANGE and self.check_termination > 0
+
+    @property
+    def uses_objective(self) -> bool:
+        """Whether the loop evaluates the verification objective (``FOM_USE_OBJECTIVE``).
+
+        True even with ``check_termination == 0``: the objective is then still
+        evaluated, and tested, once at the last iteration.
+        """
+        return self.kind == TerminationKind.OBJECTIVE
+
+    def is_check_iteration(self, k: int, max_iter: int | None = None) -> bool:
+        """Whether the 1-based iteration ``k`` evaluates the ``OBJECTIVE`` criterion.
+
+        Every ``check_termination``-th iteration, and the last one (``max_iter``,
+        defaulting to ``max_iters``). Shared by the oracle and the emitted
+        verify data so both test at the same iterations.
+        """
+        last = self.max_iters if max_iter is None else max_iter
+        check = self.check_termination
+        return k == last or (check > 0 and k % check == 0)
 
 
 class CodegenConfig(BaseModel):

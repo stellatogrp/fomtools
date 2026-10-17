@@ -23,10 +23,13 @@ from fomtools.codegen.ir import (
     IterationStep,
     LinearOp,
     MatrixData,
+    ObjectiveBlock,
+    ObjectiveSpec,
     ParamSpec,
     StateSpec,
     Term,
 )
+from fomtools.codegen.objective import objective_c_params, objective_call
 
 
 def _linop_to_dict(lin: LinearOp) -> dict:
@@ -58,6 +61,23 @@ def _step_to_dict(s: IterationStep) -> dict:
     }
 
 
+def _objective_to_dict(obj: ObjectiveSpec | None) -> dict | None:
+    if obj is None:
+        return None
+    return {
+        "norm": obj.norm,
+        "blocks": [
+            {
+                "name": b.name,
+                "out_dim": b.out_dim,
+                "linear_op": _linop_to_dict(b.linear_op),
+                "activation": _activation_to_dict(b.activation),
+            }
+            for b in obj.blocks
+        ],
+    }
+
+
 def _fac_meta(fac: Factorization) -> dict:
     meta = {"method": fac.method, "dim": fac.dim}
     if fac.method == "cg":
@@ -86,6 +106,7 @@ def ir_to_dict(ir: FomIR) -> dict:
         },
         "body": [_step_to_dict(s) for s in ir.body],
         "state_update": _linop_to_dict(ir.state_update),
+        "objective": _objective_to_dict(ir.objective),
         "matrices": {
             name: {
                 "shape": list(md.shape),
@@ -190,6 +211,7 @@ def load(directory: str | Path) -> FomIR:
         tol=spec["termination"]["tol"],
         check_termination=spec["termination"].get("check_termination", 1),
     )
+    objective = _dict_to_objective(spec.get("objective"))
 
     factorizations: dict[str, Factorization] = {}
     for fname, meta in spec.get("factorizations", {}).items():
@@ -237,6 +259,7 @@ def load(directory: str | Path) -> FomIR:
         name=spec["name"],
         # Defaulted so spec directories written before unrolled emission load.
         unrolled=spec.get("unrolled", False),
+        objective=objective,
     )
 
 
@@ -268,9 +291,8 @@ def _dict_to_linop(d: dict) -> LinearOp:
     )
 
 
-def _dict_to_step(d: dict) -> IterationStep:
-    a = d["activation"]
-    act = ActivationOp(
+def _dict_to_activation(a: dict) -> ActivationOp:
+    return ActivationOp(
         kind=ActivationKind(a["kind"]),
         lambd=a["lambd"],
         lower=a["lower"],
@@ -278,12 +300,33 @@ def _dict_to_step(d: dict) -> IterationStep:
         lower_scalar=a["lower_scalar"],
         upper_scalar=a["upper_scalar"],
     )
+
+
+def _dict_to_step(d: dict) -> IterationStep:
     return IterationStep(
         name=d["name"],
         out_dim=d["out_dim"],
         linear_op=_dict_to_linop(d["linear_op"]),
-        activation=act,
+        activation=_dict_to_activation(d["activation"]),
         solve=d.get("solve"),
+    )
+
+
+def _dict_to_objective(d: dict | None) -> ObjectiveSpec | None:
+    # Absent from spec directories written before objective termination.
+    if d is None:
+        return None
+    return ObjectiveSpec(
+        blocks=tuple(
+            ObjectiveBlock(
+                name=b["name"],
+                out_dim=b["out_dim"],
+                linear_op=_dict_to_linop(b["linear_op"]),
+                activation=_dict_to_activation(b["activation"]),
+            )
+            for b in d["blocks"]
+        ),
+        norm=d["norm"],
     )
 
 
@@ -393,16 +436,21 @@ def render_markdown(ir: FomIR) -> str:
         lines.append("## Final state (the answer)")
         lines.append(f"- `state <- {_linop_str(ir.state_update)}`")
         lines.append("")
-        lines.append("Apply this once, after the steps above, and report")
-        lines.append("`FOM_MAX_ITER_REACHED` with `iter = 1`. The residual is")
-        lines.append("`max_abs(new_state - state)` as usual, but nothing terminates on it.")
+        if ir.termination.uses_objective:
+            lines.append("Apply this once, after the steps above. The residual and status")
+            lines.append("come from the verification objective; see below.")
+        else:
+            lines.append("Apply this once, after the steps above, and report")
+            lines.append("`FOM_MAX_ITER_REACHED` with `iter = 1`. The residual is")
+            lines.append("`max_abs(new_state - state)` as usual, but nothing terminates on it.")
         lines.append("")
     else:
         lines.append("## State update")
         lines.append(f"- `state <- {_linop_str(ir.state_update)}`")
         lines.append("")
-        lines.append("Residual = `max_abs(new_state - state)`.")
-        lines.append("")
+        if not ir.termination.uses_objective:
+            lines.append("Residual = `max_abs(new_state - state)`.")
+            lines.append("")
     if ir.termination.kind == TerminationKind.INF_NORM_CHANGE and ir.termination.check_termination:
         lines.append(
             "Termination: evaluate the residual and exit early (status `FOM_SOLVED`) only "
@@ -416,8 +464,95 @@ def render_markdown(ir: FomIR) -> str:
             "`FOM_CHECK_TERMINATION`, and `FOM_TOL` are defined in `fom_workspace.h`."
         )
         lines.append("")
+    if ir.termination.uses_objective and ir.objective is not None:
+        lines += _objective_markdown(ir)
     lines.append("All matrices/consts are provided numerically in `data.npz` / `fom_data.c`.")
     return "\n".join(lines)
+
+
+def _objective_markdown(ir: FomIR) -> list[str]:
+    """The objective-termination protocol, for SPEC.md."""
+    obj = ir.objective
+    what = {
+        "inf": "the infinity norm (max of absolute values)",
+        "1": "the one-norm (sum of absolute values)",
+        "2": "the squared two-norm (sum of squares, as the verifier defines it)",
+    }[obj.norm]
+    inputs = []
+    for source in ir.objective_inputs():
+        kind, name = source.split(":", 1)
+        inputs.append(
+            f"`{name}` (parameter)"
+            if kind == "param"
+            else f"`{name}` (this iteration's step output)"
+        )
+    lines = [
+        "## Termination: the verification objective",
+        "",
+        "The solver stops on the verification objective `r^k`, the metric verification",
+        f"certifies, measured in {what}. It is generated for you in `fom_ops.c`:",
+        "",
+        "```c",
+        f"fom_float fom_objective({', '.join(objective_c_params(ir))});",
+        "```",
+        "",
+        "`state` is `w^{k-1}`, `new_state` is `w^k` and `it` is the 0-based index of",
+        "the iteration that produced `new_state`; "
+        + (
+            "the remaining arguments are " + ", ".join(inputs) + "."
+            if inputs
+            else "it reads nothing else."
+        ),
+        "Never compute this metric yourself, and never stop on anything else.",
+        "",
+    ]
+    if ir.unrolled:
+        lines += [
+            "After the single pass, with `new_state` holding the answer and `state` still",
+            "holding the initial state, call it once (`it = 0`):",
+            "",
+            f"    r = {objective_call(ir).replace('(it,', '(0,')};",
+            "",
+            "then set `solution.iter = 1`, `solution.residual = r`, copy the answer into",
+            "`solution.x`, and return `FOM_SOLVED` if `r <= work->settings.tol`, else",
+            "`FOM_MAX_ITER_REACHED`.",
+            "",
+        ]
+    else:
+        lines += [
+            "With `check = work->settings.check_termination` and",
+            "`max_iter = work->settings.max_iter` (both RUNTIME settings: initialize",
+            "`settings->check_termination = FOM_CHECK_TERMINATION` and",
+            "`settings->tol = FOM_TOL` in `fom_set_default_settings`), at the end of",
+            "iteration `it`, after computing `new_state` and BEFORE copying it into",
+            "`state`:",
+            "",
+            "- if `(check > 0 && (it + 1) % check == 0) || it + 1 == max_iter`, call",
+            f"  `r = {objective_call(ir)};`, set `solution.iter = it + 1` and",
+            "  `solution.residual = r`, advance the state, and if",
+            "  `r <= work->settings.tol` copy the state into `solution.x`, set the status",
+            "  to `FOM_SOLVED` and return it;",
+            "- otherwise advance the state without evaluating the objective.",
+            "",
+            "If the loop runs out, return `FOM_MAX_ITER_REACHED`; `solution.residual` then",
+            "holds the objective at the last iteration, where it is always evaluated.",
+            "Keep the temporaries the call reads in their workspace buffers until then.",
+            "",
+        ]
+    lines += [
+        "`make verify` checks the stopping iteration, the objective value and the",
+        "status against the reference oracle, also at other runtime",
+        "`check_termination` / `max_iter`, and rejects a solver that never calls",
+        "`fom_objective` or never reads `check_termination`.",
+        "",
+        "Objective rows (for reference; `fom_objective` already implements them):",
+        "",
+    ]
+    for block in obj.blocks:
+        act = "" if block.activation.kind == ActivationKind.IDENTITY else "relu of "
+        lines.append(f"- `{block.name}` ({block.out_dim} rows): {act}{_linop_str(block.linear_op)}")
+    lines.append("")
+    return lines
 
 
 def _linop_str(lin: LinearOp) -> str:

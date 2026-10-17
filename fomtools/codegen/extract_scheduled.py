@@ -126,7 +126,7 @@ def _extract_at(build: Callable, point: dict[str, float], config, name: str) -> 
 
 
 def _linops(ir: FomIR) -> list[LinearOp]:
-    return [step.linear_op for step in ir.body] + [ir.state_update]
+    return ir.linops()
 
 
 def _structure(ir: FomIR) -> dict:
@@ -374,8 +374,24 @@ def extract_scheduled_ir(
         replace(step, linear_op=_rewrite_linop(step.linear_op, slopes)) for step in ref.body
     )
     state_update = _rewrite_linop(ref.state_update, slopes)
+    # The objective is evaluated on the iterate an iteration produced, so a term
+    # that varies with the schedule reads the same table entry as that iteration.
+    objective = None
+    if ref.objective is not None:
+        objective = replace(
+            ref.objective,
+            blocks=tuple(
+                replace(block, linear_op=_rewrite_linop(block.linear_op, slopes))
+                for block in ref.objective.blocks
+            ),
+        )
 
-    used = {t.scale for lin in [*(s.linear_op for s in body), state_update] for t in lin.terms}
+    used = {
+        t.scale
+        for lin in [*(s.linear_op for s in body), state_update]
+        + (objective.linops() if objective is not None else [])
+        for t in lin.terms
+    }
     unused = [n for n in names if n not in used]
     if unused:
         raise ScheduleFitError(
@@ -395,4 +411,5 @@ def extract_scheduled_ir(
         schedules={n: tables[n].values for n in names},
         dtype=ref.dtype,
         name=name,
+        objective=objective,
     )
