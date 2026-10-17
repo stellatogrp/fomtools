@@ -15,6 +15,8 @@ build.
 
 from __future__ import annotations
 
+from fomtools.codegen.ir import FomIR
+from fomtools.codegen.targets.base import objective_violations
 from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
 
 
@@ -26,12 +28,13 @@ class OpenMpTarget(EmbeddedCTarget):
     #: is unaffected and threading is enabled only with ``OMPFLAGS=-fopenmp``.
     parallel = True
 
-    def static_checks(self, source: str) -> list[str]:
+    def static_checks(self, source: str, ir: FomIR | None = None) -> list[str]:
         # Large-scale targets are not bound by the embedded no-malloc /
-        # division-free invariants.
-        return []
+        # division-free invariants; the objective-termination contract holds.
+        return objective_violations(source, ir)
 
-    def _makefile(self) -> str:
+    def _makefile(self, ir: FomIR | None = None) -> str:
+        guard, guard_rules = self._objective_guard(ir)
         return "\n".join(
             [
                 "CC ?= cc",
@@ -48,9 +51,9 @@ class OpenMpTarget(EmbeddedCTarget):
                 "LIBEXT = so",
                 "endif",
                 "",
-                ".PHONY: verify bench profile lib release clean",
+                ".PHONY: verify bench profile lib release clean objective_guard",
                 "",
-                "verify: $(SRC) test/verify_main.c",
+                f"verify:{guard} $(SRC) test/verify_main.c",
                 "\t$(CC) $(CFLAGS) $(OMPFLAGS) -Itest $(SRC) test/verify_main.c -o verify_bin -lm",
                 "\t./verify_bin",
                 "",
@@ -73,6 +76,7 @@ class OpenMpTarget(EmbeddedCTarget):
                 "clean:",
                 "\trm -f verify_bin bench_bin profile_bin libfomsolver.so libfomsolver.dylib",
                 "",
+                *guard_rules,
             ]
         )
 

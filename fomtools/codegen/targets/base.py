@@ -72,17 +72,44 @@ class TargetDescriptor(ABC):
         """
         return ""
 
-    def static_checks(self, source: str) -> list[str]:
+    def static_checks(self, source: str, ir: FomIR | None = None) -> list[str]:
         """Return a list of invariant violations in ``source`` (empty = OK).
 
-        Default: no checks. Embedded targets override.
+        Default: the contract every target shares (see
+        :func:`objective_violations`, which needs ``ir``). Embedded targets add
+        their own invariants.
         """
-        return []
+        return objective_violations(source, ir)
 
 
 _C_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _C_LINE_COMMENT = re.compile(r"//[^\n]*")
 _C_STRING = re.compile(r'"(?:\\.|[^"\\])*"')
+
+
+def objective_violations(source: str, ir: FomIR | None) -> list[str]:
+    """The objective-termination contract of a solver body, for any target.
+
+    Under ``TerminationKind.OBJECTIVE`` the solver must stop through the
+    generated ``fom_objective`` (never a metric of its own) and read the runtime
+    ``check_termination``. ``make verify`` then checks that it stops where the
+    oracle does; this catches the omission statically, with a clearer message.
+    """
+    if ir is None or not ir.termination.uses_objective:
+        return []
+    code = strip_c_comments_and_strings(source)
+    violations = []
+    if not re.search(r"\bfom_objective\s*\(", code):
+        violations.append(
+            "termination kind 'objective': the solver never calls fom_objective(), the "
+            "generated verification objective it must stop on"
+        )
+    if not re.search(r"\bcheck_termination\b", code):
+        violations.append(
+            "termination kind 'objective': the solver never reads "
+            "settings.check_termination, the runtime interval of the objective check"
+        )
+    return violations
 
 
 def strip_c_comments_and_strings(source: str) -> str:
