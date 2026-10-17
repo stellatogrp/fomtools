@@ -595,6 +595,40 @@ def test_prompts_require_fom_objective():
     assert "fom_objective" not in translation_instructions(plain_ir, target)
 
 
+def _dr_objective_ir(config):
+    """Douglas-Rachford (a factorized affine solve) stopping on its residual."""
+    case = build_dr(K=3)
+    z = case["iterates"]
+    case["verifier"].set_objective_norm(z[1] - z[0], np.inf)
+    return extract_ir(case["verifier"], case["next_state"], config=config)
+
+
+@pytest.mark.parametrize("target_cls", [EmbeddedCTarget, OpenMpTarget, CudaTarget])
+def test_optimization_prompt_keeps_the_objective_rule_with_an_editable_linsolve(target_cls):
+    """Where the optimizer may also rewrite the linear solves, the objective
+    stays fixed in the ops source and must still gate the stop."""
+    config = objective_config()
+    ir = _dr_objective_ir(config)
+    assert ir.factorizations and ir.termination.uses_objective
+    target = target_cls(config)
+    text = code_optimization_instructions(ir, target)
+    editable = target.linsolve_source_path() in target.optimization_editable_paths()
+    assert ("You may edit" in text) == editable
+    assert "Keep calling `fom_objective` exactly where it is called now" in text
+    assert f"It lives in `{target.ops_source_path()}`, which stays fixed" in text
+
+
+def test_verify_holds_both_linsolve_and_objective_checks(tmp_path):
+    config = objective_config()
+    ir = _dr_objective_ir(config)
+    scaffold(ir, tmp_path, config)
+    data = (tmp_path / "test" / "verify_data.h").read_text()
+    main = (tmp_path / "test" / "verify_main.c").read_text()
+    assert "FOM_VERIFY_LS_T0_B" in data and "FOM_VERIFY_CASE_CHECK" in data
+    assert "fom_lin_solve_t0(FOM_VERIFY_LS_T0_B[r], x);" in main
+    assert "check_stop(" in main and "FOM_VERIFY_NUM_CASES > 0" in main
+
+
 @pytest.mark.parametrize("target_cls", [EmbeddedCTarget, OpenMpTarget, CudaTarget])
 def test_static_checks_enforce_the_objective_contract(target_cls):
     case, ir = ista_ir()
