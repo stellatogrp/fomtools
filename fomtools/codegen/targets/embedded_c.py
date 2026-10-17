@@ -24,7 +24,7 @@ import numpy as np
 import scipy.sparse as spa
 
 from fomtools.codegen import spec
-from fomtools.codegen.ir import ActivationKind, FomIR
+from fomtools.codegen.ir import ActivationKind, FomIR, csr_arrays
 from fomtools.codegen.oracle import ReferenceOracle
 from fomtools.codegen.targets.base import TargetDescriptor, strip_c_comments_and_strings
 
@@ -49,22 +49,6 @@ def _c_int_array(name: str, values, storage: str = "static const") -> str:
     flat = np.asarray(values).reshape(-1).astype(int)
     body = ", ".join(str(int(v)) for v in flat)
     return f"{storage} fom_int {name}[{flat.size}] = {{{body}}};"
-
-
-def _csr_from_dense(A: np.ndarray, tol: float = 1e-12):
-    """Return (rowptr, colidx, vals) CSR arrays of a dense matrix."""
-    A = np.atleast_2d(np.asarray(A, dtype=float))
-    rows, cols = A.shape
-    rowptr = [0]
-    colidx: list[int] = []
-    vals: list[float] = []
-    for i in range(rows):
-        for j in range(cols):
-            if abs(A[i, j]) > tol:
-                colidx.append(j)
-                vals.append(A[i, j])
-        rowptr.append(len(colidx))
-    return rowptr, colidx, vals
 
 
 def _strict_triangle(csc) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -121,7 +105,7 @@ def _is_csr(md) -> bool:
     rows = shape[0]
     cols = shape[1] if len(shape) > 1 else 1
     size = rows * cols
-    nnz = int(np.count_nonzero(np.abs(md.array) > 1e-12))
+    nnz = md.nnz()
     return size >= 16 and 2 * nnz < size
 
 
@@ -384,7 +368,7 @@ class EmbeddedCTarget(TargetDescriptor):
         for name, md in ir.matrices.items():
             if name in csr:
                 continue  # emitted as CSR in fom_ops.c
-            lines.append(_c_array(f"FOM_MAT_{name}", md.array, storage="const"))
+            lines.append(_c_array(f"FOM_MAT_{name}", md.dense(), storage="const"))
             lines.append("")
         return "\n".join(lines)
 
@@ -423,7 +407,7 @@ class EmbeddedCTarget(TargetDescriptor):
             cols = shape[1] if len(shape) > 1 else 1
             up = name.upper()
             if _is_csr(md):
-                rowptr, colidx, vals = _csr_from_dense(md.array)
+                rowptr, colidx, vals = md.csr()
                 lines.append(_c_int_array(f"FOM_OP_{up}_ROWPTR", rowptr))
                 lines.append(_c_int_array(f"FOM_OP_{up}_COLIDX", colidx))
                 lines.append(_c_array(f"FOM_OP_{up}_VALS", vals))
@@ -497,7 +481,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 lines.append(
                     f"/* ---- solve '{name}' (CG, preconditioned conjugate gradient) ---- */"
                 )
-                rowptr, colidx, vals = _csr_from_dense(fac.A.to_dense())
+                rowptr, colidx, vals = csr_arrays(fac.A.to_scipy())
                 lines.append(_c_int_array(f"FOM_FAC_{up}_A_ROWPTR", rowptr))
                 lines.append(_c_int_array(f"FOM_FAC_{up}_A_COLIDX", colidx))
                 lines.append(_c_array(f"FOM_FAC_{up}_A_VALS", vals))

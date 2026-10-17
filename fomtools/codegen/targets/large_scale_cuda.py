@@ -41,12 +41,11 @@ import os
 import shutil
 import subprocess
 
-from fomtools.codegen.ir import FomIR
+from fomtools.codegen.ir import FomIR, csr_arrays
 from fomtools.codegen.targets.embedded_c import (
     EmbeddedCTarget,
     _c_array,
     _c_int_array,
-    _csr_from_dense,
     _factor_arrays,
     _fmt_float,
     _is_csr,
@@ -173,7 +172,7 @@ class CudaTarget(EmbeddedCTarget):
             cols = shape[1] if len(shape) > 1 else 1
             up = name.upper()
             if _is_csr(md):
-                rowptr, colidx, vals = _csr_from_dense(md.array)
+                rowptr, colidx, vals = md.csr()
                 lines.append(_c_int_array(f"FOM_OP_{up}_ROWPTR", rowptr, storage=_DEVICE_CONST))
                 lines.append(_c_int_array(f"FOM_OP_{up}_COLIDX", colidx, storage=_DEVICE_CONST))
                 lines.append(_c_array(f"FOM_OP_{up}_VALS", vals, storage=_DEVICE_CONST))
@@ -192,7 +191,7 @@ class CudaTarget(EmbeddedCTarget):
             else:
                 # Device copy of the dense FOM_MAT_<name> coefficients (fom_data.c
                 # is host memory; kernels need the values in device global memory).
-                lines.append(_c_array(f"FOM_OP_{up}_DENSE", md.array, storage=_DEVICE_CONST))
+                lines.append(_c_array(f"FOM_OP_{up}_DENSE", md.dense(), storage=_DEVICE_CONST))
                 lines += [
                     "",
                     f"__global__ void fom_apply_{name}_kern(const fom_float *x, fom_float *out) {{",
@@ -373,7 +372,7 @@ class CudaTarget(EmbeddedCTarget):
         n = f"FOM_FAC_{up}_DIM"
         tol2 = _fmt_float(fac.cg_tol * fac.cg_tol)
         maxit = int(fac.cg_max_iter)
-        rowptr, colidx, vals = _csr_from_dense(fac.A.to_dense())
+        rowptr, colidx, vals = csr_arrays(fac.A.to_scipy())
         out = [
             f"/* ---- solve '{name}' (CG, preconditioned conjugate gradient, on the"
             " device) ---- */",

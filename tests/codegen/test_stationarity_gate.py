@@ -88,7 +88,7 @@ def test_the_wrongly_rolled_fista_really_is_ista():
     ir_i = extract_ir(v_i, iters_i[0], config=_config())
 
     for name, md in ir_i.matrices.items():
-        assert np.abs(ir_f.matrices[name].array - md.array).max() < 1e-14
+        assert np.abs(ir_f.matrices[name].dense() - md.dense()).max() < 1e-14
 
     rolled = ReferenceOracle(ir_f).solve(param_values={"p0": x_val}).solution
     truth = run_recorded_tape(v_f, iters_f, {x_f: x_val})

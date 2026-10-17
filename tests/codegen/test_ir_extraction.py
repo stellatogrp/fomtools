@@ -33,8 +33,8 @@ def test_ista_ir_structure():
     assert sources == {"state", "param:p0"}
     state_mat = ir.matrices[[t.matrix for t in step.linear_op.terms if t.source == "state"][0]]
     param_mat = ir.matrices[[t.matrix for t in step.linear_op.terms if t.source == "param:p0"][0]]
-    assert np.allclose(state_mat.array, data["At"])
-    assert np.allclose(param_mat.array, data["Bt"])
+    assert np.allclose(state_mat.dense(), data["At"])
+    assert np.allclose(param_mat.dense(), data["Bt"])
 
     # State update is just the soft-threshold output.
     assert [t.source for t in ir.state_update.terms] == ["tmp:t0"]

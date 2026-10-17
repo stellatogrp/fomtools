@@ -22,7 +22,7 @@ def _assert_ir_equal(a, b):
     assert [p.name for p in a.params] == [p.name for p in b.params]
     assert set(a.matrices) == set(b.matrices)
     for name, md in a.matrices.items():
-        assert np.allclose(md.array, b.matrices[name].array)
+        assert np.allclose(md.dense(), b.matrices[name].dense())
         assert (md.sparse_pattern is None) == (b.matrices[name].sparse_pattern is None)
     assert len(a.body) == len(b.body)
     for sa, sb in zip(a.body, b.body):
