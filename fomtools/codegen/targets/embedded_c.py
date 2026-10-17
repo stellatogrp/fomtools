@@ -233,8 +233,11 @@ class EmbeddedCTarget(TargetDescriptor):
         term = ir.termination
         tol = term.tol if term.tol is not None else 0.0
         # The macro is clamped to >= 1 so `% FOM_CHECK_TERMINATION` is safe
-        # even when checking is disabled (check_termination == 0).
+        # even when checking is disabled (check_termination == 0). Not for the
+        # objective: its loop guards `check > 0` and still tests the last
+        # iteration, so 0 has to reach the runtime setting as 0.
         use_tol = 1 if term.uses_tolerance else 0
+        check = term.check_termination if term.uses_objective else max(term.check_termination, 1)
 
         lines = [
             "#ifndef FOM_WORKSPACE_H",
@@ -250,7 +253,7 @@ class EmbeddedCTarget(TargetDescriptor):
             # 1 when the loop stops on the verification objective: call
             # fom_objective (fom_ops.h) on check iterations and the last one.
             f"#define FOM_USE_OBJECTIVE {1 if term.uses_objective else 0}",
-            f"#define FOM_CHECK_TERMINATION {max(term.check_termination, 1)}",
+            f"#define FOM_CHECK_TERMINATION {check}",
             f"#define FOM_NUM_PARAMS {len(ir.params)}",
             f"#define FOM_MAX_VEC_DIM {ir.max_rhs_dim}",
             # 1 when the body is the whole recorded run rather than one

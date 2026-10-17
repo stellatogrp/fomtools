@@ -694,6 +694,18 @@ def test_runtime_settings_drive_the_stop(tmp_path, requires_compiler):
     assert solver.solve(p0=b_val)["iter"] == expected.iters
 
 
+def test_check_termination_zero_tests_only_the_last_iteration(tmp_path, requires_compiler):
+    """0 disables early exit but still evaluates the objective at max_iter, so
+    the generated default must be 0, not clamped to 1."""
+    case = build_ista_objective(check_termination=0, max_iters=40)
+    result = _generate(case, tmp_path, ISTA_GOLDEN)
+    assert result.translate.success, result.translate.log
+    header = (tmp_path / "include" / "fom_workspace.h").read_text()
+    assert "#define FOM_CHECK_TERMINATION 0" in header
+    res = ReferenceOracle(result.ir).solve(param_values={"p0": case["data"]["b"]})
+    assert res.iters == 40 and [k for k, _ in res.objectives] == [40]
+
+
 def test_float32_rolled_ista_verifies(tmp_path, requires_compiler):
     # 1e-4 keeps every checked objective well clear of the single-precision
     # rounding of the threshold test.
