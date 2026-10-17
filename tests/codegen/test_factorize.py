@@ -266,3 +266,47 @@ def test_ldlt_never_densifies_large_sparse_kkt():
     b = rng.normal(size=K.shape[0])
     x = f.solve(b)
     assert np.linalg.norm(K @ x - b) <= 1e-8 * np.linalg.norm(b)
+
+
+def _scaled_nearly_symmetric_kkt(scale, seed=0):
+    # Sparse quasidefinite KKT with large entries plus relative-roundoff-level
+    # asymmetry (as from a cvxpygen-style large-scale problem).
+    K = spa.csc_matrix(_kkt(30, 20, seed) * scale)
+    rng = np.random.default_rng(seed)
+    K.data *= 1.0 + 1e-13 * rng.standard_normal(K.nnz)  # breaks exact symmetry
+    return K
+
+
+def test_scaled_nearly_symmetric_sparse_matrix_uses_ldlt():
+    # max|K - K^T| ~ 1e-13 * 1e6 >> 1e-9 absolute, but tiny relative to max|K|:
+    # it is symmetric up to roundoff and must not be sent to dense LU.
+    K = _scaled_nearly_symmetric_kkt(1e6)
+    assert abs(K - K.T).max() > 1e-9
+    f = factorize(K)
+    assert f.method == "ldlt"
+    b = np.arange(1, K.shape[0] + 1, dtype=float)
+    x = f.solve(b)
+    assert np.linalg.norm(K @ x - b) <= 1e-8 * np.linalg.norm(b)
+
+
+def test_relative_symmetry_tol_still_rejects_genuinely_nonsymmetric():
+    K = _kkt(5, 3, 0) * 1e6
+    K[0, 1] += 1e-3 * abs(K).max()  # asymmetry far above roundoff
+    assert factorize(K).method == "lu"
+
+
+def test_is_spd_true_for_scaled_nearly_symmetric_spd():
+    S = spa.csc_matrix(_spd(8, 3) * 1e5)
+    S.data *= 1.0 + 1e-13 * np.random.default_rng(0).standard_normal(S.nnz)
+    assert is_spd(S) is True
+
+
+def test_large_dense_lu_fallback_warns(monkeypatch):
+    import fomtools.codegen.factorize as fz
+
+    monkeypatch.setattr(fz, "_DENSE_LU_WARN_DIM", 2)
+    with pytest.warns(UserWarning, match="dense LU because sparse LDL\\^T failed"):
+        f = factorize(np.array([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]))
+    assert f.method == "lu"
+    with pytest.warns(UserWarning, match="nonsymmetric"):
+        factorize(np.array([[1.0, 2.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]))

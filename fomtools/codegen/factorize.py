@@ -31,6 +31,7 @@ see :class:`fomtools.codegen.config.SolveMethod`.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from functools import cached_property
 
@@ -45,6 +46,10 @@ import scipy.sparse.linalg as spla
 #: ~machine precision; a much larger residual signals element growth from a small
 #: pivot on a general symmetric-indefinite matrix.
 _LDLT_RTOL = 1e-9
+
+#: Dimension above which falling back to the dense LU path warns: it allocates an
+#: ``n x n`` dense copy (~3.2 GB at ``n = 20000``) and costs ``O(n^3)`` work.
+_DENSE_LU_WARN_DIM = 5000
 
 
 @dataclass(frozen=True)
@@ -225,7 +230,7 @@ def _ldlt_factor(M: spa.csc_matrix) -> tuple[np.ndarray, spa.csc_matrix, np.ndar
     """
     try:
         L, d, perm = qdldl.Solver(spa.csc_matrix(M)).factors()
-    except (RuntimeError, ValueError):  # QDLDL reports a zero pivot by raising
+    except RuntimeError:  # QDLDL reports a zero pivot by raising
         return None
     d = np.asarray(d, dtype=float)
     if not np.all(np.isfinite(d)) or np.any(np.abs(d) < 1e-12):
@@ -264,6 +269,9 @@ def factorize(
         ``"auto"`` (LDL^T if symmetric else LU), ``"ldlt"``, ``"lu"``, or
         ``"cg"`` (preconditioned conjugate gradient; requires a symmetric
         positive-definite ``M``, intended for large-scale / GPU targets).
+    symmetry_tol:
+        ``M`` counts as symmetric when ``max|M - M^T| <= symmetry_tol *
+        max(1, max|M|)``; the symmetric and CG paths then use ``(M + M^T) / 2``.
     cg_tol:
         Relative-residual stopping tolerance for the ``"cg"`` method (ignored by
         the direct methods). The default ``1e-12`` suits float64; the caller
@@ -279,6 +287,11 @@ def factorize(
         raise ValueError(f"unknown solve method {method!r}")
 
     is_sym = _is_symmetric(Ms, symmetry_tol)
+    if is_sym and method != "lu":
+        # Factor (and, for CG, multiply by) the symmetric part, so roundoff-level
+        # asymmetry that passed the tolerance does not count against the LDL^T
+        # backward-error gate.
+        Ms = _symmetric_part(Ms)
 
     if method == "cg":
         return _cg_factorization(Ms, n, is_sym, cg_tol=cg_tol)
@@ -297,7 +310,7 @@ def factorize(
         # rather than emit a factorization that solves the wrong system.
         if res is not None:
             perm, L, d = res
-            if _ldlt_backward_error(L, d, Ms[perm][:, perm]) <= _LDLT_RTOL:
+            if _ldlt_backward_error(L, d, _sym_permute(Ms, perm)) <= _LDLT_RTOL:
                 return Factorization(
                     method="ldlt",
                     dim=n,
@@ -312,10 +325,25 @@ def factorize(
                 "(it is symmetric-indefinite but not quasidefinite). Use "
                 "solve_method='auto' or 'lu' for a pivoted direct factorization."
             )
-        chosen = "lu"  # auto: silently use the robust pivoted method
+        chosen = "lu"  # auto: use the robust pivoted method
 
     # LU with partial pivoting: M = P L U (backward stable for any nonsingular M).
     # Dense: only general (non-quasidefinite) systems get here.
+    if n > _DENSE_LU_WARN_DIM:
+        if method == "lu":
+            reason = "solve_method='lu' was requested"
+        elif is_sym:
+            reason = "sparse LDL^T failed (zero pivot or backward-error gate)"
+        else:
+            reason = "the matrix is nonsymmetric"
+        warnings.warn(
+            f"factorizing a {n}x{n} system by dense LU because {reason}: this allocates "
+            f"an n x n dense matrix (~{8 * n * n / 1e9:.1f} GB) and costs O(n^3) work. "
+            "A symmetric quasidefinite system (e.g. a regularized KKT matrix) keeps "
+            "the sparse LDL^T path.",
+            UserWarning,
+            stacklevel=2,
+        )
     P, L, U = sla.lu(Ms.toarray())
     diag_u = np.diag(U)
     scale = max(1.0, float(np.max(np.abs(diag_u))) if diag_u.size else 1.0)
@@ -344,12 +372,31 @@ def _positive_definite(Ms: spa.csc_matrix) -> bool:
     if res is None:
         return False
     perm, L, d = res
-    return bool(np.all(d > 0)) and _ldlt_backward_error(L, d, Ms[perm][:, perm]) <= _LDLT_RTOL
+    return bool(np.all(d > 0)) and _ldlt_backward_error(L, d, _sym_permute(Ms, perm)) <= _LDLT_RTOL
+
+
+def _sym_permute(Ms: spa.spmatrix, perm: np.ndarray) -> spa.csr_matrix:
+    """``Ms[perm][:, perm]``, row-indexing on CSR (the fast axis; slow on CSC)."""
+    return Ms.tocsr()[perm][:, perm]
+
+
+def _symmetric_part(Ms: spa.csc_matrix) -> spa.csc_matrix:
+    """``(Ms + Ms^T) / 2`` in CSC (exactly ``Ms`` when it is already symmetric)."""
+    return spa.csc_matrix((Ms + Ms.T) * 0.5)
 
 
 def _is_symmetric(Ms: spa.csc_matrix, symmetry_tol: float) -> bool:
+    """``max|M - M^T| <= symmetry_tol * max(1, max|M|)``.
+
+    Relative to the largest entry, so roundoff-level asymmetry in a large-scale
+    matrix (entries ~1e4-1e6) still counts as symmetric rather than sending the
+    system to the dense LU path.
+    """
     asym = Ms - Ms.T
-    return asym.nnz == 0 or float(np.max(np.abs(asym.data))) <= symmetry_tol
+    if asym.nnz == 0:
+        return True
+    scale = max(1.0, float(np.max(np.abs(Ms.data))) if Ms.nnz else 0.0)
+    return float(np.max(np.abs(asym.data))) <= symmetry_tol * scale
 
 
 def is_spd(M, symmetry_tol: float = 1e-9) -> bool:
@@ -366,7 +413,7 @@ def is_spd(M, symmetry_tol: float = 1e-9) -> bool:
     Ms = spa.csc_matrix(M, dtype=float)
     if Ms.shape[0] != Ms.shape[1] or Ms.shape[0] == 0:
         return False
-    return _is_symmetric(Ms, symmetry_tol) and _positive_definite(Ms)
+    return _is_symmetric(Ms, symmetry_tol) and _positive_definite(_symmetric_part(Ms))
 
 
 def _cg_factorization(
