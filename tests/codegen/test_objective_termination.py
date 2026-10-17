@@ -11,6 +11,7 @@ paths.
 
 import importlib.util
 import json
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -842,3 +843,86 @@ def test_verify_passes_after_scaffold_restore(tmp_path, requires_compiler):
     result.target.scaffold(result.ir, tmp_path)
     assert (tmp_path / "src" / "fom_ops.c").read_text() == before
     assert build_and_verify(tmp_path, result.target).success
+
+
+# --------------------------------------------------------------------------
+# hardware runs: a GPU, and threaded OpenMP (skipped where unavailable; run on
+# the cluster through slurm/codegen_hw.slurm)
+# --------------------------------------------------------------------------
+CUDA_GOLDENS = {
+    "ista": GOLDEN / "ista_objective" / "large_scale_cuda" / "fom_solver.cu",
+    "scheduled": GOLDEN / "scheduled_objective" / "large_scale_cuda" / "fom_solver.cu",
+}
+
+
+def _hw_cases(backend):
+    """(label, generate_code args) for the rolled ISTA, a large ISTA whose
+    objective has enough rows to spread over threads / thread blocks, and the
+    scheduled objective in both reduction kinds (max and sum)."""
+    hw = dict(version=Version.LARGE_SCALE, backend=backend)
+    small = build_ista_objective(**hw)
+    large = build_ista_objective(**hw)
+    large_ista = build_ista(K=3, n=300, m=600, seed=3)
+    its = large_ista["iterates"]
+    large_ista["verifier"].set_objective_norm(its[-1] - its[-2], np.inf)
+    large.update(
+        {k: large_ista[k] for k in ("verifier", "next_state", "iterates", "param", "data")}
+    )
+    out = [("ista", small), ("ista_large", large)]
+    for ord, label in ((np.inf, "scheduled_inf"), (2, "scheduled_sq")):
+        out.append((label, build_scheduled_objective(extrapolated=True, ord=ord, **hw)))
+    return out
+
+
+def _generate_hw(case, out_dir, golden):
+    if "build" in case:
+        return generate_code(
+            case["build"],
+            out_dir=out_dir,
+            config=case["config"],
+            driver=StubAgentDriver(golden),
+            name="scheduled",
+            schedules=case["schedules"],
+        )
+    return _generate(case, out_dir, golden)
+
+
+def _openmp_links(compiler, tmp_path) -> bool:
+    src = tmp_path / "omp_probe.c"
+    src.write_text(
+        "#include <omp.h>\nint main(void) { return omp_get_max_threads() > 0 ? 0 : 1; }\n"
+    )
+    import subprocess
+
+    proc = subprocess.run(
+        [compiler, "-fopenmp", str(src), "-o", str(tmp_path / "omp_probe")], capture_output=True
+    )
+    return proc.returncode == 0
+
+
+@pytest.mark.parametrize("threads", [1, 4, 16])
+def test_threaded_openmp_objective_verifies(tmp_path, requires_compiler, monkeypatch, threads):
+    """The fom_objective reductions give the oracle's stop with threads on."""
+    if not _openmp_links(requires_compiler, tmp_path):
+        pytest.skip("the C compiler cannot build and link with -fopenmp")
+    monkeypatch.setenv("OMPFLAGS", "-fopenmp")  # the Makefile reads OMPFLAGS ?=
+    monkeypatch.setenv("OMP_NUM_THREADS", str(threads))
+    for label, case in _hw_cases(Backend.OPENMP):
+        golden = SCHEDULED_GOLDEN if "build" in case else ISTA_GOLDEN
+        result = _generate_hw(case, tmp_path / label, golden)
+        assert result.translate.success, (label, result.translate.log)
+        assert "-fopenmp" in result.translate.log, label
+
+
+@pytest.mark.skipif(shutil.which("nvcc") is None, reason="needs nvcc (CUDA toolkit)")
+def test_cuda_objective_builds_and_verifies(tmp_path):
+    """Builds every objective case with nvcc; on a GPU (detected, or forced
+    with FOMTOOLS_CUDA_RUN=1) the verify harness also runs, runtime cases
+    included."""
+    on_gpu = CudaTarget._can_run_on_gpu()
+    for label, case in _hw_cases(Backend.CUDA):
+        golden = CUDA_GOLDENS["scheduled" if "build" in case else "ista"]
+        result = _generate_hw(case, tmp_path / label, golden)
+        assert result.translate.success, (label, result.translate.log)
+        if on_gpu:
+            assert "VERIFY OK" in result.translate.log, (label, result.translate.log)
