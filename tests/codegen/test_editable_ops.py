@@ -24,7 +24,7 @@ from fomtools.codegen.examples import mpc_osqp_example
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.generate import generate_code
 from fomtools.codegen.targets import get_target
-from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
+from fomtools.codegen.targets.embedded_c import EmbeddedCTarget, _matvec_matrix_names
 
 GOLDEN = Path(__file__).parent / "golden" / "mpc" / "embedded_c" / "fom_solver.c"
 OPS = "src/fom_ops.c"
@@ -288,3 +288,66 @@ def test_the_pipeline_gate_decides_even_without_the_verify_step(tmp_path, mpc, r
     )
     assert MARK not in (tmp_path / OPS).read_text()
     assert not (tmp_path / "test" / "kernel_check.json").exists()  # nothing shipped
+    report = (tmp_path / "OPTIMIZATIONS.md").read_text()
+    assert "### Rule violations" in report
+    assert "- [optimization not kept: src/fom_ops.c: floating-point literal '0.37'" in report
+
+
+# -- the report ----------------------------------------------------------------
+def _rewrite_one_routine(name: str):
+    """Change the text, not the result, of ``fom_apply_<name>`` only."""
+
+    def rewrite(text: str) -> str:
+        sig = f"void fom_apply_{name}(const fom_float *x, fom_float *out) {{"
+        head, rest = text.split(sig, 1)
+        body, tail = rest.split("\n}\n", 1)
+        body = body.replace("fom_float s = 0.0;", "fom_float s = 0;")
+        return MARK + "\n" + head + sig + body + "\n}\n" + tail
+
+    return rewrite
+
+
+def test_parse_ops_checks():
+    from fomtools.codegen.postprocess import parse_ops_checks
+
+    out = "noise\nOPSCHECK name=a_b mode=basis probes=7 max_err=0.000e+00\nOPSCHECK name=c mode=random probes=2 max_err=1.5e-16\n"
+    assert parse_ops_checks(out) == [
+        {"name": "a_b", "mode": "basis", "probes": 7, "max_err": 0.0},
+        {"name": "c", "mode": "random", "probes": 2, "max_err": 1.5e-16},
+    ]
+
+
+def test_report_tables_each_routine_and_marks_the_rewritten_one(tmp_path, mpc, requires_compiler):
+    _, ir = mpc
+    result = _generate(tmp_path, mpc, _rewrite_one_routine("su_state"))
+    assert result.optimization_kept, result.optimize.log
+    rows = {c["name"]: c for c in result.kernel_checks}
+    assert list(rows) == _matvec_matrix_names(ir)
+    assert rows["su_state"]["rewritten"] and not rows["t0_state"]["rewritten"]
+    md = ir.matrices["su_state"]
+    assert rows["su_state"]["shape"] == tuple(md.shape)
+    assert rows["su_state"]["nnz"] == md.nnz()
+    assert rows["su_state"]["mode"] == "basis"
+    assert rows["su_state"]["probes"] == md.shape[1] + 2
+    report = (tmp_path / "OPTIMIZATIONS.md").read_text()
+    assert "## Kernel checks" in report
+    shape = "x".join(map(str, md.shape))
+    assert f"| `su_state` | {shape} | {md.nnz()} | yes | basis | {md.shape[1] + 2} |" in report
+    assert "| `t0_state` |" in report and "_None in the collected rewrite._" in report
+
+
+def test_report_checks_the_shipped_sources_when_a_rewrite_is_reverted(
+    tmp_path, mpc, requires_compiler
+):
+    result = _generate(tmp_path, mpc, _perturbed_ops(RARE_MATRIX, RARE_COL))
+    assert not result.optimization_kept
+    # The translated (generated) routines ship, and that is what the table shows.
+    assert result.kernel_checks and not any(c["rewritten"] for c in result.kernel_checks)
+    assert all(c["max_err"] == 0.0 for c in result.kernel_checks)
+
+
+def test_report_has_no_kernel_section_where_ops_are_not_editable(tmp_path):
+    from fomtools.codegen.postprocess import write_optimization_report
+
+    path = write_optimization_report(tmp_path, "", "", "", optimize_succeeded=False)
+    assert "Kernel checks" not in path.read_text()

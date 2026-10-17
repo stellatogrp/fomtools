@@ -35,9 +35,11 @@ from fomtools.codegen.harness import (
     time_python_oracle,
 )
 from fomtools.codegen.ir import FomIR
+from fomtools.codegen.kernel_rules import function_body, strip_c_comments_and_strings
 from fomtools.codegen.oracle import check_stationary
 from fomtools.codegen.postprocess import (
     extract_agent_notes,
+    parse_ops_checks,
     unified_solver_diff,
     write_optimization_report,
     write_production_variant,
@@ -58,6 +60,10 @@ class CodegenResult:
     optimization_diff: str | None = None
     optimizations_md: Path | None = None
     production_path: Path | None = None
+    #: How verify checked each shipped ``fom_apply_<name>`` against its matrix (one
+    #: dict per matrix: ``name, shape, nnz, rewritten, mode, probes, max_err``), or
+    #: ``None`` when the products were not editable or not optimized.
+    kernel_checks: list[dict] | None = None
 
     @property
     def success(self) -> bool:
@@ -94,6 +100,33 @@ def _static_issues(target, ir, optimized: dict[str, str], translated: dict[str, 
             found = target.static_checks(text) + found
         issues += [f"[optimization not kept: {rel}: {v}]" for v in found]
     return issues
+
+
+def _routine_rewritten(name: str, translated: str, final: str) -> bool:
+    """Whether ``fom_apply_<name>`` differs between two ``fom_ops.c`` sources
+    (ignoring comments and whitespace)."""
+
+    def body(text: str) -> str:
+        return " ".join(
+            function_body(strip_c_comments_and_strings(text), f"fom_apply_{name}").split()
+        )
+
+    return body(translated) != body(final)
+
+
+def _kernel_checks(target, ir, out_dir, final, translated, verify_output) -> list[dict] | None:
+    """Rows of the report's kernel-check table, from the shipped sources' verify."""
+    ops = target.ops_source_path()
+    if ops not in final:
+        return None
+    if verify_output is None:
+        verify_output = build_and_verify(out_dir, target).output
+    rows = []
+    for check in parse_ops_checks(verify_output):
+        md = ir.matrices[check["name"]]
+        rewritten = _routine_rewritten(check["name"], translated[ops], final[ops])
+        rows.append({**check, "shape": tuple(md.shape), "nnz": md.nnz(), "rewritten": rewritten})
+    return rows
 
 
 def _bench_mean_us(out_dir: Path) -> float | None:
@@ -404,6 +437,7 @@ def generate_code(
     optimize = None
     optimization_diff = None
     optimizations_md = None
+    kernel_checks = None
     if code_optimization and translate.success:
         translated_sources = read_editable()  # known-good fallback
 
@@ -493,6 +527,20 @@ def generate_code(
         # Record exactly what changed (diff translated -> final, per editable
         # source) + the agent's notes.
         final_sources = read_editable()
+        # The shipped sources' checks: the optimized ones were just re-verified
+        # when kept; otherwise (translated sources shipped) verify them now.
+        kernel_checks = (
+            _kernel_checks(
+                target,
+                ir,
+                out_dir,
+                final_sources,
+                translated_sources,
+                recheck.output if (kept and recheck is not None) else None,
+            )
+            if have_cc
+            else None
+        )
         optimization_diff = "".join(
             unified_solver_diff(translated_sources[rel], final_sources[rel], rel)
             for rel in editable
@@ -520,6 +568,8 @@ def generate_code(
             agent_notes=agent_notes,
             optimize_succeeded=optimize.success,
             caveats=caveats,
+            kernel_checks=kernel_checks,
+            rule_violations=static_issues,
         )
     # Always persist the raw agent output, code optimization phase or not.
     _write_agent_transcripts(out_dir, translate, optimize)
@@ -543,4 +593,5 @@ def generate_code(
         optimization_diff=optimization_diff,
         optimizations_md=optimizations_md,
         production_path=production_path,
+        kernel_checks=kernel_checks,
     )
