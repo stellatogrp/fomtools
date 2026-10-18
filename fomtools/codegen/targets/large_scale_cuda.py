@@ -77,9 +77,16 @@ class CudaTarget(EmbeddedCTarget):
         return "src/fom_ops.cu"
 
     def objective_source_path(self) -> str:
-        """The device reductions stay beside the kernels in ``fom_ops.cu``, which
-        the code optimization phase never edits on this target."""
-        return self.ops_source_path()
+        """The device reductions, in their own fixed file (as on the CPU targets),
+        so a rewritten ``fom_ops.cu`` can never change the metric."""
+        return "src/fom_objective.cu"
+
+    def _objective_file(self, ir: FomIR) -> str:
+        lines = ['#include "fom_ops.h"', "", "#include <cuda_runtime.h>", ""]
+        if ir.objective is None:
+            lines += ["/* No verification objective: this solver does not stop on one. */", ""]
+        lines += self._objective_source(ir)
+        return "\n".join(lines)
 
     def optimization_editable_paths(self) -> tuple[str, ...]:
         """Only the solver: without a GPU, verify only compiles the CUDA sources,
@@ -231,7 +238,6 @@ class CudaTarget(EmbeddedCTarget):
                 "}",
                 "",
             ]
-        lines += self._objective_source(ir)
         return "\n".join(lines)
 
     def _objective_source(self, ir: FomIR) -> list[str]:
@@ -570,7 +576,8 @@ class CudaTarget(EmbeddedCTarget):
                 "CFLAGS ?= -O3 -Iinclude -Itest",
                 "NVCCFLAGS ?= -O3 -Iinclude -Itest",
                 "",
-                "CU_SRC = src/fom_solver.cu src/fom_ops.cu src/fom_linsolve.cu",
+                "CU_SRC = src/fom_solver.cu src/fom_ops.cu src/fom_linsolve.cu "
+                "src/fom_objective.cu",
                 "",
                 ".PHONY: compile verify bench lib clean objective_guard",
                 "",
@@ -580,10 +587,12 @@ class CudaTarget(EmbeddedCTarget):
                 "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
                 "fom_linsolve.o: src/fom_linsolve.cu",
                 "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
+                "fom_objective.o: src/fom_objective.cu",
+                "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
                 "fom_data.o: src/fom_data.c",
                 "\t$(CC) $(CFLAGS) -c $< -o $@",
                 "",
-                "OBJS = fom_solver.o fom_ops.o fom_linsolve.o fom_data.o",
+                "OBJS = fom_solver.o fom_ops.o fom_linsolve.o fom_objective.o fom_data.o",
                 "",
                 "# Compile-check: build BOTH the verify and bench binaries (no GPU run).",
                 "# Building bench_bin here too means a CI compile-check catches bench",
@@ -631,8 +640,9 @@ class CudaTarget(EmbeddedCTarget):
                 "",
                 "`src/fom_solver.cu` orchestrates the iteration; the deterministic",
                 "device code lives in `src/fom_ops.cu` (matrix-vector kernels, CSR",
-                "where structured) and `src/fom_linsolve.cu` (device CG; host LDL^T/LU",
-                "behind a staging wrapper - triangular solves are sequential). All",
+                "where structured), `src/fom_linsolve.cu` (device CG; host LDL^T/LU",
+                "behind a staging wrapper - triangular solves are sequential) and",
+                "`src/fom_objective.cu` (the verification objective). All",
                 "`fom_apply_*` / `fom_lin_solve_*` arguments are DEVICE pointers.",
                 "Host-side numeric data lives in `src/fom_data.c`. See `SPEC.md`.",
                 "",

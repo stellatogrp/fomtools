@@ -190,7 +190,7 @@ def test_cmake_solver_sources_cuda_uses_cu():
     assert any(s.endswith("src/fom_solver.cu") for s in srcs)
     assert any(s.endswith("src/fom_ops.cu") for s in srcs)
     assert any(s.endswith("src/fom_linsolve.cu") for s in srcs)
-    assert not any("fom_objective" in s for s in srcs)  # it lives in fom_ops.cu
+    assert any(s.endswith("src/fom_objective.cu") for s in srcs)
     assert len(srcs) == len(set(srcs))
     # Numeric data and the bridge stay host C even on CUDA.
     assert any(s.endswith("src/fom_data.c") for s in srcs)
