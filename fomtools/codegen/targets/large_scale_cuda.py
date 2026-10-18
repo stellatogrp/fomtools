@@ -25,7 +25,8 @@ Design decisions (mirroring the CPU emission in ``embedded_c.py``):
 * **Direct (LDL^T / LU) solves through cuDSS.** NVIDIA's sparse direct solver
   factorizes the fixed system matrix on the device at the first solve
   (``CUDSS_MTYPE_SYMMETRIC`` with symmetric pivoting for LDL^T, so indefinite
-  KKT systems work; ``CUDSS_MTYPE_GENERAL`` for LU), and each call is one cuDSS
+  KKT systems work; ``CUDSS_MTYPE_GENERAL`` with global row pivoting, as the
+  CPU path's LU, for LU), and each call is one cuDSS
   solve on device vectors. cuDSS comes from the ``nvidia-cudss`` wheel or
   ``CUDSS_HOME`` and is linked only when a direct solve exists. Large SPD
   systems take device CG under ``solve_method=AUTO``.
@@ -576,6 +577,25 @@ class CudaTarget(EmbeddedCTarget):
             "",
         ]
 
+    @staticmethod
+    def _cudss_lu_pivoting(config: str) -> list[str]:
+        """Global row (partial) pivoting for LU, as the CPU path's LU does: cuDSS's
+        default local pivoting perturbs small pivots instead, which loses accuracy
+        on an ill-conditioned indefinite system. Needs a COLAMD ordering."""
+        return [
+            "#if CUDSS_VERSION < 800",
+            '#error "pivoted LU needs cuDSS >= 0.8 (CUDSS_PIVOT_GLOBAL_ROW)"',
+            "#endif",
+            "        {",
+            "            cudssReorderingAlg_t reorder = CUDSS_REORDERING_ALG_COLAMD;",
+            "            cudssPivotType_t pivot = CUDSS_PIVOT_GLOBAL_ROW;",
+            f"            fom_dss_check(cudssConfigSet({config}, CUDSS_CONFIG_REORDERING_ALG, &reorder,",
+            '                                         sizeof(reorder)), "reordering");',
+            f"            fom_dss_check(cudssConfigSet({config}, CUDSS_CONFIG_PIVOT_TYPE, &pivot,",
+            '                                         sizeof(pivot)), "pivoting");',
+            "        }",
+        ]
+
     def _cudss_routine(self, name: str, fac) -> list[str]:
         """A direct system through cuDSS: analysis and factorization of the fixed
         ``M`` at the first call (``M`` is device data, so nothing leaves the
@@ -606,6 +626,7 @@ class CudaTarget(EmbeddedCTarget):
             f"        cudaGetSymbolAddress(&vals, FOM_FAC_{up}_A_VALS);",
             f'        if (!{h}) fom_dss_check(cudssCreate(&{h}), "create");',
             f'        fom_dss_check(cudssConfigCreate(&{sys}_config), "config");',
+            *(self._cudss_lu_pivoting(f"{sys}_config") if fac.method == "lu" else []),
             f'        fom_dss_check(cudssDataCreate({h}, &{sys}_data), "data");',
             f"        fom_dss_check(cudssMatrixCreateCsr(&{sys}_A, {n}, {n}, {fac.A.nnz}, rowptr, "
             "NULL, colidx, vals,",
