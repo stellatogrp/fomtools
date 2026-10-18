@@ -839,7 +839,9 @@ class CudaTarget(EmbeddedCTarget):
                 "CUDSS_LIB = $(firstword $(wildcard $(CUDSS_HOME)/lib/libcudss.so "
                 "$(CUDSS_HOME)/lib/libcudss.so.0 $(CUDSS_HOME)/lib64/libcudss.so))",
                 "LINSOLVE_FLAGS = -I$(CUDSS_HOME)/include",
-                "LDLIBS = $(CUDSS_LIB) -Xlinker -rpath=$(dir $(CUDSS_LIB))",
+                "# nvcc rejects a library file named *.so.0 (the wheel's only name): hand",
+                "# it to the host linker directly.",
+                "LDLIBS = -Xlinker $(CUDSS_LIB) -Xlinker -rpath=$(dir $(CUDSS_LIB))",
             ]
         else:
             cudss = ["LINSOLVE_FLAGS =", "LDLIBS ="]
