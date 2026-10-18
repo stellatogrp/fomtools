@@ -18,7 +18,7 @@ from pathlib import Path
 
 from fomtools.codegen.config import CodegenConfig
 from fomtools.codegen.ir import FomIR
-from fomtools.codegen.kernel_rules import strip_c_comments_and_strings  # noqa: F401 (re-export)
+from fomtools.codegen.kernel_rules import strip_c_comments_and_strings
 
 
 class TargetDescriptor(ABC):

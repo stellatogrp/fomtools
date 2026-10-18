@@ -140,7 +140,7 @@ def test_affine_lowered_to_factorized_solve_not_inverse():
 def test_emitted_linsolve_is_division_free(tmp_path):
     from fomtools.codegen.emit import scaffold
     from fomtools.codegen.examples import mpc_osqp_example
-    from fomtools.codegen.targets.base import strip_c_comments_and_strings
+    from fomtools.codegen.kernel_rules import strip_c_comments_and_strings
 
     ex = mpc_osqp_example(nx=3, nu=2, N=4)
     ir = extract_ir(ex["verifier"], ex["next_state"], config=CodegenConfig(), name="mpc")
@@ -157,7 +157,7 @@ def test_emitted_linsolve_is_division_free(tmp_path):
 def test_structured_matvec_emitted_sparse(tmp_path):
     from fomtools.codegen.emit import scaffold
     from fomtools.codegen.examples import mpc_osqp_example
-    from fomtools.codegen.targets.base import strip_c_comments_and_strings
+    from fomtools.codegen.kernel_rules import strip_c_comments_and_strings
 
     ex = mpc_osqp_example(nx=4, nu=2, N=8)
     ir = extract_ir(ex["verifier"], ex["next_state"], config=CodegenConfig(), name="mpc")

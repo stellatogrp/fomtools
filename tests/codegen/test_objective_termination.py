@@ -35,10 +35,10 @@ from fomtools.codegen.extract_unrolled import extract_unrolled_ir
 from fomtools.codegen.generate import extract_fom_ir
 from fomtools.codegen.harness import build_and_verify, build_lib
 from fomtools.codegen.ir import ActivationKind
+from fomtools.codegen.kernel_rules import strip_c_comments_and_strings
 from fomtools.codegen.objective import ObjectiveExtractionError, norm_label
 from fomtools.codegen.oracle import ReferenceOracle
 from fomtools.codegen.targets import get_target
-from fomtools.codegen.targets.base import strip_c_comments_and_strings
 from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
 from fomtools.codegen.targets.large_scale_cuda import CudaTarget
 from fomtools.codegen.targets.large_scale_openmp import OpenMpTarget

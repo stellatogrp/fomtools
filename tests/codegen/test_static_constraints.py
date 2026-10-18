@@ -3,7 +3,7 @@
 import pytest
 
 from fomtools.codegen.config import CodegenConfig
-from fomtools.codegen.targets.base import strip_c_comments_and_strings
+from fomtools.codegen.kernel_rules import strip_c_comments_and_strings
 from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
 
 

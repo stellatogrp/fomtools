@@ -27,13 +27,10 @@ import scipy.sparse as spa
 
 from fomtools.codegen import kernel_rules, spec
 from fomtools.codegen.ir import ActivationKind, FomIR, csr_arrays
+from fomtools.codegen.kernel_rules import strip_c_comments_and_strings
 from fomtools.codegen.objective import objective_c_params, objective_c_source
 from fomtools.codegen.oracle import ReferenceOracle
-from fomtools.codegen.targets.base import (
-    TargetDescriptor,
-    objective_violations,
-    strip_c_comments_and_strings,
-)
+from fomtools.codegen.targets.base import TargetDescriptor, objective_violations
 
 
 def _fmt_float(x: float) -> str:
