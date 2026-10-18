@@ -72,7 +72,9 @@ def test_partial_relu_and_affine_starts_are_feasible():
         if k > 1:
             value, _ = _fixed_start_value(vp, 0)
             assert value is not None
-            assert value == pytest.approx(vp.canonicalizer.warm_start_stats[0]["objective"], abs=1e-6)
+            assert value == pytest.approx(
+                vp.canonicalizer.warm_start_stats[0]["objective"], abs=1e-6
+            )
         vp.solve()
 
 
@@ -139,7 +141,9 @@ def test_lp_step_gets_partial_start():
     v = Verifier(method="mip", solver="gurobi", obbt_solver="gurobi", params={"OutputFlag": 0})
     q = v.add_param(2, lb=np.array([0.5, -1.0]), ub=np.array([1.0, -0.5]))
     for _ in range(2):
-        u = v.linear_program(q=q, C=C, d=np.ones(4), dual_ub=10.0, primal_bounds=(-np.ones(2), np.ones(2)))
+        u = v.linear_program(
+            q=q, C=C, d=np.ones(4), dual_ub=10.0, primal_bounds=(-np.ones(2), np.ones(2))
+        )
         v.set_objective_norm([u], np.inf)
         v.solve()
     stats = v.canonicalizer.warm_start_stats

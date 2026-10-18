@@ -63,16 +63,29 @@ def _violations(path: Path) -> list[str]:
             if mod in BACKEND_IMPORTS:
                 found.append(f"from {mod} import ...")
             if mod == "fomtools.solvers":
-                found += [f"from {mod} import {a.name}" for a in node.names if a.name in ("gurobi", "highs")]
+                found += [
+                    f"from {mod} import {a.name}"
+                    for a in node.names
+                    if a.name in ("gurobi", "highs")
+                ]
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
             if id(node) not in docstrings and node.value in BACKEND_NAMES:
                 found.append(f"backend name {node.value!r} (line {node.lineno})")
         elif isinstance(node, ast.Compare):
             for sub in ast.walk(node):
-                if isinstance(sub, ast.Constant) and isinstance(sub.value, str) and sub.value.lower() in SOLVER_NAMES:
-                    found.append(f"comparison against solver name {sub.value!r} (line {node.lineno})")
+                if (
+                    isinstance(sub, ast.Constant)
+                    and isinstance(sub.value, str)
+                    and sub.value.lower() in SOLVER_NAMES
+                ):
+                    found.append(
+                        f"comparison against solver name {sub.value!r} (line {node.lineno})"
+                    )
         elif isinstance(node, ast.MatchValue):
-            if isinstance(node.value, ast.Constant) and str(node.value.value).lower() in SOLVER_NAMES:
+            if (
+                isinstance(node.value, ast.Constant)
+                and str(node.value.value).lower() in SOLVER_NAMES
+            ):
                 found.append(f"match on solver name {node.value.value!r} (line {node.lineno})")
     return found
 

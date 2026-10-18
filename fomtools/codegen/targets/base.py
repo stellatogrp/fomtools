@@ -18,6 +18,7 @@ from pathlib import Path
 
 from fomtools.codegen.config import CodegenConfig
 from fomtools.codegen.ir import FomIR
+from fomtools.codegen.kernel_rules import strip_c_comments_and_strings
 
 
 class TargetDescriptor(ABC):
@@ -53,16 +54,26 @@ class TargetDescriptor(ABC):
         """Relative path of the generated linear-solve source."""
         return "src/fom_linsolve.c"
 
+    def objective_source_path(self) -> str:
+        """Relative path of the source holding the generated ``fom_objective``.
+
+        Default: the matrix-vector product source. Never editable by the code
+        optimization phase: the metric the solver stops on stays package-owned.
+        """
+        return self.ops_source_path()
+
     def optimization_editable_paths(self) -> tuple[str, ...]:
         """Sources the code optimization phase may rewrite.
 
-        The solver and the linear solve, which is usually where the time goes:
-        both are re-verified, the solve also directly against its matrix (see
-        the generated ``test/verify_main.c``), and kept only if faster. Every
-        other file is restored from the generator. The translation phase may
-        write only the solver.
+        The solver, the linear solves and the matrix-vector products, which is
+        where the time goes: all are re-verified end to end, the solves and the
+        products also directly against the package's factorizations and
+        matrices (see the generated ``test/verify_main.c``), and kept only if
+        faster. Every other file, including the numeric data in ``fom_data.c``,
+        is restored from the generator. The translation phase may write only
+        the solver.
         """
-        return (self.solver_source_path(), self.linsolve_source_path())
+        return (self.solver_source_path(), self.linsolve_source_path(), self.ops_source_path())
 
     def agent_notes(self) -> str:
         """Target-specific guidance appended to the coding-agent prompts.
@@ -72,6 +83,39 @@ class TargetDescriptor(ABC):
         """
         return ""
 
+    def kernel_checks(self, rel: str, source: str, ir, baseline: str | None = None) -> list[str]:
+        """Violations of the rules that keep rewritten kernels checkable (empty = OK).
+
+        Run on each source the code optimization phase changed; ``baseline`` is
+        its translated version. Default: none. Targets whose matrix-vector
+        products are editable and checked against the package's matrices
+        override this (see :mod:`fomtools.codegen.kernel_rules`).
+        """
+        return []
+
+    def ops_data_path(self) -> str:
+        """Where the matrix data the matrix-vector products read lives."""
+        return "src/fom_data.c"
+
+    def translation_checks(self, source: str, ir) -> list[str]:
+        """Violations of the kernel rules in the translated solver (empty = OK).
+
+        Default: none (see :meth:`kernel_checks`).
+        """
+        return []
+
+    def write_kernel_check_config(self, out_dir, ir, baselines: dict[str, str] | None) -> None:
+        """Let ``make verify`` apply the kernel rules while the agent works.
+
+        Called when the code optimization phase starts, with the translated
+        sources as ``baselines`` (:meth:`kernel_checks`), and when translation
+        starts, with ``None`` (:meth:`translation_checks`). Default: nothing to
+        write.
+        """
+
+    def remove_kernel_check_config(self, out_dir) -> None:
+        """Undo :meth:`write_kernel_check_config` once the phase is over."""
+
     def static_checks(self, source: str, ir: FomIR | None = None) -> list[str]:
         """Return a list of invariant violations in ``source`` (empty = OK).
 
@@ -80,11 +124,6 @@ class TargetDescriptor(ABC):
         their own invariants.
         """
         return objective_violations(source, ir)
-
-
-_C_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
-_C_LINE_COMMENT = re.compile(r"//[^\n]*")
-_C_STRING = re.compile(r'"(?:\\.|[^"\\])*"')
 
 
 def objective_violations(source: str, ir: FomIR | None) -> list[str]:
@@ -110,14 +149,3 @@ def objective_violations(source: str, ir: FomIR | None) -> list[str]:
             "settings.check_termination, the runtime interval of the objective check"
         )
     return violations
-
-
-def strip_c_comments_and_strings(source: str) -> str:
-    """Remove C comments and string literals so token checks don't false-match.
-
-    Comments/strings are replaced with spaces (preserving rough offsets).
-    """
-    source = _C_BLOCK_COMMENT.sub(" ", source)
-    source = _C_LINE_COMMENT.sub(" ", source)
-    source = _C_STRING.sub(" ", source)
-    return source

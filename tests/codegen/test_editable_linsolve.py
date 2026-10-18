@@ -86,11 +86,12 @@ def test_a_division_in_a_rewritten_embedded_solve_is_rejected(tmp_path, requires
     assert MARK not in (tmp_path / LINSOLVE).read_text()
 
 
-def test_verify_checks_the_solve_only_where_it_is_editable():
+def test_verify_checks_the_solve_only_where_it_is_editable(monkeypatch):
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "0")  # CUDA without a GPU: solver only
     case = build_indefinite_kkt()
     ir = extract_ir(case["verifier"], case["next_state"], config=case["config"], name="t")
     embedded = get_target(case["config"])
-    assert embedded.optimization_editable_paths() == ("src/fom_solver.c", LINSOLVE)
+    assert embedded.optimization_editable_paths() == ("src/fom_solver.c", LINSOLVE, "src/fom_ops.c")
     assert "fom_lin_solve_t0(FOM_VERIFY_LS_T0_B[r], x)" in embedded._verify_main(ir)
     assert f"You may edit `src/fom_solver.c` and `{LINSOLVE}`" in code_optimization_instructions(
         ir, embedded

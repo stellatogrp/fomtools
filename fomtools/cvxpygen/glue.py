@@ -32,7 +32,8 @@ def cmake_solver_sources(target) -> list[str]:
     """CMake source paths (cvxpygen ``solver_code`` scope) for one target.
 
     Mirrors the translation units the target actually scaffolds — the solver
-    body, the numeric data, and the matrix-vector / linear-solve sources, which
+    body, the numeric data, the matrix-vector / linear-solve sources and the
+    ``fom_objective`` source (written for every IR, so listing it is safe), which
     become ``.cu`` on the CUDA backend — plus the generated bridge. cvxpygen
     globs this list into its build, so the file extensions must match what the
     target's ``scaffold`` wrote (e.g. ``src/fom_ops.cu`` for CUDA, ``.c`` for
@@ -44,8 +45,10 @@ def cmake_solver_sources(target) -> list[str]:
         "src/fom_data.c",
         target.linsolve_source_path(),
         target.ops_source_path(),
-        "src/cpg_fom_bridge.c",
     ]
+    if target.objective_source_path() not in rel:  # its own file except on CUDA
+        rel.append(target.objective_source_path())
+    rel.append("src/cpg_fom_bridge.c")
     return [f"${{CMAKE_CURRENT_SOURCE_DIR}}/{r}" for r in rel]
 
 

@@ -70,8 +70,8 @@ verified over the parameter set, the solver is guaranteed to stop by `K` with
   mixed ReLU rows, other nonlinear steps.
 - Scheduled builds set the objective inside `build`; coefficients that follow the
   schedule are fitted like any other. An unrolled run evaluates it once at the end.
-- Generated as `fom_objective(it, state, new_state[, params][, temps])` in
-  `fom_ops.c`; `make verify` checks the stopping iteration, value and status, also
+- Generated as `fom_objective(it, state, new_state[, params][, temps])` in its own
+  non-editable `src/fom_objective.c` (`fom_ops.cu` on CUDA); `make verify` checks the stopping iteration, value and status, also
   at `check_termination` 1 and 7 and a capped `max_iter`.
 - CLI: `--tol 1e-6 --objective [--check-termination N]`.
 

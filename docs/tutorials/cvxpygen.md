@@ -110,8 +110,9 @@ application allows.
 
 `code_optimization=True` runs the code optimization phase after translation
 (see the code generation tutorial): the coding agent rewrites the translated
-solver for speed, and the rewrite is kept only if it passes verification again
-and is benchmarked faster. Its budget comes from `config`
+solver, its linear solves and its matrix-vector products for speed, and the
+rewrite is kept only if it passes verification again (including the direct
+checks of each solve and product) and is benchmarked faster. Its budget comes from `config`
 (`agent_optimize_timeout_s`, `agent_optimize_max_turns`).
 
 ## The three generation paths

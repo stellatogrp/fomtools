@@ -18,7 +18,7 @@ Flow:
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from fomtools.codegen.agent.driver import AgentDriver, AgentResult, AgentTask
@@ -35,9 +35,11 @@ from fomtools.codegen.harness import (
     time_python_oracle,
 )
 from fomtools.codegen.ir import FomIR
+from fomtools.codegen.kernel_rules import functions, reachable, strip_c_comments_and_strings
 from fomtools.codegen.oracle import check_stationary
 from fomtools.codegen.postprocess import (
     extract_agent_notes,
+    parse_ops_checks,
     unified_solver_diff,
     write_optimization_report,
     write_production_variant,
@@ -58,6 +60,10 @@ class CodegenResult:
     optimization_diff: str | None = None
     optimizations_md: Path | None = None
     production_path: Path | None = None
+    #: How verify checked each shipped ``fom_apply_<name>`` against its matrix (one
+    #: dict per matrix: ``name, shape, nnz, rewritten, mode, probes, max_err``), or
+    #: ``None`` when the products were not editable or not optimized.
+    kernel_checks: list[dict] | None = None
 
     @property
     def success(self) -> bool:
@@ -76,18 +82,61 @@ class CodegenResult:
         return self.optimize is not None and self.optimize.success
 
 
-def _static_issues(target, optimized: dict[str, str], translated: dict[str, str]) -> list[str]:
-    """Target invariant violations (e.g. division, malloc) in rewritten non-solver sources.
+def _static_issues(target, ir, optimized: dict[str, str], translated: dict[str, str]) -> list[str]:
+    """Invariant violations in the sources the code optimization phase rewrote.
 
-    The solver is held to these by its prompt and verify, as before; a rewritten
-    linear solve is new ground for the agent, so it is also checked here.
+    Target invariants (e.g. division, malloc) on rewritten non-solver sources:
+    the solver is held to these by its prompt and verify, as before, while a
+    rewritten linear solve or matrix-vector product is new ground for the agent.
+    And, on every rewritten source, the rules that keep its kernels tied to the
+    checked data (:meth:`~fomtools.codegen.targets.base.TargetDescriptor.kernel_checks`).
     """
     issues = []
     for rel, text in optimized.items():
-        if rel == target.solver_source_path() or text == translated.get(rel):
+        if text == translated.get(rel):
             continue
-        issues += [f"[optimization not kept: {rel}: {v}]" for v in target.static_checks(text)]
+        found = target.kernel_checks(rel, text, ir, translated.get(rel))
+        if rel != target.solver_source_path():
+            found = target.static_checks(text) + found
+        issues += [f"[optimization not kept: {rel}: {v}]" for v in found]
     return issues
+
+
+def _routine_rewritten(name: str, translated: str, final: str) -> bool:
+    """Whether ``fom_apply_<name>`` computes differently between two ``fom_ops.c``
+    sources (ignoring comments and whitespace): its body, a function it reaches,
+    or the file scope (macros, static data) changed. A routine that cannot be
+    found in either is not the generated one, so it counts as rewritten."""
+
+    def parse(text: str) -> tuple[dict[str, list[str]], str]:
+        bodies, scope = functions(strip_c_comments_and_strings(text))
+        return {fn: [" ".join(b.split()) for b in bs] for fn, bs in bodies.items()}, " ".join(
+            scope.split()
+        )
+
+    (before, before_scope), (after, after_scope) = parse(translated), parse(final)
+    fn = f"fom_apply_{name}"
+    if fn not in before or fn not in after or before_scope != after_scope:
+        return True
+    return any(before.get(g) != after.get(g) for g in reachable(after, [fn]))
+
+
+def _kernel_checks(target, ir, out_dir, final, translated, verify_output) -> list[dict] | None:
+    """Rows of the report's kernel-check table, from a verify of the shipped
+    ``fom_ops.c`` (the last ``OPSCHECK`` line per matrix in ``verify_output``;
+    a fresh ``make verify`` only if it has none)."""
+    ops = target.ops_source_path()
+    if ops not in final:
+        return None
+    checks = {c["name"]: c for c in parse_ops_checks(verify_output or "")}
+    if not checks:
+        checks = {c["name"]: c for c in parse_ops_checks(build_and_verify(out_dir, target).output)}
+    rows = []
+    for check in checks.values():
+        md = ir.matrices[check["name"]]
+        rewritten = _routine_rewritten(check["name"], translated[ops], final[ops])
+        rows.append({**check, "shape": tuple(md.shape), "nnz": md.nnz(), "rewritten": rewritten})
+    return rows
 
 
 def _bench_mean_us(out_dir: Path) -> float | None:
@@ -348,9 +397,9 @@ def generate_code(
     def restore_deterministic_files():
         target.scaffold(ir, out_dir)
 
-    # In the code optimization phase the agent may also rewrite the linear solve
-    # (target.optimization_editable_paths()): restore everything else, and keep
-    # what it wrote to those files.
+    # In the code optimization phase the agent may also rewrite the linear solves
+    # and the matrix-vector products (target.optimization_editable_paths()):
+    # restore everything else, and keep what it wrote to those files.
     editable = tuple(target.optimization_editable_paths())
 
     def read_editable() -> dict[str, str]:
@@ -374,7 +423,20 @@ def generate_code(
         phase="translation",
         restore_hook=restore_deterministic_files,
     )
-    translate = driver.run(translation_task)
+    # `make verify` also holds the translated solver to the kernel rule that has
+    # no baseline (it reads no matrix data: every product goes through a checked
+    # fom_apply_*); the check below applies it again and decides.
+    target.write_kernel_check_config(out_dir, ir, None)
+    try:
+        translate = driver.run(translation_task)
+    finally:
+        target.remove_kernel_check_config(out_dir)
+    if translate.success:
+        solver = (out_dir / target.solver_source_path()).read_text()
+        issues = target.translation_checks(solver, ir)
+        if issues:
+            notes = "\n".join(f"[translation rejected: {v}]" for v in issues)
+            translate = replace(translate, success=False, log=translate.log + "\n" + notes)
 
     timing = TimingReport() if profile else None
     have_cc = find_compiler() is not None
@@ -398,6 +460,7 @@ def generate_code(
     optimize = None
     optimization_diff = None
     optimizations_md = None
+    kernel_checks = None
     if code_optimization and translate.success:
         translated_sources = read_editable()  # known-good fallback
 
@@ -412,7 +475,14 @@ def generate_code(
             restore_hook=restore_all_but_editable,
             extra={"editable_paths": editable},
         )
-        optimize = driver.run(optimization_task)
+        # While the agent works, `make verify` also applies the kernel rules, so it
+        # sees a violation as it makes it; Gate 1 below applies them again and
+        # decides. The shipped directory carries no such config.
+        target.write_kernel_check_config(out_dir, ir, translated_sources)
+        try:
+            optimize = driver.run(optimization_task)
+        finally:
+            target.remove_kernel_check_config(out_dir)
         restore_all_but_editable()  # discard edits outside the editable sources
         optimized_sources = read_editable()
         changed = optimized_sources != translated_sources
@@ -421,11 +491,10 @@ def generate_code(
         # Gate 1 (correctness): the optimized sources must still verify (and, on
         # the embedded target, pass its static checks). If they broke (or never
         # verified), fall back to the known-good translated sources.
-        recheck = build_and_verify(out_dir, target) if (optimize.success and changed) else None
+        collected = optimize.success and changed  # a rewrite to re-verify and check
+        recheck = build_and_verify(out_dir, target) if collected else None
         static_issues = (
-            _static_issues(target, optimized_sources, translated_sources)
-            if (optimize.success and changed)
-            else []
+            _static_issues(target, ir, optimized_sources, translated_sources) if collected else []
         )
         correct = bool(
             optimize.success and (recheck is None or recheck.success) and not static_issues
@@ -480,6 +549,21 @@ def generate_code(
         # Record exactly what changed (diff translated -> final, per editable
         # source) + the agent's notes.
         final_sources = read_editable()
+        # The shipped fom_ops.c's checks: the optimized one was just re-verified
+        # when kept; otherwise the shipped one is the generated fom_ops.c, which
+        # the translation phase's passing verify already checked.
+        kernel_checks = (
+            _kernel_checks(
+                target,
+                ir,
+                out_dir,
+                final_sources,
+                translated_sources,
+                recheck.output if (kept and recheck is not None) else translate.log,
+            )
+            if have_cc
+            else None
+        )
         optimization_diff = "".join(
             unified_solver_diff(translated_sources[rel], final_sources[rel], rel)
             for rel in editable
@@ -507,6 +591,9 @@ def generate_code(
             agent_notes=agent_notes,
             optimize_succeeded=optimize.success,
             caveats=caveats,
+            kernel_checks=kernel_checks,
+            rule_violations=static_issues,
+            rewrite_collected=collected,
         )
     # Always persist the raw agent output, code optimization phase or not.
     _write_agent_transcripts(out_dir, translate, optimize)
@@ -530,4 +617,5 @@ def generate_code(
         optimization_diff=optimization_diff,
         optimizations_md=optimizations_md,
         production_path=production_path,
+        kernel_checks=kernel_checks,
     )
