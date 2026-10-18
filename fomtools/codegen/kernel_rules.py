@@ -26,7 +26,8 @@ rules keep the coefficients there, where it can see them:
 Literals the translated version of the same file already had are exempt: that
 version passed verify under a prompt that forbids hardcoding, so only what a
 rewrite adds is new. In ``fom_ops.c`` the exemption is per routine: a literal in
-``fom_apply_<name>`` is exempt only if the translated ``fom_apply_<name>`` had it.
+``fom_apply_<name>`` is exempt only if the translated ``fom_apply_<name>`` had it,
+and one outside every routine only if the translated file had it outside too.
 
 Not covered by a rule: state a rewritten ``fom_ops.c`` keeps across calls (a
 ``static`` cache, say). The direct check runs each routine before ``fom_setup``
@@ -156,27 +157,37 @@ def _new_literals(code: str, known: set[str]) -> list[str]:
     ]
 
 
+def _split_routines(code: str, names) -> tuple[dict[str, str | None], str]:
+    """Each ``fom_apply_<name>`` body in ``fom_ops.c`` (``None`` if not found),
+    and the code outside them, with the bodies blanked out."""
+    bodies, outside = {}, code
+    for name in names:
+        span = _function_span(code, f"fom_apply_{name}")
+        bodies[name] = None if span is None else code[span[0] : span[1]]
+        if span is not None:
+            outside = outside[: span[0]] + " " * (span[1] - span[0]) + outside[span[1] :]
+    return bodies, outside
+
+
 def _check_ops(code: str, base: str, matvec_names) -> list[str]:
     """``fom_ops.c``: literals per routine, and each routine on its own data."""
     violations = []
-    outside = code
-    for name in matvec_names:
+    bodies, outside = _split_routines(code, matvec_names)
+    base_bodies, base_outside = _split_routines(base, matvec_names)
+    for name, body in bodies.items():
         fn = f"fom_apply_{name}"
-        span = _function_span(code, fn)
-        if span is None:
+        if body is None:
             violations.append(_not_found(fn))
             continue
-        body = code[span[0] : span[1]]
-        outside = outside[: span[0]] + " " * (span[1] - span[0]) + outside[span[1] :]
-        base_body = function_body(base, fn) or ""
-        violations += [f"{fn}: {v}" for v in _new_literals(body, set(float_literals(base_body)))]
+        base_lits = set(float_literals(base_bodies[name] or ""))
+        violations += [f"{fn}: {v}" for v in _new_literals(body, base_lits)]
         for other in matvec_names:
             if other != name and _mat_data(other).search(body):
                 violations.append(
                     f"{fn} reads FOM_MAT_{other}, the data of another product; each "
                     "routine may read only its own matrix"
                 )
-    return _new_literals(outside, set(float_literals(base))) + violations
+    return _new_literals(outside, set(float_literals(base_outside))) + violations
 
 
 def check(kind: str, source: str, matvec_names, baseline: str | None = None) -> list[str]:

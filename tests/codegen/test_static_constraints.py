@@ -158,7 +158,13 @@ def test_ops_literal_exemption_is_per_routine(target, mpc_ir):
     ]
     # ...while a literal the translated routine itself had stays exempt.
     baseline = _ops(mpc_ir, {"t0_state": "out[0] += 0.3 * x[0];"})
+    baseline += "\nfom_float step(void) { return 0.3; }"
     assert target.kernel_checks("src/fom_ops.c", rewrite, mpc_ir, baseline) == []
+    # A routine's literal does not exempt a new function outside every routine.
+    baseline = _ops(mpc_ir, {"t0_state": "out[0] += 0.3 * x[0];"})
+    moved = _ops(mpc_ir) + "\nfom_float step(void) { return 0.3; }"
+    violations = target.kernel_checks("src/fom_ops.c", moved, mpc_ir, baseline)
+    assert len(violations) == 1 and "'0.3'" in violations[0]
 
 
 def test_braces_in_character_literals_do_not_break_the_rules(target, mpc_ir):
