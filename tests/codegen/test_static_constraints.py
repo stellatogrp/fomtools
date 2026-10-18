@@ -268,3 +268,19 @@ def test_ops_routine_defined_twice_is_a_violation(target, mpc_ir):
     source = "#if FAST\n" + other + "\n#else\n" + _ops(mpc_ir) + "\n#endif\n"
     violations = target.kernel_checks("src/fom_ops.c", source, mpc_ir)
     assert any("fom_apply_t0_state is defined more than once" in v for v in violations)
+
+
+def test_fom_apply_reached_from_setup_through_a_helper_is_flagged(target, mpc_ir):
+    source = """
+    static void probe(FomWorkspace *w) { fom_apply_t0_state(w->state, w->acc); }
+    static void precompute(FomWorkspace *w) { probe(w); }
+    void fom_setup(FomWorkspace *work, const FomSettings *settings) { precompute(work); }
+    void fom_update_params(FomWorkspace *work, const FomParams *params) {
+        void (*f)(const fom_float *, fom_float *) = fom_apply_su_state; (void)f;
+    }
+    fom_int fom_solve(FomWorkspace *work) { fom_apply_t0_p_p0(work->state, work->acc); return 0; }
+    """
+    violations = target.kernel_checks("src/fom_solver.c", source, mpc_ir)
+    assert any("fom_apply_t0_state is called from fom_setup" in v for v in violations)
+    assert any("fom_apply_su_state is called from fom_setup" in v for v in violations)
+    assert not any("t0_p_p0" in v for v in violations)  # only in the iteration

@@ -15,8 +15,8 @@ rules keep the coefficients there, where it can see them:
 * **Products through the checked routines.** A rewritten solver may not read the
   ``FOM_MAT_<name>`` data of a matrix it multiplies by (it calls
   ``fom_apply_<name>`` instead), and may not newly call ``fom_apply_*`` from
-  ``fom_setup`` / ``fom_update_params``, which is how a matrix would be rebuilt by
-  probing it on unit vectors. In ``fom_ops.c``, ``fom_apply_<name>`` may read only
+  ``fom_setup`` / ``fom_update_params``, or from any function of the file they
+  reach, which is how a matrix would be rebuilt by probing it on unit vectors. In ``fom_ops.c``, ``fom_apply_<name>`` may read only
   its own matrix's ``FOM_MAT_<name>`` data, not another product's, and no code
   outside the routines (a helper, a macro, static data) may read any matrix data:
   a helper gets it as an argument from the routine that owns it.
@@ -81,7 +81,11 @@ ALLOWED_FLOAT_LITERALS = frozenset({0.0, 0.5, 1.0, 2.0})
 #: Functions that run once per setup or parameter update, not per iteration.
 SETUP_FUNCTIONS = ("fom_setup", "fom_update_params")
 
-_APPLY_CALL = re.compile(r"\bfom_apply_(\w+)\s*\(")
+#: A use of ``fom_apply_<name>``: a call, or the function's address.
+_APPLY_REF = re.compile(r"\bfom_apply_(\w+)\b")
+
+_FUNCTION_DEF = re.compile(r"\b([A-Za-z_]\w*)\s*\([^;{)]*\)\s*\{")
+_C_KEYWORDS = frozenset({"if", "for", "while", "switch", "return", "sizeof"})
 
 
 def strip_c_comments_and_strings(source: str) -> str:
@@ -142,13 +146,41 @@ def _not_found(name: str) -> str:
     )
 
 
+def _function_bodies(code: str) -> dict[str, list[str]]:
+    """The bodies of every C function defined at file scope in (stripped)
+    ``code``, by name (a list: ``#if`` branches may define one twice)."""
+    bodies: dict[str, list[str]] = {}
+    end = 0
+    for match in _FUNCTION_DEF.finditer(code):
+        if match.start() < end or match.group(1) in _C_KEYWORDS:
+            continue
+        depth, i = 1, match.end()
+        while depth and i < len(code):
+            depth += {"{": 1, "}": -1}.get(code[i], 0)
+            i += 1
+        if depth:
+            break
+        bodies.setdefault(match.group(1), []).append(code[match.end() : i - 1])
+        end = i
+    return bodies
+
+
 def setup_apply_calls(code: str) -> set[str] | None:
-    """Matrices whose ``fom_apply_<name>`` the setup functions call, or ``None``
-    if a setup function cannot be found."""
-    bodies = [function_body(code, fn) for fn in SETUP_FUNCTIONS]
-    if any(body is None for body in bodies):
+    """Matrices whose ``fom_apply_<name>`` the setup functions use, directly or
+    through the functions of the file they reach, or ``None`` if a setup function
+    cannot be found."""
+    if any(function_body(code, fn) is None for fn in SETUP_FUNCTIONS):
         return None
-    return {name for body in bodies for name in _APPLY_CALL.findall(body)}
+    bodies = _function_bodies(code)
+    seen, todo = set(SETUP_FUNCTIONS), list(SETUP_FUNCTIONS)
+    names = set()
+    while todo:
+        for body in bodies.get(todo.pop(), []):
+            names |= set(_APPLY_REF.findall(body))
+            for fn in set(re.findall(r"\b\w+\b", body)) & bodies.keys() - seen:
+                seen.add(fn)
+                todo.append(fn)
+    return names
 
 
 def _mat_data(name: str) -> re.Pattern:
