@@ -152,6 +152,20 @@ def test_random_probes_check_a_matrix_over_the_budget(
     assert "fom_apply_su_t_t1 differs from its matrix" in proc.stdout
 
 
+def test_the_tolerance_scales_with_the_entry_not_the_starting_out(tmp_path, mpc, requires_compiler):
+    # Row 6 of `out` starts at 3 and entry (6, 0) of t0_state is zero. An error
+    # of 2.5 * tol there must fail: scaled by the starting value it would pass.
+    _, ir = mpc
+    scaffold(ir, tmp_path, CONFIG)
+    (tmp_path / "src" / "fom_solver.c").write_text(GOLDEN.read_text())
+    sig = "void fom_apply_t0_state(const fom_float *x, fom_float *out) {"
+    ops = tmp_path / OPS
+    off = 2.5 * CONFIG.tol_verify
+    ops.write_text(ops.read_text().replace(sig, sig + f"\n    out[6] += {off!r} * x[0];"))
+    proc = _verify(tmp_path)
+    assert "fom_apply_t0_state entry (6, 0) is off by" in proc.stdout, proc.stdout
+
+
 def test_the_check_stores_no_matrix_sized_data(tmp_path, mpc):
     # Only O(cols) random probes per matrix go into verify_data.h; the reference
     # is computed in C from fom_data.c, so no outputs or columns are stored.
@@ -170,7 +184,8 @@ def test_the_translation_phase_may_not_rewrite_ops(tmp_path, mpc, requires_compi
     assert MARK not in (tmp_path / OPS).read_text()
 
 
-def test_ops_are_checked_and_editable_only_off_cuda(mpc):
+def test_ops_are_checked_and_editable_only_off_cuda(mpc, monkeypatch):
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "0")  # CUDA without a GPU
     _, ir = mpc
     embedded = get_target(CONFIG)
     assert OPS in embedded.optimization_editable_paths()
@@ -187,6 +202,27 @@ def test_ops_are_checked_and_editable_only_off_cuda(mpc):
     assert cuda.optimization_editable_paths() == (cuda.solver_source_path(),)
     assert "fom_ref_apply_" not in cuda._verify_main(ir)
     assert "Edit ONLY" in code_optimization_instructions(ir, cuda)
+
+
+def test_the_cuda_solver_is_held_to_the_kernel_rules(tmp_path, mpc, monkeypatch):
+    # Without a GPU fom_ops.cu stays fixed on CUDA, but the solver's rules are
+    # the same as on the CPU targets: `make compile` applies them too.
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "0")
+    _, ir = mpc
+    cfg = CodegenConfig(version=Version.LARGE_SCALE, backend=Backend.CUDA)
+    cuda = get_target(cfg)
+    scaffold(ir, tmp_path, cfg)
+    assert (tmp_path / "test" / "kernel_check.py").exists()
+    assert not (tmp_path / "test" / "ops_ref.c").exists()
+    compile_rule = (tmp_path / "Makefile").read_text().split("compile:", 1)[1]
+    assert "python3 test/kernel_check.py" in compile_rule.split("\n\n", 1)[0]
+    prompt = code_optimization_instructions(ir, cuda)
+    assert "must not read the `FOM_MAT_<name>` data" in prompt
+    assert "`fom_setup` and `fom_update_params` must not add calls" in prompt
+    assert "`src/fom_ops.cu`, each `fom_apply_<name>`" not in prompt  # fixed there
+    cuda.write_kernel_check_config(tmp_path, ir, None)
+    config = (tmp_path / "test" / "kernel_check.json").read_text()
+    assert '"src/fom_solver.cu"' in config and '"translation"' in config
 
 
 def test_a_hardcoded_coefficient_in_ops_is_rejected(tmp_path, mpc, requires_compiler):
@@ -235,6 +271,42 @@ def test_an_optimized_solver_with_its_own_matvec_is_rejected(tmp_path, mpc, requ
     assert not result.optimization_kept
     assert "the solver reads FOM_MAT_t0_state directly" in result.optimize.log
     assert (tmp_path / "src" / "fom_solver.c").read_text() == golden
+
+
+def test_a_translated_solver_with_its_own_matvec_is_rejected(tmp_path, mpc, requires_compiler):
+    # The same inline loop at translation: `make verify` flags it while the agent
+    # works, and the pipeline rejects the translation even if verify passed.
+    golden = GOLDEN.read_text()
+    source = golden.replace(
+        "fom_apply_t0_state(work->state, work->acc);",
+        "{ fom_int i, p; for (i = 0; i < FOM_MAT_t0_state_ROWS; ++i) "
+        "for (p = FOM_MAT_t0_state_ROWPTR[i]; p < FOM_MAT_t0_state_ROWPTR[i + 1]; ++p) "
+        "work->acc[i] += FOM_MAT_t0_state_VALS[p] * work->state[FOM_MAT_t0_state_COLIDX[p]]; }",
+    )
+    inline = tmp_path / "inline.c"
+    inline.write_text(source)
+    ex, _ = mpc
+
+    class DeletesConfig(StubAgentDriver):
+        def run(self, task):
+            (task.workdir / "test" / "kernel_check.json").unlink(missing_ok=True)
+            return super().run(task)
+
+    for driver, seen_by_verify in ((StubAgentDriver(inline), True), (DeletesConfig(inline), False)):
+        result = generate_code(
+            ex["verifier"],
+            ex["next_state"],
+            tmp_path / str(seen_by_verify),
+            config=CONFIG,
+            driver=driver,
+            name="mpc",
+        )
+        assert not result.translate.success
+        log = result.translate.log
+        assert ("VERIFY FAILED: kernel rule: src/fom_solver.c" in log) == seen_by_verify
+        rejected = "[translation rejected: the solver reads FOM_MAT_t0_state directly"
+        assert (rejected in log) != seen_by_verify  # the gate catches what verify missed
+        assert not (tmp_path / str(seen_by_verify) / "test" / "kernel_check.json").exists()
 
 
 def test_make_verify_applies_the_kernel_rules_while_configured(tmp_path, mpc, requires_compiler):
@@ -383,13 +455,20 @@ def test_a_routine_that_returns_nan_fails_verify(tmp_path, mpc, requires_compile
 
 
 def test_report_checks_the_shipped_sources_when_a_rewrite_is_reverted(
-    tmp_path, mpc, requires_compiler
+    tmp_path, mpc, requires_compiler, monkeypatch
 ):
+    import fomtools.codegen.generate as generate
+
+    runs = []
+    real = generate.build_and_verify
+    monkeypatch.setattr(generate, "build_and_verify", lambda *a: runs.append(a) or real(*a))
     result = _generate(tmp_path, mpc, _perturbed_ops(RARE_MATRIX, RARE_COL))
     assert not result.optimization_kept
-    # The translated (generated) routines ship, and that is what the table shows.
+    # The translated (generated) routines ship, and that is what the table shows,
+    # read from the translation phase's verify: no extra verify after the phase.
     assert result.kernel_checks and not any(c["rewritten"] for c in result.kernel_checks)
     assert all(c["max_err"] == 0.0 for c in result.kernel_checks)
+    assert runs == []
 
 
 def test_report_has_no_kernel_section_where_ops_are_not_editable(tmp_path):
@@ -397,3 +476,71 @@ def test_report_has_no_kernel_section_where_ops_are_not_editable(tmp_path):
 
     path = write_optimization_report(tmp_path, "", "", "", optimize_succeeded=False)
     assert "Kernel checks" not in path.read_text()
+
+
+def test_rewritten_follows_helpers_and_file_scope():
+    from fomtools.codegen.generate import _routine_rewritten
+
+    def ops(helper: str, scope: str = "") -> str:
+        return (
+            f"{scope}\nstatic void kern(const fom_float *x, fom_float *o) {{ {helper} }}\n"
+            "void fom_apply_a(const fom_float *x, fom_float *out) { kern(x, out); }\n"
+            "void fom_apply_b(const fom_float *x, fom_float *out) { out[0] += x[0]; }\n"
+        )
+
+    before = ops("o[0] += x[0];")
+    # A comment or whitespace change is not a rewrite.
+    assert not _routine_rewritten("a", before, "/* note */ " + before.replace("+=", " += "))
+    # A changed helper rewrites the routine that calls it, not the other one.
+    after = ops("o[0] += x[1];")
+    assert _routine_rewritten("a", before, after) and not _routine_rewritten("b", before, after)
+    # A changed macro or static data may affect any routine.
+    after = ops("o[0] += x[0];", "#define K 1")
+    assert _routine_rewritten("a", before, after) and _routine_rewritten("b", before, after)
+
+
+def test_cuda_on_a_gpu_has_the_cpu_policy(tmp_path, mpc, monkeypatch):
+    # Where verify runs on a GPU, CUDA edits the same files as the CPU targets,
+    # under the same direct checks (staged through the device) and rules.
+    import fomtools.codegen.kernel_rules as kernel_rules
+
+    _, ir = mpc
+    cfg = CodegenConfig(version=Version.LARGE_SCALE, backend=Backend.CUDA)
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "1")
+    cuda = get_target(cfg)
+    assert set(cuda.optimization_editable_paths()) == {
+        "src/fom_solver.cu",
+        "src/fom_linsolve.cu",
+        "src/fom_ops.cu",
+    }
+    assert cuda.objective_source_path() not in cuda.optimization_editable_paths()
+    scaffold(ir, tmp_path, cfg)
+    ops = (tmp_path / "src" / "fom_ops.cu").read_text()
+    assert '#include "fom_ops_data.cuh"' in ops and "FOM_OP_T0_STATE_VALS[" in ops
+    assert "__device__ static const" not in ops  # the data lives in the fixed header
+    assert "FOM_OP_T0_STATE_VALS[" in (tmp_path / "include" / "fom_ops_data.cuh").read_text()
+    # The reference reads an independent host copy.
+    assert "FOM_MAT_t0_state_VALS" in (tmp_path / "include" / "fom_data.h").read_text()
+    assert "fom_ref_apply_t0_state" in (tmp_path / "test" / "ops_ref.c").read_text()
+    verify = (tmp_path / "test" / "verify_main.c").read_text()
+    assert "fom_check_apply_t0_state(x, got);" in verify
+    assert "fom_ref_apply_t0_state(x, ref);" in verify
+    stage = (tmp_path / "test" / "check_stage.cu").read_text()
+    assert "fom_apply_t0_state(d_in, d_out);" in stage
+    for name, _ in cuda._checked_factorizations(ir):
+        assert f"fom_check_lin_solve_{name}(FOM_VERIFY_LS_" in verify
+        assert f"fom_lin_solve_{name}(d_in, d_out);" in stage
+    assert "$(CHECK_OBJS)" in (tmp_path / "Makefile").read_text()
+    # The generated kernels satisfy the ops rules with nothing exempt.
+    names = _matvec_matrix_names(ir)
+    assert kernel_rules.check("ops", ops, names) == []
+    prompt = code_optimization_instructions(ir, cuda)
+    assert "matrix data in `include/fom_ops_data.cuh`" in prompt
+    assert "`src/fom_ops.cu`, each `fom_apply_<name>`" in prompt
+
+    # Without a GPU: solver only, no host copy, no staging.
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "0")
+    scaffold(ir, tmp_path, cfg)
+    assert not (tmp_path / "test" / "check_stage.cu").exists()
+    assert not (tmp_path / "test" / "ops_ref.c").exists()
+    assert "FOM_MAT_t0_state_VALS" not in (tmp_path / "include" / "fom_data.h").read_text()

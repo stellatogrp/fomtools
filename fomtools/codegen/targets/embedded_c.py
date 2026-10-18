@@ -27,26 +27,23 @@ import scipy.sparse as spa
 
 from fomtools.codegen import kernel_rules, spec
 from fomtools.codegen.ir import ActivationKind, FomIR, csr_arrays
+from fomtools.codegen.kernel_rules import strip_c_comments_and_strings
 from fomtools.codegen.objective import objective_c_params, objective_c_source
 from fomtools.codegen.oracle import ReferenceOracle
-from fomtools.codegen.targets.base import (
-    TargetDescriptor,
-    objective_violations,
-    strip_c_comments_and_strings,
-)
+from fomtools.codegen.targets.base import TargetDescriptor, objective_violations
 
 
 def _fmt_float(x: float) -> str:
     return f"{float(x):.17g}"
 
 
-#: Written while the code optimization phase runs (and removed after), so that
-#: ``make verify`` also applies the kernel rules to the agent's rewrite.
+#: Written while an agent works (translation or code optimization, removed
+#: after), so that ``make verify`` also applies the kernel rules to its code.
 _KERNEL_CHECK_CONFIG = "test/kernel_check.json"
 
 
 #: ``make verify`` step that applies the kernel rules while a config is present
-#: (only during the code optimization phase, and only if python3 is available).
+#: (only while an agent works, and only if python3 is available).
 _KERNEL_CHECK_RECIPE = (
     f"\t@if [ -f {_KERNEL_CHECK_CONFIG} ] && command -v python3 >/dev/null; then "
     f"python3 test/kernel_check.py {_KERNEL_CHECK_CONFIG}; fi"
@@ -248,12 +245,12 @@ class EmbeddedCTarget(TargetDescriptor):
             (out / self.objective_source_path()).write_text(self._objective_file(ir))
         (out / "src" / "fom_data.c").write_text(self._data_source(ir))
         (out / "src" / "fom_profile.c").write_text(self._profile_source())
+        (out / "test" / "kernel_check.py").write_text(Path(kernel_rules.__file__).read_text())
         if self._checked_ops(ir):
             (out / "test" / "ops_ref.h").write_text(self._ops_ref_header(ir))
             (out / "test" / "ops_ref.c").write_text(self._ops_ref_source(ir))
-            (out / "test" / "kernel_check.py").write_text(Path(kernel_rules.__file__).read_text())
         else:
-            for rel in ("test/ops_ref.h", "test/ops_ref.c", "test/kernel_check.py"):
+            for rel in ("test/ops_ref.h", "test/ops_ref.c"):
                 (out / rel).unlink(missing_ok=True)
         (out / "test" / "verify_data.h").write_text(self._verify_data(ir))
         (out / "test" / "verify_main.c").write_text(self._verify_main(ir))
@@ -589,17 +586,36 @@ class EmbeddedCTarget(TargetDescriptor):
         return lines
 
     # -- reference matvecs for the direct check of a rewritten fom_ops.c ---
+    def _ops_editable(self) -> bool:
+        """Whether the code optimization phase may rewrite ``fom_ops.c``. The one
+        condition for both the direct check (:meth:`_checked_ops`) and the
+        ``fom_ops.c`` kernel rules (:meth:`_kernel_rule_kinds`): neither is
+        shipped without the other."""
+        return self.ops_source_path() in self.optimization_editable_paths()
+
+    def _checked_call(self, kind: str, name: str) -> str:
+        """The function the direct checks call for ``fom_<kind>_<name>`` (``kind``
+        ``apply`` or ``lin_solve``) on host pointers: the routine itself here; a
+        device-staging wrapper on CUDA."""
+        return f"fom_{kind}_{name}"
+
+    def _verify_check_includes(self, ir: FomIR) -> list[str]:
+        """Extra includes the direct checks need in ``verify_main.c``."""
+        return []
+
+    def ops_data_path(self) -> str:
+        """Where the matrix data ``fom_ops.c`` reads lives (package-owned)."""
+        return "src/fom_data.c"
+
     def _checked_ops(self, ir: FomIR) -> list[str]:
         """Matrices whose ``fom_apply_<name>`` ``make verify`` checks on its own.
 
         Only when the code optimization phase may rewrite ``fom_ops.c``
-        (:meth:`optimization_editable_paths`): each routine is held to a
-        package-written reference over the same ``fom_data.c`` arrays, so a
-        rewrite cannot change the matrix it applies.
+        (:meth:`_ops_editable`): each routine is held to a package-written
+        reference over the same ``fom_data.c`` arrays, so a rewrite cannot change
+        the matrix it applies.
         """
-        if self.ops_source_path() not in self.optimization_editable_paths():
-            return []
-        return _matvec_matrix_names(ir)
+        return _matvec_matrix_names(ir) if self._ops_editable() else []
 
     def _ops_ref_header(self, ir: FomIR) -> str:
         lines = [
@@ -1000,7 +1016,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 "        int r;",
                 f"        for (r = 0; r < {k}; ++r) {{",
                 "            fom_float err = 0.0, scale = 1.0;",
-                f"            fom_lin_solve_{name}(FOM_VERIFY_LS_{up}_B[r], x);",
+                f"            {self._checked_call('lin_solve', name)}(FOM_VERIFY_LS_{up}_B[r], x);",
                 f"            for (j = 0; j < {fac.dim}; ++j) {{",
                 f"                fom_float d = x[j] - FOM_VERIFY_LS_{up}_X[r][j];",
                 f"                fom_float a = FOM_VERIFY_LS_{up}_X[r][j];",
@@ -1060,8 +1076,10 @@ class EmbeddedCTarget(TargetDescriptor):
         """Check each ``fom_apply_<name>`` against the package's reference matvec.
 
         Both start from the same nonzero ``out``, so the accumulate semantics are
-        checked too. Unit-vector probes (when within budget) compare the routine's
-        matrix with ``M`` entry by entry; the random probes follow.
+        checked too; the tolerance scales with ``M @ x``, not with that starting
+        value, so it stays relative to the entries being checked. Unit-vector
+        probes (when within budget) compare the routine's matrix with ``M`` entry
+        by entry; the random probes follow.
         """
         lines = []
         k = self._OPS_CHECK_RANDOM
@@ -1085,11 +1103,11 @@ class EmbeddedCTarget(TargetDescriptor):
                 f"                x[c] = (r < {nb}) ? (fom_float)(c == r) "
                 f": FOM_VERIFY_OP_{up}_X[r - {nb}][c];",
                 f"            for (i = 0; i < {rows}; ++i) got[i] = ref[i] = (fom_float)(i % 7 - 3);",
-                f"            fom_apply_{name}(x, got);",
+                f"            {self._checked_call('apply', name)}(x, got);",
                 f"            fom_ref_apply_{name}(x, ref);",
                 f"            for (i = 0; i < {rows}; ++i) {{",
                 "                fom_float d = got[i] - ref[i];",
-                "                fom_float a = ref[i];",
+                "                fom_float a = ref[i] - (fom_float)(i % 7 - 3);  /* (M x)[i] */",
                 "                if (d < 0) d = -d;",
                 "                if (a < 0) a = -a;",
                 "                if (!(d <= err)) { err = d; bad = i; }  /* NaN-safe */",
@@ -1313,6 +1331,7 @@ class EmbeddedCTarget(TargetDescriptor):
                     if self._checked_ops(ir)
                     else []
                 ),
+                *self._verify_check_includes(ir),
                 '#include "verify_data.h"',
                 "",
                 *(self._verify_stop_helper() if objective else []),
@@ -1566,6 +1585,9 @@ class EmbeddedCTarget(TargetDescriptor):
             [
                 "CC ?= cc",
                 "CFLAGS ?= -O2 -Wall -Iinclude",
+                "# Link-time optimization lets the compiler inline fom_apply_* (fom_ops.c)",
+                "# into the solver; override with LTOFLAGS= to build without it.",
+                "LTOFLAGS ?= -flto",
                 "BENCHFLAGS ?= -O3 -Iinclude",
                 "SRC = src/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c "
                 "src/fom_objective.c",
@@ -1583,27 +1605,27 @@ class EmbeddedCTarget(TargetDescriptor):
                 "",
                 f"verify:{guard} $(SRC) $(VERIFY_SRC) test/verify_main.c",
                 _KERNEL_CHECK_RECIPE,
-                "\t$(CC) $(CFLAGS) -Itest $(SRC) $(VERIFY_SRC) test/verify_main.c -o verify_bin -lm",
+                "\t$(CC) $(CFLAGS) $(LTOFLAGS) -Itest $(SRC) $(VERIFY_SRC) test/verify_main.c -o verify_bin -lm",
                 "\t./verify_bin",
                 "",
                 "# Build the shared library from the marker-free production source.",
                 "release: release/fom_solver.c src/fom_data.c release/fom_linsolve.c "
                 "release/fom_ops.c src/fom_objective.c",
-                "\t$(CC) $(CFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
+                "\t$(CC) $(CFLAGS) $(LTOFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
                 "release/fom_linsolve.c release/fom_ops.c src/fom_objective.c "
                 "-o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "bench: $(SRC) test/bench_main.c",
-                "\t$(CC) $(BENCHFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",
+                "\t$(CC) $(BENCHFLAGS) $(LTOFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",
                 "\t./bench_bin",
                 "",
                 "profile: $(SRC) src/fom_profile.c test/bench_main.c",
-                "\t$(CC) $(BENCHFLAGS) -DFOM_PROFILE -Itest $(SRC) src/fom_profile.c "
+                "\t$(CC) $(BENCHFLAGS) $(LTOFLAGS) -DFOM_PROFILE -Itest $(SRC) src/fom_profile.c "
                 "test/bench_main.c -o profile_bin -lm",
                 "\t./profile_bin",
                 "",
                 "lib: $(SRC)",
-                "\t$(CC) $(CFLAGS) -shared -fPIC $(SRC) -o libfomsolver.$(LIBEXT) -lm",
+                "\t$(CC) $(CFLAGS) $(LTOFLAGS) -shared -fPIC $(SRC) -o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "clean:",
                 "\trm -f verify_bin bench_bin profile_bin libfomsolver.so libfomsolver.dylib",
@@ -1669,8 +1691,9 @@ class EmbeddedCTarget(TargetDescriptor):
     ) -> list[str]:
         """The :mod:`~fomtools.codegen.kernel_rules` for a rewritten solver or ``fom_ops.c``.
 
-        Only where ``fom_ops.c`` is editable (and so checked against the matrices):
-        the rules keep coefficients inside the routines that check covers.
+        The solver's rules hold on every target (its products go through
+        ``fom_apply_*``, generated or checked); ``fom_ops.c``'s only where it is
+        editable, and so checked against the matrices.
         """
         kind = self._kernel_rule_kinds().get(rel)
         if kind is None:
@@ -1678,18 +1701,25 @@ class EmbeddedCTarget(TargetDescriptor):
         return kernel_rules.check(kind, source, _matvec_matrix_names(ir), baseline)
 
     def _kernel_rule_kinds(self) -> dict[str, str]:
-        if self.ops_source_path() not in self.optimization_editable_paths():
-            return {}
-        return {self.solver_source_path(): "solver", self.ops_source_path(): "ops"}
+        kinds = {self.solver_source_path(): "solver"}
+        if self._ops_editable():
+            kinds[self.ops_source_path()] = "ops"
+        return kinds
 
-    def write_kernel_check_config(self, out_dir, ir: FomIR, baselines: dict[str, str]) -> None:
+    def translation_checks(self, source: str, ir: FomIR) -> list[str]:
+        return kernel_rules.check("translation", source, _matvec_matrix_names(ir))
+
+    def write_kernel_check_config(
+        self, out_dir, ir: FomIR, baselines: dict[str, str] | None
+    ) -> None:
         kinds = self._kernel_rule_kinds()
-        if not kinds:
-            return
-        files = [
-            {"path": rel, "kind": kind, "baseline": baselines.get(rel)}
-            for rel, kind in kinds.items()
-        ]
+        if baselines is None:  # translation: the solver only, with no baseline
+            files = [{"path": self.solver_source_path(), "kind": "translation"}]
+        else:
+            files = [
+                {"path": rel, "kind": kind, "baseline": baselines.get(rel)}
+                for rel, kind in kinds.items()
+            ]
         config = {"matvec": _matvec_matrix_names(ir), "files": files}
         (Path(out_dir) / _KERNEL_CHECK_CONFIG).write_text(json.dumps(config, indent=1))
 

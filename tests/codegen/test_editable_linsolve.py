@@ -86,7 +86,8 @@ def test_a_division_in_a_rewritten_embedded_solve_is_rejected(tmp_path, requires
     assert MARK not in (tmp_path / LINSOLVE).read_text()
 
 
-def test_verify_checks_the_solve_only_where_it_is_editable():
+def test_verify_checks_the_solve_only_where_it_is_editable(monkeypatch):
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "0")  # CUDA without a GPU: solver only
     case = build_indefinite_kkt()
     ir = extract_ir(case["verifier"], case["next_state"], config=case["config"], name="t")
     embedded = get_target(case["config"])

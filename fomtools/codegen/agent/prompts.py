@@ -48,6 +48,11 @@ def translation_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     linsolve_src = target.linsolve_source_path()
     notes = target.agent_notes()
     notes_block = f"\n{notes}\n" if notes else ""
+    ops_rule = f"""
+  The one exception: never read the data of a matrix you multiply by (any
+  matrix with a `fom_apply_<name>` in `{ops_src}`); multiply only through
+  `fom_apply_<name>`, which `{verify}` checks against the matrix. `{verify}`
+  reports a breach as `VERIFY FAILED: kernel rule: ...`."""
     shape_block = (
         """
 This specification is UNROLLED: its body is the whole recorded run, not one
@@ -74,7 +79,7 @@ generated and must not be changed:
 - `include/fom_data.h` / `src/fom_data.c` hold ALL numeric coefficients and
   activation constants (matrices `FOM_MAT_*`, `FOM_STATE_INIT`, soft-threshold
   `FOM_*_LAMBDA`, clip-bound vectors `FOM_MAT_*_lo`/`_hi`). Do NOT hardcode
-  numbers; read them from these symbols.
+  numbers; read them from these symbols.{ops_rule}
 - `include/fom_linsolve.h` / `{linsolve_src}` provide the linear solve for
   every affine operator: for a step that SPEC marks with a solve, assemble its
   right-hand side from `linear_op`, then call `fom_lin_solve_<name>(rhs, out)`.
@@ -103,6 +108,33 @@ the fastest correct implementation.
 """
 
 
+def _kernel_rules_block(src: str, ops_src: str, verify: str, ops_editable: bool) -> str:
+    """The kernel rules (:mod:`fomtools.codegen.kernel_rules`), on every target."""
+    own_data = (
+        f""" In `{ops_src}`, each `fom_apply_<name>` (one
+  definition) and the helpers it calls read only its own matrix's data; no other
+  code reads matrix data, and every function but the `fom_apply_<name>` entry
+  points is `static`."""
+        if ops_editable
+        else ""
+    )
+    files = f"`{src}` and `{ops_src}`" if ops_editable else f"`{src}`"
+    same_routine = f", in the same routine of `{ops_src}`," if ops_editable else ""
+    return f"""
+
+Three rules keep every coefficient inside the checked `fom_apply_<name>`
+routines; `{verify}` reports a breach as `VERIFY FAILED: kernel rule: ...`, and a
+rewrite that breaks any of them is discarded when it is collected:
+- `{src}` must not read the `FOM_MAT_<name>` data of any matrix it multiplies
+  by; call `fom_apply_<name>` instead.{own_data}
+- {files} must not add floating-point constants other than `0.0`,
+  `0.5`, `1.0` and `2.0`, whether written as decimal or hex float literals or as
+  integers cast to a floating type (literals the translated file already
+  had{same_routine} are fine).
+- `fom_setup` and `fom_update_params` must not add calls to `fom_apply_*`: apply
+  matrices in the iteration, never probe them to rebuild a matrix."""
+
+
 def code_optimization_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     """Instructions for the code optimization phase (profile-guided rewriting)."""
     verify = " ".join(target.verify_command())
@@ -112,6 +144,7 @@ def code_optimization_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     notes = target.agent_notes()
     notes_block = f"\n{notes}\n" if notes else ""
     editable = target.optimization_editable_paths()
+    ops_data = target.ops_data_path()
     if linsolve_src in editable:
         both = ops_src in editable
         others = f"`{linsolve_src}` (the linear solves, usually the hottest code)"
@@ -138,31 +171,21 @@ profile inside it, `#include "fom_profile.h"` there."""
             scope += f"""
 
 `{ops_src}` implements each `fom_apply_<name>(x, out)` (out += M @ x) over the
-matrix data in `src/fom_data.c`. Put any specialized matrix-vector kernel HERE,
+matrix data in `{ops_data}`. Put any specialized matrix-vector kernel HERE,
 inside the `fom_apply_<name>` it replaces — e.g. exploiting Toeplitz, Hadamard,
 banded or block structure, unrolling a small block, or a better sparse loop — and
 call it from `{src}`; do not write matrix-vector loops in `{src}`. Read the
-coefficients from `src/fom_data.c` (or values derived from them at setup); never
+coefficients from `{ops_data}` (or values derived from them at setup); never
 hardcode them. `{verify}` checks every `fom_apply_<name>` directly against its
 matrix, column by column (probing each unit vector) and on random vectors, so a
 kernel must apply exactly `M` for every input and must keep accumulating into
-`out`. Three rules keep every coefficient inside those checked routines;
-`{verify}` reports a breach as `VERIFY FAILED: kernel rule: ...`, and a rewrite
-that breaks any of them is discarded when it is collected:
-- `{src}` must not read the `FOM_MAT_<name>` data of any matrix it multiplies
-  by; call `fom_apply_<name>` instead. In `{ops_src}`, each `fom_apply_<name>`
-  reads only its own matrix's data.
-- `{src}` and `{ops_src}` must not add floating-point constants other than `0.0`,
-  `0.5`, `1.0` and `2.0`, whether written as decimal or hex float literals or as
-  integers cast to a floating type (literals the translated file already had,
-  in the same routine of `{ops_src}`, are fine).
-- `fom_setup` and `fom_update_params` must not add calls to `fom_apply_*`: apply
-  matrices in the iteration, never probe them to rebuild a matrix."""
+`out`."""
     else:
         scope = f"""\
 Edit ONLY `{src}`: the Makefile, build flags, headers, numeric data,
 `{linsolve_src}`, and `{ops_src}` are fixed and restored automatically before
 every check, so changes to them are discarded (don't waste turns editing them)."""
+    scope += _kernel_rules_block(src, ops_src, verify, ops_src in editable)
     objective_src = target.objective_source_path()
     objective_block = _objective_block(ir, objective_src)
     if objective_block:

@@ -275,7 +275,6 @@ class HiGHSSolver(MIPSolver):
         except TypeError:
             self.model.setObjective(self.expression_to_solver(expression)[0], sense=sense)
 
-
     # sum_squares (quadratic) constraints are unsupported on HiGHS; the rejecting
     # default in MIPSolver.add_sum_squares_constr applies (it names the solver, so no
     # HiGHS-specific override is needed).

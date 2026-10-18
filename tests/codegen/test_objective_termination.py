@@ -35,10 +35,10 @@ from fomtools.codegen.extract_unrolled import extract_unrolled_ir
 from fomtools.codegen.generate import extract_fom_ir
 from fomtools.codegen.harness import build_and_verify, build_lib
 from fomtools.codegen.ir import ActivationKind
+from fomtools.codegen.kernel_rules import strip_c_comments_and_strings
 from fomtools.codegen.objective import ObjectiveExtractionError, norm_label
 from fomtools.codegen.oracle import ReferenceOracle
 from fomtools.codegen.targets import get_target
-from fomtools.codegen.targets.base import strip_c_comments_and_strings
 from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
 from fomtools.codegen.targets.large_scale_cuda import CudaTarget
 from fomtools.codegen.targets.large_scale_openmp import OpenMpTarget
@@ -661,8 +661,9 @@ def test_cuda_emission(tmp_path):
     )
     ir = extract_scheduled_ir(case["build"], case["schedules"], config=config)
     scaffold(ir, tmp_path, config)
-    ops = (tmp_path / "src" / "fom_ops.cu").read_text()
+    ops = (tmp_path / "src" / "fom_objective.cu").read_text()
     assert "__global__ void fom_objective_obj0_kern(" in ops
+    assert "fom_objective" not in (tmp_path / "src" / "fom_ops.cu").read_text()
     assert 'extern "C" fom_float fom_objective(fom_int it,' in ops
     assert "fom_sched_gamma(it)" in ops  # schedule read on the host
     assert "sh[threadIdx.x] += sh[threadIdx.x + w];" in ops  # sum reduction for ord 2
@@ -674,7 +675,7 @@ def test_cuda_emission(tmp_path):
         update={"version": Version.LARGE_SCALE, "backend": Backend.CUDA}
     )
     scaffold(ir_inf, tmp_path / "inf", cuda)
-    ops = (tmp_path / "inf" / "src" / "fom_ops.cu").read_text()
+    ops = (tmp_path / "inf" / "src" / "fom_objective.cu").read_text()
     assert "r = r > v ? r : v;" in ops and "(void)it;" in ops
 
 

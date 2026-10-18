@@ -37,14 +37,17 @@ See :meth:`CudaTarget.verify_command`.
 
 from __future__ import annotations
 
+import functools
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 from fomtools.codegen.ir import FomIR, csr_arrays
 from fomtools.codegen.objective import objective_c_params
 from fomtools.codegen.targets.base import objective_violations
 from fomtools.codegen.targets.embedded_c import (
+    _KERNEL_CHECK_RECIPE,
     EmbeddedCTarget,
     _c_array,
     _c_int_array,
@@ -53,6 +56,22 @@ from fomtools.codegen.targets.embedded_c import (
     _is_csr,
     _matvec_matrix_names,
 )
+
+
+@functools.cache
+def _gpu_visible() -> bool:
+    """Whether ``nvcc`` can build here and ``nvidia-smi`` sees a device (probed
+    once per process)."""
+    if not shutil.which("nvcc") or not shutil.which("nvidia-smi"):
+        return False
+    try:
+        proc = subprocess.run(["nvidia-smi", "-L"], capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    # `nvidia-smi -L` lists one "GPU <n>: ..." line per device, or
+    # "No devices were found" when none are visible.
+    return proc.returncode == 0 and b"GPU " in proc.stdout
+
 
 #: Threads per block for every emitted kernel (matvecs, CG, reductions).
 _THREADS = 256
@@ -66,8 +85,12 @@ _DEVICE_CONST = "__device__ static const"
 class CudaTarget(EmbeddedCTarget):
     name = "large_scale_cuda"
 
-    #: Sparse matvec data stays in device memory in fom_ops.cu (no host copy).
-    csr_in_data = False
+    @property
+    def csr_in_data(self) -> bool:
+        """Sparse matvec data lives in device memory (``fom_ops_data.cuh``). A host
+        copy in ``fom_data.c`` exists only where ``fom_ops.cu`` is editable: the
+        direct check's reference reads it, independent of the device copy."""
+        return self._ops_editable()
 
     def solver_source_path(self) -> str:
         return "src/fom_solver.cu"
@@ -76,13 +99,23 @@ class CudaTarget(EmbeddedCTarget):
         return "src/fom_ops.cu"
 
     def objective_source_path(self) -> str:
-        """The device reductions stay beside the kernels in ``fom_ops.cu``, which
-        the code optimization phase never edits on this target."""
-        return self.ops_source_path()
+        """The device reductions, in their own fixed file (as on the CPU targets),
+        so a rewritten ``fom_ops.cu`` can never change the metric."""
+        return "src/fom_objective.cu"
+
+    def _objective_file(self, ir: FomIR) -> str:
+        lines = ['#include "fom_ops.h"', "", "#include <cuda_runtime.h>", ""]
+        if ir.objective is None:
+            lines += ["/* No verification objective: this solver does not stop on one. */", ""]
+        lines += self._objective_source(ir)
+        return "\n".join(lines)
 
     def optimization_editable_paths(self) -> tuple[str, ...]:
-        """Only the solver: without a GPU, verify only compiles the CUDA sources,
-        so a rewritten linear solve could not be checked."""
+        """The same files as on the CPU targets when verify runs on a GPU, where
+        a rewritten solve or product is checked directly; only the solver
+        without one, since verify then only compiles the CUDA sources."""
+        if self._can_run_on_gpu():
+            return super().optimization_editable_paths()
         return (self.solver_source_path(),)
 
     def linsolve_source_path(self) -> str:
@@ -105,15 +138,104 @@ class CudaTarget(EmbeddedCTarget):
         override = os.environ.get("FOMTOOLS_CUDA_RUN")
         if override is not None:
             return override.strip().lower() not in ("", "0", "false", "no", "off")
-        if not shutil.which("nvcc") or not shutil.which("nvidia-smi"):
-            return False
-        try:
-            proc = subprocess.run(["nvidia-smi", "-L"], capture_output=True, timeout=10)
-        except (OSError, subprocess.SubprocessError):
-            return False
-        # `nvidia-smi -L` lists one "GPU <n>: ..." line per device, or
-        # "No devices were found" when none are visible.
-        return proc.returncode == 0 and b"GPU " in proc.stdout
+        return _gpu_visible()
+
+    def scaffold(self, ir: FomIR, out_dir: Path) -> None:
+        super().scaffold(ir, out_dir)
+        out = Path(out_dir)
+        (out / "include" / "fom_ops_data.cuh").write_text(self._ops_data_header(ir))
+        if self._checked_ops(ir) or self._checked_factorizations(ir):
+            (out / "test" / "check_stage.h").write_text(self._check_stage_header(ir))
+            (out / "test" / "check_stage.cu").write_text(self._check_stage_source(ir))
+        else:
+            for rel in ("test/check_stage.h", "test/check_stage.cu"):
+                (out / rel).unlink(missing_ok=True)
+
+    def ops_data_path(self) -> str:
+        return "include/fom_ops_data.cuh"
+
+    # -- direct checks: host probes staged through the device ------------------
+    def _checked_call(self, kind: str, name: str) -> str:
+        return f"fom_check_{kind}_{name}"
+
+    def _verify_check_includes(self, ir: FomIR) -> list[str]:
+        if self._checked_ops(ir) or self._checked_factorizations(ir):
+            return ['#include "check_stage.h"']
+        return []
+
+    def _check_stage_header(self, ir: FomIR) -> str:
+        lines = [
+            "#ifndef FOM_CHECK_STAGE_H",
+            "#define FOM_CHECK_STAGE_H",
+            "",
+            '#include "fom_workspace.h"',
+            "",
+            "#ifdef __cplusplus",
+            'extern "C" {',
+            "#endif",
+            "",
+            "/* Verify only: each checked routine on HOST pointers, staged through",
+            "   device buffers, so the direct checks compare it to the host reference. */",
+        ]
+        for kind, name, _, _ in self._stage_list(ir):
+            lines.append(f"void fom_check_{kind}_{name}(const fom_float *in, fom_float *out);")
+        lines += ["", "#ifdef __cplusplus", "}", "#endif", "", "#endif /* FOM_CHECK_STAGE_H */", ""]
+        return "\n".join(lines)
+
+    def _stage_list(self, ir: FomIR) -> list[tuple[str, str, int, int]]:
+        out = []
+        for name in self._checked_ops(ir):
+            shape = ir.matrices[name].shape
+            out.append(("apply", name, shape[1] if len(shape) > 1 else 1, shape[0]))
+        for name, fac in self._checked_factorizations(ir):
+            out.append(("lin_solve", name, fac.dim, fac.dim))
+        return out
+
+    def _check_stage_source(self, ir: FomIR) -> str:
+        lines = [
+            '#include "check_stage.h"',
+            '#include "fom_ops.h"',
+            '#include "fom_linsolve.h"',
+            "",
+            "#include <stdio.h>",
+            "#include <stdlib.h>",
+            "#include <cuda_runtime.h>",
+            "",
+            "static void fom_check_cuda(const char *what) {",
+            "    cudaError_t e = cudaDeviceSynchronize();",
+            "    if (e == cudaSuccess) e = cudaGetLastError();",
+            "    if (e != cudaSuccess) {",
+            '        printf("VERIFY FAILED: %s: %s\\n", what, cudaGetErrorString(e));',
+            "        exit(1);",
+            "    }",
+            "}",
+            "",
+        ]
+        for kind, name, n_in, n_out in self._stage_list(ir):
+            # A solve overwrites x; a product accumulates, so `out` goes in too.
+            upload_out = (
+                [
+                    f"    cudaMemcpy(d_out, out, sizeof(fom_float) * {n_out}, cudaMemcpyHostToDevice);"
+                ]
+                if kind == "apply"
+                else []
+            )
+            lines += [
+                f'extern "C" void fom_check_{kind}_{name}(const fom_float *in, fom_float *out) {{',
+                "    fom_float *d_in, *d_out;",
+                f"    cudaMalloc((void **)&d_in, sizeof(fom_float) * {n_in});",
+                f"    cudaMalloc((void **)&d_out, sizeof(fom_float) * {n_out});",
+                f"    cudaMemcpy(d_in, in, sizeof(fom_float) * {n_in}, cudaMemcpyHostToDevice);",
+                *upload_out,
+                f"    fom_{kind}_{name}(d_in, d_out);",
+                f'    fom_check_cuda("fom_{kind}_{name}");',
+                f"    cudaMemcpy(out, d_out, sizeof(fom_float) * {n_out}, cudaMemcpyDeviceToHost);",
+                "    cudaFree(d_in);",
+                "    cudaFree(d_out);",
+                "}",
+                "",
+            ]
+        return "\n".join(lines)
 
     def static_checks(self, source: str, ir: FomIR | None = None) -> list[str]:
         return objective_violations(source, ir)
@@ -171,13 +293,42 @@ class CudaTarget(EmbeddedCTarget):
         lines += ["", "#ifdef __cplusplus", "}", "#endif", "", "#endif /* FOM_OPS_H */", ""]
         return "\n".join(lines)
 
+    def _ops_data_header(self, ir: FomIR) -> str:
+        """``include/fom_ops_data.cuh``: the device copies of the matvec matrices,
+        package-owned and restored before every check, so a rewritten
+        ``fom_ops.cu`` reads the same data its direct check compares against."""
+        lines = [
+            "#ifndef FOM_OPS_DATA_CUH",
+            "#define FOM_OPS_DATA_CUH",
+            "",
+            "/* Device copies of the matvec matrices (fom_data.c is host memory),",
+            "   loaded with the module - no runtime upload. Included by fom_ops.cu",
+            "   only. CSR if structurally sparse, dense otherwise. */",
+            '#include "fom_workspace.h"',
+            "",
+        ]
+        for name in _matvec_matrix_names(ir):
+            md = ir.matrices[name]
+            up = name.upper()
+            if _is_csr(md):
+                rowptr, colidx, vals = md.csr()
+                lines.append(_c_int_array(f"FOM_OP_{up}_ROWPTR", rowptr, storage=_DEVICE_CONST))
+                lines.append(_c_int_array(f"FOM_OP_{up}_COLIDX", colidx, storage=_DEVICE_CONST))
+                lines.append(_c_array(f"FOM_OP_{up}_VALS", vals, storage=_DEVICE_CONST))
+            else:
+                lines.append(_c_array(f"FOM_OP_{up}_DENSE", md.dense(), storage=_DEVICE_CONST))
+            lines.append("")
+        lines += ["#endif /* FOM_OPS_DATA_CUH */", ""]
+        return "\n".join(lines)
+
     def _ops_source(self, ir: FomIR) -> str:
         lines = [
             "/* Deterministic device-side matrix-vector products (out += M @ x).",
             "   One thread per row (rows are independent). Matrix data lives in",
-            "   __device__ const arrays loaded with the module - no runtime upload.",
-            "   All pointers are device pointers. */",
+            "   fom_ops_data.cuh as __device__ const arrays. All pointers are device",
+            "   pointers. */",
             '#include "fom_ops.h"',
+            '#include "fom_ops_data.cuh"',
             "",
             "#include <cuda_runtime.h>",
             "",
@@ -190,47 +341,34 @@ class CudaTarget(EmbeddedCTarget):
             rows = shape[0]
             cols = shape[1] if len(shape) > 1 else 1
             up = name.upper()
+            lines += [
+                "static __global__ void "
+                f"fom_apply_{name}_kern(const fom_float *x, fom_float *out) {{",
+                "    fom_int i = blockIdx.x * blockDim.x + threadIdx.x;",
+                f"    if (i >= {rows}) return;",
+                "    fom_float s = 0.0;",
+            ]
             if _is_csr(md):
-                rowptr, colidx, vals = md.csr()
-                lines.append(_c_int_array(f"FOM_OP_{up}_ROWPTR", rowptr, storage=_DEVICE_CONST))
-                lines.append(_c_int_array(f"FOM_OP_{up}_COLIDX", colidx, storage=_DEVICE_CONST))
-                lines.append(_c_array(f"FOM_OP_{up}_VALS", vals, storage=_DEVICE_CONST))
                 lines += [
-                    "",
-                    f"__global__ void fom_apply_{name}_kern(const fom_float *x, fom_float *out) {{",
-                    "    fom_int i = blockIdx.x * blockDim.x + threadIdx.x;",
-                    f"    if (i >= {rows}) return;",
-                    "    fom_float s = 0.0;",
                     f"    for (fom_int p = FOM_OP_{up}_ROWPTR[i]; p < FOM_OP_{up}_ROWPTR[i + 1]; "
                     "++p)",
                     f"        s += FOM_OP_{up}_VALS[p] * x[FOM_OP_{up}_COLIDX[p]];",
-                    "    out[i] += s;",
-                    "}",
                 ]
             else:
-                # Device copy of the dense FOM_MAT_<name> coefficients (fom_data.c
-                # is host memory; kernels need the values in device global memory).
-                lines.append(_c_array(f"FOM_OP_{up}_DENSE", md.dense(), storage=_DEVICE_CONST))
-                lines += [
-                    "",
-                    f"__global__ void fom_apply_{name}_kern(const fom_float *x, fom_float *out) {{",
-                    "    fom_int i = blockIdx.x * blockDim.x + threadIdx.x;",
-                    f"    if (i >= {rows}) return;",
-                    "    fom_float s = 0.0;",
+                lines.append(
                     f"    for (fom_int j = 0; j < {cols}; ++j) "
-                    f"s += FOM_OP_{up}_DENSE[i * {cols} + j] * x[j];",
-                    "    out[i] += s;",
-                    "}",
-                ]
+                    f"s += FOM_OP_{up}_DENSE[i * {cols} + j] * x[j];"
+                )
             blocks = (rows + _THREADS - 1) // _THREADS
             lines += [
+                "    out[i] += s;",
+                "}",
                 "",
                 f'extern "C" void fom_apply_{name}(const fom_float *x, fom_float *out) {{',
                 f"    fom_apply_{name}_kern<<<{blocks}, FOM_OPS_THREADS>>>(x, out);",
                 "}",
                 "",
             ]
-        lines += self._objective_source(ir)
         return "\n".join(lines)
 
     def _objective_source(self, ir: FomIR) -> list[str]:
@@ -569,7 +707,8 @@ class CudaTarget(EmbeddedCTarget):
                 "CFLAGS ?= -O3 -Iinclude -Itest",
                 "NVCCFLAGS ?= -O3 -Iinclude -Itest",
                 "",
-                "CU_SRC = src/fom_solver.cu src/fom_ops.cu src/fom_linsolve.cu",
+                "CU_SRC = src/fom_solver.cu src/fom_ops.cu src/fom_linsolve.cu "
+                "src/fom_objective.cu",
                 "",
                 ".PHONY: compile verify bench lib clean objective_guard",
                 "",
@@ -579,17 +718,28 @@ class CudaTarget(EmbeddedCTarget):
                 "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
                 "fom_linsolve.o: src/fom_linsolve.cu",
                 "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
+                "fom_objective.o: src/fom_objective.cu",
+                "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
                 "fom_data.o: src/fom_data.c",
                 "\t$(CC) $(CFLAGS) -c $< -o $@",
                 "",
-                "OBJS = fom_solver.o fom_ops.o fom_linsolve.o fom_data.o",
+                "OBJS = fom_solver.o fom_ops.o fom_linsolve.o fom_objective.o fom_data.o",
+                "# Verify only, where fom_ops.cu / fom_linsolve.cu are editable: the host",
+                "# reference matvecs and the device staging of the direct checks.",
+                "CHECK_OBJS = $(if $(wildcard test/ops_ref.c),ops_ref.o) "
+                "$(if $(wildcard test/check_stage.cu),check_stage.o)",
+                "ops_ref.o: test/ops_ref.c",
+                "\t$(CC) $(CFLAGS) -c $< -o $@",
+                "check_stage.o: test/check_stage.cu",
+                "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
                 "",
                 "# Compile-check: build BOTH the verify and bench binaries (no GPU run).",
                 "# Building bench_bin here too means a CI compile-check catches bench",
                 "# breakage even though benchmarking itself needs a GPU.",
-                f"compile:{guard} $(OBJS) test/verify_main.c test/bench_main.c",
+                f"compile:{guard} $(OBJS) $(CHECK_OBJS) test/verify_main.c test/bench_main.c",
+                _KERNEL_CHECK_RECIPE,
                 "\t$(CC) $(CFLAGS) -c test/verify_main.c -o verify_main.o",
-                "\t$(NVCC) $(NVCCFLAGS) $(OBJS) verify_main.o -o verify_bin",
+                "\t$(NVCC) $(NVCCFLAGS) $(OBJS) $(CHECK_OBJS) verify_main.o -o verify_bin",
                 "\t$(CC) $(CFLAGS) -c test/bench_main.c -o bench_main.o",
                 "\t$(NVCC) $(NVCCFLAGS) $(OBJS) bench_main.o -o bench_bin",
                 "",
@@ -629,8 +779,9 @@ class CudaTarget(EmbeddedCTarget):
                 "",
                 "`src/fom_solver.cu` orchestrates the iteration; the deterministic",
                 "device code lives in `src/fom_ops.cu` (matrix-vector kernels, CSR",
-                "where structured) and `src/fom_linsolve.cu` (device CG; host LDL^T/LU",
-                "behind a staging wrapper - triangular solves are sequential). All",
+                "where structured), `src/fom_linsolve.cu` (device CG; host LDL^T/LU",
+                "behind a staging wrapper - triangular solves are sequential) and",
+                "`src/fom_objective.cu` (the verification objective). All",
                 "`fom_apply_*` / `fom_lin_solve_*` arguments are DEVICE pointers.",
                 "Host-side numeric data lives in `src/fom_data.c`. See `SPEC.md`.",
                 "",

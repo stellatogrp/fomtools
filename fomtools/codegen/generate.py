@@ -18,7 +18,7 @@ Flow:
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from fomtools.codegen.agent.driver import AgentDriver, AgentResult, AgentTask
@@ -35,7 +35,7 @@ from fomtools.codegen.harness import (
     time_python_oracle,
 )
 from fomtools.codegen.ir import FomIR
-from fomtools.codegen.kernel_rules import function_body, strip_c_comments_and_strings
+from fomtools.codegen.kernel_rules import functions, reachable, strip_c_comments_and_strings
 from fomtools.codegen.oracle import check_stationary
 from fomtools.codegen.postprocess import (
     extract_agent_notes,
@@ -103,27 +103,36 @@ def _static_issues(target, ir, optimized: dict[str, str], translated: dict[str, 
 
 
 def _routine_rewritten(name: str, translated: str, final: str) -> bool:
-    """Whether ``fom_apply_<name>`` differs between two ``fom_ops.c`` sources
-    (ignoring comments and whitespace). A routine that cannot be found in either
-    is not the generated one, so it counts as rewritten."""
+    """Whether ``fom_apply_<name>`` computes differently between two ``fom_ops.c``
+    sources (ignoring comments and whitespace): its body, a function it reaches,
+    or the file scope (macros, static data) changed. A routine that cannot be
+    found in either is not the generated one, so it counts as rewritten."""
 
-    def body(text: str) -> str | None:
-        found = function_body(strip_c_comments_and_strings(text), f"fom_apply_{name}")
-        return None if found is None else " ".join(found.split())
+    def parse(text: str) -> tuple[dict[str, list[str]], str]:
+        bodies, scope = functions(strip_c_comments_and_strings(text))
+        return {fn: [" ".join(b.split()) for b in bs] for fn, bs in bodies.items()}, " ".join(
+            scope.split()
+        )
 
-    before, after = body(translated), body(final)
-    return before is None or after is None or before != after
+    (before, before_scope), (after, after_scope) = parse(translated), parse(final)
+    fn = f"fom_apply_{name}"
+    if fn not in before or fn not in after or before_scope != after_scope:
+        return True
+    return any(before.get(g) != after.get(g) for g in reachable(after, [fn]))
 
 
 def _kernel_checks(target, ir, out_dir, final, translated, verify_output) -> list[dict] | None:
-    """Rows of the report's kernel-check table, from the shipped sources' verify."""
+    """Rows of the report's kernel-check table, from a verify of the shipped
+    ``fom_ops.c`` (the last ``OPSCHECK`` line per matrix in ``verify_output``;
+    a fresh ``make verify`` only if it has none)."""
     ops = target.ops_source_path()
     if ops not in final:
         return None
-    if verify_output is None:
-        verify_output = build_and_verify(out_dir, target).output
+    checks = {c["name"]: c for c in parse_ops_checks(verify_output or "")}
+    if not checks:
+        checks = {c["name"]: c for c in parse_ops_checks(build_and_verify(out_dir, target).output)}
     rows = []
-    for check in parse_ops_checks(verify_output):
+    for check in checks.values():
         md = ir.matrices[check["name"]]
         rewritten = _routine_rewritten(check["name"], translated[ops], final[ops])
         rows.append({**check, "shape": tuple(md.shape), "nnz": md.nnz(), "rewritten": rewritten})
@@ -414,7 +423,20 @@ def generate_code(
         phase="translation",
         restore_hook=restore_deterministic_files,
     )
-    translate = driver.run(translation_task)
+    # `make verify` also holds the translated solver to the kernel rule that has
+    # no baseline (it reads no matrix data: every product goes through a checked
+    # fom_apply_*); the check below applies it again and decides.
+    target.write_kernel_check_config(out_dir, ir, None)
+    try:
+        translate = driver.run(translation_task)
+    finally:
+        target.remove_kernel_check_config(out_dir)
+    if translate.success:
+        solver = (out_dir / target.solver_source_path()).read_text()
+        issues = target.translation_checks(solver, ir)
+        if issues:
+            notes = "\n".join(f"[translation rejected: {v}]" for v in issues)
+            translate = replace(translate, success=False, log=translate.log + "\n" + notes)
 
     timing = TimingReport() if profile else None
     have_cc = find_compiler() is not None
@@ -527,8 +549,9 @@ def generate_code(
         # Record exactly what changed (diff translated -> final, per editable
         # source) + the agent's notes.
         final_sources = read_editable()
-        # The shipped sources' checks: the optimized ones were just re-verified
-        # when kept; otherwise (translated sources shipped) verify them now.
+        # The shipped fom_ops.c's checks: the optimized one was just re-verified
+        # when kept; otherwise the shipped one is the generated fom_ops.c, which
+        # the translation phase's passing verify already checked.
         kernel_checks = (
             _kernel_checks(
                 target,
@@ -536,7 +559,7 @@ def generate_code(
                 out_dir,
                 final_sources,
                 translated_sources,
-                recheck.output if (kept and recheck is not None) else None,
+                recheck.output if (kept and recheck is not None) else translate.log,
             )
             if have_cc
             else None

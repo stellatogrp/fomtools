@@ -15,18 +15,29 @@ rules keep the coefficients there, where it can see them:
 * **Products through the checked routines.** A rewritten solver may not read the
   ``FOM_MAT_<name>`` data of a matrix it multiplies by (it calls
   ``fom_apply_<name>`` instead), and may not newly call ``fom_apply_*`` from
-  ``fom_setup`` / ``fom_update_params``, which is how a matrix would be rebuilt by
-  probing it on unit vectors. In ``fom_ops.c``, ``fom_apply_<name>`` may read only
-  its own matrix's ``FOM_MAT_<name>`` data, not another product's.
+  ``fom_setup`` / ``fom_update_params``, or from any function of the file they
+  reach, which is how a matrix would be rebuilt by probing it on unit vectors.
+  In ``fom_ops.c``, a routine is ``fom_apply_<name>`` together with every
+  function it reaches (a helper, or the CUDA target's ``__global__`` kernel); a
+  routine may read only its own matrix's data, no code outside every routine (a
+  macro, static data, an unreached function) may read matrix data at all, and
+  every function but the ``fom_apply_<name>`` entry points must be ``static``,
+  so nothing reaches a routine's helpers except through it.
 * **Checkable structure.** Each function these rules inspect (``fom_setup`` and
   ``fom_update_params`` in the solver, every ``fom_apply_<name>`` in
-  ``fom_ops.c``) must be found as a plain C definition with balanced braces; a
-  function the rules cannot find is a violation, never a silently skipped rule.
+  ``fom_ops.c``) must be found as a single plain C definition with balanced
+  braces; a function the rules cannot find, or one defined twice (in ``#if``
+  branches, say), is a violation, never a silently skipped rule.
+
+The translated solver is held to the matrix-data rule too (``make verify`` applies
+it during translation), so code optimization starts from a solver that already
+multiplies only through the checked routines.
 
 Literals the translated version of the same file already had are exempt: that
 version passed verify under a prompt that forbids hardcoding, so only what a
 rewrite adds is new. In ``fom_ops.c`` the exemption is per routine: a literal in
-``fom_apply_<name>`` is exempt only if the translated ``fom_apply_<name>`` had it.
+a routine is exempt only if the translated routine had it, and one outside every
+routine only if the translated file had it outside too.
 
 Not covered by a rule: state a rewritten ``fom_ops.c`` keeps across calls (a
 ``static`` cache, say). The direct check runs each routine before ``fom_setup``
@@ -77,7 +88,11 @@ ALLOWED_FLOAT_LITERALS = frozenset({0.0, 0.5, 1.0, 2.0})
 #: Functions that run once per setup or parameter update, not per iteration.
 SETUP_FUNCTIONS = ("fom_setup", "fom_update_params")
 
-_APPLY_CALL = re.compile(r"\bfom_apply_(\w+)\s*\(")
+#: A use of ``fom_apply_<name>``: a call, or the function's address.
+_APPLY_REF = re.compile(r"\bfom_apply_(\w+)\b")
+
+_FUNCTION_DEF = re.compile(r"\b([A-Za-z_]\w*)\s*\([^;{)]*\)\s*\{")
+_C_KEYWORDS = frozenset({"if", "for", "while", "switch", "return", "sizeof"})
 
 
 def strip_c_comments_and_strings(source: str) -> str:
@@ -103,11 +118,16 @@ def float_literals(code: str) -> list[str]:
     return list(dict.fromkeys(text for text, value in found if value not in ALLOWED_FLOAT_LITERALS))
 
 
+def _definitions(code: str, name: str) -> list[re.Match]:
+    """Each place (stripped) ``code`` defines the C function ``name``."""
+    return list(re.finditer(rf"\b{re.escape(name)}\s*\([^;{{)]*\)\s*\{{", code))
+
+
 def _function_span(code: str, name: str) -> tuple[int, int] | None:
     """``(start, end)`` of the body of the C function ``name`` in (stripped)
     ``code``, or ``None`` if no definition is found or its braces never balance
     (e.g. ``#if`` branches that each open a brace)."""
-    match = re.search(rf"\b{re.escape(name)}\s*\([^;{{)]*\)\s*\{{", code)
+    match = next(iter(_definitions(code, name)), None)
     if match is None:
         return None
     depth, i = 1, match.end()
@@ -133,18 +153,78 @@ def _not_found(name: str) -> str:
     )
 
 
+def _iter_functions(code: str):
+    """``(name, prefix, body)`` of each C function defined at file scope in
+    (stripped) ``code``, in order; ``prefix`` is its declaration specifiers
+    (``static``, return type), and ``body`` the ``(start, end)`` of its body.
+    Stops at a definition whose braces never balance."""
+    end = 0
+    for match in _FUNCTION_DEF.finditer(code):
+        if match.start() < end or match.group(1) in _C_KEYWORDS:
+            continue
+        depth, i = 1, match.end()
+        while depth and i < len(code):
+            depth += {"{": 1, "}": -1}.get(code[i], 0)
+            i += 1
+        if depth:
+            return
+        head = code[
+            max(
+                code.rfind(";", end, match.start()), code.rfind("}", end, match.start()), end
+            ) : match.start()
+        ]
+        prefix = " ".join(ln for ln in head.splitlines() if not ln.lstrip().startswith("#"))
+        yield match.group(1), prefix, (match.end(), i - 1)
+        end = i
+
+
+def functions(code: str) -> tuple[dict[str, list[str]], str]:
+    """The C functions defined at file scope in (stripped) ``code``: their bodies
+    by name (a list: ``#if`` branches may define one twice), and the file scope
+    left over (declarations, macros, static data) with the bodies blanked out."""
+    bodies: dict[str, list[str]] = {}
+    scope = code
+    for name, _, (start, stop) in _iter_functions(code):
+        bodies.setdefault(name, []).append(code[start:stop])
+        scope = scope[:start] + " " * (stop - start) + scope[stop:]
+    return bodies, scope
+
+
+def reachable(bodies: dict[str, list[str]], roots) -> set[str]:
+    """The functions of ``bodies`` that ``roots`` use, directly or through each
+    other (a call or the function's address), ``roots`` included."""
+    seen, todo = set(roots), list(roots)
+    while todo:
+        for body in bodies.get(todo.pop(), []):
+            for fn in set(re.findall(r"\b\w+\b", body)) & bodies.keys() - seen:
+                seen.add(fn)
+                todo.append(fn)
+    return seen
+
+
 def setup_apply_calls(code: str) -> set[str] | None:
-    """Matrices whose ``fom_apply_<name>`` the setup functions call, or ``None``
-    if a setup function cannot be found."""
-    bodies = [function_body(code, fn) for fn in SETUP_FUNCTIONS]
-    if any(body is None for body in bodies):
+    """Matrices whose ``fom_apply_<name>`` the setup functions use, directly or
+    through the functions of the file they reach, or ``None`` if a setup function
+    cannot be found."""
+    if any(function_body(code, fn) is None for fn in SETUP_FUNCTIONS):
         return None
-    return {name for body in bodies for name in _APPLY_CALL.findall(body)}
+    bodies, _ = functions(code)
+    return {
+        name
+        for fn in reachable(bodies, SETUP_FUNCTIONS)
+        for body in bodies.get(fn, [])
+        for name in _APPLY_REF.findall(body)
+    }
 
 
 def _mat_data(name: str) -> re.Pattern:
-    """A reference to the data arrays of matrix ``name`` (not its dimensions)."""
-    return re.compile(rf"\bFOM_MAT_{re.escape(name)}(?:_(?:ROWPTR|COLIDX|VALS))?\b")
+    """A reference to the data arrays of matrix ``name`` (not its dimensions): the
+    host ``FOM_MAT_<name>`` arrays, or the CUDA target's device copies
+    ``FOM_OP_<NAME>_*``."""
+    return re.compile(
+        rf"\bFOM_MAT_{re.escape(name)}(?:_(?:ROWPTR|COLIDX|VALS))?\b"
+        rf"|\bFOM_OP_{re.escape(name.upper())}_(?:ROWPTR|COLIDX|VALS|DENSE)\b"
+    )
 
 
 def _new_literals(code: str, known: set[str]) -> list[str]:
@@ -156,48 +236,88 @@ def _new_literals(code: str, known: set[str]) -> list[str]:
     ]
 
 
-def _check_ops(code: str, base: str, matvec_names) -> list[str]:
-    """``fom_ops.c``: literals per routine, and each routine on its own data."""
-    violations = []
-    outside = code
-    for name in matvec_names:
+def _routine_regions(code: str, names) -> tuple[dict[str, set[str]], dict, str, list[str]]:
+    """``fom_ops.c`` split by routine: the functions each ``fom_apply_<name>``
+    reaches (itself included), the function bodies, the code outside every
+    region (file scope and functions no routine reaches), and violations of
+    its structure."""
+    bodies, scope = functions(code)
+    regions, violations = {}, []
+    for name in names:
         fn = f"fom_apply_{name}"
-        span = _function_span(code, fn)
-        if span is None:
+        if fn not in bodies:
             violations.append(_not_found(fn))
-            continue
-        body = code[span[0] : span[1]]
-        outside = outside[: span[0]] + " " * (span[1] - span[0]) + outside[span[1] :]
-        base_body = function_body(base, fn) or ""
-        violations += [f"{fn}: {v}" for v in _new_literals(body, set(float_literals(base_body)))]
+        elif len(bodies[fn]) > 1:
+            violations.append(
+                f"{fn} is defined more than once (e.g. in #if branches); the kernel "
+                "rules check one plain definition"
+            )
+        else:
+            regions[name] = reachable(bodies, [fn])
+    covered = set().union(*regions.values())
+    outside = " ".join([scope] + [b for fn, bs in bodies.items() if fn not in covered for b in bs])
+    return regions, bodies, outside, violations
+
+
+def _check_ops(code: str, base: str, matvec_names) -> list[str]:
+    """``fom_ops.c``: each routine (with the helpers it reaches) on its own data,
+    literals per routine, and no entry points but the routines."""
+    regions, bodies, outside, violations = _routine_regions(code, matvec_names)
+    base_regions, base_bodies, base_outside, _ = _routine_regions(base, matvec_names)
+    entry = {f"fom_apply_{name}" for name in matvec_names}
+    for fn, prefix, _ in _iter_functions(code):
+        if fn not in entry and not re.search(r"\bstatic\b", prefix):
+            violations.append(
+                f"{fn} is not static; every function of fom_ops.c but the "
+                "fom_apply_<name> routines must be, so it is reached only through them"
+            )
+    for name, region in regions.items():
+        fn = f"fom_apply_{name}"
+        text = " ".join(b for g in sorted(region) for b in bodies[g])
+        base_text = " ".join(b for g in base_regions.get(name, ()) for b in base_bodies[g])
+        violations += [f"{fn}: {v}" for v in _new_literals(text, set(float_literals(base_text)))]
         for other in matvec_names:
-            if other != name and _mat_data(other).search(body):
+            if other != name and _mat_data(other).search(text):
                 violations.append(
                     f"{fn} reads FOM_MAT_{other}, the data of another product; each "
-                    "routine may read only its own matrix"
+                    "routine (and every helper it calls) may read only its own matrix"
                 )
-    return _new_literals(outside, set(float_literals(base))) + violations
+    for name in matvec_names:
+        if _mat_data(name).search(outside):
+            violations.append(
+                f"FOM_MAT_{name} is read outside fom_apply_{name} and the helpers it "
+                "calls, where the rules cannot see which routine uses it"
+            )
+    return _new_literals(outside, set(float_literals(base_outside))) + violations
+
+
+def _solver_data_reads(code: str, matvec_names) -> list[str]:
+    return [
+        f"the solver reads FOM_MAT_{name} directly; apply it with "
+        f"fom_apply_{name}, which verify checks against the matrix"
+        for name in matvec_names
+        if _mat_data(name).search(code)
+    ]
 
 
 def check(kind: str, source: str, matvec_names, baseline: str | None = None) -> list[str]:
     """Rule violations in a rewritten ``kind`` (``"solver"`` or ``"ops"``) source.
 
     ``baseline`` is the translated version of the same file; whatever it already
-    contains is exempt.
+    contains is exempt. Kind ``"translation"`` is the translated solver itself:
+    it has no baseline, so only the rule without one applies (it reads no
+    matrix data, so every product goes through a checked ``fom_apply_<name>``).
     """
     code = strip_c_comments_and_strings(source)
     base = strip_c_comments_and_strings(baseline) if baseline is not None else ""
     if kind == "ops":
         return _check_ops(code, base, matvec_names)
+    if kind == "translation":
+        return _solver_data_reads(code, matvec_names)
     violations = _new_literals(code, set(float_literals(base)))
     if kind != "solver":
         return violations
-    for name in matvec_names:
-        if _mat_data(name).search(code):
-            violations.append(
-                f"the solver reads FOM_MAT_{name} directly; apply it with "
-                f"fom_apply_{name}, which verify checks against the matrix"
-            )
+    violations += _solver_data_reads(code, matvec_names)
     calls = setup_apply_calls(code)
     if calls is None:
         missing = [fn for fn in SETUP_FUNCTIONS if function_body(code, fn) is None]

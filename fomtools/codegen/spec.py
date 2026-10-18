@@ -491,7 +491,7 @@ def _objective_markdown(ir: FomIR) -> list[str]:
         "",
         "The solver stops on the verification objective `r^k`, the metric verification",
         f"certifies, measured in {what}. It is generated for you, in a source you may not",
-        "edit (`fom_objective.c`, or `fom_ops.cu` on CUDA), and declared in `fom_ops.h`:",
+        "edit (`fom_objective.c`, or `fom_objective.cu` on CUDA), declared in `fom_ops.h`:",
         "",
         "```c",
         f"fom_float fom_objective({', '.join(objective_c_params(ir))});",
