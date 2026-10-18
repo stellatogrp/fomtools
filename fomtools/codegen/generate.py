@@ -116,14 +116,17 @@ def _routine_rewritten(name: str, translated: str, final: str) -> bool:
 
 
 def _kernel_checks(target, ir, out_dir, final, translated, verify_output) -> list[dict] | None:
-    """Rows of the report's kernel-check table, from the shipped sources' verify."""
+    """Rows of the report's kernel-check table, from a verify of the shipped
+    ``fom_ops.c`` (the last ``OPSCHECK`` line per matrix in ``verify_output``;
+    a fresh ``make verify`` only if it has none)."""
     ops = target.ops_source_path()
     if ops not in final:
         return None
-    if verify_output is None:
-        verify_output = build_and_verify(out_dir, target).output
+    checks = {c["name"]: c for c in parse_ops_checks(verify_output or "")}
+    if not checks:
+        checks = {c["name"]: c for c in parse_ops_checks(build_and_verify(out_dir, target).output)}
     rows = []
-    for check in parse_ops_checks(verify_output):
+    for check in checks.values():
         md = ir.matrices[check["name"]]
         rewritten = _routine_rewritten(check["name"], translated[ops], final[ops])
         rows.append({**check, "shape": tuple(md.shape), "nnz": md.nnz(), "rewritten": rewritten})
@@ -527,8 +530,9 @@ def generate_code(
         # Record exactly what changed (diff translated -> final, per editable
         # source) + the agent's notes.
         final_sources = read_editable()
-        # The shipped sources' checks: the optimized ones were just re-verified
-        # when kept; otherwise (translated sources shipped) verify them now.
+        # The shipped fom_ops.c's checks: the optimized one was just re-verified
+        # when kept; otherwise the shipped one is the generated fom_ops.c, which
+        # the translation phase's passing verify already checked.
         kernel_checks = (
             _kernel_checks(
                 target,
@@ -536,7 +540,7 @@ def generate_code(
                 out_dir,
                 final_sources,
                 translated_sources,
-                recheck.output if (kept and recheck is not None) else None,
+                recheck.output if (kept and recheck is not None) else translate.log,
             )
             if have_cc
             else None

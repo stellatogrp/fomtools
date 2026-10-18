@@ -397,13 +397,20 @@ def test_a_routine_that_returns_nan_fails_verify(tmp_path, mpc, requires_compile
 
 
 def test_report_checks_the_shipped_sources_when_a_rewrite_is_reverted(
-    tmp_path, mpc, requires_compiler
+    tmp_path, mpc, requires_compiler, monkeypatch
 ):
+    import fomtools.codegen.generate as generate
+
+    runs = []
+    real = generate.build_and_verify
+    monkeypatch.setattr(generate, "build_and_verify", lambda *a: runs.append(a) or real(*a))
     result = _generate(tmp_path, mpc, _perturbed_ops(RARE_MATRIX, RARE_COL))
     assert not result.optimization_kept
-    # The translated (generated) routines ship, and that is what the table shows.
+    # The translated (generated) routines ship, and that is what the table shows,
+    # read from the translation phase's verify: no extra verify after the phase.
     assert result.kernel_checks and not any(c["rewritten"] for c in result.kernel_checks)
     assert all(c["max_err"] == 0.0 for c in result.kernel_checks)
+    assert runs == []
 
 
 def test_report_has_no_kernel_section_where_ops_are_not_editable(tmp_path):
