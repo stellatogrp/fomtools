@@ -94,6 +94,55 @@ def _direct(ir: FomIR) -> bool:
     return any(fac.method != "cg" for fac in ir.factorizations.values())
 
 
+#: Average nonzeros per row from which a matvec gives each row a whole warp.
+_WARP_ROW_MIN_NNZ = 16
+
+
+def _matvec_kernel(
+    decl: str, rows: int, nnz: int, terms: tuple, store: str, x: str = "x", out: str = "out"
+) -> tuple[list[str], int]:
+    """A matvec kernel ``out[i] (store) row_i . x`` and its grid size (blocks).
+
+    One warp per row when rows are dense enough (``nnz / rows >= 16``): its 32
+    lanes stride the row, so neighboring threads read neighboring entries
+    (coalesced), and a warp shuffle sums them. Very sparse rows keep one thread
+    per row, where a warp would leave most lanes idle. ``terms`` is
+    ``("csr", rowptr, colidx, vals)`` or ``("dense", array, cols)``.
+    """
+    warp = nnz >= _WARP_ROW_MIN_NNZ * rows
+    if terms[0] == "csr":
+        _, rowptr, colidx, vals = terms
+        start, stop, step = f"{rowptr}[i]", f"{rowptr}[i + 1]", "32" if warp else "1"
+        term = f"{vals}[k] * {x}[{colidx}[k]]"
+    else:
+        _, array, cols = terms
+        start, stop, step = "0", str(cols), "32" if warp else "1"
+        term = f"{array}[i * {cols} + k] * {x}[k]"
+    lines = [f"{decl}(const fom_float *{x}, fom_float *{out}) {{"]
+    if warp:
+        lines += [
+            "    /* One warp per row: lanes stride the row (coalesced), then a shuffle sum. */",
+            "    fom_int i = (blockIdx.x * blockDim.x + threadIdx.x) / 32;",
+            "    fom_int lane = threadIdx.x % 32;",
+            f"    if (i >= {rows}) return;  /* whole warps exit together */",
+            "    fom_float s = 0.0;",
+            f"    for (fom_int k = {start} + lane; k < {stop}; k += 32) s += {term};",
+            "    for (int w = 16; w > 0; w /= 2) s += __shfl_down_sync(0xffffffff, s, w);",
+            f"    if (lane == 0) {out}[i] {store} s;",
+        ]
+        blocks = (rows * 32 + _THREADS - 1) // _THREADS
+    else:
+        lines += [
+            "    fom_int i = blockIdx.x * blockDim.x + threadIdx.x;  /* one thread per row */",
+            f"    if (i >= {rows}) return;",
+            "    fom_float s = 0.0;",
+            f"    for (fom_int k = {start}; k < {stop}; k += {step}) s += {term};",
+            f"    {out}[i] {store} s;",
+        ]
+        blocks = (rows + _THREADS - 1) // _THREADS
+    return lines + ["}"], blocks
+
+
 #: Threads per block for every emitted kernel (matvecs, CG, reductions).
 _THREADS = 256
 #: Fixed grid size of the reduction kernels: keeps the partial-sum buffer
@@ -346,9 +395,9 @@ class CudaTarget(EmbeddedCTarget):
     def _ops_source(self, ir: FomIR) -> str:
         lines = [
             "/* Deterministic device-side matrix-vector products (out += M @ x).",
-            "   One thread per row (rows are independent). Matrix data lives in",
-            "   fom_ops_data.cuh as __device__ const arrays. All pointers are device",
-            "   pointers. */",
+            "   One warp per row for dense-enough rows, one thread per row for very",
+            "   sparse ones. Matrix data lives in fom_ops_data.cuh as __device__ const",
+            "   arrays. All pointers are device pointers. */",
             '#include "fom_ops.h"',
             '#include "fom_ops_data.cuh"',
             "",
@@ -359,32 +408,19 @@ class CudaTarget(EmbeddedCTarget):
         ]
         for name in _matvec_matrix_names(ir):
             md = ir.matrices[name]
-            shape = md.shape
-            rows = shape[0]
-            cols = shape[1] if len(shape) > 1 else 1
+            rows = md.shape[0]
+            cols = md.shape[1] if len(md.shape) > 1 else 1
             up = name.upper()
-            lines += [
-                "static __global__ void "
-                f"fom_apply_{name}_kern(const fom_float *x, fom_float *out) {{",
-                "    fom_int i = blockIdx.x * blockDim.x + threadIdx.x;",
-                f"    if (i >= {rows}) return;",
-                "    fom_float s = 0.0;",
-            ]
             if _is_csr(md):
-                lines += [
-                    f"    for (fom_int p = FOM_OP_{up}_ROWPTR[i]; p < FOM_OP_{up}_ROWPTR[i + 1]; "
-                    "++p)",
-                    f"        s += FOM_OP_{up}_VALS[p] * x[FOM_OP_{up}_COLIDX[p]];",
-                ]
+                terms = ("csr", f"FOM_OP_{up}_ROWPTR", f"FOM_OP_{up}_COLIDX", f"FOM_OP_{up}_VALS")
+                nnz = md.nnz()
             else:
-                lines.append(
-                    f"    for (fom_int j = 0; j < {cols}; ++j) "
-                    f"s += FOM_OP_{up}_DENSE[i * {cols} + j] * x[j];"
-                )
-            blocks = (rows + _THREADS - 1) // _THREADS
+                terms, nnz = ("dense", f"FOM_OP_{up}_DENSE", cols), rows * cols
+            kern, blocks = _matvec_kernel(
+                f"static __global__ void fom_apply_{name}_kern", rows, nnz, terms, "+="
+            )
             lines += [
-                "    out[i] += s;",
-                "}",
+                *kern,
                 "",
                 f'extern "C" void fom_apply_{name}(const fom_float *x, fom_float *out) {{',
                 f"    fom_apply_{name}_kern<<<{blocks}, FOM_OPS_THREADS>>>(x, out);",
@@ -761,6 +797,15 @@ class CudaTarget(EmbeddedCTarget):
         tol2 = _fmt_float(fac.cg_tol * fac.cg_tol)
         maxit = int(fac.cg_max_iter)
         rowptr, colidx, vals = csr_arrays(fac.A.to_scipy())
+        spmv, spmv_blocks = _matvec_kernel(
+            f"__global__ void fom_cg_{name}_spmv_kern",
+            fac.dim,
+            fac.A.nnz,
+            ("csr", f"FOM_FAC_{up}_A_ROWPTR", f"FOM_FAC_{up}_A_COLIDX", f"FOM_FAC_{up}_A_VALS"),
+            "=",
+            x="p",
+            out="Ap",
+        )
         out = [
             f"/* ---- solve '{name}' (CG, preconditioned conjugate gradient, on the"
             " device) ---- */",
@@ -769,16 +814,8 @@ class CudaTarget(EmbeddedCTarget):
             _c_array(f"FOM_FAC_{up}_A_VALS", vals, storage=_DEVICE_CONST),
             _c_array(f"FOM_FAC_{up}_MINV", fac.minv, storage=_DEVICE_CONST),
             "",
-            "/* Ap = A @ p (sparse CSR matvec, one thread per row) */",
-            f"__global__ void fom_cg_{name}_spmv_kern(const fom_float *p, fom_float *Ap) {{",
-            "    fom_int i = blockIdx.x * blockDim.x + threadIdx.x;",
-            f"    if (i >= {n}) return;",
-            "    fom_float s = 0.0;",
-            f"    for (fom_int k = FOM_FAC_{up}_A_ROWPTR[i]; k < FOM_FAC_{up}_A_ROWPTR[i + 1]; "
-            "++k)",
-            f"        s += FOM_FAC_{up}_A_VALS[k] * p[FOM_FAC_{up}_A_COLIDX[k]];",
-            "    Ap[i] = s;",
-            "}",
+            "/* Ap = A @ p (sparse CSR matvec) */",
+            *spmv,
             "",
             "/* x = 0; r = b; z = Minv .* r; p = z */",
             f"__global__ void fom_cg_{name}_init_kern(const fom_float *b, fom_float *x, "
@@ -826,7 +863,7 @@ class CudaTarget(EmbeddedCTarget):
             "    if (stop != 0.0) return;  /* b == 0: x was zeroed by the init kernel */",
             f"    fom_device_dot(fom_cg_{name}_r, fom_cg_{name}_z, n, s + FOM_CG_RZ);",
             f"    for (it = 0; it < {maxit}; ++it) {{",
-            f"        fom_cg_{name}_spmv_kern<<<blocks, FOM_RED_THREADS>>>(fom_cg_{name}_p, "
+            f"        fom_cg_{name}_spmv_kern<<<{spmv_blocks}, FOM_RED_THREADS>>>(fom_cg_{name}_p, "
             f"fom_cg_{name}_Ap);",
             f"        fom_device_dot(fom_cg_{name}_p, fom_cg_{name}_Ap, n, s + FOM_CG_PAP);",
             "        fom_cg_alpha_kern<<<1, 1>>>(s);",

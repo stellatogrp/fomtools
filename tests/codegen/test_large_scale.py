@@ -597,3 +597,24 @@ def test_cuda_cudss_solve_verifies_and_its_direct_check_catches_a_wrong_matrix(t
     assert not result.optimization_kept
     assert "fom_lin_solve_t0 differs from its reference solve" in result.optimize.log
     assert mark not in lin
+
+
+def test_cuda_matvecs_give_dense_rows_a_warp(tmp_path):
+    # Dense-enough rows get one warp per row (coalesced loads + shuffle sum);
+    # very sparse rows (the identity blocks here) keep one thread per row.
+    import fomtools.codegen.kernel_rules as kernel_rules
+    from fomtools.codegen.targets.embedded_c import _matvec_matrix_names
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg(n=40)
+    ir = extract_ir(case["verifier"], case["next_state"], config=_cuda_cg_config(), name="cgqp")
+    scaffold(ir, tmp_path, _cuda_cg_config())
+    lin = (tmp_path / "src" / "fom_linsolve.cu").read_text()
+    spmv = lin[lin.index("fom_cg_t0_spmv_kern(") : lin.index("/* x = 0;")]
+    assert "__shfl_down_sync" in spmv and "k += 32" in spmv
+    ops = (tmp_path / "src" / "fom_ops.cu").read_text()
+    identity = ops[
+        ops.index("fom_apply_t0_state_kern(") : ops.index('extern "C" void fom_apply_t0_state(')
+    ]
+    assert "one thread per row" in identity and "__shfl" not in identity
+    assert kernel_rules.check("ops", ops, _matvec_matrix_names(ir)) == []
