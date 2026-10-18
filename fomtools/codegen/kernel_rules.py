@@ -146,11 +146,12 @@ def _not_found(name: str) -> str:
     )
 
 
-def _function_bodies(code: str) -> dict[str, list[str]]:
-    """The bodies of every C function defined at file scope in (stripped)
-    ``code``, by name (a list: ``#if`` branches may define one twice)."""
+def functions(code: str) -> tuple[dict[str, list[str]], str]:
+    """The C functions defined at file scope in (stripped) ``code``: their bodies
+    by name (a list: ``#if`` branches may define one twice), and the file scope
+    left over (declarations, macros, static data) with the bodies blanked out."""
     bodies: dict[str, list[str]] = {}
-    end = 0
+    scope, end = code, 0
     for match in _FUNCTION_DEF.finditer(code):
         if match.start() < end or match.group(1) in _C_KEYWORDS:
             continue
@@ -161,8 +162,21 @@ def _function_bodies(code: str) -> dict[str, list[str]]:
         if depth:
             break
         bodies.setdefault(match.group(1), []).append(code[match.end() : i - 1])
+        scope = scope[: match.end()] + " " * (i - 1 - match.end()) + scope[i - 1 :]
         end = i
-    return bodies
+    return bodies, scope
+
+
+def reachable(bodies: dict[str, list[str]], roots) -> set[str]:
+    """The functions of ``bodies`` that ``roots`` use, directly or through each
+    other (a call or the function's address), ``roots`` included."""
+    seen, todo = set(roots), list(roots)
+    while todo:
+        for body in bodies.get(todo.pop(), []):
+            for fn in set(re.findall(r"\b\w+\b", body)) & bodies.keys() - seen:
+                seen.add(fn)
+                todo.append(fn)
+    return seen
 
 
 def setup_apply_calls(code: str) -> set[str] | None:
@@ -171,16 +185,13 @@ def setup_apply_calls(code: str) -> set[str] | None:
     cannot be found."""
     if any(function_body(code, fn) is None for fn in SETUP_FUNCTIONS):
         return None
-    bodies = _function_bodies(code)
-    seen, todo = set(SETUP_FUNCTIONS), list(SETUP_FUNCTIONS)
-    names = set()
-    while todo:
-        for body in bodies.get(todo.pop(), []):
-            names |= set(_APPLY_REF.findall(body))
-            for fn in set(re.findall(r"\b\w+\b", body)) & bodies.keys() - seen:
-                seen.add(fn)
-                todo.append(fn)
-    return names
+    bodies, _ = functions(code)
+    return {
+        name
+        for fn in reachable(bodies, SETUP_FUNCTIONS)
+        for body in bodies.get(fn, [])
+        for name in _APPLY_REF.findall(body)
+    }
 
 
 def _mat_data(name: str) -> re.Pattern:

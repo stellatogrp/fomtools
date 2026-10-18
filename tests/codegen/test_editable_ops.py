@@ -418,3 +418,24 @@ def test_report_has_no_kernel_section_where_ops_are_not_editable(tmp_path):
 
     path = write_optimization_report(tmp_path, "", "", "", optimize_succeeded=False)
     assert "Kernel checks" not in path.read_text()
+
+
+def test_rewritten_follows_helpers_and_file_scope():
+    from fomtools.codegen.generate import _routine_rewritten
+
+    def ops(helper: str, scope: str = "") -> str:
+        return (
+            f"{scope}\nstatic void kern(const fom_float *x, fom_float *o) {{ {helper} }}\n"
+            "void fom_apply_a(const fom_float *x, fom_float *out) { kern(x, out); }\n"
+            "void fom_apply_b(const fom_float *x, fom_float *out) { out[0] += x[0]; }\n"
+        )
+
+    before = ops("o[0] += x[0];")
+    # A comment or whitespace change is not a rewrite.
+    assert not _routine_rewritten("a", before, "/* note */ " + before.replace("+=", " += "))
+    # A changed helper rewrites the routine that calls it, not the other one.
+    after = ops("o[0] += x[1];")
+    assert _routine_rewritten("a", before, after) and not _routine_rewritten("b", before, after)
+    # A changed macro or static data may affect any routine.
+    after = ops("o[0] += x[0];", "#define K 1")
+    assert _routine_rewritten("a", before, after) and _routine_rewritten("b", before, after)

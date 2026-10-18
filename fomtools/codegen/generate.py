@@ -35,7 +35,7 @@ from fomtools.codegen.harness import (
     time_python_oracle,
 )
 from fomtools.codegen.ir import FomIR
-from fomtools.codegen.kernel_rules import function_body, strip_c_comments_and_strings
+from fomtools.codegen.kernel_rules import functions, reachable, strip_c_comments_and_strings
 from fomtools.codegen.oracle import check_stationary
 from fomtools.codegen.postprocess import (
     extract_agent_notes,
@@ -103,16 +103,22 @@ def _static_issues(target, ir, optimized: dict[str, str], translated: dict[str, 
 
 
 def _routine_rewritten(name: str, translated: str, final: str) -> bool:
-    """Whether ``fom_apply_<name>`` differs between two ``fom_ops.c`` sources
-    (ignoring comments and whitespace). A routine that cannot be found in either
-    is not the generated one, so it counts as rewritten."""
+    """Whether ``fom_apply_<name>`` computes differently between two ``fom_ops.c``
+    sources (ignoring comments and whitespace): its body, a function it reaches,
+    or the file scope (macros, static data) changed. A routine that cannot be
+    found in either is not the generated one, so it counts as rewritten."""
 
-    def body(text: str) -> str | None:
-        found = function_body(strip_c_comments_and_strings(text), f"fom_apply_{name}")
-        return None if found is None else " ".join(found.split())
+    def parse(text: str) -> tuple[dict[str, list[str]], str]:
+        bodies, scope = functions(strip_c_comments_and_strings(text))
+        return {fn: [" ".join(b.split()) for b in bs] for fn, bs in bodies.items()}, " ".join(
+            scope.split()
+        )
 
-    before, after = body(translated), body(final)
-    return before is None or after is None or before != after
+    (before, before_scope), (after, after_scope) = parse(translated), parse(final)
+    fn = f"fom_apply_{name}"
+    if fn not in before or fn not in after or before_scope != after_scope:
+        return True
+    return any(before.get(g) != after.get(g) for g in reachable(after, [fn]))
 
 
 def _kernel_checks(target, ir, out_dir, final, translated, verify_output) -> list[dict] | None:
