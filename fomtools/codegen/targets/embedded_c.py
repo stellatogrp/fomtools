@@ -1061,8 +1061,10 @@ class EmbeddedCTarget(TargetDescriptor):
         """Check each ``fom_apply_<name>`` against the package's reference matvec.
 
         Both start from the same nonzero ``out``, so the accumulate semantics are
-        checked too. Unit-vector probes (when within budget) compare the routine's
-        matrix with ``M`` entry by entry; the random probes follow.
+        checked too; the tolerance scales with ``M @ x``, not with that starting
+        value, so it stays relative to the entries being checked. Unit-vector
+        probes (when within budget) compare the routine's matrix with ``M`` entry
+        by entry; the random probes follow.
         """
         lines = []
         k = self._OPS_CHECK_RANDOM
@@ -1090,7 +1092,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 f"            fom_ref_apply_{name}(x, ref);",
                 f"            for (i = 0; i < {rows}; ++i) {{",
                 "                fom_float d = got[i] - ref[i];",
-                "                fom_float a = ref[i];",
+                "                fom_float a = ref[i] - (fom_float)(i % 7 - 3);  /* (M x)[i] */",
                 "                if (d < 0) d = -d;",
                 "                if (a < 0) a = -a;",
                 "                if (!(d <= err)) { err = d; bad = i; }  /* NaN-safe */",

@@ -152,6 +152,20 @@ def test_random_probes_check_a_matrix_over_the_budget(
     assert "fom_apply_su_t_t1 differs from its matrix" in proc.stdout
 
 
+def test_the_tolerance_scales_with_the_entry_not_the_starting_out(tmp_path, mpc, requires_compiler):
+    # Row 6 of `out` starts at 3 and entry (6, 0) of t0_state is zero. An error
+    # of 2.5 * tol there must fail: scaled by the starting value it would pass.
+    _, ir = mpc
+    scaffold(ir, tmp_path, CONFIG)
+    (tmp_path / "src" / "fom_solver.c").write_text(GOLDEN.read_text())
+    sig = "void fom_apply_t0_state(const fom_float *x, fom_float *out) {"
+    ops = tmp_path / OPS
+    off = 2.5 * CONFIG.tol_verify
+    ops.write_text(ops.read_text().replace(sig, sig + f"\n    out[6] += {off!r} * x[0];"))
+    proc = _verify(tmp_path)
+    assert "fom_apply_t0_state entry (6, 0) is off by" in proc.stdout, proc.stdout
+
+
 def test_the_check_stores_no_matrix_sized_data(tmp_path, mpc):
     # Only O(cols) random probes per matrix go into verify_data.h; the reference
     # is computed in C from fom_data.c, so no outputs or columns are stored.
