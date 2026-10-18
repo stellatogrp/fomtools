@@ -268,11 +268,12 @@ class CudaTarget(EmbeddedCTarget):
                 "  DEVICE pointer; each call launches CUDA kernels on the default",
                 "  stream. Zero an accumulator with cudaMemset before the fom_apply_*",
                 "  calls of a linear op (the helpers accumulate `out += M @ x`).",
-                "- Keep the state resident on the device for the WHOLE iteration loop:",
-                "  cudaMalloc buffers in `fom_setup`, upload state/params once at the",
-                "  start of `fom_solve`, swap device pointers instead of copying, and",
-                "  copy the solution back to the host workspace once at the end.",
-                "  Avoid per-iteration host<->device copies of full vectors.",
+                "- Run the WHOLE iteration on the device: cudaMalloc buffers in",
+                "  `fom_setup`, upload state/params once at the start of `fom_solve`,",
+                "  swap device pointers instead of copying, and copy the solution back",
+                "  to the host workspace once at the end. Do reductions (residuals) on",
+                "  the device too, down to one scalar: the only per-iteration host",
+                "  traffic is that scalar, read back where the stopping test needs it.",
                 "- Write the activation kernels (soft-threshold / ReLU / clip) and the",
                 "  residual reduction yourself in the .cu file; read constants from",
                 "  `fom_data.h` (host) and pass them as kernel arguments.",
@@ -397,15 +398,15 @@ class CudaTarget(EmbeddedCTarget):
         Each kernel walks its rows grid-stride (fixed grid, so the partial buffer
         is statically sized and the in-run reduction order stable), computes a
         row exactly as the CPU target does, folds it into a shared-memory block
-        reduction, and writes one partial per thread block; the host folds the
-        partials. Schedule values are read on the host and passed in.
+        reduction, and writes one partial per thread block; a one-block kernel
+        folds the partials on the device, and only the final scalar comes back.
+        Schedule values are read on the host and passed in as kernel arguments.
         """
         if ir.objective is None:
             return []
         obj = ir.objective
         args = objective_c_params(ir)
         names = [a.split("*")[-1] if "*" in a else a.split()[-1] for a in args]
-        fold = "r = r > v ? r : v;" if obj.norm == "inf" else "r += v;"
         combine = (
             "sh[threadIdx.x] = sh[threadIdx.x] > sh[threadIdx.x + w] ? sh[threadIdx.x] : "
             "sh[threadIdx.x + w];"
@@ -447,32 +448,56 @@ class CudaTarget(EmbeddedCTarget):
                 "}",
                 "",
             ]
+        pick = "a > b ? a : b" if obj.norm == "inf" else "a + b"
         lines += [
-            "static fom_float *fom_obj_partials_d = 0;",
-            "static fom_float fom_obj_partials_h[FOM_OBJ_BLOCKS];",
+            "/* Fold the per-block partials on the device: one thread block, the same",
+            "   combine as the row kernels; *r starts from the first objective block. */",
+            "__device__ static fom_float fom_obj_combine(fom_float a, fom_float b) {",
+            f"    return {pick};",
+            "}",
+            "__global__ void fom_objective_fold_kern(const fom_float *partials, fom_float *r, "
+            "int first) {",
+            "    __shared__ fom_float sh[FOM_OBJ_THREADS];",
+            "    fom_float v = 0.0;",
+            "    for (fom_int i = threadIdx.x; i < FOM_OBJ_BLOCKS; i += blockDim.x)",
+            "        v = fom_obj_combine(v, partials[i]);",
+            "    sh[threadIdx.x] = v;",
+            "    __syncthreads();",
+            "    for (fom_int w = blockDim.x >> 1; w > 0; w >>= 1) {",
+            "        if (threadIdx.x < w)",
+            "            sh[threadIdx.x] = fom_obj_combine(sh[threadIdx.x], sh[threadIdx.x + w]);",
+            "        __syncthreads();",
+            "    }",
+            "    if (threadIdx.x == 0) *r = first ? sh[0] : fom_obj_combine(*r, sh[0]);",
+            "}",
             "",
+            "static fom_float *fom_obj_partials_d = 0, *fom_obj_r_d = 0;",
+            "",
+            "/* Computed on the device; only the final scalar comes back. */",
             f'extern "C" fom_float fom_objective({", ".join(args)}) {{',
-            "    fom_float r = 0.0;",
-            "    fom_int b;",
-            "    if (!fom_obj_partials_d)",
+            "    fom_float r;",
+            "    if (!fom_obj_partials_d) {",
             "        cudaMalloc((void **)&fom_obj_partials_d, sizeof(fom_float) * FOM_OBJ_BLOCKS);",
+            "        cudaMalloc((void **)&fom_obj_r_d, sizeof(fom_float));",
+            "    }",
         ]
         if not any(self._objective_scales(ir, block) for block in obj.blocks):
             lines.append("    (void)it;")
-        for block in obj.blocks:
+        for k, block in enumerate(obj.blocks):
             scales = self._objective_scales(ir, block)
-            values = [f"fom_sched_{block.linear_op.terms[k].scale}(it)" for k in scales]
+            values = [f"fom_sched_{block.linear_op.terms[j].scale}(it)" for j in scales]
             call = ", ".join(names[1:] + values + ["fom_obj_partials_d"])
             lines += [
                 f"    fom_objective_{block.name}_kern<<<FOM_OBJ_BLOCKS, FOM_OBJ_THREADS>>>({call});",
-                "    cudaMemcpy(fom_obj_partials_h, fom_obj_partials_d,",
-                "               sizeof(fom_float) * FOM_OBJ_BLOCKS, cudaMemcpyDeviceToHost);",
-                "    for (b = 0; b < FOM_OBJ_BLOCKS; ++b) {",
-                "        fom_float v = fom_obj_partials_h[b];",
-                f"        {fold}",
-                "    }",
+                "    fom_objective_fold_kern<<<1, FOM_OBJ_THREADS>>>(fom_obj_partials_d, "
+                f"fom_obj_r_d, {int(k == 0)});",
             ]
-        lines += ["    return r;", "}", ""]
+        lines += [
+            "    cudaMemcpy(&r, fom_obj_r_d, sizeof(fom_float), cudaMemcpyDeviceToHost);",
+            "    return r;",
+            "}",
+            "",
+        ]
         return lines
 
     # -- linear solves -------------------------------------------------------
@@ -603,17 +628,23 @@ class CudaTarget(EmbeddedCTarget):
         ]
 
     def _cg_shared_helpers(self) -> str:
-        """Kernels shared by every device CG solve: dot product + vector updates."""
+        """Kernels shared by every device CG solve: a two-stage dot product into a
+        device scalar, the scalar steps of the iteration, and the vector updates.
+        The scalars stay on the device; the host reads back only the stop flag."""
         return "\n".join(
             [
                 f"#define FOM_RED_THREADS {_THREADS}",
                 f"#define FOM_RED_BLOCKS {_RED_BLOCKS}",
                 "",
-                "/* Grid-stride dot product with a shared-memory block reduction.",
-                "   The fixed grid keeps the partial buffer statically sized and the",
-                "   in-run floating-point reduction order stable (it still differs",
-                "   from the serial NumPy oracle; CG converges to cg_tol, so both",
-                "   land well within the verify tolerance). */",
+                "/* CG scalars, kept in device memory (one slot array per system). */",
+                "enum { FOM_CG_BB, FOM_CG_THRESH, FOM_CG_RZ, FOM_CG_PAP, FOM_CG_ALPHA, FOM_CG_RR,",
+                "       FOM_CG_RZ_NEW, FOM_CG_BETA, FOM_CG_STOP, FOM_CG_SLOTS };",
+                "",
+                "/* Grid-stride dot product with a shared-memory block reduction, then",
+                "   one block folds the per-block partials into *out. The fixed grid keeps",
+                "   the in-run floating-point reduction order stable (it still differs",
+                "   from the serial NumPy oracle; CG converges to cg_tol, so both land",
+                "   well within the verify tolerance). */",
                 "__global__ void fom_dot_kern(const fom_float *a, const fom_float *b, "
                 "fom_int n, fom_float *partials) {",
                 "    __shared__ fom_float sh[FOM_RED_THREADS];",
@@ -630,41 +661,68 @@ class CudaTarget(EmbeddedCTarget):
                 "    if (threadIdx.x == 0) partials[blockIdx.x] = sh[0];",
                 "}",
                 "",
-                "static fom_float *fom_dot_partials_d = 0;",
-                "static fom_float fom_dot_partials_h[FOM_RED_BLOCKS];",
-                "",
-                "static fom_float fom_device_dot(const fom_float *a, const fom_float *b, "
-                "fom_int n) {",
-                "    fom_int i;",
+                "__global__ void fom_sum_partials_kern(const fom_float *partials, fom_float *out) {",
+                "    __shared__ fom_float sh[FOM_RED_THREADS];",
                 "    fom_float s = 0.0;",
+                "    for (fom_int i = threadIdx.x; i < FOM_RED_BLOCKS; i += blockDim.x) "
+                "s += partials[i];",
+                "    sh[threadIdx.x] = s;",
+                "    __syncthreads();",
+                "    for (fom_int w = blockDim.x >> 1; w > 0; w >>= 1) {",
+                "        if (threadIdx.x < w) sh[threadIdx.x] += sh[threadIdx.x + w];",
+                "        __syncthreads();",
+                "    }",
+                "    if (threadIdx.x == 0) *out = sh[0];",
+                "}",
+                "",
+                "static fom_float *fom_dot_partials_d = 0;",
+                "",
+                "/* *out = a . b, computed and stored on the device. */",
+                "static void fom_device_dot(const fom_float *a, const fom_float *b, fom_int n, "
+                "fom_float *out) {",
                 "    if (!fom_dot_partials_d)",
                 "        cudaMalloc((void **)&fom_dot_partials_d, "
                 "sizeof(fom_float) * FOM_RED_BLOCKS);",
                 "    fom_dot_kern<<<FOM_RED_BLOCKS, FOM_RED_THREADS>>>(a, b, n, "
                 "fom_dot_partials_d);",
-                "    cudaMemcpy(fom_dot_partials_h, fom_dot_partials_d,",
-                "               sizeof(fom_float) * FOM_RED_BLOCKS, cudaMemcpyDeviceToHost);",
-                "    for (i = 0; i < FOM_RED_BLOCKS; ++i) s += fom_dot_partials_h[i];",
-                "    return s;",
+                "    fom_sum_partials_kern<<<1, FOM_RED_THREADS>>>(fom_dot_partials_d, out);",
+                "}",
+                "",
+                "/* The scalar steps of one CG iteration, on one device thread. */",
+                "__global__ void fom_cg_start_kern(fom_float *s, fom_float tol2) {",
+                "    s[FOM_CG_THRESH] = tol2 * s[FOM_CG_BB];",
+                "    s[FOM_CG_STOP] = (s[FOM_CG_BB] == 0.0);",
+                "}",
+                "/* alpha = rz / pAp, or stop (alpha = 0, a no-op update) on breakdown. */",
+                "__global__ void fom_cg_alpha_kern(fom_float *s) {",
+                "    s[FOM_CG_STOP] = (s[FOM_CG_PAP] == 0.0);",
+                "    s[FOM_CG_ALPHA] = s[FOM_CG_STOP] ? 0.0 : s[FOM_CG_RZ] / s[FOM_CG_PAP];",
+                "}",
+                "__global__ void fom_cg_converged_kern(fom_float *s) {",
+                "    if (s[FOM_CG_RR] <= s[FOM_CG_THRESH]) s[FOM_CG_STOP] = 1.0;",
+                "}",
+                "__global__ void fom_cg_beta_kern(fom_float *s) {",
+                "    s[FOM_CG_BETA] = s[FOM_CG_RZ_NEW] / s[FOM_CG_RZ];",
+                "    s[FOM_CG_RZ] = s[FOM_CG_RZ_NEW];",
                 "}",
                 "",
                 "/* x += alpha p; r -= alpha Ap (fused) */",
                 "__global__ void fom_cg_update_xr_kern(fom_float *x, fom_float *r, "
                 "const fom_float *p,",
-                "                                      const fom_float *Ap, fom_float alpha, "
+                "                                      const fom_float *Ap, const fom_float *s, "
                 "fom_int n) {",
                 "    fom_int i = blockIdx.x * blockDim.x + threadIdx.x;",
                 "    if (i >= n) return;",
-                "    x[i] += alpha * p[i];",
-                "    r[i] -= alpha * Ap[i];",
+                "    x[i] += s[FOM_CG_ALPHA] * p[i];",
+                "    r[i] -= s[FOM_CG_ALPHA] * Ap[i];",
                 "}",
                 "",
                 "/* p = z + beta p */",
                 "__global__ void fom_cg_update_p_kern(fom_float *p, const fom_float *z, "
-                "fom_float beta, fom_int n) {",
+                "const fom_float *s, fom_int n) {",
                 "    fom_int i = blockIdx.x * blockDim.x + threadIdx.x;",
                 "    if (i >= n) return;",
-                "    p[i] = z[i] + beta * p[i];",
+                "    p[i] = z[i] + s[FOM_CG_BETA] * p[i];",
                 "}",
             ]
         )
@@ -673,9 +731,9 @@ class CudaTarget(EmbeddedCTarget):
         """Device-resident Jacobi-preconditioned CG for one SPD system.
 
         Mirrors :func:`fomtools.codegen.factorize._pcg_solve` exactly (same
-        iteration, same stopping test ``r.r <= tol^2 (b.b)``); the host drives
-        the outer loop, every vector kernel and the SpMV run on the device, and
-        only the dot-product scalars cross back per iteration.
+        iteration, same stopping test ``r.r <= tol^2 (b.b)``, same breakdown
+        exit); every vector, dot product and scalar step runs on the device, and
+        the host, which drives the loop, reads back only the stop flag.
         """
         up = name.upper()
         n = f"FOM_FAC_{up}_DIM"
@@ -721,44 +779,50 @@ class CudaTarget(EmbeddedCTarget):
             "}",
             "",
             f"static fom_float *fom_cg_{name}_r = 0, *fom_cg_{name}_z = 0;",
-            f"static fom_float *fom_cg_{name}_p = 0, *fom_cg_{name}_Ap = 0;",
+            f"static fom_float *fom_cg_{name}_p = 0, *fom_cg_{name}_Ap = 0, *fom_cg_{name}_s = 0;",
             "",
+            "/* Every vector and scalar stays on the device; the host reads back only",
+            "   the stop flag (one scalar per iteration) to end the loop. */",
             f'extern "C" void fom_lin_solve_{name}(const fom_float *b, fom_float *x) {{',
             f"    const fom_int n = {n};",
             "    const fom_int blocks = (n + FOM_RED_THREADS - 1) / FOM_RED_THREADS;",
-            "    fom_float bb, thresh, rz, rz_new, pAp, alpha, beta, rr;",
+            "    fom_float *s, stop;",
             "    fom_int it;",
             f"    if (!fom_cg_{name}_r) {{",
             f"        cudaMalloc((void **)&fom_cg_{name}_r, sizeof(fom_float) * n);",
             f"        cudaMalloc((void **)&fom_cg_{name}_z, sizeof(fom_float) * n);",
             f"        cudaMalloc((void **)&fom_cg_{name}_p, sizeof(fom_float) * n);",
             f"        cudaMalloc((void **)&fom_cg_{name}_Ap, sizeof(fom_float) * n);",
+            f"        cudaMalloc((void **)&fom_cg_{name}_s, sizeof(fom_float) * FOM_CG_SLOTS);",
             "    }",
+            f"    s = fom_cg_{name}_s;",
             f"    fom_cg_{name}_init_kern<<<blocks, FOM_RED_THREADS>>>(b, x, fom_cg_{name}_r,",
             f"                                                        fom_cg_{name}_z, "
             f"fom_cg_{name}_p);",
-            "    bb = fom_device_dot(b, b, n);",
-            "    if (bb == 0.0) return;  /* x was zeroed by the init kernel */",
-            f"    thresh = (fom_float){tol2} * bb;",
-            f"    rz = fom_device_dot(fom_cg_{name}_r, fom_cg_{name}_z, n);",
+            "    fom_device_dot(b, b, n, s + FOM_CG_BB);",
+            f"    fom_cg_start_kern<<<1, 1>>>(s, (fom_float){tol2});",
+            "    cudaMemcpy(&stop, s + FOM_CG_STOP, sizeof(fom_float), cudaMemcpyDeviceToHost);",
+            "    if (stop != 0.0) return;  /* b == 0: x was zeroed by the init kernel */",
+            f"    fom_device_dot(fom_cg_{name}_r, fom_cg_{name}_z, n, s + FOM_CG_RZ);",
             f"    for (it = 0; it < {maxit}; ++it) {{",
             f"        fom_cg_{name}_spmv_kern<<<blocks, FOM_RED_THREADS>>>(fom_cg_{name}_p, "
             f"fom_cg_{name}_Ap);",
-            f"        pAp = fom_device_dot(fom_cg_{name}_p, fom_cg_{name}_Ap, n);",
-            "        if (pAp == 0.0) break;",
-            "        alpha = rz / pAp;",
+            f"        fom_device_dot(fom_cg_{name}_p, fom_cg_{name}_Ap, n, s + FOM_CG_PAP);",
+            "        fom_cg_alpha_kern<<<1, 1>>>(s);",
             f"        fom_cg_update_xr_kern<<<blocks, FOM_RED_THREADS>>>(x, fom_cg_{name}_r,",
             f"                                                          fom_cg_{name}_p, "
-            f"fom_cg_{name}_Ap, alpha, n);",
-            f"        rr = fom_device_dot(fom_cg_{name}_r, fom_cg_{name}_r, n);",
-            "        if (rr <= thresh) break;",
+            f"fom_cg_{name}_Ap, s, n);",
+            f"        fom_device_dot(fom_cg_{name}_r, fom_cg_{name}_r, n, s + FOM_CG_RR);",
+            "        fom_cg_converged_kern<<<1, 1>>>(s);",
+            "        cudaMemcpy(&stop, s + FOM_CG_STOP, sizeof(fom_float), "
+            "cudaMemcpyDeviceToHost);",
+            "        if (stop != 0.0) break;",
             f"        fom_cg_{name}_precond_kern<<<blocks, FOM_RED_THREADS>>>(fom_cg_{name}_r, "
             f"fom_cg_{name}_z);",
-            f"        rz_new = fom_device_dot(fom_cg_{name}_r, fom_cg_{name}_z, n);",
-            "        beta = rz_new / rz;",
+            f"        fom_device_dot(fom_cg_{name}_r, fom_cg_{name}_z, n, s + FOM_CG_RZ_NEW);",
+            "        fom_cg_beta_kern<<<1, 1>>>(s);",
             f"        fom_cg_update_p_kern<<<blocks, FOM_RED_THREADS>>>(fom_cg_{name}_p, "
-            f"fom_cg_{name}_z, beta, n);",
-            "        rz = rz_new;",
+            f"fom_cg_{name}_z, s, n);",
             "    }",
             "}",
         ]

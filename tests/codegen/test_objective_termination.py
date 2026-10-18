@@ -676,7 +676,9 @@ def test_cuda_emission(tmp_path):
     )
     scaffold(ir_inf, tmp_path / "inf", cuda)
     ops = (tmp_path / "inf" / "src" / "fom_objective.cu").read_text()
-    assert "r = r > v ? r : v;" in ops and "(void)it;" in ops
+    assert "return a > b ? a : b;" in ops and "(void)it;" in ops
+    # Folded on the device: one scalar comes back, never the partials.
+    assert ops.count("cudaMemcpy(") == 1 and "fom_obj_r_d, sizeof(fom_float)" in ops
 
 
 # --------------------------------------------------------------------------

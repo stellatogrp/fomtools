@@ -541,3 +541,57 @@ def test_cuda_direct_check_keeps_a_right_kernel_and_rejects_a_wrong_one(tmp_path
             assert not result.optimization_kept
             assert "fom_apply_t0_state entry (0, 1) is off by" in result.optimize.log
             assert mark not in (out / "src" / "fom_ops.cu").read_text()
+
+
+def test_cuda_cg_reads_back_only_its_stop_flag(tmp_path):
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg()
+    ir = extract_ir(case["verifier"], case["next_state"], config=_cuda_cg_config(), name="cgqp")
+    scaffold(ir, tmp_path, _cuda_cg_config())
+    lin = (tmp_path / "src" / "fom_linsolve.cu").read_text()
+    copies = [ln for ln in lin.splitlines() if "cudaMemcpy(" in ln]
+    assert len(copies) == 2 and all("FOM_CG_STOP" in ln for ln in copies)
+    assert "fom_dot_partials_h" not in lin  # partials are folded on the device
+
+
+def _cuda_direct_cases():
+    from tests.codegen.conftest import build_indefinite_kkt, build_spd_cg
+
+    spd = build_spd_cg()
+    spd["config"] = _cuda_cg_config().model_copy(update={"solve_method": SolveMethod.LDLT})
+    kkt = build_indefinite_kkt()
+    kkt["config"] = _cuda_auto_config(max_iters=60)
+    return [("ldlt", spd), ("lu", kkt)]
+
+
+@pytest.mark.skipif(not CudaTarget._can_run_on_gpu(), reason="needs a GPU (or FOMTOOLS_CUDA_RUN=1)")
+@pytest.mark.parametrize("method", ["ldlt", "lu"])
+def test_cuda_cudss_solve_verifies_and_its_direct_check_catches_a_wrong_matrix(tmp_path, method):
+    # cuDSS on the device (LDL^T for the SPD system, LU for the indefinite KKT):
+    # the solver verifies end to end, and a fom_linsolve.cu that solves a
+    # different matrix is caught by the direct check against the reference solve.
+    [case] = [c for m, c in _cuda_direct_cases() if m == method]
+    mark = "/* rewritten by the code optimization phase */"
+
+    def wrong(text: str) -> str:
+        head, rest = text.split("FOM_FAC_T0_A_VALS[", 1)
+        size, rest = rest.split("] = {", 1)
+        first, tail = rest.split(",", 1)
+        return mark + "\n" + head + f"FOM_FAC_T0_A_VALS[{size}] = {{{float(first) * 2!r}," + tail
+
+    result = generate_code(
+        case["verifier"],
+        case["next_state"],
+        tmp_path,
+        config=case["config"],
+        driver=StubAgentDriver(CUDA_CG_GOLDEN, extra_sources={"src/fom_linsolve.cu": wrong}),
+        name="cgqp",
+        code_optimization=True,
+    )
+    assert result.translate.success, result.translate.log
+    lin = (tmp_path / "src" / "fom_linsolve.cu").read_text()
+    assert ("CUDSS_MTYPE_SYMMETRIC" if method == "ldlt" else "CUDSS_MTYPE_GENERAL") in lin
+    assert not result.optimization_kept
+    assert "fom_lin_solve_t0 differs from its reference solve" in result.optimize.log
+    assert mark not in lin
