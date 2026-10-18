@@ -14,6 +14,32 @@ SUMMARY_BEGIN = _SUMMARY_BEGIN
 SUMMARY_END = _SUMMARY_END
 
 
+def _objective_block(ir: FomIR, ops_src: str) -> str:
+    """The objective-termination contract, shared by both phases."""
+    if not ir.termination.uses_objective:
+        return ""
+    where = (
+        "once, after the single pass"
+        if ir.unrolled
+        else "at the end of every iteration `it` with `(check > 0 && (it + 1) % check == 0) "
+        "|| it + 1 == max_iter`, where `check = work->settings.check_termination` and "
+        "`max_iter = work->settings.max_iter`, after computing `new_state` and before it "
+        "replaces `state`"
+    )
+    return f"""
+This solver STOPS ON THE VERIFICATION OBJECTIVE (termination kind `objective`).
+`{ops_src}` provides `fom_objective(...)` (declared in `include/fom_ops.h`), which
+computes the certified metric r^k. Call it {where}; report its value in
+`solution.residual` and return `FOM_SOLVED` as soon as it is
+`<= work->settings.tol`. Never compute the metric yourself and never stop on any
+other test. `tol`, `max_iter` and `check_termination` are RUNTIME settings: set
+their defaults (`FOM_TOL`, `FOM_MAX_ITER`, `FOM_CHECK_TERMINATION`) in
+`fom_set_default_settings` and read them from `work->settings`. SPEC.md gives the
+exact protocol; `make verify` checks the stopping iteration, objective value and
+status against the oracle at several runtime settings.
+"""
+
+
 def translation_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     """Instructions for the translation phase: a faithful translation of the spec."""
     verify = " ".join(target.verify_command())
@@ -32,6 +58,7 @@ state update. Do not write a loop over iterations and do not read
         if ir.unrolled
         else ""
     )
+    shape_block += _objective_block(ir, ops_src)
     return f"""\
 You are generating a high-performance, embedded implementation of a verified
 first-order optimization method named `{ir.name}`.
@@ -107,6 +134,13 @@ profile inside it, `#include "fom_profile.h"` there."""
 Edit ONLY `{src}`: the Makefile, build flags, headers, numeric data,
 `{linsolve_src}`, and `{ops_src}` are fixed and restored automatically before
 every check, so changes to them are discarded (don't waste turns editing them)."""
+    objective_block = _objective_block(ir, ops_src)
+    if objective_block:
+        objective_block += f"""Keep calling `fom_objective` exactly where it is called now: the
+checks it gates are part of the verified behavior, and their cost is already
+amortized over the check interval. It lives in `{ops_src}`, which stays fixed
+whatever else you may edit; do not reimplement or inline the metric anywhere.
+"""
     return f"""\
 The solver `{src}` already passes `{verify}`. Now make it as FAST as possible
 WITHOUT ever breaking correctness. {scope}
@@ -136,7 +170,7 @@ Work as a tight, profile-guided loop:
 
 Keep the target constraints throughout, in every file you edit (embedded: no
 dynamic allocation, division-free).
-{notes_block}
+{objective_block}{notes_block}
 In your FINAL version, KEEP `FOM_PROF_BEGIN/END` markers around
 the main computational regions (they are no-ops in production) so that
 `make profile` still reports a per-region breakdown after optimization.

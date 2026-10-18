@@ -134,6 +134,10 @@ class Verifier(object):
         self.iterates = []
         self.params = []
         self.steps = []
+        # The most recently set objective as ``(expressions, ord)``, or ``None``
+        # for none / the zero objective. Code generation reads it to stop the
+        # generated solver on the verified metric (TerminationKind.OBJECTIVE).
+        self.objective: tuple[tuple[LinearExpression, ...], int | float] | None = None
 
         self.canonicalizer = self._get_canonicalizer(
             method,
@@ -1062,6 +1066,7 @@ class Verifier(object):
         This method replaces the current objective with a constant
         zero objective, turning it into a feasibility problem.
         """
+        self.objective = None
         self.canonicalizer.set_zero_objective()
 
     def set_infinity_norm_objective(self, expr_list: Sequence[LinearExpression] | LinearExpression):
@@ -1083,6 +1088,7 @@ class Verifier(object):
 
         lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
         self.canonicalizer.set_infinity_norm_objective(expr_list, list(lb), list(ub))
+        self.objective = (tuple(expr_list), np.inf)
 
     def set_two_norm_objective(self, expr_list: Sequence[LinearExpression] | LinearExpression):
         """
@@ -1103,6 +1109,7 @@ class Verifier(object):
 
         lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
         self.canonicalizer.set_two_norm_objective(expr_list, list(lb), list(ub))
+        self.objective = (tuple(expr_list), 2)
 
     def set_one_norm_objective(
         self, expr_list: Sequence[LinearExpression] | LinearExpression
@@ -1122,6 +1129,7 @@ class Verifier(object):
             expr_list = [expr_list]
 
         self.canonicalizer.set_one_norm_objective(expr_list)
+        self.objective = (tuple(expr_list), 1)
 
     def set_objective_norm(
         self,

@@ -128,11 +128,15 @@ def test_extraction_does_not_warn_about_stationarity(fom):
 def test_recording_the_tape_does_not_change_the_emitted_ir(fom):
     """Extraction takes the dependency cone of one iteration, not the whole tape."""
     build, make_qp = BUILDERS[fom]
-    spec = build(make_qp())
+    qp = make_qp()
+    spec = build(qp)
     ir = _extract(spec)
 
-    # The verifier holds every recorded iteration; the IR holds exactly one.
-    assert len(spec.verifier.steps) == _GATE_ITERS * len(ir.body)
+    # The verifier holds every recorded iteration, plus the ReLU of the residual
+    # objective's one-sided rows (recorded outside the loop); the IR holds
+    # exactly one iteration.
+    objective_steps = 1 if qp.m > qp.n_eq else 0
+    assert len(spec.verifier.steps) == _GATE_ITERS * len(ir.body) + objective_steps
     assert [dim for _, dim in ir.state.slots] == [expr.ndim for expr in spec.state]
 
 

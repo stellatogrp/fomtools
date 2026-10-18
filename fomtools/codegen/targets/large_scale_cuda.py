@@ -42,6 +42,8 @@ import shutil
 import subprocess
 
 from fomtools.codegen.ir import FomIR, csr_arrays
+from fomtools.codegen.objective import objective_c_params
+from fomtools.codegen.targets.base import objective_violations
 from fomtools.codegen.targets.embedded_c import (
     EmbeddedCTarget,
     _c_array,
@@ -105,8 +107,8 @@ class CudaTarget(EmbeddedCTarget):
         # "No devices were found" when none are visible.
         return proc.returncode == 0 and b"GPU " in proc.stdout
 
-    def static_checks(self, source: str) -> list[str]:
-        return []
+    def static_checks(self, source: str, ir: FomIR | None = None) -> list[str]:
+        return objective_violations(source, ir)
 
     def agent_notes(self) -> str:
         return "\n".join(
@@ -154,6 +156,10 @@ class CudaTarget(EmbeddedCTarget):
                 f"void fom_apply_{name}(const fom_float *x, fom_float *out);  "
                 f"/* {kind} {md.shape[0]}x{md.shape[1] if len(md.shape) > 1 else 1} */"
             )
+        lines += self._objective_declaration(
+            ir,
+            pointers="CUDA: every pointer is a DEVICE pointer; the value returns to the host.",
+        )
         lines += ["", "#ifdef __cplusplus", "}", "#endif", "", "#endif /* FOM_OPS_H */", ""]
         return "\n".join(lines)
 
@@ -216,7 +222,92 @@ class CudaTarget(EmbeddedCTarget):
                 "}",
                 "",
             ]
+        lines += self._objective_source(ir)
         return "\n".join(lines)
+
+    def _objective_source(self, ir: FomIR) -> list[str]:
+        """Device ``fom_objective``: one reduction kernel per objective block.
+
+        Each kernel walks its rows grid-stride (fixed grid, so the partial buffer
+        is statically sized and the in-run reduction order stable), computes a
+        row exactly as the CPU target does, folds it into a shared-memory block
+        reduction, and writes one partial per thread block; the host folds the
+        partials. Schedule values are read on the host and passed in.
+        """
+        if ir.objective is None:
+            return []
+        obj = ir.objective
+        args = objective_c_params(ir)
+        names = [a.split("*")[-1] if "*" in a else a.split()[-1] for a in args]
+        fold = "r = r > v ? r : v;" if obj.norm == "inf" else "r += v;"
+        combine = (
+            "sh[threadIdx.x] = sh[threadIdx.x] > sh[threadIdx.x + w] ? sh[threadIdx.x] : "
+            "sh[threadIdx.x + w];"
+            if obj.norm == "inf"
+            else "sh[threadIdx.x] += sh[threadIdx.x + w];"
+        )
+        lines = [
+            "/* ---- verification objective (stopping criterion), on the device ---- */",
+            *(['#include "fom_data.h"  /* schedule accessors (host) */'] if ir.schedules else []),
+            f"#define FOM_OBJ_THREADS {_THREADS}",
+            f"#define FOM_OBJ_BLOCKS {_RED_BLOCKS}",
+            *self._objective_arrays(ir, storage=_DEVICE_CONST),
+            "",
+        ]
+        for block in obj.blocks:
+            scales = self._objective_scales(ir, block)
+            kern_args = args[1:] + [f"fom_float {s}" for s in scales.values()]
+            lines += [
+                f"__global__ void fom_objective_{block.name}_kern({', '.join(kern_args)},",
+                "        fom_float *partials) {",
+                "    __shared__ fom_float sh[FOM_OBJ_THREADS];",
+                "    fom_float r = 0.0;",
+                "    fom_int i, p;",
+                f"    for (i = blockIdx.x * blockDim.x + threadIdx.x; i < {block.out_dim};",
+                "         i += gridDim.x * blockDim.x) {",
+            ]
+            # The CPU target's row code verbatim, folding into this thread's r.
+            lines += self._objective_row(ir, block, scales, indent="        ")
+            lines += [
+                "    }",
+                "    sh[threadIdx.x] = r;",
+                "    __syncthreads();",
+                "    for (fom_int w = blockDim.x >> 1; w > 0; w >>= 1) {",
+                f"        if (threadIdx.x < w) {combine}",
+                "        __syncthreads();",
+                "    }",
+                "    if (threadIdx.x == 0) partials[blockIdx.x] = sh[0];",
+                "    (void)p;",
+                "}",
+                "",
+            ]
+        lines += [
+            "static fom_float *fom_obj_partials_d = 0;",
+            "static fom_float fom_obj_partials_h[FOM_OBJ_BLOCKS];",
+            "",
+            f'extern "C" fom_float fom_objective({", ".join(args)}) {{',
+            "    fom_float r = 0.0;",
+            "    fom_int b;",
+            "    if (!fom_obj_partials_d)",
+            "        cudaMalloc((void **)&fom_obj_partials_d, sizeof(fom_float) * FOM_OBJ_BLOCKS);",
+        ]
+        if not any(self._objective_scales(ir, block) for block in obj.blocks):
+            lines.append("    (void)it;")
+        for block in obj.blocks:
+            scales = self._objective_scales(ir, block)
+            values = [f"fom_sched_{block.linear_op.terms[k].scale}(it)" for k in scales]
+            call = ", ".join(names[1:] + values + ["fom_obj_partials_d"])
+            lines += [
+                f"    fom_objective_{block.name}_kern<<<FOM_OBJ_BLOCKS, FOM_OBJ_THREADS>>>({call});",
+                "    cudaMemcpy(fom_obj_partials_h, fom_obj_partials_d,",
+                "               sizeof(fom_float) * FOM_OBJ_BLOCKS, cudaMemcpyDeviceToHost);",
+                "    for (b = 0; b < FOM_OBJ_BLOCKS; ++b) {",
+                "        fom_float v = fom_obj_partials_h[b];",
+                f"        {fold}",
+                "    }",
+            ]
+        lines += ["    return r;", "}", ""]
+        return lines
 
     # -- linear solves -------------------------------------------------------
     def _linsolve_header(self, ir: FomIR) -> str:
@@ -461,7 +552,8 @@ class CudaTarget(EmbeddedCTarget):
         return "\n".join(out)
 
     # -- build ---------------------------------------------------------------
-    def _makefile(self) -> str:
+    def _makefile(self, ir: FomIR | None = None) -> str:
+        guard, guard_rules = self._objective_guard(ir)
         return "\n".join(
             [
                 "CC ?= cc",
@@ -471,7 +563,7 @@ class CudaTarget(EmbeddedCTarget):
                 "",
                 "CU_SRC = src/fom_solver.cu src/fom_ops.cu src/fom_linsolve.cu",
                 "",
-                ".PHONY: compile verify bench lib clean",
+                ".PHONY: compile verify bench lib clean objective_guard",
                 "",
                 "fom_solver.o: src/fom_solver.cu",
                 "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
@@ -487,7 +579,7 @@ class CudaTarget(EmbeddedCTarget):
                 "# Compile-check: build BOTH the verify and bench binaries (no GPU run).",
                 "# Building bench_bin here too means a CI compile-check catches bench",
                 "# breakage even though benchmarking itself needs a GPU.",
-                "compile: $(OBJS) test/verify_main.c test/bench_main.c",
+                f"compile:{guard} $(OBJS) test/verify_main.c test/bench_main.c",
                 "\t$(CC) $(CFLAGS) -c test/verify_main.c -o verify_main.o",
                 "\t$(NVCC) $(NVCCFLAGS) $(OBJS) verify_main.o -o verify_bin",
                 "\t$(CC) $(CFLAGS) -c test/bench_main.c -o bench_main.o",
@@ -508,6 +600,7 @@ class CudaTarget(EmbeddedCTarget):
                 "clean:",
                 "\trm -f verify_bin bench_bin *.o libfomsolver.so",
                 "",
+                *guard_rules,
             ]
         )
 

@@ -55,6 +55,12 @@ class QPData:
     # warning about this is emitted at the ``generate_solver`` call site (so it
     # points at the user's code, not these internals) rather than here.
     unbounded_params: tuple[str, ...] = ()
+    # ``(D, E, c)`` when this is an equilibrated copy of the canonical QP
+    # (``P~ = c D P D``, ``q~ = c D q``, ``A~ = E A D``, bounds scaled by ``E``),
+    # so the solution maps back as ``x = D x~``, ``y = E y~ / c``. ``None`` for
+    # the canonical data itself. The builders use it to measure their residual
+    # objective in the original problem's units.
+    unscale: tuple[np.ndarray, np.ndarray, float] | None = None
 
     @property
     def m(self) -> int:

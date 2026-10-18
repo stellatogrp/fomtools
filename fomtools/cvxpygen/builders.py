@@ -280,6 +280,41 @@ def _gate_param_values(verifier: Verifier, iterates: tuple, state: tuple, params
     )
 
 
+def set_residual_objective(v: Verifier, qp: QPData, exprs: dict, x, y) -> None:
+    r"""Set OSQP's primal and dual residuals at ``(x, y)`` as the verification objective.
+
+    The objective is ``max(||r_prim||_inf, ||r_dual||_inf)`` with
+
+    * ``r_prim = Ax - clamp(Ax, l, u)``: ``|A_eq x - b|`` on the equality rows
+      and ``max(A_in x - u, 0)`` on the inequality rows, and
+    * ``r_dual = P x + q + A' y``,
+
+    in the original problem's units when ``qp`` is equilibrated (``qp.unscale``
+    holds ``(D, E, c)``): ``Ax = E^{-1} A~ x~`` and ``Px + q + A'y = D^{-1}
+    (P~ x~ + q~ + A~' y~) / c``, with ``E > 0`` so ``max(E^{-1} z, 0) = E^{-1}
+    max(z, 0)``. Stopping at ``objective <= tol`` is OSQP's test with
+    ``eps_abs = tol``, ``eps_rel = 0`` and ``scaled_termination = False``, and the
+    bridge reports the same two residuals.
+
+    ``x`` and ``y`` are the primal and dual iterate *after* an iteration (the
+    extracted one), so the objective is that iteration's ``r^k``. The one-sided
+    rows are a ReLU recorded on ``v`` outside the loop.
+    """
+    n, m, n_eq = qp.n, qp.m, qp.n_eq
+    D, E, c = qp.unscale if qp.unscale is not None else (np.ones(n), np.ones(m), 1.0)
+    A = spa.csr_matrix(qp.A)
+    parts: list[LinearExpression] = []
+    if n_eq > 0:
+        parts.append(spa.diags(1.0 / E[:n_eq]) @ (A[:n_eq] @ x - exprs["b"]))
+    if m - n_eq > 0:
+        parts.append(v.step.relu(spa.diags(1.0 / E[n_eq:]) @ (A[n_eq:] @ x - exprs["u_ineq"])))
+    dual = A.T @ y + exprs["q"]
+    if qp.P.nnz:
+        dual = spa.csr_matrix(qp.P) @ x + dual
+    parts.append(spa.diags(1.0 / (c * D)) @ dual)
+    v.set_objective_norm(parts, np.inf)
+
+
 def _admm_constants(qp: QPData, rho: float, sigma: float, rho_eq_scale: float) -> tuple:
     """The fixed matrices one ADMM iteration needs: ``(R, Rinv, kkt)``.
 
@@ -368,6 +403,8 @@ def build_admm_qp(
     one_iteration = _admm_step(v, qp, exprs, consts, sigma, alpha)
     state = (x, z, y)
     next_state, iterates = _record_iterations(one_iteration, state)
+    x_next, _, y_next = iterates[0]
+    set_residual_objective(v, qp, exprs, x_next, y_next)
     params = tuple(exprs[piece] for piece in param_copy)
     return FomSpec(
         verifier=v,
@@ -455,6 +492,7 @@ def build_relaxed_admm_qp(
         # The recorded relaxation is the probe scalar rather than a constant;
         # everything else is the plain builder's iteration, unchanged.
         tx, tz, ty = _admm_step(v, qp, exprs, consts, sigma, relaxation)(x, z, y)
+        set_residual_objective(v, qp, exprs, tx, ty)
         return Recording(
             v,
             next_state=[tx, tz, ty],
@@ -521,6 +559,7 @@ def build_pdhg_lp(qp: QPData, *, step_scale: float = 0.9) -> FomSpec:
 
     state = (x, y)
     next_state, iterates = _record_iterations(one_iteration, state)
+    set_residual_objective(v, qp, exprs, *iterates[0])
     params = tuple(exprs[piece] for piece in param_copy)
     return FomSpec(
         verifier=v,

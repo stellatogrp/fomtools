@@ -351,6 +351,7 @@ def extract_ir(
     params=None,
     config: CodegenConfig | None = None,
     name: str = "fom",
+    iterates=None,
 ) -> FomIR:
     """Build a :class:`FomIR` for one iteration of the FOM recorded in ``verifier``.
 
@@ -372,11 +373,21 @@ def extract_ir(
         Code-generation configuration (supplies the termination spec / dtype).
     name:
         Human-friendly FOM name used for file naming.
+    iterates:
+        Optional recorded iterate sequence. Used only under
+        ``TerminationKind.OBJECTIVE``, to locate an objective written at the last
+        recorded iteration (see :mod:`fomtools.codegen.objective`).
 
     Returns
     -------
     FomIR
         The single-iteration intermediate representation.
+
+    Raises
+    ------
+    ObjectiveExtractionError
+        Under ``TerminationKind.OBJECTIVE``, if no objective is set on the
+        verifier or it reads something the generated loop does not carry.
     """
     config = config or CodegenConfig()
     next_state_exprs, body_steps, body_fresh, state_leaves, param_leaves = resolve_structure(
@@ -449,6 +460,21 @@ def extract_ir(
             f"inferred state dimension ({state_dim})."
         )
 
+    # --- verification objective (early exit on the certified metric) ----------
+    objective = None
+    if config.termination.uses_objective:
+        from fomtools.codegen.objective import extract_objective
+
+        objective = extract_objective(
+            verifier,
+            state_layout,
+            next_state_exprs,
+            param_map,
+            tmp_map,
+            matrices,
+            iterates=normalize_iterates(verifier, iterates) if iterates is not None else None,
+        )
+
     # --- initial state + param specs -----------------------------------------
     init = _initial_state(state_layout)
     state_spec = StateSpec(
@@ -476,6 +502,7 @@ def extract_ir(
         factorizations=factorizations,
         dtype=config.dtype,
         name=name,
+        objective=objective,
     )
 
 

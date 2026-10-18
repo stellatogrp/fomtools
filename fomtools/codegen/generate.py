@@ -222,7 +222,15 @@ def extract_fom_ir(
             param_values=param_values,
         )
 
-    ir = extract_ir(verifier, next_state, state=state, params=params, config=config, name=name)
+    ir = extract_ir(
+        verifier,
+        next_state,
+        state=state,
+        params=params,
+        config=config,
+        name=name,
+        iterates=iterates,
+    )
     _gate_stationarity(ir, verifier, iterates, param_values, state, params)
     return ir
 

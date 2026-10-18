@@ -19,11 +19,11 @@ config = CodegenConfig(
     backend="c",               # "c", "openmp", or "cuda"
     solve_method=None,         # force "LDLT"/"LU"/"CG"; None = auto
     termination=TerminationSpec(
-        kind=TerminationKind.INF_NORM_CHANGE,
+        kind=TerminationKind.INF_NORM_CHANGE,  # or MAX_ITERS, or OBJECTIVE (below)
         max_iters=1000,
         tol=1e-6,
         check_termination=1,   # check every N iters; 0 disables early exit
-    ),
+    ),                         # (default 1; 25 for OBJECTIVE)
     tol_verify=1e-6,           # float64 verification tolerance
     float_type="float64",      # "float64" or "float32" (tol_verify=1e-4)
 )
@@ -47,6 +47,33 @@ result = generate_code(verifier, next_state, "out/ista",
 result = generate_code(build_fn, None, "out/fista",
     schedules={"gamma": momentum_fn}, config=config)
 ```
+
+### Stopping on the verification objective
+
+`TerminationKind.OBJECTIVE` stops at the first checked iteration `k` (every
+`check_termination`-th, default 25, and always the last) with `r^k <= tol`, where
+`r^k` is the objective set with `Verifier.set_objective_norm(expr, ord)` in that
+norm (`ord=2` is the squared two-norm). With `max_iters = K` and `r^K <= tol`
+verified over the parameter set, the solver is guaranteed to stop by `K` with
+`FOM_SOLVED`; `solution.residual` is `r^k` at the stop.
+
+- The objective is written at iteration `K` over `w^K`, `w^{K-1}`. It is mapped
+  exactly onto the loop's new state, current state and parameters; written on the
+  extracted iteration (`next_state` frame) it may also read that iteration's step
+  outputs. One-sided terms are ReLU steps recorded after the loop
+  (`v.step.relu(A @ x_K - u)`), one ReLU per row and nothing else in that row.
+- An objective written after the loop needs the tape: `codegen(iterates=...)`, or
+  `codegen_rolled(..., iterates=...)`.
+- Not representable (raises `ObjectiveExtractionError` with the fix): an iterate
+  older than `w^{K-1}` (carry it in the state), a non-leaf accumulated iterate at
+  `K` (use `iterate_trajectory`), a parameter the iteration never reads, nested or
+  mixed ReLU rows, other nonlinear steps.
+- Scheduled builds set the objective inside `build`; coefficients that follow the
+  schedule are fitted like any other. An unrolled run evaluates it once at the end.
+- Generated as `fom_objective(it, state, new_state[, params][, temps])` in
+  `fom_ops.c`; `make verify` checks the stopping iteration, value and status, also
+  at `check_termination` 1 and 7 and a capped `max_iter`.
+- CLI: `--tol 1e-6 --objective [--check-termination N]`.
 
 ### Recording vs Rolled vs Scheduled
 

@@ -18,6 +18,7 @@ The coding agent (or a golden fixture) supplies ``src/fom_solver.c``.
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -25,8 +26,13 @@ import scipy.sparse as spa
 
 from fomtools.codegen import spec
 from fomtools.codegen.ir import ActivationKind, FomIR, csr_arrays
+from fomtools.codegen.objective import objective_c_params, objective_c_source
 from fomtools.codegen.oracle import ReferenceOracle
-from fomtools.codegen.targets.base import TargetDescriptor, strip_c_comments_and_strings
+from fomtools.codegen.targets.base import (
+    TargetDescriptor,
+    objective_violations,
+    strip_c_comments_and_strings,
+)
 
 
 def _fmt_float(x: float) -> str:
@@ -86,6 +92,48 @@ def _factor_arrays(name: str, fac) -> list[str]:
     return lines
 
 
+#: Extra ``check_termination`` intervals ``make verify`` runs an objective-terminated
+#: solver at, besides its default: every iteration, and one that divides nothing
+#: in sight, so a solver that ignores the runtime setting cannot pass.
+_VERIFY_CHECK_INTERVALS = (1, 7)
+
+
+def _live_terms(ir: FomIR, lin) -> list[tuple[int, object]]:
+    """``(index, term)`` of a linear op's terms whose block has a nonzero entry.
+
+    A scheduled block can be identically zero in its base (it varies only
+    through its slope); its row loop would add nothing and its CSR arrays would
+    be empty, which C does not allow, so the emitters skip it.
+    """
+    return [(k, t) for k, t in enumerate(lin.terms) if ir.matrices[t.matrix].nnz() > 0]
+
+
+def _objective_matrix_names(ir: FomIR) -> list[str]:
+    """Names of the coefficient blocks and constants the objective reads."""
+    names: list[str] = []
+    if ir.objective is None:
+        return names
+    for lin in ir.objective.linops():
+        terms = [t.matrix for _, t in _live_terms(ir, lin)]
+        for name in terms + ([lin.const] if lin.const else []):
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def _objective_only_names(ir: FomIR) -> set[str]:
+    """Objective blocks nothing else reads. They are emitted next to
+    ``fom_objective`` in the ops source, so the data source leaves them out."""
+    used = set()
+    for lin in [step.linear_op for step in ir.body] + [ir.state_update]:
+        used.update(t.matrix for t in lin.terms)
+        if lin.const:
+            used.add(lin.const)
+    for step in ir.body:
+        used.update(b for b in (step.activation.lower, step.activation.upper) if b)
+    return set(_objective_matrix_names(ir)) - used
+
+
 def _matvec_matrix_names(ir: FomIR) -> list[str]:
     """Names of matrices used as ``matrix @ source`` in any linear op."""
     names: list[str] = []
@@ -114,6 +162,12 @@ def _c_array_2d(name: str, mat: np.ndarray, decl_dims: str, ctype: str = "fom_fl
     mat = np.atleast_2d(np.asarray(mat, dtype=float))
     rows = ", ".join("{" + ", ".join(_fmt_float(v) for v in row) + "}" for row in mat)
     return f"static const {ctype} {name}{decl_dims} = {{{rows}}};"
+
+
+def _c_int_array_2d(name: str, rows, decl_dims: str) -> str:
+    """Emit a 2-D ``static const fom_int`` array with nested braces per row."""
+    body = ", ".join("{" + ", ".join(str(int(v)) for v in row) + "}" for row in rows)
+    return f"static const fom_int {name}{decl_dims} = {{{body}}};"
 
 
 class EmbeddedCTarget(TargetDescriptor):
@@ -170,7 +224,7 @@ class EmbeddedCTarget(TargetDescriptor):
         (out / "test" / "verify_data.h").write_text(self._verify_data(ir))
         (out / "test" / "verify_main.c").write_text(self._verify_main(ir))
         (out / "test" / "bench_main.c").write_text(self._bench_main(ir))
-        (out / "Makefile").write_text(self._makefile())
+        (out / "Makefile").write_text(self._makefile(ir))
         (out / "README.md").write_text(self._readme(ir))
 
     # -- headers -----------------------------------------------------------
@@ -179,8 +233,11 @@ class EmbeddedCTarget(TargetDescriptor):
         term = ir.termination
         tol = term.tol if term.tol is not None else 0.0
         # The macro is clamped to >= 1 so `% FOM_CHECK_TERMINATION` is safe
-        # even when checking is disabled (check_termination == 0).
+        # even when checking is disabled (check_termination == 0). Not for the
+        # objective: its loop guards `check > 0` and still tests the last
+        # iteration, so 0 has to reach the runtime setting as 0.
         use_tol = 1 if term.uses_tolerance else 0
+        check = term.check_termination if term.uses_objective else max(term.check_termination, 1)
 
         lines = [
             "#ifndef FOM_WORKSPACE_H",
@@ -193,7 +250,10 @@ class EmbeddedCTarget(TargetDescriptor):
             f"#define FOM_MAX_ITER {term.max_iters}",
             f"#define FOM_TOL ((fom_float){_fmt_float(tol)})",
             f"#define FOM_USE_TOL {use_tol}",
-            f"#define FOM_CHECK_TERMINATION {max(term.check_termination, 1)}",
+            # 1 when the loop stops on the verification objective: call
+            # fom_objective (fom_ops.h) on check iterations and the last one.
+            f"#define FOM_USE_OBJECTIVE {1 if term.uses_objective else 0}",
+            f"#define FOM_CHECK_TERMINATION {check}",
             f"#define FOM_NUM_PARAMS {len(ir.params)}",
             f"#define FOM_MAX_VEC_DIM {ir.max_rhs_dim}",
             # 1 when the body is the whole recorded run rather than one
@@ -325,6 +385,7 @@ class EmbeddedCTarget(TargetDescriptor):
             lines.append("}")
             lines.append("")
         csr = {n for n in _matvec_matrix_names(ir) if _is_csr(ir.matrices[n])}
+        csr |= _objective_only_names(ir)  # emitted with fom_objective in fom_ops.c
         for name, md in ir.matrices.items():
             if name in csr:
                 continue  # sparse matvec matrices live in fom_ops.c as CSR
@@ -359,6 +420,7 @@ class EmbeddedCTarget(TargetDescriptor):
 
     def _data_source(self, ir: FomIR) -> str:
         csr = {n for n in _matvec_matrix_names(ir) if _is_csr(ir.matrices[n])}
+        csr |= _objective_only_names(ir)  # emitted with fom_objective in fom_ops.c
         lines = ['#include "fom_data.h"', ""]
         lines.append(_c_array("FOM_STATE_INIT", ir.state.init, storage="const"))
         lines.append("")
@@ -395,8 +457,36 @@ class EmbeddedCTarget(TargetDescriptor):
                 f"void fom_apply_{name}(const fom_float *x, fom_float *out);  "
                 f"/* {kind} {md.shape[0]}x{md.shape[1] if len(md.shape) > 1 else 1} */"
             )
+        lines += self._objective_declaration(ir)
         lines += ["", "#ifdef __cplusplus", "}", "#endif", "", "#endif /* FOM_OPS_H */", ""]
         return "\n".join(lines)
+
+    def _objective_declaration(self, ir: FomIR, pointers: str = "") -> list[str]:
+        """The ``fom_objective`` prototype and its contract, for ``fom_ops.h``."""
+        if ir.objective is None:
+            return []
+        obj = ir.objective
+        what = {
+            "inf": "max_i |r_i|",
+            "1": "sum_i |r_i|",
+            "2": "sum_i r_i^2 (the squared two-norm, as the verifier defines it)",
+        }[obj.norm]
+        lines = [
+            "",
+            f"#define FOM_OBJ_DIM {obj.out_dim}",
+            "",
+            "/* The verification objective r^k, the metric the solver stops on:",
+            f"   returns {what}",
+            "   over the FOM_OBJ_DIM rows of r^k. Call it at the end of iteration `it`",
+            "   (0-based), after new_state = w^k is computed and BEFORE it replaces",
+            "   state = w^{k-1}; temporaries are that iteration's values. Stop when the",
+            "   returned value is <= settings.tol. Never compute this metric yourself.",
+        ]
+        if pointers:
+            lines.append(f"   {pointers}")
+        lines[-1] += " */"
+        lines.append(f"fom_float fom_objective({', '.join(objective_c_params(ir))});")
+        return lines
 
     def _ops_source(self, ir: FomIR) -> str:
         lines = ['#include "fom_ops.h"', '#include "fom_data.h"', ""]
@@ -442,7 +532,106 @@ class EmbeddedCTarget(TargetDescriptor):
                     "}",
                     "",
                 ]
+        lines += self._objective_source(ir)
         return "\n".join(lines)
+
+    # -- verification objective ----------------------------------------------
+    def _objective_arrays(self, ir: FomIR, storage: str = "static const") -> list[str]:
+        """CSR arrays of every objective block, and its constant vectors."""
+        lines = []
+        for name in _objective_matrix_names(ir):
+            md = ir.matrices[name]
+            up = name.upper()
+            if md.array.ndim < 2:
+                lines.append(_c_array(f"FOM_OBJ_{up}", md.array, storage=storage))
+                continue
+            rowptr, colidx, vals = md.csr()
+            lines.append(_c_int_array(f"FOM_OBJ_{up}_ROWPTR", rowptr, storage=storage))
+            lines.append(_c_int_array(f"FOM_OBJ_{up}_COLIDX", colidx, storage=storage))
+            lines.append(_c_array(f"FOM_OBJ_{up}_VALS", vals, storage=storage))
+        return lines
+
+    def _objective_row(self, ir: FomIR, block, scales: dict, indent: str) -> list[str]:
+        """C statements computing row ``i`` of ``block`` and folding it into ``r``.
+
+        Same order of operations as the oracle: the constant, then each term in
+        turn (scaled ones multiplied by their schedule value), then the
+        activation, then the norm.
+        """
+        lin = block.linear_op
+        norm = ir.objective.norm
+        first = f"FOM_OBJ_{lin.const.upper()}[i]" if lin.const else "0.0"
+        out = [f"{indent}fom_float v = {first};", f"{indent}fom_float s;"]
+        for k, term in _live_terms(ir, lin):
+            up = term.matrix.upper()
+            src = objective_c_source(term.source)
+            out += [
+                f"{indent}s = 0.0;",
+                f"{indent}for (p = FOM_OBJ_{up}_ROWPTR[i]; p < FOM_OBJ_{up}_ROWPTR[i + 1]; ++p)",
+                f"{indent}    s += FOM_OBJ_{up}_VALS[p] * {src}[FOM_OBJ_{up}_COLIDX[p]];",
+                f"{indent}v += {scales[k]} * s;" if k in scales else f"{indent}v += s;",
+            ]
+        if block.activation.kind == ActivationKind.RELU:
+            out.append(f"{indent}if (v < 0.0) v = 0.0;")
+        if norm == "2":
+            out.append(f"{indent}r += v * v;")
+        else:
+            out.append(f"{indent}if (v < 0.0) v = -v;")
+            out.append(f"{indent}if (v > r) r = v;" if norm == "inf" else f"{indent}r += v;")
+        return out
+
+    @staticmethod
+    def _objective_scales(ir: FomIR, block) -> dict[int, str]:
+        """Local names of the schedule values a block's scaled terms read."""
+        return {
+            k: f"sc_{block.name}_{k}"
+            for k, term in _live_terms(ir, block.linear_op)
+            if term.scale is not None
+        }
+
+    def _objective_source(self, ir: FomIR) -> list[str]:
+        """``fom_objective``: the verification objective, fused row by row.
+
+        Each row of each block is computed from CSR coefficients and folded into
+        the norm at once, so nothing is stored: no scratch, no allocation, and no
+        division. Rows are independent, so the loops parallelize as reductions.
+        """
+        if ir.objective is None:
+            return []
+        obj = ir.objective
+        used = {objective_c_source(t.source) for lin in obj.linops() for t in lin.terms}
+        lines = [
+            "/* ---- verification objective (stopping criterion) ---- */",
+            *self._objective_arrays(ir),
+            "",
+            f"fom_float fom_objective({', '.join(objective_c_params(ir))}) {{",
+            "    fom_float r = 0.0;",
+            "    fom_int i, p;",
+        ]
+        for arg in ("state", "new_state"):
+            if arg not in used:
+                lines.append(f"    (void){arg};")
+        if not any(self._objective_scales(ir, block) for block in obj.blocks):
+            lines.append("    (void)it;")
+        reduction = "reduction(max : r)" if obj.norm == "inf" else "reduction(+ : r)"
+        # Schedule values are fixed within the call: read each once, up front.
+        for block in obj.blocks:
+            for k, local in self._objective_scales(ir, block).items():
+                sched = block.linear_op.terms[k].scale
+                lines.append(f"    const fom_float {local} = fom_sched_{sched}(it);")
+        for block in obj.blocks:
+            lines.append(
+                f"    /* {block.name}: {block.out_dim} row(s), "
+                f"{block.activation.kind.value} activation */"
+            )
+            lines += self._omp_for(f"private(p) {reduction}")
+            lines.append(f"    for (i = 0; i < {block.out_dim}; ++i) {{")
+            lines += self._objective_row(
+                ir, block, self._objective_scales(ir, block), indent="        "
+            )
+            lines.append("    }")
+        lines += ["    return r;", "}", ""]
+        return lines
 
     # -- linear solves (factorizations, never inverses) --------------------
     def _linsolve_header(self, ir: FomIR) -> str:
@@ -642,7 +831,15 @@ class EmbeddedCTarget(TargetDescriptor):
                 hi = np.where(np.isfinite(p.ub), p.ub, 1.0)
                 pvals[p.name] = rng.uniform(lo, hi)
             res = oracle.solve(param_values=pvals)
-            samples.append({"params": pvals, "solution": res.solution, "iters": res.iters})
+            samples.append(
+                {
+                    "params": pvals,
+                    "solution": res.solution,
+                    "iters": res.iters,
+                    "residual": res.residual,
+                    "status": 0 if res.solved else 1,  # FOM_SOLVED / FOM_MAX_ITER_REACHED
+                }
+            )
         return samples
 
     #: Right-hand sides per factorization in the direct linear-solve check.
@@ -706,6 +903,30 @@ class EmbeddedCTarget(TargetDescriptor):
             ]
         return lines
 
+    def _objective_cases(self, ir: FomIR, samples: list[dict]) -> list[tuple[int, int, list]]:
+        """Runtime settings ``make verify`` re-runs an objective-terminated solver at.
+
+        Each case is ``(check_termination, max_iter, oracle results per sample)``:
+        the intervals in :data:`_VERIFY_CHECK_INTERVALS`, and a ``max_iter`` that
+        stops every sample short of its own exit, so the solver must honor both
+        settings at run time and test the objective at the last iteration.
+        """
+        term = ir.termination
+        if not term.uses_objective or ir.unrolled or not samples:
+            return []
+        cases = [
+            (c, term.max_iters) for c in _VERIFY_CHECK_INTERVALS if c != term.check_termination
+        ]
+        shortest = min(s["iters"] for s in samples)
+        if shortest > 1:
+            cases.append((term.check_termination, shortest - 1))
+        out = []
+        for check, max_iter in cases:
+            update = {"check_termination": check, "max_iters": max_iter}
+            oracle = ReferenceOracle(replace(ir, termination=term.model_copy(update=update)))
+            out.append((check, max_iter, [oracle.solve(param_values=s["params"]) for s in samples]))
+        return out
+
     def _verify_data(self, ir: FomIR) -> str:
         samples = self._sample_params(ir)
         n = len(samples)
@@ -735,10 +956,40 @@ class EmbeddedCTarget(TargetDescriptor):
         iters = np.array([s["iters"] for s in samples], dtype=int)
         body = ", ".join(str(int(v)) for v in iters)
         lines.append(f"static const fom_int FOM_VERIFY_ITERS[{n}] = {{{body}}};")
+        lines += self._verify_objective_data(ir, samples)
         lines.append("")
         lines += self._linsolve_check_data(ir)
         lines += ["#endif /* FOM_VERIFY_DATA_H */", ""]
         return "\n".join(lines)
+
+    def _verify_objective_data(self, ir: FomIR, samples: list[dict]) -> list[str]:
+        """Where the oracle stops, and on what objective value, per sample and case."""
+        if not ir.termination.uses_objective:
+            return ["#define FOM_VERIFY_OBJECTIVE 0", "#define FOM_VERIFY_NUM_CASES 0"]
+        n = len(samples)
+        lines = [
+            "",
+            "/* Objective termination: the oracle's stopping iteration, objective value",
+            "   at the stop (solution.residual) and status, per sample. */",
+            "#define FOM_VERIFY_OBJECTIVE 1",
+            _c_array("FOM_VERIFY_RESIDUAL", [s["residual"] for s in samples], ctype="double"),
+            _c_int_array("FOM_VERIFY_STATUS", [s["status"] for s in samples]),
+        ]
+        cases = self._objective_cases(ir, samples)
+        lines.append("")
+        lines.append("/* The same, re-run at other runtime (check_termination, max_iter). */")
+        lines.append(f"#define FOM_VERIFY_NUM_CASES {len(cases)}")
+        if cases:
+            c = len(cases)
+            lines.append(_c_int_array("FOM_VERIFY_CASE_CHECK", [case[0] for case in cases]))
+            lines.append(_c_int_array("FOM_VERIFY_CASE_MAXITER", [case[1] for case in cases]))
+            table = [[r.iters for r in case[2]] for case in cases]
+            lines.append(_c_int_array_2d("FOM_VERIFY_CASE_ITERS", table, f"[{c}][{n}]"))
+            table = [[r.residual for r in case[2]] for case in cases]
+            lines.append(_c_array_2d("FOM_VERIFY_CASE_RESIDUAL", table, f"[{c}][{n}]", "double"))
+            table = [[0 if r.solved else 1 for r in case[2]] for case in cases]
+            lines.append(_c_int_array_2d("FOM_VERIFY_CASE_STATUS", table, f"[{c}][{n}]"))
+        return lines
 
     def _verify_update_block(self, ir: FomIR, sample: str, indent: str) -> str:
         """Copy one verify sample's parameter values into ``params``."""
@@ -783,9 +1034,87 @@ class EmbeddedCTarget(TargetDescriptor):
             "    }",
         ]
 
+    def _verify_stop_helper(self) -> list[str]:
+        """``check_stop``: compare where and how a solve stopped with the oracle.
+
+        The objective value is compared relative to ``max(1, |expected|)`` at the
+        verify tolerance; the iteration and the status must match exactly.
+        """
+        return [
+            "static int check_stop(const char *what, int s, fom_int iter, fom_float res,",
+            "                      fom_int status, fom_int e_iter, double e_res, fom_int e_status,",
+            "                      double tol) {",
+            "    double d = (double)res - e_res;",
+            "    double scale = e_res < 0.0 ? -e_res : e_res;",
+            "    if (d < 0.0) d = -d;",
+            "    if (scale < 1.0) scale = 1.0;",
+            "    if (iter == e_iter && status == e_status && d <= tol * scale) return 0;",
+            '    printf("%s sample %d: stopped at iteration %d with objective %.6e (status %d); "',
+            '           "the oracle stops at %d with %.6e (status %d)\\n",',
+            "           what, s, (int)iter, (double)res, (int)status, (int)e_iter, e_res,",
+            "           (int)e_status);",
+            "    return 1;",
+            "}",
+            "",
+        ]
+
+    def _verify_stop_checks(self, ir: FomIR, tol: str) -> tuple[list[str], list[str]]:
+        """Objective-termination checks: per sample, then per runtime case.
+
+        Returns the statements for inside the main sample loop and those that run
+        after it. Empty unless the loop stops on the verification objective.
+        """
+        if not ir.termination.uses_objective:
+            return [], []
+        per_sample = [
+            '        stop_failures += check_stop("default settings:", s, work.solution.iter,',
+            "                                    work.solution.residual, stop_status,",
+            "                                    FOM_VERIFY_ITERS[s], FOM_VERIFY_RESIDUAL[s],",
+            f"                                    FOM_VERIFY_STATUS[s], {tol});",
+        ]
+        after = [
+            "",
+            "#if FOM_VERIFY_NUM_CASES > 0",
+            "    /* The runtime settings must drive the stop: re-run every sample at",
+            "       other (check_termination, max_iter) and compare with the oracle. */",
+            "    {",
+            "        int c;",
+            "        char what[64];",
+            "        for (c = 0; c < FOM_VERIFY_NUM_CASES; ++c) {",
+            "            fom_set_default_settings(&settings);",
+            "            settings.check_termination = FOM_VERIFY_CASE_CHECK[c];",
+            "            settings.max_iter = FOM_VERIFY_CASE_MAXITER[c];",
+            "            fom_setup(&work, &settings);",
+            '            snprintf(what, sizeof what, "check_termination=%d max_iter=%d:",',
+            "                     (int)FOM_VERIFY_CASE_CHECK[c], (int)FOM_VERIFY_CASE_MAXITER[c]);",
+            "            for (s = 0; s < FOM_NUM_SAMPLES; ++s) {",
+            self._verify_update_block(ir, "s", "                "),
+            "                fom_update_params(&work, &params);",
+            "                stop_status = fom_solve(&work);",
+            "                stop_failures += check_stop(what, s, work.solution.iter,",
+            "                                            work.solution.residual, stop_status,",
+            "                                            FOM_VERIFY_CASE_ITERS[c][s],",
+            "                                            FOM_VERIFY_CASE_RESIDUAL[c][s],",
+            f"                                            FOM_VERIFY_CASE_STATUS[c][s], {tol});",
+            "            }",
+            "        }",
+            "        fom_set_default_settings(&settings);",
+            "        fom_setup(&work, &settings);",
+            "    }",
+            "#endif",
+            "    if (stop_failures) {",
+            '        printf("VERIFY FAILED: %d solve(s) stopped at a different iteration, "',
+            '               "objective value or status than the oracle\\n", stop_failures);',
+            "        return 1;",
+            "    }",
+        ]
+        return per_sample, after
+
     def _verify_main(self, ir: FomIR) -> str:
-        tol = self.config.tol_verify
+        tol = _fmt_float(self.config.tol_verify)
         update_block = self._verify_update_block(ir, "s", "        ")
+        objective = ir.termination.uses_objective
+        per_sample, after = self._verify_stop_checks(ir, f"(double){tol}")
         return "\n".join(
             [
                 "#include <stdio.h>",
@@ -794,14 +1123,16 @@ class EmbeddedCTarget(TargetDescriptor):
                 *(['#include "fom_linsolve.h"'] if self._checked_factorizations(ir) else []),
                 '#include "verify_data.h"',
                 "",
+                *(self._verify_stop_helper() if objective else []),
                 "int main(void) {",
                 "    FomWorkspace work;",
                 "    FomSettings settings;",
                 "    FomParams params;",
                 "    int s, j;",
-                f"    fom_float tol = (fom_float){_fmt_float(tol)};",
+                f"    fom_float tol = (fom_float){tol};",
                 "    fom_float worst = 0.0;",
                 "    int failures = 0;",
+                *(["    int stop_failures = 0;", "    fom_int stop_status;"] if objective else []),
                 "",
                 *self._linsolve_check_main(ir),
                 "",
@@ -811,7 +1142,9 @@ class EmbeddedCTarget(TargetDescriptor):
                 "    for (s = 0; s < FOM_NUM_SAMPLES; ++s) {",
                 update_block,
                 "        fom_update_params(&work, &params);",
-                "        fom_solve(&work);",
+                "        stop_status = fom_solve(&work);"
+                if objective
+                else "        fom_solve(&work);",
                 "        fom_float err = 0.0;",
                 "        for (j = 0; j < FOM_STATE_DIM; ++j) {",
                 "            fom_float d = work.solution.x[j] - FOM_VERIFY_EXPECTED[s][j];",
@@ -823,6 +1156,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 '            printf("sample %d: max abs error %.3e > tol %.3e\\n", s, (double)err, (double)tol);',
                 "            failures++;",
                 "        }",
+                *per_sample,
                 "    }",
                 '    printf("worst max-abs error over %d samples: %.3e (tol %.3e)\\n",',
                 "           FOM_NUM_SAMPLES, (double)worst, (double)tol);",
@@ -830,6 +1164,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 '        printf("VERIFY FAILED: %d/%d samples exceed tol\\n", failures, FOM_NUM_SAMPLES);',
                 "        return 1;",
                 "    }",
+                *after,
                 *self._verify_single_pass(ir),
                 "",
                 '    printf("VERIFY OK\\n");',
@@ -1012,7 +1347,28 @@ class EmbeddedCTarget(TargetDescriptor):
             ]
         )
 
-    def _makefile(self) -> str:
+    def _objective_guard(self, ir: FomIR | None) -> tuple[str, list[str]]:
+        """``(prerequisite, rules)`` of the Makefile check run before verifying an
+        objective-terminated solver: it must call ``fom_objective`` and read the
+        runtime ``check_termination``. Empty for any other criterion."""
+        if ir is None or not ir.termination.uses_objective:
+            return "", []
+        src = self.solver_source_path()
+        return " objective_guard", [
+            "# Objective termination: the solver stops on the generated fom_objective,",
+            "# at the runtime check_termination interval, and never on its own metric.",
+            "objective_guard:",
+            f"\t@grep -q 'fom_objective *(' {src} || (echo 'VERIFY FAILED: {src} never "
+            "calls fom_objective, the generated verification objective it must stop on'; "
+            "exit 1)",
+            f"\t@grep -q 'check_termination' {src} || (echo 'VERIFY FAILED: {src} does not "
+            "read settings.check_termination, the runtime interval of the objective "
+            "check'; exit 1)",
+            "",
+        ]
+
+    def _makefile(self, ir: FomIR | None = None) -> str:
+        guard, guard_rules = self._objective_guard(ir)
         return "\n".join(
             [
                 "CC ?= cc",
@@ -1027,9 +1383,9 @@ class EmbeddedCTarget(TargetDescriptor):
                 "LIBEXT = so",
                 "endif",
                 "",
-                ".PHONY: verify bench profile lib release clean",
+                ".PHONY: verify bench profile lib release clean objective_guard",
                 "",
-                "verify: $(SRC) test/verify_main.c",
+                f"verify:{guard} $(SRC) test/verify_main.c",
                 "\t$(CC) $(CFLAGS) -Itest $(SRC) test/verify_main.c -o verify_bin -lm",
                 "\t./verify_bin",
                 "",
@@ -1053,6 +1409,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 "clean:",
                 "\trm -f verify_bin bench_bin profile_bin libfomsolver.so libfomsolver.dylib",
                 "",
+                *guard_rules,
             ]
         )
 
@@ -1108,8 +1465,8 @@ class EmbeddedCTarget(TargetDescriptor):
         )
 
     # -- static checks -----------------------------------------------------
-    def static_checks(self, source: str) -> list[str]:
-        violations: list[str] = []
+    def static_checks(self, source: str, ir: FomIR | None = None) -> list[str]:
+        violations = objective_violations(source, ir)
         code = strip_c_comments_and_strings(source)
         for fn in ("malloc", "calloc", "realloc", "free", "alloca"):
             if re.search(rf"\b{fn}\s*\(", code):

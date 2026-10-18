@@ -254,6 +254,60 @@ class IterationStep:
     solve: str | None = None  # name into FomIR.factorizations, or None
 
 
+#: The norms an objective can be measured in, as the verifier defines them:
+#: ``"inf"`` is the max of absolute values, ``"1"`` their sum, and ``"2"`` the
+#: sum of squares (the verifier's two-norm objective is the *squared* norm).
+OBJECTIVE_NORMS = ("1", "2", "inf")
+
+
+@dataclass(frozen=True)
+class ObjectiveBlock:
+    """Rows ``activation(linear_op(...))`` of the verification objective ``r^k``.
+
+    Evaluated at the end of iteration ``k``, once the new state exists and
+    before it replaces the current one, so ``state`` holds ``w^{k-1}``,
+    ``new_state`` holds ``w^k`` and ``tmp:<name>`` is iteration ``k``'s body
+    temporary. Besides those the linear op may read ``param:<name>``.
+    The activation is the identity or a ReLU (for one-sided terms such as
+    ``max(Ax - u, 0)``).
+    """
+
+    name: str
+    out_dim: int
+    linear_op: LinearOp
+    activation: ActivationOp
+
+
+@dataclass(frozen=True)
+class ObjectiveSpec:
+    """The verification objective ``r^k = ||concat(blocks)||``, for early exit.
+
+    Attributes
+    ----------
+    blocks:
+        The rows of ``r^k``, grouped into blocks that each share one
+        activation. The norm is taken over all of them at once, so their order
+        does not matter.
+    norm:
+        One of :data:`OBJECTIVE_NORMS`. ``"2"`` is the sum of squares, matching
+        :meth:`~fomtools.verifier.Verifier.set_objective_norm`.
+    """
+
+    blocks: tuple[ObjectiveBlock, ...]
+    norm: str
+
+    def __post_init__(self):
+        if self.norm not in OBJECTIVE_NORMS:
+            raise ValueError(f"objective norm must be one of {OBJECTIVE_NORMS}, got {self.norm!r}")
+
+    @property
+    def out_dim(self) -> int:
+        return sum(block.out_dim for block in self.blocks)
+
+    def linops(self) -> list[LinearOp]:
+        return [block.linear_op for block in self.blocks]
+
+
 @dataclass(frozen=True)
 class ParamSpec:
     """A solve-time parameter vector."""
@@ -322,6 +376,10 @@ class FomIR:
         ``termination.max_iters`` is 1 and no residual-based early exit applies;
         each iteration carries its own coefficient blocks, which is what lets a
         recording use arbitrary per-iteration steps.
+    objective:
+        The verification objective the loop stops on under
+        :attr:`~fomtools.codegen.config.TerminationKind.OBJECTIVE`, or ``None``.
+        For an unrolled IR it is evaluated once, after the single pass.
     """
 
     params: tuple[ParamSpec, ...]
@@ -335,6 +393,7 @@ class FomIR:
     dtype: str = "float64"
     name: str = "fom"
     unrolled: bool = False
+    objective: ObjectiveSpec | None = None
 
     def __post_init__(self):
         # Enforced here rather than left to "whichever extraction function you
@@ -350,6 +409,11 @@ class FomIR:
                 "emitted. Extract the run with extract_unrolled_ir (arbitrary variation, "
                 "size grows with the horizon) or declare the variation with "
                 "extract_scheduled_ir (compact, affine dependence only)."
+            )
+        if self.termination.uses_objective and self.objective is None:
+            raise ValueError(
+                "termination kind 'objective' needs the verification objective in the IR; "
+                "set it on the verifier with set_objective_norm() before extracting."
             )
 
     @property
@@ -372,3 +436,21 @@ class FomIR:
     def tmp_dims(self) -> dict[str, int]:
         """Map each temporary name to its dimension."""
         return {step.name: step.out_dim for step in self.body}
+
+    def objective_inputs(self) -> list[str]:
+        """The parameter and temporary sources the objective reads, in the order
+        ``fom_objective`` takes them after ``(it, state, new_state)``: parameters in
+        declaration order, then temporaries in body order."""
+        if self.objective is None:
+            return []
+        used = {t.source for lin in self.objective.linops() for t in lin.terms}
+        params = [f"param:{p.name}" for p in self.params if f"param:{p.name}" in used]
+        tmps = [f"tmp:{s.name}" for s in self.body if f"tmp:{s.name}" in used]
+        return params + tmps
+
+    def linops(self) -> list[LinearOp]:
+        """Every linear op: the body steps', the state update, and the objective's."""
+        ops = [step.linear_op for step in self.body] + [self.state_update]
+        if self.objective is not None:
+            ops += self.objective.linops()
+        return ops

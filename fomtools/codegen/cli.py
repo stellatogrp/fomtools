@@ -44,11 +44,23 @@ def _load_module_fom(path: str) -> dict:
 
 
 def _build_config(args) -> CodegenConfig:
-    kind = TerminationKind.INF_NORM_CHANGE if args.tol is not None else TerminationKind.MAX_ITERS
+    if args.objective and args.tol is None:
+        raise SystemExit("--objective stops on the verification objective at --tol; pass --tol")
+    if args.tol is None:
+        kind = TerminationKind.MAX_ITERS
+    elif args.objective:
+        kind = TerminationKind.OBJECTIVE
+    else:
+        kind = TerminationKind.INF_NORM_CHANGE
     return CodegenConfig(
         version=Version(args.version),
         backend=Backend(args.backend),
-        termination=TerminationSpec(kind=kind, max_iters=args.max_iter, tol=args.tol),
+        termination=TerminationSpec(
+            kind=kind,
+            max_iters=args.max_iter,
+            tol=args.tol,
+            check_termination=args.check_termination,
+        ),
         solve_method=SolveMethod(args.solve_method),
         dtype=args.dtype,
     )
@@ -100,6 +112,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--max-iter", type=int, default=1000)
     p.add_argument("--tol", type=float, default=None, help="enable inf-norm-change termination")
+    p.add_argument(
+        "--objective",
+        action="store_true",
+        help="with --tol, stop on the verification objective set on the recording "
+        "(set_objective_norm) instead of the inf-norm change",
+    )
+    p.add_argument(
+        "--check-termination",
+        type=int,
+        default=None,
+        help="check the termination criterion every N iterations (default: 1 for the "
+        "inf-norm change, 25 for the objective; 0 disables early exit)",
+    )
     p.add_argument("--dtype", choices=["float64", "float32"], default="float64")
     p.add_argument(
         "--code-optimization",
