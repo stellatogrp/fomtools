@@ -211,9 +211,11 @@ def test_solver_may_read_clip_bounds_and_dimensions(target, mpc_ir):
     assert target.kernel_checks("src/fom_solver.c", source, mpc_ir) == []
 
 
-def test_kernel_checks_skip_other_files_but_hold_the_cuda_solver(target, mpc_ir):
+def test_kernel_checks_skip_other_files_but_hold_the_cuda_solver(target, mpc_ir, monkeypatch):
     from fomtools.codegen.config import Backend, Version
     from fomtools.codegen.targets import get_target
+
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "0")  # CUDA without a GPU: fom_ops.cu fixed
 
     source = SETUP + "fom_float f(void){ return 0.37 * FOM_MAT_t0_state[0]; }"
     assert target.kernel_checks("src/fom_linsolve.c", source, mpc_ir) == []
