@@ -586,17 +586,21 @@ class EmbeddedCTarget(TargetDescriptor):
         return lines
 
     # -- reference matvecs for the direct check of a rewritten fom_ops.c ---
+    def _ops_editable(self) -> bool:
+        """Whether the code optimization phase may rewrite ``fom_ops.c``. The one
+        condition for both the direct check (:meth:`_checked_ops`) and the kernel
+        rules (:meth:`_kernel_rule_kinds`): neither is shipped without the other."""
+        return self.ops_source_path() in self.optimization_editable_paths()
+
     def _checked_ops(self, ir: FomIR) -> list[str]:
         """Matrices whose ``fom_apply_<name>`` ``make verify`` checks on its own.
 
         Only when the code optimization phase may rewrite ``fom_ops.c``
-        (:meth:`optimization_editable_paths`): each routine is held to a
-        package-written reference over the same ``fom_data.c`` arrays, so a
-        rewrite cannot change the matrix it applies.
+        (:meth:`_ops_editable`): each routine is held to a package-written
+        reference over the same ``fom_data.c`` arrays, so a rewrite cannot change
+        the matrix it applies.
         """
-        if self.ops_source_path() not in self.optimization_editable_paths():
-            return []
-        return _matvec_matrix_names(ir)
+        return _matvec_matrix_names(ir) if self._ops_editable() else []
 
     def _ops_ref_header(self, ir: FomIR) -> str:
         lines = [
@@ -1675,7 +1679,7 @@ class EmbeddedCTarget(TargetDescriptor):
         return kernel_rules.check(kind, source, _matvec_matrix_names(ir), baseline)
 
     def _kernel_rule_kinds(self) -> dict[str, str]:
-        if self.ops_source_path() not in self.optimization_editable_paths():
+        if not self._ops_editable():
             return {}
         return {self.solver_source_path(): "solver", self.ops_source_path(): "ops"}
 
