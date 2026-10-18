@@ -378,7 +378,8 @@ def test_a_routine_that_returns_nan_fails_verify(tmp_path, mpc, requires_compile
     ops.write_text(nan_ops)
     proc = _verify(tmp_path)
     assert proc.returncode != 0 and "VERIFY OK" not in proc.stdout
-    assert "max abs error nan" in proc.stdout
+    # printf spells NaN "nan" or "-nan" depending on the libc; the verdict is what counts.
+    assert "VERIFY FAILED: 8/8 samples exceed tol" in proc.stdout
 
 
 def test_report_checks_the_shipped_sources_when_a_rewrite_is_reverted(
