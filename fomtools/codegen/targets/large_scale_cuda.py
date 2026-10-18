@@ -329,8 +329,35 @@ class CudaTarget(EmbeddedCTarget):
                 "  `fom_data.h` (host) and pass them as kernel arguments.",
                 "- The embedded no-malloc / division-free constraints do NOT apply to",
                 "  this target.",
+                *(self._optimization_hints() if self._ops_editable() else []),
             ]
         )
+
+    @staticmethod
+    def _optimization_hints() -> list[str]:
+        """Where the generated kernels leave speed on the table (profiled with Nsight
+        Systems on an A100). The generator keeps them simple on purpose; these
+        rewrites are the code optimization phase's job, under its checks."""
+        return [
+            "- Profiling the generated code: a CG solve in `src/fom_linsolve.cu` runs",
+            "  ~13 small kernels per iteration (each >= ~2 us on the GPU and ~3 us to",
+            "  launch) plus a blocking readback of the stop flag, so at small and",
+            "  medium sizes launch and sync overhead dominate, not arithmetic.",
+            "  Rewrites that pay off there:",
+            "  * fuse each partial dot product into the kernel that produces its",
+            "    vector (p.Ap in the matvec, r.r in the x/r update, r.z in the",
+            "    preconditioner) and fold the scalar steps (alpha, beta, stop test)",
+            "    into the finishing reductions;",
+            "  * run k iterations per launch (capture them in a CUDA graph) behind a",
+            "    device-side stop guard that turns every kernel into a no-op once CG",
+            "    has converged, so the iterates still match the reference, and read",
+            "    the stop flag once per batch instead of once per iteration;",
+            "  * keep every reduction in a fixed order (deterministic results).",
+            "- Matvec kernels give each dense-enough row a warp (coalesced loads);",
+            "  very short rows keep one thread per row, where packing several rows",
+            "  per warp can help. The direct checks hold every `fom_apply_<name>` and",
+            "  direct `fom_lin_solve_<name>` to the reference; CG is checked end to end.",
+        ]
 
     # -- matrix-vector products (device kernels) ----------------------------
     def _ops_header(self, ir: FomIR) -> str:

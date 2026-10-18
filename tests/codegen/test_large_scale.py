@@ -618,3 +618,10 @@ def test_cuda_matvecs_give_dense_rows_a_warp(tmp_path):
     ]
     assert "one thread per row" in identity and "__shfl" not in identity
     assert kernel_rules.check("ops", ops, _matvec_matrix_names(ir)) == []
+
+
+def test_cuda_optimization_hints_only_where_the_kernels_are_editable(monkeypatch):
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "1")
+    assert "CUDA graph" in get_target(_cuda_config()).agent_notes()
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "0")
+    assert "CUDA graph" not in get_target(_cuda_config()).agent_notes()
