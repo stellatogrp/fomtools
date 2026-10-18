@@ -150,9 +150,12 @@ kernel must apply exactly `M` for every input and must keep accumulating into
 `{verify}` reports a breach as `VERIFY FAILED: kernel rule: ...`, and a rewrite
 that breaks any of them is discarded when it is collected:
 - `{src}` must not read the `FOM_MAT_<name>` data of any matrix it multiplies
-  by; call `fom_apply_<name>` instead.
-- `{src}` and `{ops_src}` must not add floating-point literals other than `0.0`,
-  `0.5`, `1.0` and `2.0` (literals the translated file already had are fine).
+  by; call `fom_apply_<name>` instead. In `{ops_src}`, each `fom_apply_<name>`
+  reads only its own matrix's data.
+- `{src}` and `{ops_src}` must not add floating-point constants other than `0.0`,
+  `0.5`, `1.0` and `2.0`, whether written as decimal or hex float literals or as
+  integers cast to a floating type (literals the translated file already had,
+  in the same routine of `{ops_src}`, are fine).
 - `fom_setup` and `fom_update_params` must not add calls to `fom_apply_*`: apply
   matrices in the iteration, never probe them to rebuild a matrix."""
     else:

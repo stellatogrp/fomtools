@@ -104,14 +104,15 @@ def _static_issues(target, ir, optimized: dict[str, str], translated: dict[str, 
 
 def _routine_rewritten(name: str, translated: str, final: str) -> bool:
     """Whether ``fom_apply_<name>`` differs between two ``fom_ops.c`` sources
-    (ignoring comments and whitespace)."""
+    (ignoring comments and whitespace). A routine that cannot be found in either
+    is not the generated one, so it counts as rewritten."""
 
-    def body(text: str) -> str:
-        return " ".join(
-            function_body(strip_c_comments_and_strings(text), f"fom_apply_{name}").split()
-        )
+    def body(text: str) -> str | None:
+        found = function_body(strip_c_comments_and_strings(text), f"fom_apply_{name}")
+        return None if found is None else " ".join(found.split())
 
-    return body(translated) != body(final)
+    before, after = body(translated), body(final)
+    return before is None or after is None or before != after
 
 
 def _kernel_checks(target, ir, out_dir, final, translated, verify_output) -> list[dict] | None:
@@ -388,8 +389,8 @@ def generate_code(
         target.scaffold(ir, out_dir)
 
     # In the code optimization phase the agent may also rewrite the linear solves
-    # and the matrix-vector products (target.optimization_editable_paths()): restore everything else, and keep
-    # what it wrote to those files.
+    # and the matrix-vector products (target.optimization_editable_paths()):
+    # restore everything else, and keep what it wrote to those files.
     editable = tuple(target.optimization_editable_paths())
 
     def read_editable() -> dict[str, str]:
@@ -468,11 +469,10 @@ def generate_code(
         # Gate 1 (correctness): the optimized sources must still verify (and, on
         # the embedded target, pass its static checks). If they broke (or never
         # verified), fall back to the known-good translated sources.
-        recheck = build_and_verify(out_dir, target) if (optimize.success and changed) else None
+        collected = optimize.success and changed  # a rewrite to re-verify and check
+        recheck = build_and_verify(out_dir, target) if collected else None
         static_issues = (
-            _static_issues(target, ir, optimized_sources, translated_sources)
-            if (optimize.success and changed)
-            else []
+            _static_issues(target, ir, optimized_sources, translated_sources) if collected else []
         )
         correct = bool(
             optimize.success and (recheck is None or recheck.success) and not static_issues
@@ -570,6 +570,7 @@ def generate_code(
             caveats=caveats,
             kernel_checks=kernel_checks,
             rule_violations=static_issues,
+            rewrite_collected=collected,
         )
     # Always persist the raw agent output, code optimization phase or not.
     _write_agent_transcripts(out_dir, translate, optimize)

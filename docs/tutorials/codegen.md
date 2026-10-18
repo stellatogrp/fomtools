@@ -340,19 +340,27 @@ accumulate, `out += M @ x`):
 The check stores no matrix-sized data: the expected values are computed in C from
 `fom_data.c`, and the only stored data are the random probe vectors.
 
-Only code inside `fom_apply_<name>` goes through this check, so three rules keep
+Only code inside `fom_apply_<name>` goes through this check, so these rules keep
 every coefficient there. A rewrite that breaks one is discarded:
 
 - the solver may not read the `FOM_MAT_<name>` data of a matrix it multiplies
-  by; it calls `fom_apply_<name>`;
-- the solver and `fom_ops.c` may not add floating-point literals other than
-  `0.0`, `0.5`, `1.0` and `2.0` (coefficients come from `fom_data.c`);
+  by; it calls `fom_apply_<name>`. In `fom_ops.c`, each `fom_apply_<name>` may
+  read only its own matrix's data;
+- the solver and `fom_ops.c` may not add floating-point constants other than
+  `0`, `0.5`, `1` and `2`: decimal or hexadecimal float literals, or integer
+  literals cast to a floating type (coefficients come from `fom_data.c`);
 - `fom_setup` and `fom_update_params` may not add calls to `fom_apply_*`, which
-  is how a matrix would be rebuilt by probing it.
+  is how a matrix would be rebuilt by probing it;
+- every function the rules inspect must be a plain C definition they can find;
+  one they cannot find is a violation, not a skipped rule.
 
-Literals and setup calls the translated file already had are exempt. `make
-verify` reports these rules while the agent works; the pipeline applies them
-again when it collects the rewrite, and that check decides.
+Literals and setup calls the translated file already had are exempt; in
+`fom_ops.c`, per routine. The literal rule is syntactic: an integer coefficient
+(`3 * x[j]`) or one computed from allowed constants gets past it, and the
+numerical checks (exact for `fom_apply_<name>`, sampled for the solver) are what
+catch those. `make verify` reports these rules while the agent works; the
+pipeline applies them again when it collects the rewrite, and that check
+decides.
 
 `OPTIMIZATIONS.md` records the outcome for the shipped `fom_ops.c`:
 

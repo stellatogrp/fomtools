@@ -61,8 +61,8 @@ def write_production_variant(
     """Write a marker-free production copy of the solver under ``release/``.
 
     ``extra_rel_paths`` are other sources the code optimization phase may have
-    rewritten (the linear solves, the matrix-vector products); each gets a marker-free copy beside the solver,
-    which ``make release`` compiles.
+    rewritten (the linear solves, the matrix-vector products); each gets a
+    marker-free copy beside the solver, which ``make release`` compiles.
 
     Returns the path to the emitted production source.
     """
@@ -193,7 +193,12 @@ def parse_ops_checks(verify_output: str) -> list[dict]:
     ]
 
 
-def _kernel_check_lines(kernel_checks: list[dict], rule_violations: list[str]) -> list[str]:
+def _kernel_check_lines(
+    kernel_checks: list[dict],
+    rule_violations: list[str],
+    rewrite_collected: bool,
+    optimize_succeeded: bool,
+) -> list[str]:
     lines = [
         "## Kernel checks",
         "",
@@ -219,10 +224,21 @@ def _kernel_check_lines(kernel_checks: list[dict], rule_violations: list[str]) -
     else:
         lines.append("_Not available: the final verify did not report the checks._")
     lines += ["", "### Rule violations", ""]
-    if rule_violations:
+    if not rewrite_collected:
+        lines.append(
+            "_Not checked: the code optimization phase returned no changed, verified "
+            "rewrite, so there was nothing to collect._"
+        )
+    elif rule_violations:
+        lines += ["The collected rewrite broke these rules and was discarded:", ""]
         lines += [f"- {v}" for v in rule_violations]
+    elif optimize_succeeded:
+        lines.append("_None: the collected rewrite passed the rules and was kept._")
     else:
-        lines.append("_None in the collected rewrite._")
+        lines.append(
+            "_None: the collected rewrite passed the rules but was not kept "
+            "(see the outcome above)._"
+        )
     return lines + [""]
 
 
@@ -235,6 +251,7 @@ def write_optimization_report(
     caveats: list[str] | None = None,
     kernel_checks: list[dict] | None = None,
     rule_violations: list[str] | None = None,
+    rewrite_collected: bool = True,
 ) -> Path:
     """Write ``OPTIMIZATIONS.md`` recording timing, agent notes, and the diff.
 
@@ -248,6 +265,8 @@ def write_optimization_report(
     probes, max_err``) adds the per-routine check table, with the
     ``rule_violations`` found when the rewrite was collected; ``None`` (a target
     whose products are not editable) leaves the section out.
+    ``rewrite_collected`` is False when the phase returned no changed, verified
+    rewrite, so the rules never ran on one.
     """
     out_dir = Path(out_dir)
     lines = ["# Optimization report", ""]
@@ -264,7 +283,9 @@ def write_optimization_report(
         lines += [f"- {c}" for c in caveats]
         lines += [""]
     if kernel_checks is not None:
-        lines += _kernel_check_lines(kernel_checks, rule_violations or [])
+        lines += _kernel_check_lines(
+            kernel_checks, rule_violations or [], rewrite_collected, optimize_succeeded
+        )
     lines += ["## What the agent changed", ""]
     if diff.strip():
         lines += ["```diff", diff.rstrip(), "```", ""]

@@ -333,7 +333,52 @@ def test_report_tables_each_routine_and_marks_the_rewritten_one(tmp_path, mpc, r
     assert "## Kernel checks" in report
     shape = "x".join(map(str, md.shape))
     assert f"| `su_state` | {shape} | {md.nnz()} | yes | basis | {md.shape[1] + 2} |" in report
-    assert "| `t0_state` |" in report and "_None in the collected rewrite._" in report
+    assert "| `t0_state` |" in report
+    assert "_None: the collected rewrite passed the rules and was kept._" in report
+
+
+def test_report_says_when_no_rewrite_was_collected(tmp_path, mpc, requires_compiler):
+    result = _generate(tmp_path, mpc, lambda text: text)  # the agent changes nothing
+    assert not result.optimization_kept
+    report = (tmp_path / "OPTIMIZATIONS.md").read_text()
+    assert "_Not checked: the code optimization phase returned no changed" in report
+
+
+def test_parse_ops_checks_round_trips_real_verify_output(tmp_path, mpc, requires_compiler):
+    # Pins the OPSCHECK format the C harness prints to the parser that reads it.
+    from fomtools.codegen.postprocess import parse_ops_checks
+
+    _, ir = mpc
+    scaffold(ir, tmp_path, CONFIG)
+    (tmp_path / "src" / "fom_solver.c").write_text(GOLDEN.read_text())
+    proc = _verify(tmp_path)
+    assert proc.returncode == 0, proc.stdout
+    checks = parse_ops_checks(proc.stdout)
+    assert [c["name"] for c in checks] == _matvec_matrix_names(ir)
+    for c in checks:
+        cols = ir.matrices[c["name"]].shape[1]
+        assert c["mode"] == "basis" and c["probes"] == cols + 2 and c["max_err"] == 0.0
+
+
+def test_a_routine_that_returns_nan_fails_verify(tmp_path, mpc, requires_compiler, monkeypatch):
+    # A NaN difference compares false with anything: each check must treat it as
+    # a failure, not as an error of zero. Both the direct check and, without it,
+    # the end-to-end comparison.
+    _, ir = mpc
+    scaffold(ir, tmp_path, CONFIG)
+    (tmp_path / "src" / "fom_solver.c").write_text(GOLDEN.read_text())
+    ops = tmp_path / OPS
+    nan_ops = ops.read_text().replace("out[i] += s;", "out[i] += s * (s - s) / (s - s);", 1)
+    ops.write_text(nan_ops)
+    proc = _verify(tmp_path)
+    assert proc.returncode != 0 and "VERIFY FAILED: fom_apply_" in proc.stdout
+
+    monkeypatch.setattr(EmbeddedCTarget, "_checked_ops", lambda self, ir: [])
+    scaffold(ir, tmp_path, CONFIG)
+    ops.write_text(nan_ops)
+    proc = _verify(tmp_path)
+    assert proc.returncode != 0 and "VERIFY OK" not in proc.stdout
+    assert "max abs error nan" in proc.stdout
 
 
 def test_report_checks_the_shipped_sources_when_a_rewrite_is_reverted(
