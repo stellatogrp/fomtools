@@ -1569,6 +1569,9 @@ class EmbeddedCTarget(TargetDescriptor):
             [
                 "CC ?= cc",
                 "CFLAGS ?= -O2 -Wall -Iinclude",
+                "# Link-time optimization lets the compiler inline fom_apply_* (fom_ops.c)",
+                "# into the solver; override with LTOFLAGS= to build without it.",
+                "LTOFLAGS ?= -flto",
                 "BENCHFLAGS ?= -O3 -Iinclude",
                 "SRC = src/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c "
                 "src/fom_objective.c",
@@ -1586,27 +1589,27 @@ class EmbeddedCTarget(TargetDescriptor):
                 "",
                 f"verify:{guard} $(SRC) $(VERIFY_SRC) test/verify_main.c",
                 _KERNEL_CHECK_RECIPE,
-                "\t$(CC) $(CFLAGS) -Itest $(SRC) $(VERIFY_SRC) test/verify_main.c -o verify_bin -lm",
+                "\t$(CC) $(CFLAGS) $(LTOFLAGS) -Itest $(SRC) $(VERIFY_SRC) test/verify_main.c -o verify_bin -lm",
                 "\t./verify_bin",
                 "",
                 "# Build the shared library from the marker-free production source.",
                 "release: release/fom_solver.c src/fom_data.c release/fom_linsolve.c "
                 "release/fom_ops.c src/fom_objective.c",
-                "\t$(CC) $(CFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
+                "\t$(CC) $(CFLAGS) $(LTOFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
                 "release/fom_linsolve.c release/fom_ops.c src/fom_objective.c "
                 "-o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "bench: $(SRC) test/bench_main.c",
-                "\t$(CC) $(BENCHFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",
+                "\t$(CC) $(BENCHFLAGS) $(LTOFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",
                 "\t./bench_bin",
                 "",
                 "profile: $(SRC) src/fom_profile.c test/bench_main.c",
-                "\t$(CC) $(BENCHFLAGS) -DFOM_PROFILE -Itest $(SRC) src/fom_profile.c "
+                "\t$(CC) $(BENCHFLAGS) $(LTOFLAGS) -DFOM_PROFILE -Itest $(SRC) src/fom_profile.c "
                 "test/bench_main.c -o profile_bin -lm",
                 "\t./profile_bin",
                 "",
                 "lib: $(SRC)",
-                "\t$(CC) $(CFLAGS) -shared -fPIC $(SRC) -o libfomsolver.$(LIBEXT) -lm",
+                "\t$(CC) $(CFLAGS) $(LTOFLAGS) -shared -fPIC $(SRC) -o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "clean:",
                 "\trm -f verify_bin bench_bin profile_bin libfomsolver.so libfomsolver.dylib",
