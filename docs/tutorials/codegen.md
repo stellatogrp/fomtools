@@ -329,7 +329,8 @@ A matrix-vector routine is a linear map, so it can be checked for **every**
 input, not just sampled ones. `make verify` runs each `fom_apply_<name>` next to a
 package-written reference (`test/ops_ref.c`) that reads the same `fom_data.c`
 arrays, starting both from the same nonzero `out` (so the routine must still
-accumulate, `out += M @ x`):
+accumulate, `out += M @ x`). The tolerance scales with `M @ x`, not with that
+starting value, so each entry is held to `tol_verify` relative to itself:
 
 - on **every unit vector** when the matrix is small enough
   (`cols × (nnz + rows) ≤ 1e8`): this recovers the routine's matrix column by
@@ -344,18 +345,28 @@ Only code inside `fom_apply_<name>` goes through this check, so these rules keep
 every coefficient there. A rewrite that breaks one is discarded:
 
 - the solver may not read the `FOM_MAT_<name>` data of a matrix it multiplies
-  by; it calls `fom_apply_<name>`. In `fom_ops.c`, each `fom_apply_<name>` may
-  read only its own matrix's data;
+  by; it calls `fom_apply_<name>`. This rule already holds at translation
+  (`make verify` applies it there too), so the code optimization phase starts
+  from a solver that multiplies only through the checked routines. In
+  `fom_ops.c`, each `fom_apply_<name>` may read only its own matrix's data, and
+  no code outside the routines (a helper, a macro, static data) may read matrix
+  data at all: a helper kernel gets the arrays as arguments from its routine;
 - the solver and `fom_ops.c` may not add floating-point constants other than
   `0`, `0.5`, `1` and `2`: decimal or hexadecimal float literals, or integer
   literals cast to a floating type (coefficients come from `fom_data.c`);
-- `fom_setup` and `fom_update_params` may not add calls to `fom_apply_*`, which
-  is how a matrix would be rebuilt by probing it;
-- every function the rules inspect must be a plain C definition they can find;
-  one they cannot find is a violation, not a skipped rule.
+- `fom_setup` and `fom_update_params`, and any function of the solver they
+  reach, may not add uses of `fom_apply_*`, which is how a matrix would be
+  rebuilt by probing it. This also rules out hoisting a product that depends
+  only on the parameters out of the iteration and into `fom_update_params`: a
+  syntactic rule cannot tell a parameter vector from a unit vector, and the
+  guarantee is worth more than that speedup;
+- every function the rules inspect must be a single plain C definition they can
+  find; one they cannot find, or one defined twice (in `#if` branches, say), is
+  a violation, not a skipped rule.
 
 Literals and setup calls the translated file already had are exempt; in
-`fom_ops.c`, per routine. The literal rule is syntactic: an integer coefficient
+`fom_ops.c`, per routine (and outside the routines, only against what the
+translated file had outside them). The literal rule is syntactic: an integer coefficient
 (`3 * x[j]`) or one computed from allowed constants gets past it, and the
 numerical checks (exact for `fom_apply_<name>`, sampled for the solver) are what
 catch those. `make verify` reports these rules while the agent works; the
@@ -371,8 +382,10 @@ decides.
 | `su_state` | 228x228 | 228 | yes | basis | 230 | 0.000e+00 |
 ```
 
-followed by any rule violations found in the collected rewrite.
-`result.kernel_checks` holds the same rows.
+A routine counts as rewritten when its body, a helper it reaches, or the file
+scope (macros, static data) changed. The table is followed by any rule
+violations found in the collected rewrite. `result.kernel_checks` holds the same
+rows.
 
 On the large-scale CUDA target only `fom_solver.cu` is editable: verify there
 needs a GPU to run, so a rewritten solve or product could not be checked.
