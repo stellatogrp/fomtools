@@ -113,7 +113,8 @@ application allows.
 solver, its linear solves and its matrix-vector products for speed, and the
 rewrite is kept only if it passes verification again (including the direct
 checks of each solve and product) and is benchmarked faster. Its budget comes from `config`
-(`agent_optimize_timeout_s`, `agent_optimize_max_turns`).
+(`agent_optimize_timeout_s`, two hours by default, and `agent_optimize_max_turns`; see
+[time and turn budgets](codegen.md#time-and-turn-budgets)).
 
 ## The three generation paths
 

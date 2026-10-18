@@ -295,6 +295,34 @@ The portable region profiler (`include/fom_profile.h`) is compiled in only for
 the shipped `make verify` / `make lib` builds, so profiling never affects the
 production solver.
 
+### Time and turn budgets
+
+Each agent phase runs under a budget, set per run on `CodegenConfig`:
+
+| setting | default | bounds |
+|---|---|---|
+| `agent_timeout_s` | 600 s (10 min) | wall-clock time of the translation phase |
+| `agent_optimize_timeout_s` | 7200 s (2 h) | wall-clock time of the code optimization phase |
+| `agent_optimize_max_turns` | 200 | agent turns of the code optimization phase |
+
+Translation is a bounded task and rarely needs more than a few minutes. The code
+optimization phase is open-ended, and on a GPU every round (an `nvcc` build,
+`make verify`, `make bench`) is slow, so it gets two hours and enough turns that
+time, not turns, ends a run. Raise them for larger problems:
+
+```python
+config = CodegenConfig(agent_optimize_timeout_s=4 * 3600, agent_optimize_max_turns=400)
+result = generate_code(..., config=config, code_optimization=True)
+```
+
+or, on the command line, `--translate-timeout`, `--optimize-timeout` (seconds)
+and `--optimize-max-turns`. The budgets apply to whichever agent driver runs, a
+driver you build yourself included: one built without a config takes the run's.
+When a budget runs out the agent is stopped, whatever it wrote is re-verified and
+benchmarked as usual, and the report says so (in that case the agent may not have
+written its own summary). For reference, a CUDA CG solve stopped at 30 minutes
+had already gone from 2.05 s to 0.114 s per solve and was still improving.
+
 ### What changed, and a marker-free production build
 
 When the code optimization phase runs, two extra artifacts are written:
@@ -584,7 +612,9 @@ both side by side is the quickest way to see what declaring a coefficient buys.
 
 `--scaffold-only` emits everything except the solver body (useful to inspect the
 spec and data before invoking the agent). `--no-roll` keeps a recorded run
-unrolled even when it could be rolled back up. `--tol` alone stops on the
+unrolled even when it could be rolled back up. `--translate-timeout`,
+`--optimize-timeout` (seconds) and `--optimize-max-turns` set the agent's
+budgets for this run ([above](#time-and-turn-budgets)). `--tol` alone stops on the
 infinity-norm change; with `--objective` it stops on the verification objective
 the module set on its recording, and `--check-termination N` sets the interval.
 

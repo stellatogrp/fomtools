@@ -262,26 +262,29 @@ class CodegenConfig(BaseModel):
     )
     agent_optimize_max_turns: int = Field(
         ge=1,
-        default=60,
+        default=200,
         description=(
             "Turn budget for one coding-agent attempt at the code optimization phase. "
             "The phase is a profile/rewrite/verify/benchmark loop, so a method "
             "with more structure to exploit needs more turns; exhausting the "
             "budget leaves the verified solver in place but costs the agent's own "
-            "summary of what it did."
+            "summary of what it did. Sized so the wall-clock budget, not turns, "
+            "is what ends a run at the default."
         ),
     )
     agent_optimize_timeout_s: int = Field(
         ge=1,
-        default=1800,
+        default=7200,
         description=(
             "Wall-clock budget, in seconds, for the code optimization phase, "
             "enforced as for agent_timeout_s. Larger than the translation budget "
             "because the phase is open-ended: profile, rewrite, re-verify, "
-            "benchmark, repeat. A stopped agent still leaves whatever it had "
-            "written on disk, which the pipeline re-verifies and benchmarks. The "
-            "gates that run after the agent (verify, benchmark, profile) take "
-            "seconds and are outside the budget."
+            "benchmark, repeat, and each round of a GPU kernel rewrite (nvcc "
+            "build, verify, benchmark) is slow. Two hours by default: a CUDA CG "
+            "solve stopped at 30 minutes was still improving. A stopped agent "
+            "still leaves whatever it had written on disk, which the pipeline "
+            "re-verifies and benchmarks. The gates that run after the agent "
+            "(verify, benchmark, profile) take seconds and are outside the budget."
         ),
     )
     cg_auto_min_dim: int = Field(
