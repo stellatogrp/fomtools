@@ -48,6 +48,15 @@ def translation_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     linsolve_src = target.linsolve_source_path()
     notes = target.agent_notes()
     notes_block = f"\n{notes}\n" if notes else ""
+    ops_rule = (
+        f"""
+  The one exception: never read the data of a matrix you multiply by (any
+  matrix with a `fom_apply_<name>` in `{ops_src}`); multiply only through
+  `fom_apply_<name>`, which `{verify}` checks against the matrix. `{verify}`
+  reports a breach as `VERIFY FAILED: kernel rule: ...`."""
+        if ops_src in target.optimization_editable_paths()
+        else ""
+    )
     shape_block = (
         """
 This specification is UNROLLED: its body is the whole recorded run, not one
@@ -74,7 +83,7 @@ generated and must not be changed:
 - `include/fom_data.h` / `src/fom_data.c` hold ALL numeric coefficients and
   activation constants (matrices `FOM_MAT_*`, `FOM_STATE_INIT`, soft-threshold
   `FOM_*_LAMBDA`, clip-bound vectors `FOM_MAT_*_lo`/`_hi`). Do NOT hardcode
-  numbers; read them from these symbols.
+  numbers; read them from these symbols.{ops_rule}
 - `include/fom_linsolve.h` / `{linsolve_src}` provide the linear solve for
   every affine operator: for a step that SPEC marks with a solve, assemble its
   right-hand side from `linear_op`, then call `fom_lin_solve_<name>(rhs, out)`.

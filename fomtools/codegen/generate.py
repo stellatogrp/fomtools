@@ -18,7 +18,7 @@ Flow:
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from fomtools.codegen.agent.driver import AgentDriver, AgentResult, AgentTask
@@ -423,7 +423,20 @@ def generate_code(
         phase="translation",
         restore_hook=restore_deterministic_files,
     )
-    translate = driver.run(translation_task)
+    # `make verify` also holds the translated solver to the kernel rule that has
+    # no baseline (it reads no matrix data: every product goes through a checked
+    # fom_apply_*); the check below applies it again and decides.
+    target.write_kernel_check_config(out_dir, ir, None)
+    try:
+        translate = driver.run(translation_task)
+    finally:
+        target.remove_kernel_check_config(out_dir)
+    if translate.success:
+        solver = (out_dir / target.solver_source_path()).read_text()
+        issues = target.translation_checks(solver, ir)
+        if issues:
+            notes = "\n".join(f"[translation rejected: {v}]" for v in issues)
+            translate = replace(translate, success=False, log=translate.log + "\n" + notes)
 
     timing = TimingReport() if profile else None
     have_cc = find_compiler() is not None

@@ -251,6 +251,42 @@ def test_an_optimized_solver_with_its_own_matvec_is_rejected(tmp_path, mpc, requ
     assert (tmp_path / "src" / "fom_solver.c").read_text() == golden
 
 
+def test_a_translated_solver_with_its_own_matvec_is_rejected(tmp_path, mpc, requires_compiler):
+    # The same inline loop at translation: `make verify` flags it while the agent
+    # works, and the pipeline rejects the translation even if verify passed.
+    golden = GOLDEN.read_text()
+    source = golden.replace(
+        "fom_apply_t0_state(work->state, work->acc);",
+        "{ fom_int i, p; for (i = 0; i < FOM_MAT_t0_state_ROWS; ++i) "
+        "for (p = FOM_MAT_t0_state_ROWPTR[i]; p < FOM_MAT_t0_state_ROWPTR[i + 1]; ++p) "
+        "work->acc[i] += FOM_MAT_t0_state_VALS[p] * work->state[FOM_MAT_t0_state_COLIDX[p]]; }",
+    )
+    inline = tmp_path / "inline.c"
+    inline.write_text(source)
+    ex, _ = mpc
+
+    class DeletesConfig(StubAgentDriver):
+        def run(self, task):
+            (task.workdir / "test" / "kernel_check.json").unlink(missing_ok=True)
+            return super().run(task)
+
+    for driver, seen_by_verify in ((StubAgentDriver(inline), True), (DeletesConfig(inline), False)):
+        result = generate_code(
+            ex["verifier"],
+            ex["next_state"],
+            tmp_path / str(seen_by_verify),
+            config=CONFIG,
+            driver=driver,
+            name="mpc",
+        )
+        assert not result.translate.success
+        log = result.translate.log
+        assert ("VERIFY FAILED: kernel rule: src/fom_solver.c" in log) == seen_by_verify
+        rejected = "[translation rejected: the solver reads FOM_MAT_t0_state directly"
+        assert (rejected in log) != seen_by_verify  # the gate catches what verify missed
+        assert not (tmp_path / str(seen_by_verify) / "test" / "kernel_check.json").exists()
+
+
 def test_make_verify_applies_the_kernel_rules_while_configured(tmp_path, mpc, requires_compiler):
     import fomtools.codegen.kernel_rules as kernel_rules
 

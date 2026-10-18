@@ -284,3 +284,17 @@ def test_fom_apply_reached_from_setup_through_a_helper_is_flagged(target, mpc_ir
     assert any("fom_apply_t0_state is called from fom_setup" in v for v in violations)
     assert any("fom_apply_su_state is called from fom_setup" in v for v in violations)
     assert not any("t0_p_p0" in v for v in violations)  # only in the iteration
+
+
+def test_translation_checks_only_matrix_data_reads(target, mpc_ir):
+    from fomtools.codegen.config import Backend, Version
+    from fomtools.codegen.targets import get_target
+
+    # No baseline yet: a literal is the prompt's business, a matrix read is not.
+    source = SETUP + "void g(FomWorkspace *w){ w->acc[0] = 1e-12 * FOM_MAT_t0_state[0]; }"
+    assert target.translation_checks(source, mpc_ir) == [
+        "the solver reads FOM_MAT_t0_state directly; apply it with "
+        "fom_apply_t0_state, which verify checks against the matrix"
+    ]
+    cuda = get_target(CodegenConfig(version=Version.LARGE_SCALE, backend=Backend.CUDA))
+    assert cuda.translation_checks(source, mpc_ir) == []

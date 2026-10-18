@@ -26,6 +26,10 @@ rules keep the coefficients there, where it can see them:
   braces; a function the rules cannot find, or one defined twice (in ``#if``
   branches, say), is a violation, never a silently skipped rule.
 
+The translated solver is held to the matrix-data rule too (``make verify`` applies
+it during translation), so code optimization starts from a solver that already
+multiplies only through the checked routines.
+
 Literals the translated version of the same file already had are exempt: that
 version passed verify under a prompt that forbids hardcoding, so only what a
 rewrite adds is new. In ``fom_ops.c`` the exemption is per routine: a literal in
@@ -251,25 +255,33 @@ def _check_ops(code: str, base: str, matvec_names) -> list[str]:
     return _new_literals(outside, set(float_literals(base_outside))) + violations
 
 
+def _solver_data_reads(code: str, matvec_names) -> list[str]:
+    return [
+        f"the solver reads FOM_MAT_{name} directly; apply it with "
+        f"fom_apply_{name}, which verify checks against the matrix"
+        for name in matvec_names
+        if _mat_data(name).search(code)
+    ]
+
+
 def check(kind: str, source: str, matvec_names, baseline: str | None = None) -> list[str]:
     """Rule violations in a rewritten ``kind`` (``"solver"`` or ``"ops"``) source.
 
     ``baseline`` is the translated version of the same file; whatever it already
-    contains is exempt.
+    contains is exempt. Kind ``"translation"`` is the translated solver itself:
+    it has no baseline, so only the rule without one applies (it reads no
+    matrix data, so every product goes through a checked ``fom_apply_<name>``).
     """
     code = strip_c_comments_and_strings(source)
     base = strip_c_comments_and_strings(baseline) if baseline is not None else ""
     if kind == "ops":
         return _check_ops(code, base, matvec_names)
+    if kind == "translation":
+        return _solver_data_reads(code, matvec_names)
     violations = _new_literals(code, set(float_literals(base)))
     if kind != "solver":
         return violations
-    for name in matvec_names:
-        if _mat_data(name).search(code):
-            violations.append(
-                f"the solver reads FOM_MAT_{name} directly; apply it with "
-                f"fom_apply_{name}, which verify checks against the matrix"
-            )
+    violations += _solver_data_reads(code, matvec_names)
     calls = setup_apply_calls(code)
     if calls is None:
         missing = [fn for fn in SETUP_FUNCTIONS if function_body(code, fn) is None]

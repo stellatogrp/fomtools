@@ -93,11 +93,20 @@ class TargetDescriptor(ABC):
         """
         return []
 
-    def write_kernel_check_config(self, out_dir, ir, baselines: dict[str, str]) -> None:
-        """Let ``make verify`` apply :meth:`kernel_checks` while the agent works.
+    def translation_checks(self, source: str, ir) -> list[str]:
+        """Violations of the kernel rules in the translated solver (empty = OK).
+
+        Default: none (see :meth:`kernel_checks`).
+        """
+        return []
+
+    def write_kernel_check_config(self, out_dir, ir, baselines: dict[str, str] | None) -> None:
+        """Let ``make verify`` apply the kernel rules while the agent works.
 
         Called when the code optimization phase starts, with the translated
-        sources as ``baselines``. Default: nothing to write.
+        sources as ``baselines`` (:meth:`kernel_checks`), and when translation
+        starts, with ``None`` (:meth:`translation_checks`). Default: nothing to
+        write.
         """
 
     def remove_kernel_check_config(self, out_dir) -> None:

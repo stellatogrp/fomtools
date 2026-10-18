@@ -37,13 +37,13 @@ def _fmt_float(x: float) -> str:
     return f"{float(x):.17g}"
 
 
-#: Written while the code optimization phase runs (and removed after), so that
-#: ``make verify`` also applies the kernel rules to the agent's rewrite.
+#: Written while an agent works (translation or code optimization, removed
+#: after), so that ``make verify`` also applies the kernel rules to its code.
 _KERNEL_CHECK_CONFIG = "test/kernel_check.json"
 
 
 #: ``make verify`` step that applies the kernel rules while a config is present
-#: (only during the code optimization phase, and only if python3 is available).
+#: (only while an agent works, and only if python3 is available).
 _KERNEL_CHECK_RECIPE = (
     f"\t@if [ -f {_KERNEL_CHECK_CONFIG} ] && command -v python3 >/dev/null; then "
     f"python3 test/kernel_check.py {_KERNEL_CHECK_CONFIG}; fi"
@@ -1685,14 +1685,24 @@ class EmbeddedCTarget(TargetDescriptor):
             return {}
         return {self.solver_source_path(): "solver", self.ops_source_path(): "ops"}
 
-    def write_kernel_check_config(self, out_dir, ir: FomIR, baselines: dict[str, str]) -> None:
+    def translation_checks(self, source: str, ir: FomIR) -> list[str]:
+        if not self._kernel_rule_kinds():
+            return []
+        return kernel_rules.check("translation", source, _matvec_matrix_names(ir))
+
+    def write_kernel_check_config(
+        self, out_dir, ir: FomIR, baselines: dict[str, str] | None
+    ) -> None:
         kinds = self._kernel_rule_kinds()
         if not kinds:
             return
-        files = [
-            {"path": rel, "kind": kind, "baseline": baselines.get(rel)}
-            for rel, kind in kinds.items()
-        ]
+        if baselines is None:  # translation: the solver only, with no baseline
+            files = [{"path": self.solver_source_path(), "kind": "translation"}]
+        else:
+            files = [
+                {"path": rel, "kind": kind, "baseline": baselines.get(rel)}
+                for rel, kind in kinds.items()
+            ]
         config = {"matvec": _matvec_matrix_names(ir), "files": files}
         (Path(out_dir) / _KERNEL_CHECK_CONFIG).write_text(json.dumps(config, indent=1))
 
