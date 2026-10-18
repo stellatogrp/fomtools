@@ -151,7 +151,8 @@ kernel must apply exactly `M` for every input and must keep accumulating into
 that breaks any of them is discarded when it is collected:
 - `{src}` must not read the `FOM_MAT_<name>` data of any matrix it multiplies
   by; call `fom_apply_<name>` instead. In `{ops_src}`, each `fom_apply_<name>`
-  reads only its own matrix's data.
+  reads only its own matrix's data, and only inside its single definition: a
+  helper kernel takes the arrays as arguments from it.
 - `{src}` and `{ops_src}` must not add floating-point constants other than `0.0`,
   `0.5`, `1.0` and `2.0`, whether written as decimal or hex float literals or as
   integers cast to a floating type (literals the translated file already had,

@@ -17,11 +17,14 @@ rules keep the coefficients there, where it can see them:
   ``fom_apply_<name>`` instead), and may not newly call ``fom_apply_*`` from
   ``fom_setup`` / ``fom_update_params``, which is how a matrix would be rebuilt by
   probing it on unit vectors. In ``fom_ops.c``, ``fom_apply_<name>`` may read only
-  its own matrix's ``FOM_MAT_<name>`` data, not another product's.
+  its own matrix's ``FOM_MAT_<name>`` data, not another product's, and no code
+  outside the routines (a helper, a macro, static data) may read any matrix data:
+  a helper gets it as an argument from the routine that owns it.
 * **Checkable structure.** Each function these rules inspect (``fom_setup`` and
   ``fom_update_params`` in the solver, every ``fom_apply_<name>`` in
-  ``fom_ops.c``) must be found as a plain C definition with balanced braces; a
-  function the rules cannot find is a violation, never a silently skipped rule.
+  ``fom_ops.c``) must be found as a single plain C definition with balanced
+  braces; a function the rules cannot find, or one defined twice (in ``#if``
+  branches, say), is a violation, never a silently skipped rule.
 
 Literals the translated version of the same file already had are exempt: that
 version passed verify under a prompt that forbids hardcoding, so only what a
@@ -104,11 +107,16 @@ def float_literals(code: str) -> list[str]:
     return list(dict.fromkeys(text for text, value in found if value not in ALLOWED_FLOAT_LITERALS))
 
 
+def _definitions(code: str, name: str) -> list[re.Match]:
+    """Each place (stripped) ``code`` defines the C function ``name``."""
+    return list(re.finditer(rf"\b{re.escape(name)}\s*\([^;{{)]*\)\s*\{{", code))
+
+
 def _function_span(code: str, name: str) -> tuple[int, int] | None:
     """``(start, end)`` of the body of the C function ``name`` in (stripped)
     ``code``, or ``None`` if no definition is found or its braces never balance
     (e.g. ``#if`` branches that each open a brace)."""
-    match = re.search(rf"\b{re.escape(name)}\s*\([^;{{)]*\)\s*\{{", code)
+    match = next(iter(_definitions(code, name)), None)
     if match is None:
         return None
     depth, i = 1, match.end()
@@ -179,6 +187,16 @@ def _check_ops(code: str, base: str, matvec_names) -> list[str]:
         if body is None:
             violations.append(_not_found(fn))
             continue
+        if len(_definitions(code, fn)) > 1:
+            violations.append(
+                f"{fn} is defined more than once (e.g. in #if branches); the kernel "
+                "rules check one plain definition"
+            )
+        if _mat_data(name).search(outside):
+            violations.append(
+                f"FOM_MAT_{name} is read outside {fn}; read it there (pass it to a "
+                "helper as an argument), where the rules can see which routine uses it"
+            )
         base_lits = set(float_literals(base_bodies[name] or ""))
         violations += [f"{fn}: {v}" for v in _new_literals(body, base_lits)]
         for other in matvec_names:

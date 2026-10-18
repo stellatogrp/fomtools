@@ -245,3 +245,26 @@ def test_new_fom_apply_calls_at_setup_are_flagged(target, mpc_ir):
     assert not any("su_state" in v for v in violations)  # in the iteration: fine
     # Already done by the translated solver: exempt.
     assert target.kernel_checks("src/fom_solver.c", source, mpc_ir, source) == []
+
+
+def test_ops_matrix_data_is_read_only_inside_its_routine(target, mpc_ir):
+    # A helper reading another product's data directly is not hidden from the rule.
+    helper = (
+        "static void kern(const fom_float *x, fom_float *o) { o[0] += FOM_MAT_su_state_VALS[0]; }"
+    )
+    source = helper + "\n" + _ops(mpc_ir, {"t0_state": "kern(x, out);"})
+    violations = target.kernel_checks("src/fom_ops.c", source, mpc_ir)
+    assert any("FOM_MAT_su_state is read outside fom_apply_su_state" in v for v in violations)
+    # The same helper, handed the owning routine's data, is fine.
+    helper = (
+        "static void kern(const fom_float *v, const fom_float *x, fom_float *o) { o[0] += v[0]; }"
+    )
+    source = helper + "\n" + _ops(mpc_ir, {"t0_state": "kern(FOM_MAT_t0_state_VALS, x, out);"})
+    assert target.kernel_checks("src/fom_ops.c", source, mpc_ir) == []
+
+
+def test_ops_routine_defined_twice_is_a_violation(target, mpc_ir):
+    other = "void fom_apply_t0_state(const fom_float *x, fom_float *out) { out[0] += x[0]; }"
+    source = "#if FAST\n" + other + "\n#else\n" + _ops(mpc_ir) + "\n#endif\n"
+    violations = target.kernel_checks("src/fom_ops.c", source, mpc_ir)
+    assert any("fom_apply_t0_state is defined more than once" in v for v in violations)
