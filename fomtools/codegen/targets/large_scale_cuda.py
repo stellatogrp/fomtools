@@ -373,8 +373,8 @@ class CudaTarget(EmbeddedCTarget):
             "",
             "/* out += M @ x for each linear-op matrix M (CSR if structurally",
             "   sparse, dense otherwise). CUDA target: `x` and `out` are DEVICE",
-            "   pointers; each call launches a kernel (one thread per row) on the",
-            "   default stream. Accumulating: zero `out` (cudaMemset) first. */",
+            "   pointers; each call launches a kernel (a warp per dense-enough row)",
+            "   on the default stream. Accumulating: zero `out` (cudaMemset) first. */",
             "",
         ]
         for name in _matvec_matrix_names(ir):
