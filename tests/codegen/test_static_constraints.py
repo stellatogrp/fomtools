@@ -126,7 +126,7 @@ def test_ops_routines_read_only_their_own_matrix(target, mpc_ir):
     violations = target.kernel_checks("src/fom_ops.c", source, mpc_ir)
     assert violations == [
         "fom_apply_t0_state reads FOM_MAT_su_state, the data of another product; each "
-        "routine may read only its own matrix"
+        "routine (and every helper it calls) may read only its own matrix"
     ]
     # Its own data, and another matrix's dimensions, are fine.
     source = _ops(
@@ -148,9 +148,9 @@ def test_a_missing_or_unbalanced_routine_is_a_violation(target, mpc_ir):
 def test_ops_literal_exemption_is_per_routine(target, mpc_ir):
     # 0.3 sits in another function of the translated file: it exempts that
     # function, not fom_apply_t0_state.
-    baseline = _ops(mpc_ir) + "\nfom_float step(void) { return 0.3; }"
+    baseline = _ops(mpc_ir) + "\nstatic fom_float step(void) { return 0.3; }"
     rewrite = _ops(mpc_ir, {"t0_state": "out[0] += 0.3 * x[0];"})
-    rewrite += "\nfom_float step(void) { return 0.3; }"
+    rewrite += "\nstatic fom_float step(void) { return 0.3; }"
     violations = target.kernel_checks("src/fom_ops.c", rewrite, mpc_ir, baseline)
     assert violations == [
         "fom_apply_t0_state: floating-point literal '0.3' looks like a hardcoded "
@@ -158,11 +158,11 @@ def test_ops_literal_exemption_is_per_routine(target, mpc_ir):
     ]
     # ...while a literal the translated routine itself had stays exempt.
     baseline = _ops(mpc_ir, {"t0_state": "out[0] += 0.3 * x[0];"})
-    baseline += "\nfom_float step(void) { return 0.3; }"
+    baseline += "\nstatic fom_float step(void) { return 0.3; }"
     assert target.kernel_checks("src/fom_ops.c", rewrite, mpc_ir, baseline) == []
     # A routine's literal does not exempt a new function outside every routine.
     baseline = _ops(mpc_ir, {"t0_state": "out[0] += 0.3 * x[0];"})
-    moved = _ops(mpc_ir) + "\nfom_float step(void) { return 0.3; }"
+    moved = _ops(mpc_ir) + "\nstatic fom_float step(void) { return 0.3; }"
     violations = target.kernel_checks("src/fom_ops.c", moved, mpc_ir, baseline)
     assert len(violations) == 1 and "'0.3'" in violations[0]
 
@@ -251,20 +251,70 @@ def test_new_fom_apply_calls_at_setup_are_flagged(target, mpc_ir):
     assert target.kernel_checks("src/fom_solver.c", source, mpc_ir, source) == []
 
 
-def test_ops_matrix_data_is_read_only_inside_its_routine(target, mpc_ir):
-    # A helper reading another product's data directly is not hidden from the rule.
+def test_ops_routine_includes_the_helpers_it_reaches(target, mpc_ir):
+    # A helper is part of every routine that reaches it: reading another
+    # product's data there is that routine's violation.
     helper = (
         "static void kern(const fom_float *x, fom_float *o) { o[0] += FOM_MAT_su_state_VALS[0]; }"
     )
     source = helper + "\n" + _ops(mpc_ir, {"t0_state": "kern(x, out);"})
     violations = target.kernel_checks("src/fom_ops.c", source, mpc_ir)
-    assert any("FOM_MAT_su_state is read outside fom_apply_su_state" in v for v in violations)
-    # The same helper, handed the owning routine's data, is fine.
-    helper = (
-        "static void kern(const fom_float *v, const fom_float *x, fom_float *o) { o[0] += v[0]; }"
+    assert any("fom_apply_t0_state reads FOM_MAT_su_state" in v for v in violations)
+    # Its own data, read directly in a helper (a CUDA kernel, say) or passed in, is fine.
+    for helper, call in (
+        (
+            "static void kern(const fom_float *x, fom_float *o) "
+            "{ o[0] += FOM_MAT_t0_state_VALS[0] * x[0]; }",
+            "kern(x, out);",
+        ),
+        (
+            "static void kern(const fom_float *v, const fom_float *x, fom_float *o) "
+            "{ o[0] += v[0]; }",
+            "kern(FOM_MAT_t0_state_VALS, x, out);",
+        ),
+    ):
+        source = helper + "\n" + _ops(mpc_ir, {"t0_state": call})
+        assert target.kernel_checks("src/fom_ops.c", source, mpc_ir) == []
+
+
+def test_ops_matrix_data_outside_every_routine_is_a_violation(target, mpc_ir):
+    # A function no routine reaches, or a macro, is outside every routine.
+    for extra in (
+        "static fom_float peek(void) { return FOM_MAT_t0_state_VALS[0]; }",
+        "#define T0 FOM_MAT_t0_state_VALS",
+    ):
+        violations = target.kernel_checks("src/fom_ops.c", extra + "\n" + _ops(mpc_ir), mpc_ir)
+        assert any("FOM_MAT_t0_state is read outside fom_apply_t0_state" in v for v in violations)
+
+
+def test_ops_helpers_must_be_static(target, mpc_ir):
+    # A non-static helper could be called from the solver, around the checked entry.
+    helper = "void kern(const fom_float *x, fom_float *o) { o[0] += x[0]; }"
+    source = helper + "\n" + _ops(mpc_ir, {"t0_state": "kern(x, out);"})
+    violations = target.kernel_checks("src/fom_ops.c", source, mpc_ir)
+    assert violations == [
+        "kern is not static; every function of fom_ops.c but the fom_apply_<name> "
+        "routines must be, so it is reached only through them"
+    ]
+
+
+def test_ops_rules_see_the_cuda_device_arrays(target, mpc_ir):
+    # The CUDA target's launcher + __global__ kernel, reading device copies.
+    kern = (
+        "static __global__ void fom_apply_t0_state_kern(const fom_float *x, fom_float *out) "
+        "{ out[0] += FOM_OP_T0_STATE_VALS[0] * x[0] + FOM_OP_SU_STATE_DENSE[0]; }"
     )
-    source = helper + "\n" + _ops(mpc_ir, {"t0_state": "kern(FOM_MAT_t0_state_VALS, x, out);"})
-    assert target.kernel_checks("src/fom_ops.c", source, mpc_ir) == []
+    source = (
+        kern + "\n" + _ops(mpc_ir, {"t0_state": "fom_apply_t0_state_kern<<<1, 256>>>(x, out);"})
+    )
+    violations = target.kernel_checks("src/fom_ops.c", source, mpc_ir)
+    assert violations == [
+        "fom_apply_t0_state reads FOM_MAT_su_state, the data of another product; each "
+        "routine (and every helper it calls) may read only its own matrix"
+    ]
+    # ...and the solver may not read them either.
+    solver = SETUP + "void g(fom_float *o){ o[0] = FOM_OP_T0_STATE_VALS[0]; }"
+    assert any("FOM_MAT_t0_state directly" in v for v in target.translation_checks(solver, mpc_ir))
 
 
 def test_ops_routine_defined_twice_is_a_violation(target, mpc_ir):

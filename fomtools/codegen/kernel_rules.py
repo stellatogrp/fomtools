@@ -16,10 +16,13 @@ rules keep the coefficients there, where it can see them:
   ``FOM_MAT_<name>`` data of a matrix it multiplies by (it calls
   ``fom_apply_<name>`` instead), and may not newly call ``fom_apply_*`` from
   ``fom_setup`` / ``fom_update_params``, or from any function of the file they
-  reach, which is how a matrix would be rebuilt by probing it on unit vectors. In ``fom_ops.c``, ``fom_apply_<name>`` may read only
-  its own matrix's ``FOM_MAT_<name>`` data, not another product's, and no code
-  outside the routines (a helper, a macro, static data) may read any matrix data:
-  a helper gets it as an argument from the routine that owns it.
+  reach, which is how a matrix would be rebuilt by probing it on unit vectors.
+  In ``fom_ops.c``, a routine is ``fom_apply_<name>`` together with every
+  function it reaches (a helper, or the CUDA target's ``__global__`` kernel); a
+  routine may read only its own matrix's data, no code outside every routine (a
+  macro, static data, an unreached function) may read matrix data at all, and
+  every function but the ``fom_apply_<name>`` entry points must be ``static``,
+  so nothing reaches a routine's helpers except through it.
 * **Checkable structure.** Each function these rules inspect (``fom_setup`` and
   ``fom_update_params`` in the solver, every ``fom_apply_<name>`` in
   ``fom_ops.c``) must be found as a single plain C definition with balanced
@@ -33,8 +36,8 @@ multiplies only through the checked routines.
 Literals the translated version of the same file already had are exempt: that
 version passed verify under a prompt that forbids hardcoding, so only what a
 rewrite adds is new. In ``fom_ops.c`` the exemption is per routine: a literal in
-``fom_apply_<name>`` is exempt only if the translated ``fom_apply_<name>`` had it,
-and one outside every routine only if the translated file had it outside too.
+a routine is exempt only if the translated routine had it, and one outside every
+routine only if the translated file had it outside too.
 
 Not covered by a rule: state a rewritten ``fom_ops.c`` keeps across calls (a
 ``static`` cache, say). The direct check runs each routine before ``fom_setup``
@@ -150,12 +153,12 @@ def _not_found(name: str) -> str:
     )
 
 
-def functions(code: str) -> tuple[dict[str, list[str]], str]:
-    """The C functions defined at file scope in (stripped) ``code``: their bodies
-    by name (a list: ``#if`` branches may define one twice), and the file scope
-    left over (declarations, macros, static data) with the bodies blanked out."""
-    bodies: dict[str, list[str]] = {}
-    scope, end = code, 0
+def _iter_functions(code: str):
+    """``(name, prefix, body)`` of each C function defined at file scope in
+    (stripped) ``code``, in order; ``prefix`` is its declaration specifiers
+    (``static``, return type), and ``body`` the ``(start, end)`` of its body.
+    Stops at a definition whose braces never balance."""
+    end = 0
     for match in _FUNCTION_DEF.finditer(code):
         if match.start() < end or match.group(1) in _C_KEYWORDS:
             continue
@@ -164,10 +167,26 @@ def functions(code: str) -> tuple[dict[str, list[str]], str]:
             depth += {"{": 1, "}": -1}.get(code[i], 0)
             i += 1
         if depth:
-            break
-        bodies.setdefault(match.group(1), []).append(code[match.end() : i - 1])
-        scope = scope[: match.end()] + " " * (i - 1 - match.end()) + scope[i - 1 :]
+            return
+        head = code[
+            max(
+                code.rfind(";", end, match.start()), code.rfind("}", end, match.start()), end
+            ) : match.start()
+        ]
+        prefix = " ".join(ln for ln in head.splitlines() if not ln.lstrip().startswith("#"))
+        yield match.group(1), prefix, (match.end(), i - 1)
         end = i
+
+
+def functions(code: str) -> tuple[dict[str, list[str]], str]:
+    """The C functions defined at file scope in (stripped) ``code``: their bodies
+    by name (a list: ``#if`` branches may define one twice), and the file scope
+    left over (declarations, macros, static data) with the bodies blanked out."""
+    bodies: dict[str, list[str]] = {}
+    scope = code
+    for name, _, (start, stop) in _iter_functions(code):
+        bodies.setdefault(name, []).append(code[start:stop])
+        scope = scope[:start] + " " * (stop - start) + scope[stop:]
     return bodies, scope
 
 
@@ -199,8 +218,13 @@ def setup_apply_calls(code: str) -> set[str] | None:
 
 
 def _mat_data(name: str) -> re.Pattern:
-    """A reference to the data arrays of matrix ``name`` (not its dimensions)."""
-    return re.compile(rf"\bFOM_MAT_{re.escape(name)}(?:_(?:ROWPTR|COLIDX|VALS))?\b")
+    """A reference to the data arrays of matrix ``name`` (not its dimensions): the
+    host ``FOM_MAT_<name>`` arrays, or the CUDA target's device copies
+    ``FOM_OP_<NAME>_*``."""
+    return re.compile(
+        rf"\bFOM_MAT_{re.escape(name)}(?:_(?:ROWPTR|COLIDX|VALS))?\b"
+        rf"|\bFOM_OP_{re.escape(name.upper())}_(?:ROWPTR|COLIDX|VALS|DENSE)\b"
+    )
 
 
 def _new_literals(code: str, known: set[str]) -> list[str]:
@@ -212,46 +236,58 @@ def _new_literals(code: str, known: set[str]) -> list[str]:
     ]
 
 
-def _split_routines(code: str, names) -> tuple[dict[str, str | None], str]:
-    """Each ``fom_apply_<name>`` body in ``fom_ops.c`` (``None`` if not found),
-    and the code outside them, with the bodies blanked out."""
-    bodies, outside = {}, code
+def _routine_regions(code: str, names) -> tuple[dict[str, set[str]], dict, str, list[str]]:
+    """``fom_ops.c`` split by routine: the functions each ``fom_apply_<name>``
+    reaches (itself included), the function bodies, the code outside every
+    region (file scope and functions no routine reaches), and violations of
+    its structure."""
+    bodies, scope = functions(code)
+    regions, violations = {}, []
     for name in names:
-        span = _function_span(code, f"fom_apply_{name}")
-        bodies[name] = None if span is None else code[span[0] : span[1]]
-        if span is not None:
-            outside = outside[: span[0]] + " " * (span[1] - span[0]) + outside[span[1] :]
-    return bodies, outside
-
-
-def _check_ops(code: str, base: str, matvec_names) -> list[str]:
-    """``fom_ops.c``: literals per routine, and each routine on its own data."""
-    violations = []
-    bodies, outside = _split_routines(code, matvec_names)
-    base_bodies, base_outside = _split_routines(base, matvec_names)
-    for name, body in bodies.items():
         fn = f"fom_apply_{name}"
-        if body is None:
+        if fn not in bodies:
             violations.append(_not_found(fn))
-            continue
-        if len(_definitions(code, fn)) > 1:
+        elif len(bodies[fn]) > 1:
             violations.append(
                 f"{fn} is defined more than once (e.g. in #if branches); the kernel "
                 "rules check one plain definition"
             )
-        if _mat_data(name).search(outside):
+        else:
+            regions[name] = reachable(bodies, [fn])
+    covered = set().union(*regions.values())
+    outside = " ".join([scope] + [b for fn, bs in bodies.items() if fn not in covered for b in bs])
+    return regions, bodies, outside, violations
+
+
+def _check_ops(code: str, base: str, matvec_names) -> list[str]:
+    """``fom_ops.c``: each routine (with the helpers it reaches) on its own data,
+    literals per routine, and no entry points but the routines."""
+    regions, bodies, outside, violations = _routine_regions(code, matvec_names)
+    base_regions, base_bodies, base_outside, _ = _routine_regions(base, matvec_names)
+    entry = {f"fom_apply_{name}" for name in matvec_names}
+    for fn, prefix, _ in _iter_functions(code):
+        if fn not in entry and not re.search(r"\bstatic\b", prefix):
             violations.append(
-                f"FOM_MAT_{name} is read outside {fn}; read it there (pass it to a "
-                "helper as an argument), where the rules can see which routine uses it"
+                f"{fn} is not static; every function of fom_ops.c but the "
+                "fom_apply_<name> routines must be, so it is reached only through them"
             )
-        base_lits = set(float_literals(base_bodies[name] or ""))
-        violations += [f"{fn}: {v}" for v in _new_literals(body, base_lits)]
+    for name, region in regions.items():
+        fn = f"fom_apply_{name}"
+        text = " ".join(b for g in sorted(region) for b in bodies[g])
+        base_text = " ".join(b for g in base_regions.get(name, ()) for b in base_bodies[g])
+        violations += [f"{fn}: {v}" for v in _new_literals(text, set(float_literals(base_text)))]
         for other in matvec_names:
-            if other != name and _mat_data(other).search(body):
+            if other != name and _mat_data(other).search(text):
                 violations.append(
                     f"{fn} reads FOM_MAT_{other}, the data of another product; each "
-                    "routine may read only its own matrix"
+                    "routine (and every helper it calls) may read only its own matrix"
                 )
+    for name in matvec_names:
+        if _mat_data(name).search(outside):
+            violations.append(
+                f"FOM_MAT_{name} is read outside fom_apply_{name} and the helpers it "
+                "calls, where the rules cannot see which routine uses it"
+            )
     return _new_literals(outside, set(float_literals(base_outside))) + violations
 
 

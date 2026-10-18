@@ -348,9 +348,10 @@ every coefficient there. A rewrite that breaks one is discarded:
   by; it calls `fom_apply_<name>`. This rule already holds at translation
   (`make verify` applies it there too), so the code optimization phase starts
   from a solver that multiplies only through the checked routines. In
-  `fom_ops.c`, each `fom_apply_<name>` may read only its own matrix's data, and
-  no code outside the routines (a helper, a macro, static data) may read matrix
-  data at all: a helper kernel gets the arrays as arguments from its routine;
+  `fom_ops.c`, a routine is `fom_apply_<name>` with every helper it calls (on
+  CUDA, its `__global__` kernel); it may read only its own matrix's data, no
+  other code (a macro, static data, an unreached function) may read matrix data,
+  and every function but the `fom_apply_<name>` entry points must be `static`;
 - the solver and `fom_ops.c` may not add floating-point constants other than
   `0`, `0.5`, `1` and `2`: decimal or hexadecimal float literals, or integer
   literals cast to a floating type (coefficients come from `fom_data.c`);
