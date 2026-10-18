@@ -54,6 +54,14 @@ class TargetDescriptor(ABC):
         """Relative path of the generated linear-solve source."""
         return "src/fom_linsolve.c"
 
+    def objective_source_path(self) -> str:
+        """Relative path of the source holding the generated ``fom_objective``.
+
+        Default: the matrix-vector product source. Never editable by the code
+        optimization phase: the metric the solver stops on stays package-owned.
+        """
+        return self.ops_source_path()
+
     def optimization_editable_paths(self) -> tuple[str, ...]:
         """Sources the code optimization phase may rewrite.
 
@@ -128,4 +136,3 @@ def objective_violations(source: str, ir: FomIR | None) -> list[str]:
             "settings.check_termination, the runtime interval of the objective check"
         )
     return violations
-

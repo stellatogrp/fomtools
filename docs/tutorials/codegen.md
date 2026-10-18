@@ -198,9 +198,10 @@ expression, a parameter the iteration never reads) raises
 `ObjectiveExtractionError` saying what to change: carry the older iterate in the
 state, or record the iterates with `iterate_trajectory`.
 
-The metric is generated as `fom_objective(...)` next to the matrix-vector
-products, in the files the coding agent may not edit, and the agent's loop only
-decides when to call it. `make verify` checks the stopping iteration, the
+The metric is generated as `fom_objective(...)` in its own source,
+`src/fom_objective.c` (beside the kernels in `src/fom_ops.cu` on CUDA), which the
+coding agent may never edit, even where it may rewrite the matrix-vector
+products; the agent's loop only decides when to call it. `make verify` checks the stopping iteration, the
 objective value and the status against the reference oracle, at the default
 settings and at other runtime `check_termination` and `max_iter`. An unrolled run
 (one that does not roll back up) evaluates the objective once, after its single
@@ -322,7 +323,7 @@ data cannot change:
 | `src/fom_solver.c` (the iteration) | rewritten by the agent | end to end, against the Python reference on sampled parameters |
 | `src/fom_linsolve.c` (linear solves) | rewritten by the agent | each `fom_lin_solve_<name>` against the reference solve of its factorization, on random right-hand sides |
 | `src/fom_ops.c` (matrix-vector products) | rewritten by the agent | each `fom_apply_<name>` exactly against its matrix (below) |
-| `src/fom_data.c`, `include/`, `test/`, `Makefile` | package only | — |
+| `src/fom_data.c`, `src/fom_objective.c`, `include/`, `test/`, `Makefile` | package only | — |
 
 A matrix-vector routine is a linear map, so it can be checked for **every**
 input, not just sampled ones. `make verify` runs each `fom_apply_<name>` next to a

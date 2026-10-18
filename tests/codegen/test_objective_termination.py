@@ -545,8 +545,10 @@ def test_emitted_artifacts(tmp_path):
         "fom_float fom_objective(fom_int it, const fom_float *state, "
         "const fom_float *new_state);" in ops_h
     )
-    ops_c = (tmp_path / "src" / "fom_ops.c").read_text()
-    assert "FOM_OBJ_OBJ0_NEW_ROWPTR" in ops_c and "fom_objective(" in ops_c
+    obj_c = (tmp_path / "src" / "fom_objective.c").read_text()
+    assert "FOM_OBJ_OBJ0_NEW_ROWPTR" in obj_c and "fom_objective(" in obj_c
+    # The metric has its own source: the editable fom_ops.c holds none of it.
+    assert "objective" not in (tmp_path / "src" / "fom_ops.c").read_text()
     data_c = (tmp_path / "src" / "fom_data.c").read_text()
     assert "obj0" not in data_c  # objective blocks live with fom_objective
     spec_md = (tmp_path / "SPEC.md").read_text()
@@ -558,6 +560,7 @@ def test_emitted_artifacts(tmp_path):
     makefile = (tmp_path / "Makefile").read_text()
     assert "verify: objective_guard" in makefile
     assert makefile.index("verify:") < makefile.index("objective_guard:")  # default goal
+    assert "src/fom_objective.c" in makefile.split("SRC = ", 1)[1].split("\n# ", 1)[0]
 
 
 def test_objective_source_is_division_and_allocation_free():
@@ -581,6 +584,8 @@ def test_other_criteria_emit_no_objective(tmp_path):
     ir = extract_ir(case["verifier"], case["next_state"], config=case["config"])
     scaffold(ir, tmp_path, case["config"])
     assert "fom_objective" not in (tmp_path / "include" / "fom_ops.h").read_text()
+    # Still written (the build and the CVXPYgen sources list it), with no code.
+    assert "fom_objective" not in (tmp_path / "src" / "fom_objective.c").read_text()
     assert "objective_guard:" not in (tmp_path / "Makefile").read_text()
     assert "#define FOM_USE_OBJECTIVE 0" in (tmp_path / "include" / "fom_workspace.h").read_text()
 
@@ -605,8 +610,9 @@ def _dr_objective_ir(config):
 
 @pytest.mark.parametrize("target_cls", [EmbeddedCTarget, OpenMpTarget, CudaTarget])
 def test_optimization_prompt_keeps_the_objective_rule_with_an_editable_linsolve(target_cls):
-    """Where the optimizer may also rewrite the linear solves, the objective
-    stays fixed in the ops source and must still gate the stop."""
+    """Where the optimizer may also rewrite the linear solves (and the matrix-vector
+    products), the objective stays fixed in a source it may not edit and must
+    still gate the stop."""
     config = objective_config()
     ir = _dr_objective_ir(config)
     assert ir.factorizations and ir.termination.uses_objective
@@ -615,7 +621,8 @@ def test_optimization_prompt_keeps_the_objective_rule_with_an_editable_linsolve(
     editable = target.linsolve_source_path() in target.optimization_editable_paths()
     assert ("You may edit" in text) == editable
     assert "Keep calling `fom_objective` exactly where it is called now" in text
-    assert f"It lives in `{target.ops_source_path()}`, which stays fixed" in text
+    assert f"It lives in `{target.objective_source_path()}`, which stays fixed" in text
+    assert target.objective_source_path() not in target.optimization_editable_paths()
 
 
 def test_verify_holds_both_linsolve_and_objective_checks(tmp_path):
@@ -812,8 +819,8 @@ def test_tape_that_rolls_stops_within_the_recorded_horizon(tmp_path, requires_co
 @pytest.mark.parametrize("norm", ["inf", "2"])
 def test_openmp_reductions_compile(tmp_path, requires_compiler, norm):
     """The objective's OpenMP reductions are real pragmas, not just comments:
-    compile the ops source with OpenMP on (front end only where the toolchain
-    has no runtime, as Apple clang)."""
+    compile the objective source with OpenMP on (front end only where the
+    toolchain has no runtime, as Apple clang)."""
     import subprocess
 
     case = build_scheduled_objective(
@@ -824,11 +831,12 @@ def test_openmp_reductions_compile(tmp_path, requires_compiler, norm):
     )
     ir = extract_scheduled_ir(case["build"], case["schedules"], config=case["config"])
     scaffold(ir, tmp_path, case["config"])
-    ops = (tmp_path / "src" / "fom_ops.c").read_text()
-    assert ("reduction(max : r)" in ops) == (norm == "inf")
+    obj = (tmp_path / "src" / "fom_objective.c").read_text()
+    assert ("reduction(max : r)" in obj) == (norm == "inf")
     for flags in (["-fopenmp"], ["-Xclang", "-fopenmp"]):
-        cmd = [requires_compiler, "-Werror", "-Wall", "-Iinclude", *flags, "-c", "src/fom_ops.c"]
-        proc = subprocess.run(cmd + ["-o", "ops.o"], cwd=tmp_path, capture_output=True, text=True)
+        cmd = [requires_compiler, "-Werror", "-Wall", "-Iinclude", *flags, "-c"]
+        cmd += ["src/fom_objective.c"]
+        proc = subprocess.run(cmd + ["-o", "obj.o"], cwd=tmp_path, capture_output=True, text=True)
         if proc.returncode == 0:
             return
     pytest.skip(f"no OpenMP-capable compiler front end: {proc.stderr[-300:]}")
@@ -873,10 +881,39 @@ def test_verify_passes_after_scaffold_restore(tmp_path, requires_compiler):
     objective artifacts deterministic."""
     case = build_ista_objective()
     result = _generate(case, tmp_path, ISTA_GOLDEN)
-    before = (tmp_path / "src" / "fom_ops.c").read_text()
+    before = (tmp_path / "src" / "fom_objective.c").read_text()
     result.target.scaffold(result.ir, tmp_path)
-    assert (tmp_path / "src" / "fom_ops.c").read_text() == before
+    assert (tmp_path / "src" / "fom_objective.c").read_text() == before
     assert build_and_verify(tmp_path, result.target).success
+
+
+def test_the_optimizer_cannot_rewrite_the_objective(tmp_path, requires_compiler):
+    """fom_ops.c is editable in the code optimization phase, fom_objective.c is
+    not: a rewrite that makes the objective stop at once is discarded before
+    verify, and the shipped objective is the generated one."""
+    case = build_ista_objective()
+    rel = "src/fom_objective.c"
+
+    def stop_at_once(text: str) -> str:
+        return text.replace("    return r;", "    return 0.0;")
+
+    result = generate_code(
+        case["verifier"],
+        case["next_state"],
+        tmp_path,
+        config=case["config"],
+        driver=StubAgentDriver(ISTA_GOLDEN, extra_sources={rel: stop_at_once}),
+        name="ista",
+        code_optimization=True,
+        **gate(case),
+    )
+    assert result.success, result.optimize.log
+    # Restored before verify ran: the tampered objective would stop at once.
+    assert "VERIFY OK" in result.optimize.log
+    generated = (tmp_path / rel).read_text()
+    assert "return r;" in generated and stop_at_once(generated) != generated
+    assert rel not in result.optimization_diff
+    assert not (tmp_path / "release" / "fom_objective.c").exists()
 
 
 # --------------------------------------------------------------------------

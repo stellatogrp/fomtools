@@ -14,7 +14,7 @@ SUMMARY_BEGIN = _SUMMARY_BEGIN
 SUMMARY_END = _SUMMARY_END
 
 
-def _objective_block(ir: FomIR, ops_src: str) -> str:
+def _objective_block(ir: FomIR, objective_src: str) -> str:
     """The objective-termination contract, shared by both phases."""
     if not ir.termination.uses_objective:
         return ""
@@ -28,7 +28,7 @@ def _objective_block(ir: FomIR, ops_src: str) -> str:
     )
     return f"""
 This solver STOPS ON THE VERIFICATION OBJECTIVE (termination kind `objective`).
-`{ops_src}` provides `fom_objective(...)` (declared in `include/fom_ops.h`), which
+`{objective_src}` provides `fom_objective(...)` (declared in `include/fom_ops.h`), which
 computes the certified metric r^k. Call it {where}; report its value in
 `solution.residual` and return `FOM_SOLVED` as soon as it is
 `<= work->settings.tol`. Never compute the metric yourself and never stop on any
@@ -58,7 +58,7 @@ state update. Do not write a loop over iterations and do not read
         if ir.unrolled
         else ""
     )
-    shape_block += _objective_block(ir, ops_src)
+    shape_block += _objective_block(ir, target.objective_source_path())
     return f"""\
 You are generating a high-performance, embedded implementation of a verified
 first-order optimization method named `{ir.name}`.
@@ -160,11 +160,12 @@ that breaks any of them is discarded when it is collected:
 Edit ONLY `{src}`: the Makefile, build flags, headers, numeric data,
 `{linsolve_src}`, and `{ops_src}` are fixed and restored automatically before
 every check, so changes to them are discarded (don't waste turns editing them)."""
-    objective_block = _objective_block(ir, ops_src)
+    objective_src = target.objective_source_path()
+    objective_block = _objective_block(ir, objective_src)
     if objective_block:
         objective_block += f"""Keep calling `fom_objective` exactly where it is called now: the
 checks it gates are part of the verified behavior, and their cost is already
-amortized over the check interval. It lives in `{ops_src}`, which stays fixed
+amortized over the check interval. It lives in `{objective_src}`, which stays fixed
 whatever else you may edit; do not reimplement or inline the metric anywhere.
 """
     return f"""\

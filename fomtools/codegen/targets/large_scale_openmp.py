@@ -42,7 +42,8 @@ class OpenMpTarget(EmbeddedCTarget):
                 "# Serial by default for portable verification; real builds use -fopenmp.",
                 "OMPFLAGS ?=",
                 "BENCHFLAGS ?= -O3 -Iinclude",
-                "SRC = src/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c",
+                "SRC = src/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c "
+                "src/fom_objective.c",
                 "# Package-written reference matvecs for verify's direct check of fom_ops.c.",
                 "VERIFY_SRC = $(wildcard test/ops_ref.c)",
                 "",
@@ -62,9 +63,10 @@ class OpenMpTarget(EmbeddedCTarget):
                 "\t./verify_bin",
                 "",
                 "release: release/fom_solver.c src/fom_data.c release/fom_linsolve.c "
-                "release/fom_ops.c",
+                "release/fom_ops.c src/fom_objective.c",
                 "\t$(CC) $(CFLAGS) $(OMPFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
-                "release/fom_linsolve.c release/fom_ops.c -o libfomsolver.$(LIBEXT) -lm",
+                "release/fom_linsolve.c release/fom_ops.c src/fom_objective.c "
+                "-o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "bench: $(SRC) test/bench_main.c",
                 "\t$(CC) $(BENCHFLAGS) $(OMPFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",

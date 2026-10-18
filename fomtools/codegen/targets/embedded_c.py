@@ -215,6 +215,11 @@ class EmbeddedCTarget(TargetDescriptor):
     def solver_source_path(self) -> str:
         return "src/fom_solver.c"
 
+    def objective_source_path(self) -> str:
+        """``fom_objective`` gets its own source: ``fom_ops.c`` is editable, the
+        metric the solver stops on is not."""
+        return "src/fom_objective.c"
+
     def verify_command(self) -> list[str]:
         return ["make", "verify"]
 
@@ -239,6 +244,8 @@ class EmbeddedCTarget(TargetDescriptor):
         (out / self.linsolve_source_path()).write_text(self._linsolve_source(ir))
         (out / "include" / "fom_ops.h").write_text(self._ops_header(ir))
         (out / self.ops_source_path()).write_text(self._ops_source(ir))
+        if self.objective_source_path() != self.ops_source_path():
+            (out / self.objective_source_path()).write_text(self._objective_file(ir))
         (out / "src" / "fom_data.c").write_text(self._data_source(ir))
         (out / "src" / "fom_profile.c").write_text(self._profile_source())
         if self._checked_ops(ir):
@@ -412,8 +419,10 @@ class EmbeddedCTarget(TargetDescriptor):
             lines.append("}")
             lines.append("")
         csr = {n for n in _matvec_matrix_names(ir) if _is_csr(ir.matrices[n])}
-        csr |= _objective_only_names(ir)  # emitted with fom_objective in fom_ops.c
+        objective_only = _objective_only_names(ir)  # emitted with fom_objective
         for name, md in ir.matrices.items():
+            if name in objective_only:
+                continue
             if name in csr:
                 if self.csr_in_data:
                     rows, cols = md.shape[0], md.shape[1] if len(md.shape) > 1 else 1
@@ -456,7 +465,7 @@ class EmbeddedCTarget(TargetDescriptor):
 
     def _data_source(self, ir: FomIR) -> str:
         csr = {n for n in _matvec_matrix_names(ir) if _is_csr(ir.matrices[n])}
-        csr |= _objective_only_names(ir)  # emitted with fom_objective in fom_ops.c
+        objective_only = _objective_only_names(ir)  # emitted with fom_objective
         lines = ['#include "fom_data.h"', ""]
         lines.append(_c_array("FOM_STATE_INIT", ir.state.init, storage="const"))
         lines.append("")
@@ -464,6 +473,8 @@ class EmbeddedCTarget(TargetDescriptor):
             lines.append(_c_array(f"FOM_SCHED_{sched}", ir.schedules[sched], storage="const"))
             lines.append("")
         for name, md in ir.matrices.items():
+            if name in objective_only:
+                continue
             if name in csr:
                 if self.csr_in_data:  # CSR only: never densified
                     rowptr, colidx, vals = md.csr()
@@ -534,7 +545,6 @@ class EmbeddedCTarget(TargetDescriptor):
         lines = ['#include "fom_ops.h"', '#include "fom_data.h"', ""]
         for name in _matvec_matrix_names(ir):
             lines += self._apply_routine(name, ir.matrices[name], f"fom_apply_{name}")
-        lines += self._objective_source(ir)
         return "\n".join(lines)
 
     def _apply_routine(self, name: str, md, fname: str) -> list[str]:
@@ -674,6 +684,17 @@ class EmbeddedCTarget(TargetDescriptor):
             for k, term in _live_terms(ir, block.linear_op)
             if term.scale is not None
         }
+
+    def _objective_file(self, ir: FomIR) -> str:
+        """``src/fom_objective.c``: ``fom_objective`` on its own, so a rewritten
+        ``fom_ops.c`` can never change the metric the solver stops on. Written
+        for every IR (the build lists it unconditionally); without an objective
+        it holds no code."""
+        lines = ['#include "fom_ops.h"', '#include "fom_data.h"', ""]
+        if ir.objective is None:
+            lines += ["/* No verification objective: this solver does not stop on one. */", ""]
+        lines += self._objective_source(ir)
+        return "\n".join(lines)
 
     def _objective_source(self, ir: FomIR) -> list[str]:
         """``fom_objective``: the verification objective, fused row by row.
@@ -1546,7 +1567,8 @@ class EmbeddedCTarget(TargetDescriptor):
                 "CC ?= cc",
                 "CFLAGS ?= -O2 -Wall -Iinclude",
                 "BENCHFLAGS ?= -O3 -Iinclude",
-                "SRC = src/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c",
+                "SRC = src/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c "
+                "src/fom_objective.c",
                 "# Package-written reference matvecs for verify's direct check of fom_ops.c.",
                 "VERIFY_SRC = $(wildcard test/ops_ref.c)",
                 "",
@@ -1566,9 +1588,10 @@ class EmbeddedCTarget(TargetDescriptor):
                 "",
                 "# Build the shared library from the marker-free production source.",
                 "release: release/fom_solver.c src/fom_data.c release/fom_linsolve.c "
-                "release/fom_ops.c",
+                "release/fom_ops.c src/fom_objective.c",
                 "\t$(CC) $(CFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
-                "release/fom_linsolve.c release/fom_ops.c -o libfomsolver.$(LIBEXT) -lm",
+                "release/fom_linsolve.c release/fom_ops.c src/fom_objective.c "
+                "-o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "bench: $(SRC) test/bench_main.c",
                 "\t$(CC) $(BENCHFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",
