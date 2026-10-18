@@ -93,6 +93,10 @@ class TargetDescriptor(ABC):
         """
         return []
 
+    def ops_data_path(self) -> str:
+        """Where the matrix data the matrix-vector products read lives."""
+        return "src/fom_data.c"
+
     def translation_checks(self, source: str, ir) -> list[str]:
         """Violations of the kernel rules in the translated solver (empty = OK).
 

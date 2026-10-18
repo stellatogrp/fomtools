@@ -388,11 +388,15 @@ scope (macros, static data) changed. The table is followed by any rule
 violations found in the collected rewrite. `result.kernel_checks` holds the same
 rows.
 
-On the large-scale CUDA target only `fom_solver.cu` is editable: verify there
-needs a GPU to run, so a rewritten solve or product could not be checked. The
-solver's rules above hold there too (from translation on), and `make compile`
-applies them without a GPU: every product goes through the generated
-`fom_apply_*` kernels.
+The large-scale CUDA target follows the same policy where `make verify` runs on
+a GPU (detected with `nvidia-smi`, or forced with `FOMTOOLS_CUDA_RUN=1`):
+`fom_ops.cu` and `fom_linsolve.cu` are editable, and the direct checks stage
+each probe through device buffers and compare the result with the same host
+reference. The device copies of the matrices live in the package-owned
+`include/fom_ops_data.cuh`, and the objective in `src/fom_objective.cu`, so a
+rewrite cannot change either. Without a GPU, verify only compiles, so only
+`fom_solver.cu` is editable there; its rules still hold from translation on,
+and `make compile` applies them.
 
 ## Linear solves: factorized, never inverted
 

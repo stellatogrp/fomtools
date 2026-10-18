@@ -144,6 +144,7 @@ def code_optimization_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     notes = target.agent_notes()
     notes_block = f"\n{notes}\n" if notes else ""
     editable = target.optimization_editable_paths()
+    ops_data = target.ops_data_path()
     if linsolve_src in editable:
         both = ops_src in editable
         others = f"`{linsolve_src}` (the linear solves, usually the hottest code)"
@@ -170,11 +171,11 @@ profile inside it, `#include "fom_profile.h"` there."""
             scope += f"""
 
 `{ops_src}` implements each `fom_apply_<name>(x, out)` (out += M @ x) over the
-matrix data in `src/fom_data.c`. Put any specialized matrix-vector kernel HERE,
+matrix data in `{ops_data}`. Put any specialized matrix-vector kernel HERE,
 inside the `fom_apply_<name>` it replaces — e.g. exploiting Toeplitz, Hadamard,
 banded or block structure, unrolling a small block, or a better sparse loop — and
 call it from `{src}`; do not write matrix-vector loops in `{src}`. Read the
-coefficients from `src/fom_data.c` (or values derived from them at setup); never
+coefficients from `{ops_data}` (or values derived from them at setup); never
 hardcode them. `{verify}` checks every `fom_apply_<name>` directly against its
 matrix, column by column (probing each unit vector) and on random vectors, so a
 kernel must apply exactly `M` for every input and must keep accumulating into

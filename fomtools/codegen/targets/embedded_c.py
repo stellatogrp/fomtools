@@ -593,6 +593,20 @@ class EmbeddedCTarget(TargetDescriptor):
         shipped without the other."""
         return self.ops_source_path() in self.optimization_editable_paths()
 
+    def _checked_call(self, kind: str, name: str) -> str:
+        """The function the direct checks call for ``fom_<kind>_<name>`` (``kind``
+        ``apply`` or ``lin_solve``) on host pointers: the routine itself here; a
+        device-staging wrapper on CUDA."""
+        return f"fom_{kind}_{name}"
+
+    def _verify_check_includes(self, ir: FomIR) -> list[str]:
+        """Extra includes the direct checks need in ``verify_main.c``."""
+        return []
+
+    def ops_data_path(self) -> str:
+        """Where the matrix data ``fom_ops.c`` reads lives (package-owned)."""
+        return "src/fom_data.c"
+
     def _checked_ops(self, ir: FomIR) -> list[str]:
         """Matrices whose ``fom_apply_<name>`` ``make verify`` checks on its own.
 
@@ -1002,7 +1016,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 "        int r;",
                 f"        for (r = 0; r < {k}; ++r) {{",
                 "            fom_float err = 0.0, scale = 1.0;",
-                f"            fom_lin_solve_{name}(FOM_VERIFY_LS_{up}_B[r], x);",
+                f"            {self._checked_call('lin_solve', name)}(FOM_VERIFY_LS_{up}_B[r], x);",
                 f"            for (j = 0; j < {fac.dim}; ++j) {{",
                 f"                fom_float d = x[j] - FOM_VERIFY_LS_{up}_X[r][j];",
                 f"                fom_float a = FOM_VERIFY_LS_{up}_X[r][j];",
@@ -1089,7 +1103,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 f"                x[c] = (r < {nb}) ? (fom_float)(c == r) "
                 f": FOM_VERIFY_OP_{up}_X[r - {nb}][c];",
                 f"            for (i = 0; i < {rows}; ++i) got[i] = ref[i] = (fom_float)(i % 7 - 3);",
-                f"            fom_apply_{name}(x, got);",
+                f"            {self._checked_call('apply', name)}(x, got);",
                 f"            fom_ref_apply_{name}(x, ref);",
                 f"            for (i = 0; i < {rows}; ++i) {{",
                 "                fom_float d = got[i] - ref[i];",
@@ -1317,6 +1331,7 @@ class EmbeddedCTarget(TargetDescriptor):
                     if self._checked_ops(ir)
                     else []
                 ),
+                *self._verify_check_includes(ir),
                 '#include "verify_data.h"',
                 "",
                 *(self._verify_stop_helper() if objective else []),

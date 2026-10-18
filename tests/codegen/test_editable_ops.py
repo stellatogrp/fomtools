@@ -184,7 +184,8 @@ def test_the_translation_phase_may_not_rewrite_ops(tmp_path, mpc, requires_compi
     assert MARK not in (tmp_path / OPS).read_text()
 
 
-def test_ops_are_checked_and_editable_only_off_cuda(mpc):
+def test_ops_are_checked_and_editable_only_off_cuda(mpc, monkeypatch):
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "0")  # CUDA without a GPU
     _, ir = mpc
     embedded = get_target(CONFIG)
     assert OPS in embedded.optimization_editable_paths()
@@ -203,9 +204,10 @@ def test_ops_are_checked_and_editable_only_off_cuda(mpc):
     assert "Edit ONLY" in code_optimization_instructions(ir, cuda)
 
 
-def test_the_cuda_solver_is_held_to_the_kernel_rules(tmp_path, mpc):
-    # fom_ops.cu stays fixed on CUDA, but the solver's rules are the same as on
-    # the CPU targets: `make compile` (verify without a GPU) applies them too.
+def test_the_cuda_solver_is_held_to_the_kernel_rules(tmp_path, mpc, monkeypatch):
+    # Without a GPU fom_ops.cu stays fixed on CUDA, but the solver's rules are
+    # the same as on the CPU targets: `make compile` applies them too.
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "0")
     _, ir = mpc
     cfg = CodegenConfig(version=Version.LARGE_SCALE, backend=Backend.CUDA)
     cuda = get_target(cfg)
@@ -495,3 +497,50 @@ def test_rewritten_follows_helpers_and_file_scope():
     # A changed macro or static data may affect any routine.
     after = ops("o[0] += x[0];", "#define K 1")
     assert _routine_rewritten("a", before, after) and _routine_rewritten("b", before, after)
+
+
+def test_cuda_on_a_gpu_has_the_cpu_policy(tmp_path, mpc, monkeypatch):
+    # Where verify runs on a GPU, CUDA edits the same files as the CPU targets,
+    # under the same direct checks (staged through the device) and rules.
+    import fomtools.codegen.kernel_rules as kernel_rules
+
+    _, ir = mpc
+    cfg = CodegenConfig(version=Version.LARGE_SCALE, backend=Backend.CUDA)
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "1")
+    cuda = get_target(cfg)
+    assert set(cuda.optimization_editable_paths()) == {
+        "src/fom_solver.cu",
+        "src/fom_linsolve.cu",
+        "src/fom_ops.cu",
+    }
+    assert cuda.objective_source_path() not in cuda.optimization_editable_paths()
+    scaffold(ir, tmp_path, cfg)
+    ops = (tmp_path / "src" / "fom_ops.cu").read_text()
+    assert '#include "fom_ops_data.cuh"' in ops and "FOM_OP_T0_STATE_VALS[" in ops
+    assert "__device__ static const" not in ops  # the data lives in the fixed header
+    assert "FOM_OP_T0_STATE_VALS[" in (tmp_path / "include" / "fom_ops_data.cuh").read_text()
+    # The reference reads an independent host copy.
+    assert "FOM_MAT_t0_state_VALS" in (tmp_path / "include" / "fom_data.h").read_text()
+    assert "fom_ref_apply_t0_state" in (tmp_path / "test" / "ops_ref.c").read_text()
+    verify = (tmp_path / "test" / "verify_main.c").read_text()
+    assert "fom_check_apply_t0_state(x, got);" in verify
+    assert "fom_ref_apply_t0_state(x, ref);" in verify
+    stage = (tmp_path / "test" / "check_stage.cu").read_text()
+    assert "fom_apply_t0_state(d_in, d_out);" in stage
+    for name, _ in cuda._checked_factorizations(ir):
+        assert f"fom_check_lin_solve_{name}(FOM_VERIFY_LS_" in verify
+        assert f"fom_lin_solve_{name}(d_in, d_out);" in stage
+    assert "$(CHECK_OBJS)" in (tmp_path / "Makefile").read_text()
+    # The generated kernels satisfy the ops rules with nothing exempt.
+    names = _matvec_matrix_names(ir)
+    assert kernel_rules.check("ops", ops, names) == []
+    prompt = code_optimization_instructions(ir, cuda)
+    assert "matrix data in `include/fom_ops_data.cuh`" in prompt
+    assert "`src/fom_ops.cu`, each `fom_apply_<name>`" in prompt
+
+    # Without a GPU: solver only, no host copy, no staging.
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "0")
+    scaffold(ir, tmp_path, cfg)
+    assert not (tmp_path / "test" / "check_stage.cu").exists()
+    assert not (tmp_path / "test" / "ops_ref.c").exists()
+    assert "FOM_MAT_t0_state_VALS" not in (tmp_path / "include" / "fom_data.h").read_text()

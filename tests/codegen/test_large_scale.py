@@ -1,7 +1,8 @@
 """Tests for the large-scale (OpenMP / CUDA) targets.
 
 OpenMP is built serially and numerically verified against the oracle (portable).
-CUDA is compile-checked only and skipped without ``nvcc`` (no GPU in CI).
+CUDA is compile-checked when ``nvcc`` is available and run-verified on a GPU
+(the cluster); otherwise those tests are skipped.
 """
 
 import shutil
@@ -23,6 +24,7 @@ from fomtools.codegen.config import (
 from fomtools.codegen.emit import scaffold
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.targets import get_target
+from fomtools.codegen.targets.large_scale_cuda import CudaTarget
 
 GOLDEN_ROOT = Path(__file__).parent / "golden" / "ista"
 OPENMP_GOLDEN = GOLDEN_ROOT / "large_scale_openmp" / "fom_solver.c"
@@ -298,7 +300,7 @@ def test_cuda_compile_builds_verify_and_bench(tmp_path):
     scaffold(ir, tmp_path, _cuda_config())
     mk = (tmp_path / "Makefile").read_text()
     assert "verify_bin" in mk and "bench_bin" in mk
-    assert "compile: $(OBJS) test/verify_main.c test/bench_main.c" in mk
+    assert "compile: $(OBJS) $(CHECK_OBJS) test/verify_main.c test/bench_main.c" in mk
     assert (tmp_path / "test" / "bench_main.c").exists()
 
 
@@ -478,3 +480,49 @@ def test_openmp_wrapper_matches_oracle(tmp_path, requires_compiler):
     out = solver.solve(p0=case["data"]["b"])
     expected = oracle.solve(param_values={"p0": case["data"]["b"]})
     assert np.allclose(out["x"], expected.solution, atol=1e-6)
+
+
+@pytest.mark.skipif(not CudaTarget._can_run_on_gpu(), reason="needs a GPU (or FOMTOOLS_CUDA_RUN=1)")
+def test_cuda_direct_check_keeps_a_right_kernel_and_rejects_a_wrong_one(tmp_path):
+    # On a GPU, fom_ops.cu is editable under the CPU targets' direct check.
+    from tests.codegen.conftest import build_ista
+
+    mark = "/* rewritten by the code optimization phase */"
+    sig = "static __global__ void fom_apply_t0_state_kern(const fom_float *x, fom_float *out) {"
+
+    def same(text: str) -> str:
+        return mark + "\n" + text
+
+    def wrong(text: str) -> str:  # entry (0, 1) off by one, no float literal
+        head, rest = text.split(sig, 1)
+        body, tail = rest.split("    out[i] += s;\n}", 1)
+        return (
+            mark
+            + "\n"
+            + head
+            + sig
+            + body
+            + "    if (i == 0) s += x[1];\n    out[i] += s;\n}"
+            + tail
+        )
+
+    case = build_ista()
+    for rewrite, kept in ((same, True), (wrong, False)):
+        out = tmp_path / rewrite.__name__
+        result = generate_code(
+            case["verifier"],
+            case["next_state"],
+            out,
+            config=_cuda_config(),
+            driver=StubAgentDriver(CUDA_GOLDEN, extra_sources={"src/fom_ops.cu": rewrite}),
+            name="ista",
+            code_optimization=True,
+        )
+        assert result.translate.success, result.translate.log
+        assert "OPSCHECK name=t0_state mode=basis" in result.translate.log
+        if kept:
+            assert "VERIFY OK" in result.optimize.log, result.optimize.log
+        else:
+            assert not result.optimization_kept
+            assert "fom_apply_t0_state entry (0, 1) is off by" in result.optimize.log
+            assert mark not in (out / "src" / "fom_ops.cu").read_text()
