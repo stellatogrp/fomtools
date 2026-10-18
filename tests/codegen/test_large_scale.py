@@ -260,11 +260,12 @@ def test_cuda_cg_scaffold_emits_device_cg(tmp_path):
     assert "FOM_FAC_T0_L_DATA" not in lin  # no triangular factor, no inverse
 
 
-def test_cuda_direct_solve_stays_on_host(tmp_path):
-    # Triangular solves have loop-carried dependencies: the LU solve runs on
-    # the host behind a device-pointer staging wrapper.
+def test_cuda_direct_solve_runs_on_the_device_through_cudss(tmp_path, monkeypatch):
+    # Nothing leaves the GPU: cuDSS factorizes the system matrix (device data) at
+    # the first solve and solves on the caller's device vectors; no host staging.
     from tests.codegen.conftest import build_dr
 
+    monkeypatch.setenv("CUDSS_HOME", "/opt/cudss")
     case = build_dr()
     cfg = _cuda_config()
     ir = extract_ir(case["verifier"], case["next_state"], config=cfg, name="dr")
@@ -272,9 +273,23 @@ def test_cuda_direct_solve_stays_on_host(tmp_path):
     assert fac.method == "lu"
     scaffold(ir, tmp_path, cfg)
     lin = (tmp_path / "src" / "fom_linsolve.cu").read_text()
-    assert f"static void fom_lin_solve_{name}_host(" in lin
     assert f'extern "C" void fom_lin_solve_{name}(' in lin
-    assert "cudaMemcpyDeviceToHost" in lin and "cudaMemcpyHostToDevice" in lin
+    assert "#include <cudss.h>" in lin and "CUDSS_MTYPE_GENERAL" in lin
+    assert "CUDSS_PHASE_FACTORIZATION" in lin and "CUDSS_PHASE_SOLVE" in lin
+    assert "cudaMemcpy" not in lin  # the matrix and the vectors stay on the device
+    assert f"__device__ static const fom_float FOM_FAC_{name.upper()}_A_VALS[" in lin
+    mk = (tmp_path / "Makefile").read_text()
+    assert "CUDSS_HOME ?= /opt/cudss" in mk and "$(LDLIBS)" in mk
+
+
+def test_cuda_cg_links_no_cudss(tmp_path):
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg()
+    ir = extract_ir(case["verifier"], case["next_state"], config=_cuda_cg_config(), name="cgqp")
+    scaffold(ir, tmp_path, _cuda_cg_config())
+    assert "cudss" not in (tmp_path / "src" / "fom_linsolve.cu").read_text()
+    assert "LDLIBS =\n" in (tmp_path / "Makefile").read_text()
 
 
 def test_cuda_verify_command_compile_only_without_gpu(monkeypatch):

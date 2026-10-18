@@ -39,6 +39,8 @@ include = ["fomtools*"]
 [project.optional-dependencies]
 gurobi = ["gurobipy>=12.0.1"]
 gpu = ["cupy-cuda12x"]
+# cuDSS for the CUDA target's direct linear solves (matches the CUDA 13 toolkit).
+cuda = ["nvidia-cudss-cu13; sys_platform == 'linux'"]
 
 # Code generation. The Claude Agent SDK is only needed to *run* the LLM coding
 # agent; extracting the IR, scaffolding, building, and the ctypes wrapper need

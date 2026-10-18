@@ -11,21 +11,24 @@ Design decisions (mirroring the CPU emission in ``embedded_c.py``):
   ``fom_lin_solve_<name>(b, x)`` keep their CPU signatures, but every pointer
   is a *device* pointer; each call launches kernels on the default stream.
   The solver body stays method-agnostic and free of matvec loops.
-* **Hand-written kernels, no cuSPARSE/cuBLAS.** Matrix data is baked into
-  ``__device__ const`` arrays (loaded with the CUDA module — no runtime
-  upload, no library handles, no extra link dependencies). SpMV is one thread
-  per row; dot products use a fixed-grid shared-memory block reduction, so the
-  in-run floating-point reduction order is stable. Library-backed SpMV is a
-  possible later optimization, not a correctness need.
+* **Nothing on the host during the iteration.** Every product, solve and
+  reduction runs on the device; matrix data is baked into ``__device__ const``
+  arrays (loaded with the CUDA module, no runtime upload). SpMV is one thread
+  per row (hand-written, no cuSPARSE); dot products use a fixed-grid
+  shared-memory block reduction, so the in-run floating-point reduction order
+  is stable.
 * **CG runs entirely on the device** (SpMV + dot + axpy kernels), mirroring
   :func:`fomtools.codegen.factorize._pcg_solve` exactly: same iteration, same
   stopping test ``r.r <= tol^2 (b.b)``. Only the reduction *order* differs
   from the serial NumPy oracle; CG converges to ``cg_tol`` so both land well
   within the verify tolerance.
-* **Direct (LDL^T / LU) solves stay on the host.** Sparse triangular solves
-  have loop-carried dependencies and do not parallelize naively; the emitted
-  ``fom_lin_solve_<name>`` stages ``b``/``x`` through host buffers and runs
-  the CPU routine. Prefer ``solve_method=CG`` for large SPD systems on CUDA.
+* **Direct (LDL^T / LU) solves through cuDSS.** NVIDIA's sparse direct solver
+  factorizes the fixed system matrix on the device at the first solve
+  (``CUDSS_MTYPE_SYMMETRIC`` with symmetric pivoting for LDL^T, so indefinite
+  KKT systems work; ``CUDSS_MTYPE_GENERAL`` for LU), and each call is one cuDSS
+  solve on device vectors. cuDSS comes from the ``nvidia-cudss`` wheel or
+  ``CUDSS_HOME`` and is linked only when a direct solve exists. Large SPD
+  systems take device CG under ``solve_method=AUTO``.
 * No matrix inverse is ever formed or used (project-wide invariant).
 
 The verify command auto-detects the hardware: on a GPU machine (``nvcc`` +
@@ -38,6 +41,7 @@ See :meth:`CudaTarget.verify_command`.
 from __future__ import annotations
 
 import functools
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -51,7 +55,6 @@ from fomtools.codegen.targets.embedded_c import (
     EmbeddedCTarget,
     _c_array,
     _c_int_array,
-    _factor_arrays,
     _fmt_float,
     _is_csr,
     _matvec_matrix_names,
@@ -71,6 +74,23 @@ def _gpu_visible() -> bool:
     # `nvidia-smi -L` lists one "GPU <n>: ..." line per device, or
     # "No devices were found" when none are visible.
     return proc.returncode == 0 and b"GPU " in proc.stdout
+
+
+def _cudss_home() -> str:
+    """cuDSS's install prefix: ``CUDSS_HOME``, else the ``nvidia-cudss`` wheel
+    (``nvidia/<cuda>/include/cudss.h``) in this Python, else empty."""
+    if os.environ.get("CUDSS_HOME"):
+        return os.environ["CUDSS_HOME"]
+    spec = importlib.util.find_spec("nvidia")
+    for root in spec.submodule_search_locations if spec else []:
+        for header in sorted(Path(root).glob("*/include/cudss.h")):
+            return str(header.parent.parent)
+    return ""
+
+
+def _direct(ir: FomIR) -> bool:
+    """Whether any linear solve is direct (LDL^T / LU), so cuDSS is linked."""
+    return any(fac.method != "cg" for fac in ir.factorizations.values())
 
 
 #: Threads per block for every emitted kernel (matvecs, CG, reductions).
@@ -468,18 +488,15 @@ class CudaTarget(EmbeddedCTarget):
             "#endif",
             "",
             "/* Solve M x = b for each affine operator; `b` and `x` are DEVICE",
-            "   pointers. CG systems run entirely on the GPU (CSR SpMV + reduction",
-            "   kernels + a diagonal Jacobi preconditioner). Direct factorizations",
-            "   (LDL^T / LU) are sparse triangular solves with loop-carried",
-            "   dependencies - inherently sequential - so they run on the host; the",
-            "   wrapper stages b/x through host buffers. Prefer solve_method=CG for",
-            "   large SPD systems on CUDA. No matrix inverse is ever formed or",
-            "   used. */",
+            "   pointers and everything runs on the GPU. CG systems: CSR SpMV +",
+            "   reduction kernels + a diagonal Jacobi preconditioner. Direct systems",
+            "   (LDL^T / LU): cuDSS factorizes M once, at the first solve, and each",
+            "   call is one cuDSS solve. No matrix inverse is ever formed or used. */",
             "",
         ]
         for name, fac in ir.factorizations.items():
             lines.append(f"#define FOM_FAC_{name.upper()}_DIM {fac.dim}")
-            where = "device CG" if fac.method == "cg" else f"host {fac.method.upper()}"
+            where = "device CG" if fac.method == "cg" else f"cuDSS {fac.method.upper()}"
             lines.append(
                 f"void fom_lin_solve_{name}(const fom_float *b, fom_float *x);  "
                 f"/* {where}, dim {fac.dim}, nnz {fac.nnz} */"
@@ -490,9 +507,8 @@ class CudaTarget(EmbeddedCTarget):
 
     def _linsolve_source(self, ir: FomIR) -> str:
         lines = [
-            "/* Deterministic linear solves for the CUDA target. CG solves run on",
-            "   the device (kernels below); direct LDL^T/LU triangular solves are",
-            "   sequential and run on the host behind a device-pointer wrapper.",
+            "/* Deterministic linear solves for the CUDA target, all on the device:",
+            "   CG kernels below, and cuDSS for the direct (LDL^T / LU) systems.",
             "   No matrix inverse is ever formed or used. */",
             '#include "fom_linsolve.h"',
             "",
@@ -502,38 +518,89 @@ class CudaTarget(EmbeddedCTarget):
         if any(fac.method == "cg" for fac in ir.factorizations.values()):
             lines.append(self._cg_shared_helpers())
             lines.append("")
+        if _direct(ir):
+            lines += self._cudss_shared(ir)
         for name, fac in ir.factorizations.items():
-            up = name.upper()
             if fac.method == "cg":
                 lines.append(self._cg_routine_cu(name, fac))
-                lines.append("")
-                continue
-            lines.append(
-                f"/* ---- factorization '{name}' ({fac.method.upper()}, host: triangular"
-                " solves are sequential) ---- */"
-            )
-            lines += _factor_arrays(name, fac)
+            else:
+                lines += self._cudss_routine(name, fac)
             lines.append("")
-            lines.append(
-                self._solve_routine(
-                    name, fac, func_name=f"fom_lin_solve_{name}_host", storage="static"
-                )
-            )
-            lines += [
-                "",
-                f"static fom_float fom_lin_b_{name}[FOM_FAC_{up}_DIM];",
-                f"static fom_float fom_lin_x_{name}[FOM_FAC_{up}_DIM];",
-                "",
-                f'extern "C" void fom_lin_solve_{name}(const fom_float *b, fom_float *x) {{',
-                f"    cudaMemcpy(fom_lin_b_{name}, b, sizeof(fom_float) * FOM_FAC_{up}_DIM,",
-                "               cudaMemcpyDeviceToHost);",
-                f"    fom_lin_solve_{name}_host(fom_lin_b_{name}, fom_lin_x_{name});",
-                f"    cudaMemcpy(x, fom_lin_x_{name}, sizeof(fom_float) * FOM_FAC_{up}_DIM,",
-                "               cudaMemcpyHostToDevice);",
-                "}",
-                "",
-            ]
         return "\n".join(lines)
+
+    def _cudss_shared(self, ir: FomIR) -> list[str]:
+        value = "CUDSS_R_32F" if ir.dtype == "float32" else "CUDSS_R_64F"
+        return [
+            "#include <stdio.h>",
+            "#include <cudss.h>",
+            "",
+            f"#define FOM_DSS_VALUE {value}",
+            "/* cuDSS 0.8 types the CSR row offsets separately from the column indices. */",
+            "#if CUDSS_VERSION >= 800",
+            "#define FOM_DSS_CSR_TYPES CUDSS_R_32I, CUDSS_R_32I",
+            "#else",
+            "#define FOM_DSS_CSR_TYPES CUDSS_R_32I",
+            "#endif",
+            "",
+            "static cudssHandle_t fom_dss_handle = 0;",
+            "",
+            "static void fom_dss_check(cudssStatus_t s, const char *what) {",
+            "    if (s != CUDSS_STATUS_SUCCESS)",
+            '        fprintf(stderr, "fom_linsolve: cuDSS %s failed (status %d)\\n", what, (int)s);',
+            "}",
+            "",
+        ]
+
+    def _cudss_routine(self, name: str, fac) -> list[str]:
+        """A direct system through cuDSS: analysis and factorization of the fixed
+        ``M`` at the first call (``M`` is device data, so nothing leaves the
+        GPU), then one cuDSS solve per call on the caller's device vectors."""
+        up = name.upper()
+        n = f"FOM_FAC_{up}_DIM"
+        rowptr, colidx, vals = csr_arrays(fac.A.to_scipy())
+        # The symmetric part for LDL^T (indefinite KKT systems pivot symmetrically).
+        mtype = "CUDSS_MTYPE_SYMMETRIC" if fac.method == "ldlt" else "CUDSS_MTYPE_GENERAL"
+        h = "fom_dss_handle"
+        sys = f"fom_dss_{name}"
+        args = f"{h}, {sys}_config, {sys}_data, {sys}_A, {sys}_x, {sys}_b"
+        return [
+            f"/* ---- solve '{name}' ({fac.method.upper()}, cuDSS on the device) ---- */",
+            _c_int_array(f"FOM_FAC_{up}_A_ROWPTR", rowptr, storage=_DEVICE_CONST),
+            _c_int_array(f"FOM_FAC_{up}_A_COLIDX", colidx, storage=_DEVICE_CONST),
+            _c_array(f"FOM_FAC_{up}_A_VALS", vals, storage=_DEVICE_CONST),
+            "",
+            f"static cudssConfig_t {sys}_config;",
+            f"static cudssData_t {sys}_data;",
+            f"static cudssMatrix_t {sys}_A = 0, {sys}_b, {sys}_x;",
+            "",
+            f'extern "C" void fom_lin_solve_{name}(const fom_float *b, fom_float *x) {{',
+            f"    if (!{sys}_A) {{",
+            "        void *rowptr, *colidx, *vals;",
+            f"        cudaGetSymbolAddress(&rowptr, FOM_FAC_{up}_A_ROWPTR);",
+            f"        cudaGetSymbolAddress(&colidx, FOM_FAC_{up}_A_COLIDX);",
+            f"        cudaGetSymbolAddress(&vals, FOM_FAC_{up}_A_VALS);",
+            f'        if (!{h}) fom_dss_check(cudssCreate(&{h}), "create");',
+            f'        fom_dss_check(cudssConfigCreate(&{sys}_config), "config");',
+            f'        fom_dss_check(cudssDataCreate({h}, &{sys}_data), "data");',
+            f"        fom_dss_check(cudssMatrixCreateCsr(&{sys}_A, {n}, {n}, {fac.A.nnz}, rowptr, "
+            "NULL, colidx, vals,",
+            f"                                           FOM_DSS_CSR_TYPES, FOM_DSS_VALUE, {mtype},",
+            "                                           CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO),",
+            '                      "matrix");',
+            f"        fom_dss_check(cudssMatrixCreateDn(&{sys}_b, {n}, 1, {n}, b, FOM_DSS_VALUE,",
+            '                                          CUDSS_LAYOUT_COL_MAJOR), "rhs");',
+            f"        fom_dss_check(cudssMatrixCreateDn(&{sys}_x, {n}, 1, {n}, x, FOM_DSS_VALUE,",
+            '                                          CUDSS_LAYOUT_COL_MAJOR), "solution");',
+            f'        fom_dss_check(cudssExecute({h}, CUDSS_PHASE_ANALYSIS, {args[len(h) + 2 :]}), "analysis");',
+            f"        fom_dss_check(cudssExecute({h}, CUDSS_PHASE_FACTORIZATION, "
+            f'{args[len(h) + 2 :]}), "factorization");',
+            "    } else {",
+            f"        cudssMatrixSetValues({sys}_b, b);",
+            f"        cudssMatrixSetValues({sys}_x, x);",
+            "    }",
+            f'    fom_dss_check(cudssExecute({h}, CUDSS_PHASE_SOLVE, {args[len(h) + 2 :]}), "solve");',
+            "}",
+        ]
 
     def _cg_shared_helpers(self) -> str:
         """Kernels shared by every device CG solve: dot product + vector updates."""
@@ -700,12 +767,25 @@ class CudaTarget(EmbeddedCTarget):
     # -- build ---------------------------------------------------------------
     def _makefile(self, ir: FomIR | None = None) -> str:
         guard, guard_rules = self._objective_guard(ir)
+        if ir is not None and _direct(ir):
+            cudss = [
+                "# cuDSS, for the direct linear solves on the device: CUDSS_HOME, by default",
+                "# the nvidia-cudss wheel found when this directory was generated.",
+                f"CUDSS_HOME ?= {_cudss_home()}",
+                "CUDSS_LIB = $(firstword $(wildcard $(CUDSS_HOME)/lib/libcudss.so "
+                "$(CUDSS_HOME)/lib/libcudss.so.0 $(CUDSS_HOME)/lib64/libcudss.so))",
+                "LINSOLVE_FLAGS = -I$(CUDSS_HOME)/include",
+                "LDLIBS = $(CUDSS_LIB) -Xlinker -rpath=$(dir $(CUDSS_LIB))",
+            ]
+        else:
+            cudss = ["LINSOLVE_FLAGS =", "LDLIBS ="]
         return "\n".join(
             [
                 "CC ?= cc",
                 "NVCC ?= nvcc",
                 "CFLAGS ?= -O3 -Iinclude -Itest",
                 "NVCCFLAGS ?= -O3 -Iinclude -Itest",
+                *cudss,
                 "",
                 "CU_SRC = src/fom_solver.cu src/fom_ops.cu src/fom_linsolve.cu "
                 "src/fom_objective.cu",
@@ -717,7 +797,15 @@ class CudaTarget(EmbeddedCTarget):
                 "fom_ops.o: src/fom_ops.cu",
                 "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
                 "fom_linsolve.o: src/fom_linsolve.cu",
-                "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
+                *(
+                    [
+                        '\t@test -n "$(CUDSS_HOME)" || (echo "cuDSS not found: pip install '
+                        'nvidia-cudss-cu13, or set CUDSS_HOME"; exit 1)'
+                    ]
+                    if ir is not None and _direct(ir)
+                    else []
+                ),
+                "\t$(NVCC) $(NVCCFLAGS) $(LINSOLVE_FLAGS) -c $< -o $@",
                 "fom_objective.o: src/fom_objective.cu",
                 "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
                 "fom_data.o: src/fom_data.c",
@@ -739,9 +827,9 @@ class CudaTarget(EmbeddedCTarget):
                 f"compile:{guard} $(OBJS) $(CHECK_OBJS) test/verify_main.c test/bench_main.c",
                 _KERNEL_CHECK_RECIPE,
                 "\t$(CC) $(CFLAGS) -c test/verify_main.c -o verify_main.o",
-                "\t$(NVCC) $(NVCCFLAGS) $(OBJS) $(CHECK_OBJS) verify_main.o -o verify_bin",
+                "\t$(NVCC) $(NVCCFLAGS) $(OBJS) $(CHECK_OBJS) verify_main.o -o verify_bin $(LDLIBS)",
                 "\t$(CC) $(CFLAGS) -c test/bench_main.c -o bench_main.o",
-                "\t$(NVCC) $(NVCCFLAGS) $(OBJS) bench_main.o -o bench_bin",
+                "\t$(NVCC) $(NVCCFLAGS) $(OBJS) bench_main.o -o bench_bin $(LDLIBS)",
                 "",
                 "# Run-verification (requires a GPU): check the solver vs the oracle.",
                 "verify: compile",
@@ -752,8 +840,8 @@ class CudaTarget(EmbeddedCTarget):
                 "\t./bench_bin",
                 "",
                 "lib: $(CU_SRC) src/fom_data.c",
-                "\t$(NVCC) $(NVCCFLAGS) --shared -Xcompiler -fPIC $(CU_SRC) src/fom_data.c "
-                "-o libfomsolver.so",
+                "\t$(NVCC) $(NVCCFLAGS) $(LINSOLVE_FLAGS) --shared -Xcompiler -fPIC $(CU_SRC) "
+                "src/fom_data.c -o libfomsolver.so $(LDLIBS)",
                 "",
                 "clean:",
                 "\trm -f verify_bin bench_bin *.o libfomsolver.so",
@@ -779,8 +867,8 @@ class CudaTarget(EmbeddedCTarget):
                 "",
                 "`src/fom_solver.cu` orchestrates the iteration; the deterministic",
                 "device code lives in `src/fom_ops.cu` (matrix-vector kernels, CSR",
-                "where structured), `src/fom_linsolve.cu` (device CG; host LDL^T/LU",
-                "behind a staging wrapper - triangular solves are sequential) and",
+                "where structured), `src/fom_linsolve.cu` (device CG, or cuDSS for",
+                "LDL^T/LU; set CUDSS_HOME if cuDSS was not found at generation) and",
                 "`src/fom_objective.cu` (the verification objective). All",
                 "`fom_apply_*` / `fom_lin_solve_*` arguments are DEVICE pointers.",
                 "Host-side numeric data lives in `src/fom_data.c`. See `SPEC.md`.",
