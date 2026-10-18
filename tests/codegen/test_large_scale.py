@@ -275,7 +275,8 @@ def test_cuda_direct_solve_runs_on_the_device_through_cudss(tmp_path, monkeypatc
     lin = (tmp_path / "src" / "fom_linsolve.cu").read_text()
     assert f'extern "C" void fom_lin_solve_{name}(' in lin
     assert "#include <cudss.h>" in lin and "CUDSS_MTYPE_GENERAL" in lin
-    assert "CUDSS_PIVOT_GLOBAL_ROW" in lin  # partial pivoting, as on the CPU
+    assert "CUDSS_MATCHING_ALG_AUTO" in lin  # keeps local pivoting accurate
+    assert "CUDSS_PIVOT_GLOBAL_ROW" not in lin  # the slow path
     assert "CUDSS_PHASE_FACTORIZATION" in lin and "CUDSS_PHASE_SOLVE" in lin
     assert "cudaMemcpy" not in lin  # the matrix and the vectors stay on the device
     assert f"__device__ static const fom_float FOM_FAC_{name.upper()}_A_VALS[" in lin
