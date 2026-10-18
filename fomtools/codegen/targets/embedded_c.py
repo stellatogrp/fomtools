@@ -245,12 +245,12 @@ class EmbeddedCTarget(TargetDescriptor):
             (out / self.objective_source_path()).write_text(self._objective_file(ir))
         (out / "src" / "fom_data.c").write_text(self._data_source(ir))
         (out / "src" / "fom_profile.c").write_text(self._profile_source())
+        (out / "test" / "kernel_check.py").write_text(Path(kernel_rules.__file__).read_text())
         if self._checked_ops(ir):
             (out / "test" / "ops_ref.h").write_text(self._ops_ref_header(ir))
             (out / "test" / "ops_ref.c").write_text(self._ops_ref_source(ir))
-            (out / "test" / "kernel_check.py").write_text(Path(kernel_rules.__file__).read_text())
         else:
-            for rel in ("test/ops_ref.h", "test/ops_ref.c", "test/kernel_check.py"):
+            for rel in ("test/ops_ref.h", "test/ops_ref.c"):
                 (out / rel).unlink(missing_ok=True)
         (out / "test" / "verify_data.h").write_text(self._verify_data(ir))
         (out / "test" / "verify_main.c").write_text(self._verify_main(ir))
@@ -588,8 +588,9 @@ class EmbeddedCTarget(TargetDescriptor):
     # -- reference matvecs for the direct check of a rewritten fom_ops.c ---
     def _ops_editable(self) -> bool:
         """Whether the code optimization phase may rewrite ``fom_ops.c``. The one
-        condition for both the direct check (:meth:`_checked_ops`) and the kernel
-        rules (:meth:`_kernel_rule_kinds`): neither is shipped without the other."""
+        condition for both the direct check (:meth:`_checked_ops`) and the
+        ``fom_ops.c`` kernel rules (:meth:`_kernel_rule_kinds`): neither is
+        shipped without the other."""
         return self.ops_source_path() in self.optimization_editable_paths()
 
     def _checked_ops(self, ir: FomIR) -> list[str]:
@@ -1675,8 +1676,9 @@ class EmbeddedCTarget(TargetDescriptor):
     ) -> list[str]:
         """The :mod:`~fomtools.codegen.kernel_rules` for a rewritten solver or ``fom_ops.c``.
 
-        Only where ``fom_ops.c`` is editable (and so checked against the matrices):
-        the rules keep coefficients inside the routines that check covers.
+        The solver's rules hold on every target (its products go through
+        ``fom_apply_*``, generated or checked); ``fom_ops.c``'s only where it is
+        editable, and so checked against the matrices.
         """
         kind = self._kernel_rule_kinds().get(rel)
         if kind is None:
@@ -1684,21 +1686,18 @@ class EmbeddedCTarget(TargetDescriptor):
         return kernel_rules.check(kind, source, _matvec_matrix_names(ir), baseline)
 
     def _kernel_rule_kinds(self) -> dict[str, str]:
-        if not self._ops_editable():
-            return {}
-        return {self.solver_source_path(): "solver", self.ops_source_path(): "ops"}
+        kinds = {self.solver_source_path(): "solver"}
+        if self._ops_editable():
+            kinds[self.ops_source_path()] = "ops"
+        return kinds
 
     def translation_checks(self, source: str, ir: FomIR) -> list[str]:
-        if not self._kernel_rule_kinds():
-            return []
         return kernel_rules.check("translation", source, _matvec_matrix_names(ir))
 
     def write_kernel_check_config(
         self, out_dir, ir: FomIR, baselines: dict[str, str] | None
     ) -> None:
         kinds = self._kernel_rule_kinds()
-        if not kinds:
-            return
         if baselines is None:  # translation: the solver only, with no baseline
             files = [{"path": self.solver_source_path(), "kind": "translation"}]
         else:

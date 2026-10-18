@@ -45,6 +45,7 @@ from fomtools.codegen.ir import FomIR, csr_arrays
 from fomtools.codegen.objective import objective_c_params
 from fomtools.codegen.targets.base import objective_violations
 from fomtools.codegen.targets.embedded_c import (
+    _KERNEL_CHECK_RECIPE,
     EmbeddedCTarget,
     _c_array,
     _c_int_array,
@@ -588,6 +589,7 @@ class CudaTarget(EmbeddedCTarget):
                 "# Building bench_bin here too means a CI compile-check catches bench",
                 "# breakage even though benchmarking itself needs a GPU.",
                 f"compile:{guard} $(OBJS) test/verify_main.c test/bench_main.c",
+                _KERNEL_CHECK_RECIPE,
                 "\t$(CC) $(CFLAGS) -c test/verify_main.c -o verify_main.o",
                 "\t$(NVCC) $(NVCCFLAGS) $(OBJS) verify_main.o -o verify_bin",
                 "\t$(CC) $(CFLAGS) -c test/bench_main.c -o bench_main.o",

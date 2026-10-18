@@ -203,6 +203,26 @@ def test_ops_are_checked_and_editable_only_off_cuda(mpc):
     assert "Edit ONLY" in code_optimization_instructions(ir, cuda)
 
 
+def test_the_cuda_solver_is_held_to_the_kernel_rules(tmp_path, mpc):
+    # fom_ops.cu stays fixed on CUDA, but the solver's rules are the same as on
+    # the CPU targets: `make compile` (verify without a GPU) applies them too.
+    _, ir = mpc
+    cfg = CodegenConfig(version=Version.LARGE_SCALE, backend=Backend.CUDA)
+    cuda = get_target(cfg)
+    scaffold(ir, tmp_path, cfg)
+    assert (tmp_path / "test" / "kernel_check.py").exists()
+    assert not (tmp_path / "test" / "ops_ref.c").exists()
+    compile_rule = (tmp_path / "Makefile").read_text().split("compile:", 1)[1]
+    assert "python3 test/kernel_check.py" in compile_rule.split("\n\n", 1)[0]
+    prompt = code_optimization_instructions(ir, cuda)
+    assert "must not read the `FOM_MAT_<name>` data" in prompt
+    assert "`fom_setup` and `fom_update_params` must not add calls" in prompt
+    assert "`src/fom_ops.cu`, each `fom_apply_<name>`" not in prompt  # fixed there
+    cuda.write_kernel_check_config(tmp_path, ir, None)
+    config = (tmp_path / "test" / "kernel_check.json").read_text()
+    assert '"src/fom_solver.cu"' in config and '"translation"' in config
+
+
 def test_a_hardcoded_coefficient_in_ops_is_rejected(tmp_path, mpc, requires_compiler):
     # Numerically right (adds 0.37 * 0), but a literal coefficient is untraceable.
     def with_literal(text: str) -> str:

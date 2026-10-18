@@ -48,15 +48,11 @@ def translation_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     linsolve_src = target.linsolve_source_path()
     notes = target.agent_notes()
     notes_block = f"\n{notes}\n" if notes else ""
-    ops_rule = (
-        f"""
+    ops_rule = f"""
   The one exception: never read the data of a matrix you multiply by (any
   matrix with a `fom_apply_<name>` in `{ops_src}`); multiply only through
   `fom_apply_<name>`, which `{verify}` checks against the matrix. `{verify}`
   reports a breach as `VERIFY FAILED: kernel rule: ...`."""
-        if ops_src in target.optimization_editable_paths()
-        else ""
-    )
     shape_block = (
         """
 This specification is UNROLLED: its body is the whole recorded run, not one
@@ -112,6 +108,32 @@ the fastest correct implementation.
 """
 
 
+def _kernel_rules_block(src: str, ops_src: str, verify: str, ops_editable: bool) -> str:
+    """The kernel rules (:mod:`fomtools.codegen.kernel_rules`), on every target."""
+    own_data = (
+        f""" In `{ops_src}`, each `fom_apply_<name>`
+  reads only its own matrix's data, and only inside its single definition: a
+  helper kernel takes the arrays as arguments from it."""
+        if ops_editable
+        else ""
+    )
+    files = f"`{src}` and `{ops_src}`" if ops_editable else f"`{src}`"
+    same_routine = f", in the same routine of `{ops_src}`," if ops_editable else ""
+    return f"""
+
+Three rules keep every coefficient inside the checked `fom_apply_<name>`
+routines; `{verify}` reports a breach as `VERIFY FAILED: kernel rule: ...`, and a
+rewrite that breaks any of them is discarded when it is collected:
+- `{src}` must not read the `FOM_MAT_<name>` data of any matrix it multiplies
+  by; call `fom_apply_<name>` instead.{own_data}
+- {files} must not add floating-point constants other than `0.0`,
+  `0.5`, `1.0` and `2.0`, whether written as decimal or hex float literals or as
+  integers cast to a floating type (literals the translated file already
+  had{same_routine} are fine).
+- `fom_setup` and `fom_update_params` must not add calls to `fom_apply_*`: apply
+  matrices in the iteration, never probe them to rebuild a matrix."""
+
+
 def code_optimization_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     """Instructions for the code optimization phase (profile-guided rewriting)."""
     verify = " ".join(target.verify_command())
@@ -155,24 +177,13 @@ coefficients from `src/fom_data.c` (or values derived from them at setup); never
 hardcode them. `{verify}` checks every `fom_apply_<name>` directly against its
 matrix, column by column (probing each unit vector) and on random vectors, so a
 kernel must apply exactly `M` for every input and must keep accumulating into
-`out`. Three rules keep every coefficient inside those checked routines;
-`{verify}` reports a breach as `VERIFY FAILED: kernel rule: ...`, and a rewrite
-that breaks any of them is discarded when it is collected:
-- `{src}` must not read the `FOM_MAT_<name>` data of any matrix it multiplies
-  by; call `fom_apply_<name>` instead. In `{ops_src}`, each `fom_apply_<name>`
-  reads only its own matrix's data, and only inside its single definition: a
-  helper kernel takes the arrays as arguments from it.
-- `{src}` and `{ops_src}` must not add floating-point constants other than `0.0`,
-  `0.5`, `1.0` and `2.0`, whether written as decimal or hex float literals or as
-  integers cast to a floating type (literals the translated file already had,
-  in the same routine of `{ops_src}`, are fine).
-- `fom_setup` and `fom_update_params` must not add calls to `fom_apply_*`: apply
-  matrices in the iteration, never probe them to rebuild a matrix."""
+`out`."""
     else:
         scope = f"""\
 Edit ONLY `{src}`: the Makefile, build flags, headers, numeric data,
 `{linsolve_src}`, and `{ops_src}` are fixed and restored automatically before
 every check, so changes to them are discarded (don't waste turns editing them)."""
+    scope += _kernel_rules_block(src, ops_src, verify, ops_src in editable)
     objective_src = target.objective_source_path()
     objective_block = _objective_block(ir, objective_src)
     if objective_block:

@@ -211,14 +211,18 @@ def test_solver_may_read_clip_bounds_and_dimensions(target, mpc_ir):
     assert target.kernel_checks("src/fom_solver.c", source, mpc_ir) == []
 
 
-def test_kernel_checks_skip_other_files_and_cuda(target, mpc_ir):
+def test_kernel_checks_skip_other_files_but_hold_the_cuda_solver(target, mpc_ir):
     from fomtools.codegen.config import Backend, Version
     from fomtools.codegen.targets import get_target
 
-    source = "fom_float f(void){ return 0.37 * FOM_MAT_t0_state[0]; }"
+    source = SETUP + "fom_float f(void){ return 0.37 * FOM_MAT_t0_state[0]; }"
     assert target.kernel_checks("src/fom_linsolve.c", source, mpc_ir) == []
+    # CUDA: fom_ops.cu is fixed, but the solver is held to the same rules.
     cuda = get_target(CodegenConfig(version=Version.LARGE_SCALE, backend=Backend.CUDA))
-    assert cuda.kernel_checks(cuda.solver_source_path(), source, mpc_ir) == []
+    assert cuda.kernel_checks(cuda.solver_source_path(), source, mpc_ir) == target.kernel_checks(
+        target.solver_source_path(), source, mpc_ir
+    )
+    assert cuda.kernel_checks(cuda.ops_source_path(), source, mpc_ir) == []
 
 
 def test_literals_already_in_the_translated_file_are_exempt(target, mpc_ir):
@@ -297,4 +301,4 @@ def test_translation_checks_only_matrix_data_reads(target, mpc_ir):
         "fom_apply_t0_state, which verify checks against the matrix"
     ]
     cuda = get_target(CodegenConfig(version=Version.LARGE_SCALE, backend=Backend.CUDA))
-    assert cuda.translation_checks(source, mpc_ir) == []
+    assert cuda.translation_checks(source, mpc_ir) == target.translation_checks(source, mpc_ir)

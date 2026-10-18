@@ -162,7 +162,9 @@ def test_soft_threshold_separation_matches_hull(case, k):
     def soft(t):
         return _soft(t, lambd)
 
-    lo, hi = {"both": (-lambd, lambd), "right_only": (lambd, lambd), "left_only": (-lambd, -lambd)}[case]
+    lo, hi = {"both": (-lambd, lambd), "right_only": (lambd, lambd), "left_only": (-lambd, -lambd)}[
+        case
+    ]
     n_checked = 0
     for _ in range(5000):
         if n_checked == 25:
@@ -205,7 +207,9 @@ def record_cuts(monkeypatch):
 
     def recording(cut, w_expr, leaves):
         ((w_leaf, coeff),) = w_expr.decomposition_dict.items()
-        pos = int(np.argmax(np.abs(np.asarray(coeff.todense() if hasattr(coeff, "todense") else coeff))))
+        pos = int(
+            np.argmax(np.abs(np.asarray(coeff.todense() if hasattr(coeff, "todense") else coeff)))
+        )
         records.append((list(leaves), w_leaf, pos, cut))
         return original(cut, w_expr, leaves)
 

@@ -388,7 +388,10 @@ violations found in the collected rewrite. `result.kernel_checks` holds the same
 rows.
 
 On the large-scale CUDA target only `fom_solver.cu` is editable: verify there
-needs a GPU to run, so a rewritten solve or product could not be checked.
+needs a GPU to run, so a rewritten solve or product could not be checked. The
+solver's rules above hold there too (from translation on), and `make compile`
+applies them without a GPU: every product goes through the generated
+`fom_apply_*` kernels.
 
 ## Linear solves: factorized, never inverted
 
