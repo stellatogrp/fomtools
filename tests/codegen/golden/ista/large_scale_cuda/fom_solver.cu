@@ -5,7 +5,7 @@
  * (fom_ops.cu, device pointers, accumulating); this file only orchestrates:
  * device-resident state across the whole iteration loop (pointer swap, no
  * copies), a soft-threshold kernel, and a max-|diff| residual reduction. The
- * only per-iteration device->host traffic is the residual partials.
+ * only per-iteration device->host traffic is the residual scalar.
  */
 #include <cuda_runtime.h>
 
@@ -18,7 +18,6 @@
 
 static fom_float *d_state = 0, *d_new_state = 0, *d_acc = 0, *d_t0 = 0;
 static fom_float *d_p0 = 0, *d_red = 0;
-static fom_float h_red[RED_BLOCKS];
 
 __global__ void soft_threshold_kern(const fom_float *acc, fom_float *t0,
                                     fom_float lam, int n) {
@@ -51,13 +50,24 @@ __global__ void maxdiff_kern(const fom_float *a, const fom_float *b, int n,
     if (threadIdx.x == 0) partials[blockIdx.x] = sh[0];
 }
 
+/* one block folds the per-block partials into partials[0] */
+__global__ void maxfold_kern(fom_float *partials) {
+    __shared__ fom_float sh[RED_BLOCKS];
+    sh[threadIdx.x] = partials[threadIdx.x];
+    __syncthreads();
+    for (int w = RED_BLOCKS >> 1; w > 0; w >>= 1) {
+        if (threadIdx.x < w && sh[threadIdx.x + w] > sh[threadIdx.x])
+            sh[threadIdx.x] = sh[threadIdx.x + w];
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) partials[0] = sh[0];
+}
+
 static fom_float device_max_diff(const fom_float *a, const fom_float *b, int n) {
-    fom_float m = 0.0;
-    int i;
+    fom_float m;
     maxdiff_kern<<<RED_BLOCKS, THREADS>>>(a, b, n, d_red);
-    cudaMemcpy(h_red, d_red, sizeof(fom_float) * RED_BLOCKS, cudaMemcpyDeviceToHost);
-    for (i = 0; i < RED_BLOCKS; ++i)
-        if (h_red[i] > m) m = h_red[i];
+    maxfold_kern<<<1, RED_BLOCKS>>>(d_red);
+    cudaMemcpy(&m, d_red, sizeof(fom_float), cudaMemcpyDeviceToHost);
     return m;
 }
 

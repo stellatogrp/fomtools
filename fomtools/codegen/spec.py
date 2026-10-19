@@ -149,8 +149,9 @@ def save(ir: FomIR, directory: str | Path) -> tuple[Path, Path]:
         arrays[f"param_ub::{p.name}"] = p.ub
     for fname, fac in ir.factorizations.items():
         arrays[f"fac::{fname}::perm"] = fac.perm
-        if fac.method == "cg":
+        if fac.A is not None:
             _save_csc(arrays, f"fac::{fname}::A", fac.A)
+        if fac.method == "cg":
             arrays[f"fac::{fname}::minv"] = fac.minv
             continue
         _save_csc(arrays, f"fac::{fname}::L", fac.L)
@@ -228,6 +229,8 @@ def load(directory: str | Path) -> FomIR:
             )
             continue
         L = _load_csc(npz, f"fac::{fname}::L")
+        # Specs saved before direct factorizations kept A load without it.
+        A = _load_csc(npz, f"fac::{fname}::A") if f"fac::{fname}::A::data" in npz else None
         if meta["method"] == "ldlt":
             factorizations[fname] = Factorization(
                 method="ldlt",
@@ -235,6 +238,7 @@ def load(directory: str | Path) -> FomIR:
                 perm=perm,
                 L=L,
                 dinv=npz[f"fac::{fname}::dinv"],
+                A=A,
             )
         else:
             factorizations[fname] = Factorization(
@@ -244,6 +248,7 @@ def load(directory: str | Path) -> FomIR:
                 L=L,
                 U=_load_csc(npz, f"fac::{fname}::U"),
                 uinv=npz[f"fac::{fname}::uinv"],
+                A=A,
             )
 
     return FomIR(

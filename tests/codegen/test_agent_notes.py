@@ -279,6 +279,23 @@ def test_budget_falls_back_to_the_constructor_default_without_config():
     assert driver._timeout_for_phase("code_optimization") == 42
 
 
+def test_a_driver_built_without_a_config_takes_the_runs_budgets(tmp_path, requires_compiler):
+    from pathlib import Path
+
+    from fomtools.codegen import StubAgentDriver, generate_code
+    from tests.codegen.conftest import build_ista
+
+    class Configless(StubAgentDriver):
+        config = None
+
+    case = build_ista()
+    golden = Path(__file__).parent / "golden" / "ista" / "embedded_c" / "fom_solver.c"
+    driver = Configless(golden)
+    config = case["config"].model_copy(update={"agent_optimize_timeout_s": 123})
+    generate_code(case["verifier"], case["next_state"], tmp_path, config=config, driver=driver)
+    assert driver.config is config
+
+
 def test_optimize_budget_defaults_larger_than_translate():
     """The code optimization phase is open-ended, so it needs the longer leash."""
     config = CodegenConfig()

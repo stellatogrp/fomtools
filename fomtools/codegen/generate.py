@@ -385,6 +385,10 @@ def generate_code(
         from fomtools.codegen.agent import get_default_driver
 
         driver = get_default_driver(config)
+    elif getattr(driver, "config", False) is None:
+        # A driver built without a config (e.g. ClaudeAgentDriver()) takes this
+        # run's budgets instead of its constructor default.
+        driver.config = config
 
     from fomtools.codegen.agent.prompts import (
         code_optimization_instructions,

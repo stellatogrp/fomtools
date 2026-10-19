@@ -63,10 +63,19 @@ def _build_config(args) -> CodegenConfig:
         ),
         solve_method=SolveMethod(args.solve_method),
         dtype=args.dtype,
+        **{
+            field: value
+            for field, value in (
+                ("agent_timeout_s", args.translate_timeout),
+                ("agent_optimize_timeout_s", args.optimize_timeout),
+                ("agent_optimize_max_turns", args.optimize_max_turns),
+            )
+            if value is not None  # unset: the CodegenConfig default
+        },
     )
 
 
-def _make_driver(args):
+def _make_driver(args, config):
     if args.driver == "stub":
         from fomtools.codegen.agent.stub import StubAgentDriver
 
@@ -77,7 +86,7 @@ def _make_driver(args):
         from fomtools.codegen.agent import make_agent_driver
 
         try:
-            return make_agent_driver(backend=args.agent)
+            return make_agent_driver(backend=args.agent, config=config)
         except ValueError as exc:  # unknown backend name
             raise SystemExit(str(exc)) from exc
     return None
@@ -142,6 +151,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--no-profile", dest="profile", action="store_false", help="skip timing/profiling"
     )
+    p.add_argument(
+        "--translate-timeout",
+        type=int,
+        metavar="SECONDS",
+        help="wall-clock budget of the translation phase (default: 600)",
+    )
+    p.add_argument(
+        "--optimize-timeout",
+        type=int,
+        metavar="SECONDS",
+        help="wall-clock budget of the code optimization phase (default: 7200)",
+    )
+    p.add_argument(
+        "--optimize-max-turns",
+        type=int,
+        metavar="N",
+        help="turn budget of the code optimization phase (default: 200)",
+    )
     p.add_argument("--scaffold-only", action="store_true", help="emit files but skip the agent")
     p.add_argument(
         "--no-roll",
@@ -189,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"scaffolded {fom.get('name', 'fom')} into {args.out}")
         return 0
 
-    driver = _make_driver(args)
+    driver = _make_driver(args, config)
     # The code optimization phase defaults on for the real agent (the product flow) and off for the
     # stub (which cannot meaningfully optimize), unless the user is explicit.
     code_optimization = (

@@ -115,8 +115,10 @@ class Factorization:
     uinv:
         Reciprocals of ``diag(U)`` (``lu`` only).
     A:
-        The symmetric positive-definite system matrix (CSC) — ``cg`` only;
-        applied as repeated sparse matrix-vector products, never factorized.
+        The system matrix ``M`` (CSC; its symmetric part when ``M`` counts as
+        symmetric). CG applies it as repeated sparse matrix-vector products; the
+        CUDA target hands it to cuDSS, which factorizes it on the device. Never
+        inverted.
     minv:
         Diagonal Jacobi preconditioner held as reciprocals of ``diag(M)``
         (computed once offline) — ``cg`` only. A diagonal scaling, not a matrix
@@ -317,6 +319,7 @@ def factorize(
                     perm=perm,
                     L=CSC.from_sparse(L),
                     dinv=1.0 / d,
+                    A=CSC.from_sparse(Ms),
                 )
         if method == "ldlt":
             # User forced LDL^T but it is not numerically viable here.
@@ -361,6 +364,7 @@ def factorize(
         L=CSC.from_dense(L),
         U=CSC.from_dense(U),
         uinv=1.0 / diag_u,
+        A=CSC.from_sparse(Ms),
     )
 
 

@@ -11,21 +11,25 @@ Design decisions (mirroring the CPU emission in ``embedded_c.py``):
   ``fom_lin_solve_<name>(b, x)`` keep their CPU signatures, but every pointer
   is a *device* pointer; each call launches kernels on the default stream.
   The solver body stays method-agnostic and free of matvec loops.
-* **Hand-written kernels, no cuSPARSE/cuBLAS.** Matrix data is baked into
-  ``__device__ const`` arrays (loaded with the CUDA module — no runtime
-  upload, no library handles, no extra link dependencies). SpMV is one thread
-  per row; dot products use a fixed-grid shared-memory block reduction, so the
-  in-run floating-point reduction order is stable. Library-backed SpMV is a
-  possible later optimization, not a correctness need.
+* **Nothing on the host during the iteration.** Every product, solve and
+  reduction runs on the device; matrix data is baked into ``__device__ const``
+  arrays (loaded with the CUDA module, no runtime upload). SpMV is one thread
+  per row (hand-written, no cuSPARSE); dot products use a fixed-grid
+  shared-memory block reduction, so the in-run floating-point reduction order
+  is stable.
 * **CG runs entirely on the device** (SpMV + dot + axpy kernels), mirroring
   :func:`fomtools.codegen.factorize._pcg_solve` exactly: same iteration, same
   stopping test ``r.r <= tol^2 (b.b)``. Only the reduction *order* differs
   from the serial NumPy oracle; CG converges to ``cg_tol`` so both land well
   within the verify tolerance.
-* **Direct (LDL^T / LU) solves stay on the host.** Sparse triangular solves
-  have loop-carried dependencies and do not parallelize naively; the emitted
-  ``fom_lin_solve_<name>`` stages ``b``/``x`` through host buffers and runs
-  the CPU routine. Prefer ``solve_method=CG`` for large SPD systems on CUDA.
+* **Direct (LDL^T / LU) solves through cuDSS.** NVIDIA's sparse direct solver
+  factorizes the fixed system matrix on the device at the first solve
+  (``CUDSS_MTYPE_SYMMETRIC`` with symmetric pivoting for LDL^T, so indefinite
+  KKT systems work; ``CUDSS_MTYPE_GENERAL`` with matching and scaling for LU,
+  which keeps the fast local pivoting accurate), and each call is one cuDSS
+  solve on device vectors. cuDSS comes from the ``nvidia-cudss`` wheel or
+  ``CUDSS_HOME`` and is linked only when a direct solve exists. Large SPD
+  systems take device CG under ``solve_method=AUTO``.
 * No matrix inverse is ever formed or used (project-wide invariant).
 
 The verify command auto-detects the hardware: on a GPU machine (``nvcc`` +
@@ -38,6 +42,7 @@ See :meth:`CudaTarget.verify_command`.
 from __future__ import annotations
 
 import functools
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -51,7 +56,6 @@ from fomtools.codegen.targets.embedded_c import (
     EmbeddedCTarget,
     _c_array,
     _c_int_array,
-    _factor_arrays,
     _fmt_float,
     _is_csr,
     _matvec_matrix_names,
@@ -71,6 +75,72 @@ def _gpu_visible() -> bool:
     # `nvidia-smi -L` lists one "GPU <n>: ..." line per device, or
     # "No devices were found" when none are visible.
     return proc.returncode == 0 and b"GPU " in proc.stdout
+
+
+def _cudss_home() -> str:
+    """cuDSS's install prefix: ``CUDSS_HOME``, else the ``nvidia-cudss`` wheel
+    (``nvidia/<cuda>/include/cudss.h``) in this Python, else empty."""
+    if os.environ.get("CUDSS_HOME"):
+        return os.environ["CUDSS_HOME"]
+    spec = importlib.util.find_spec("nvidia")
+    for root in spec.submodule_search_locations if spec else []:
+        for header in sorted(Path(root).glob("*/include/cudss.h")):
+            return str(header.parent.parent)
+    return ""
+
+
+def _direct(ir: FomIR) -> bool:
+    """Whether any linear solve is direct (LDL^T / LU), so cuDSS is linked."""
+    return any(fac.method != "cg" for fac in ir.factorizations.values())
+
+
+#: Average nonzeros per row from which a matvec gives each row a whole warp.
+_WARP_ROW_MIN_NNZ = 16
+
+
+def _matvec_kernel(
+    decl: str, rows: int, nnz: int, terms: tuple, store: str, x: str = "x", out: str = "out"
+) -> tuple[list[str], int]:
+    """A matvec kernel ``out[i] (store) row_i . x`` and its grid size (blocks).
+
+    One warp per row when rows are dense enough (``nnz / rows >= 16``): its 32
+    lanes stride the row, so neighboring threads read neighboring entries
+    (coalesced), and a warp shuffle sums them. Very sparse rows keep one thread
+    per row, where a warp would leave most lanes idle. ``terms`` is
+    ``("csr", rowptr, colidx, vals)`` or ``("dense", array, cols)``.
+    """
+    warp = nnz >= _WARP_ROW_MIN_NNZ * rows
+    if terms[0] == "csr":
+        _, rowptr, colidx, vals = terms
+        start, stop, step = f"{rowptr}[i]", f"{rowptr}[i + 1]", "32" if warp else "1"
+        term = f"{vals}[k] * {x}[{colidx}[k]]"
+    else:
+        _, array, cols = terms
+        start, stop, step = "0", str(cols), "32" if warp else "1"
+        term = f"{array}[i * {cols} + k] * {x}[k]"
+    lines = [f"{decl}(const fom_float *{x}, fom_float *{out}) {{"]
+    if warp:
+        lines += [
+            "    /* One warp per row: lanes stride the row (coalesced), then a shuffle sum. */",
+            "    fom_int i = (blockIdx.x * blockDim.x + threadIdx.x) / 32;",
+            "    fom_int lane = threadIdx.x % 32;",
+            f"    if (i >= {rows}) return;  /* whole warps exit together */",
+            "    fom_float s = 0.0;",
+            f"    for (fom_int k = {start} + lane; k < {stop}; k += 32) s += {term};",
+            "    for (int w = 16; w > 0; w /= 2) s += __shfl_down_sync(0xffffffff, s, w);",
+            f"    if (lane == 0) {out}[i] {store} s;",
+        ]
+        blocks = (rows * 32 + _THREADS - 1) // _THREADS
+    else:
+        lines += [
+            "    fom_int i = blockIdx.x * blockDim.x + threadIdx.x;  /* one thread per row */",
+            f"    if (i >= {rows}) return;",
+            "    fom_float s = 0.0;",
+            f"    for (fom_int k = {start}; k < {stop}; k += {step}) s += {term};",
+            f"    {out}[i] {store} s;",
+        ]
+        blocks = (rows + _THREADS - 1) // _THREADS
+    return lines + ["}"], blocks
 
 
 #: Threads per block for every emitted kernel (matvecs, CG, reductions).
@@ -248,18 +318,46 @@ class CudaTarget(EmbeddedCTarget):
                 "  DEVICE pointer; each call launches CUDA kernels on the default",
                 "  stream. Zero an accumulator with cudaMemset before the fom_apply_*",
                 "  calls of a linear op (the helpers accumulate `out += M @ x`).",
-                "- Keep the state resident on the device for the WHOLE iteration loop:",
-                "  cudaMalloc buffers in `fom_setup`, upload state/params once at the",
-                "  start of `fom_solve`, swap device pointers instead of copying, and",
-                "  copy the solution back to the host workspace once at the end.",
-                "  Avoid per-iteration host<->device copies of full vectors.",
+                "- Run the WHOLE iteration on the device: cudaMalloc buffers in",
+                "  `fom_setup`, upload state/params once at the start of `fom_solve`,",
+                "  swap device pointers instead of copying, and copy the solution back",
+                "  to the host workspace once at the end. Do reductions (residuals) on",
+                "  the device too, down to one scalar: the only per-iteration host",
+                "  traffic is that scalar, read back where the stopping test needs it.",
                 "- Write the activation kernels (soft-threshold / ReLU / clip) and the",
                 "  residual reduction yourself in the .cu file; read constants from",
                 "  `fom_data.h` (host) and pass them as kernel arguments.",
                 "- The embedded no-malloc / division-free constraints do NOT apply to",
                 "  this target.",
+                *(self._optimization_hints() if self._ops_editable() else []),
             ]
         )
+
+    @staticmethod
+    def _optimization_hints() -> list[str]:
+        """Where the generated kernels leave speed on the table (profiled with Nsight
+        Systems on an A100). The generator keeps them simple on purpose; these
+        rewrites are the code optimization phase's job, under its checks."""
+        return [
+            "- Profiling the generated code: a CG solve in `src/fom_linsolve.cu` runs",
+            "  ~13 small kernels per iteration (each >= ~2 us on the GPU and ~3 us to",
+            "  launch) plus a blocking readback of the stop flag, so at small and",
+            "  medium sizes launch and sync overhead dominate, not arithmetic.",
+            "  Rewrites that pay off there:",
+            "  * fuse each partial dot product into the kernel that produces its",
+            "    vector (p.Ap in the matvec, r.r in the x/r update, r.z in the",
+            "    preconditioner) and fold the scalar steps (alpha, beta, stop test)",
+            "    into the finishing reductions;",
+            "  * run k iterations per launch (capture them in a CUDA graph) behind a",
+            "    device-side stop guard that turns every kernel into a no-op once CG",
+            "    has converged, so the iterates still match the reference, and read",
+            "    the stop flag once per batch instead of once per iteration;",
+            "  * keep every reduction in a fixed order (deterministic results).",
+            "- Matvec kernels give each dense-enough row a warp (coalesced loads);",
+            "  very short rows keep one thread per row, where packing several rows",
+            "  per warp can help. The direct checks hold every `fom_apply_<name>` and",
+            "  direct `fom_lin_solve_<name>` to the reference; CG is checked end to end.",
+        ]
 
     # -- matrix-vector products (device kernels) ----------------------------
     def _ops_header(self, ir: FomIR) -> str:
@@ -275,8 +373,8 @@ class CudaTarget(EmbeddedCTarget):
             "",
             "/* out += M @ x for each linear-op matrix M (CSR if structurally",
             "   sparse, dense otherwise). CUDA target: `x` and `out` are DEVICE",
-            "   pointers; each call launches a kernel (one thread per row) on the",
-            "   default stream. Accumulating: zero `out` (cudaMemset) first. */",
+            "   pointers; each call launches a kernel (a warp per dense-enough row)",
+            "   on the default stream. Accumulating: zero `out` (cudaMemset) first. */",
             "",
         ]
         for name in _matvec_matrix_names(ir):
@@ -324,9 +422,9 @@ class CudaTarget(EmbeddedCTarget):
     def _ops_source(self, ir: FomIR) -> str:
         lines = [
             "/* Deterministic device-side matrix-vector products (out += M @ x).",
-            "   One thread per row (rows are independent). Matrix data lives in",
-            "   fom_ops_data.cuh as __device__ const arrays. All pointers are device",
-            "   pointers. */",
+            "   One warp per row for dense-enough rows, one thread per row for very",
+            "   sparse ones. Matrix data lives in fom_ops_data.cuh as __device__ const",
+            "   arrays. All pointers are device pointers. */",
             '#include "fom_ops.h"',
             '#include "fom_ops_data.cuh"',
             "",
@@ -337,32 +435,19 @@ class CudaTarget(EmbeddedCTarget):
         ]
         for name in _matvec_matrix_names(ir):
             md = ir.matrices[name]
-            shape = md.shape
-            rows = shape[0]
-            cols = shape[1] if len(shape) > 1 else 1
+            rows = md.shape[0]
+            cols = md.shape[1] if len(md.shape) > 1 else 1
             up = name.upper()
-            lines += [
-                "static __global__ void "
-                f"fom_apply_{name}_kern(const fom_float *x, fom_float *out) {{",
-                "    fom_int i = blockIdx.x * blockDim.x + threadIdx.x;",
-                f"    if (i >= {rows}) return;",
-                "    fom_float s = 0.0;",
-            ]
             if _is_csr(md):
-                lines += [
-                    f"    for (fom_int p = FOM_OP_{up}_ROWPTR[i]; p < FOM_OP_{up}_ROWPTR[i + 1]; "
-                    "++p)",
-                    f"        s += FOM_OP_{up}_VALS[p] * x[FOM_OP_{up}_COLIDX[p]];",
-                ]
+                terms = ("csr", f"FOM_OP_{up}_ROWPTR", f"FOM_OP_{up}_COLIDX", f"FOM_OP_{up}_VALS")
+                nnz = md.nnz()
             else:
-                lines.append(
-                    f"    for (fom_int j = 0; j < {cols}; ++j) "
-                    f"s += FOM_OP_{up}_DENSE[i * {cols} + j] * x[j];"
-                )
-            blocks = (rows + _THREADS - 1) // _THREADS
+                terms, nnz = ("dense", f"FOM_OP_{up}_DENSE", cols), rows * cols
+            kern, blocks = _matvec_kernel(
+                f"static __global__ void fom_apply_{name}_kern", rows, nnz, terms, "+="
+            )
             lines += [
-                "    out[i] += s;",
-                "}",
+                *kern,
                 "",
                 f'extern "C" void fom_apply_{name}(const fom_float *x, fom_float *out) {{',
                 f"    fom_apply_{name}_kern<<<{blocks}, FOM_OPS_THREADS>>>(x, out);",
@@ -377,15 +462,15 @@ class CudaTarget(EmbeddedCTarget):
         Each kernel walks its rows grid-stride (fixed grid, so the partial buffer
         is statically sized and the in-run reduction order stable), computes a
         row exactly as the CPU target does, folds it into a shared-memory block
-        reduction, and writes one partial per thread block; the host folds the
-        partials. Schedule values are read on the host and passed in.
+        reduction, and writes one partial per thread block; a one-block kernel
+        folds the partials on the device, and only the final scalar comes back.
+        Schedule values are read on the host and passed in as kernel arguments.
         """
         if ir.objective is None:
             return []
         obj = ir.objective
         args = objective_c_params(ir)
         names = [a.split("*")[-1] if "*" in a else a.split()[-1] for a in args]
-        fold = "r = r > v ? r : v;" if obj.norm == "inf" else "r += v;"
         combine = (
             "sh[threadIdx.x] = sh[threadIdx.x] > sh[threadIdx.x + w] ? sh[threadIdx.x] : "
             "sh[threadIdx.x + w];"
@@ -427,32 +512,56 @@ class CudaTarget(EmbeddedCTarget):
                 "}",
                 "",
             ]
+        pick = "a > b ? a : b" if obj.norm == "inf" else "a + b"
         lines += [
-            "static fom_float *fom_obj_partials_d = 0;",
-            "static fom_float fom_obj_partials_h[FOM_OBJ_BLOCKS];",
+            "/* Fold the per-block partials on the device: one thread block, the same",
+            "   combine as the row kernels; *r starts from the first objective block. */",
+            "__device__ static fom_float fom_obj_combine(fom_float a, fom_float b) {",
+            f"    return {pick};",
+            "}",
+            "__global__ void fom_objective_fold_kern(const fom_float *partials, fom_float *r, "
+            "int first) {",
+            "    __shared__ fom_float sh[FOM_OBJ_THREADS];",
+            "    fom_float v = 0.0;",
+            "    for (fom_int i = threadIdx.x; i < FOM_OBJ_BLOCKS; i += blockDim.x)",
+            "        v = fom_obj_combine(v, partials[i]);",
+            "    sh[threadIdx.x] = v;",
+            "    __syncthreads();",
+            "    for (fom_int w = blockDim.x >> 1; w > 0; w >>= 1) {",
+            "        if (threadIdx.x < w)",
+            "            sh[threadIdx.x] = fom_obj_combine(sh[threadIdx.x], sh[threadIdx.x + w]);",
+            "        __syncthreads();",
+            "    }",
+            "    if (threadIdx.x == 0) *r = first ? sh[0] : fom_obj_combine(*r, sh[0]);",
+            "}",
             "",
+            "static fom_float *fom_obj_partials_d = 0, *fom_obj_r_d = 0;",
+            "",
+            "/* Computed on the device; only the final scalar comes back. */",
             f'extern "C" fom_float fom_objective({", ".join(args)}) {{',
-            "    fom_float r = 0.0;",
-            "    fom_int b;",
-            "    if (!fom_obj_partials_d)",
+            "    fom_float r;",
+            "    if (!fom_obj_partials_d) {",
             "        cudaMalloc((void **)&fom_obj_partials_d, sizeof(fom_float) * FOM_OBJ_BLOCKS);",
+            "        cudaMalloc((void **)&fom_obj_r_d, sizeof(fom_float));",
+            "    }",
         ]
         if not any(self._objective_scales(ir, block) for block in obj.blocks):
             lines.append("    (void)it;")
-        for block in obj.blocks:
+        for k, block in enumerate(obj.blocks):
             scales = self._objective_scales(ir, block)
-            values = [f"fom_sched_{block.linear_op.terms[k].scale}(it)" for k in scales]
+            values = [f"fom_sched_{block.linear_op.terms[j].scale}(it)" for j in scales]
             call = ", ".join(names[1:] + values + ["fom_obj_partials_d"])
             lines += [
                 f"    fom_objective_{block.name}_kern<<<FOM_OBJ_BLOCKS, FOM_OBJ_THREADS>>>({call});",
-                "    cudaMemcpy(fom_obj_partials_h, fom_obj_partials_d,",
-                "               sizeof(fom_float) * FOM_OBJ_BLOCKS, cudaMemcpyDeviceToHost);",
-                "    for (b = 0; b < FOM_OBJ_BLOCKS; ++b) {",
-                "        fom_float v = fom_obj_partials_h[b];",
-                f"        {fold}",
-                "    }",
+                "    fom_objective_fold_kern<<<1, FOM_OBJ_THREADS>>>(fom_obj_partials_d, "
+                f"fom_obj_r_d, {int(k == 0)});",
             ]
-        lines += ["    return r;", "}", ""]
+        lines += [
+            "    cudaMemcpy(&r, fom_obj_r_d, sizeof(fom_float), cudaMemcpyDeviceToHost);",
+            "    return r;",
+            "}",
+            "",
+        ]
         return lines
 
     # -- linear solves -------------------------------------------------------
@@ -468,18 +577,15 @@ class CudaTarget(EmbeddedCTarget):
             "#endif",
             "",
             "/* Solve M x = b for each affine operator; `b` and `x` are DEVICE",
-            "   pointers. CG systems run entirely on the GPU (CSR SpMV + reduction",
-            "   kernels + a diagonal Jacobi preconditioner). Direct factorizations",
-            "   (LDL^T / LU) are sparse triangular solves with loop-carried",
-            "   dependencies - inherently sequential - so they run on the host; the",
-            "   wrapper stages b/x through host buffers. Prefer solve_method=CG for",
-            "   large SPD systems on CUDA. No matrix inverse is ever formed or",
-            "   used. */",
+            "   pointers and everything runs on the GPU. CG systems: CSR SpMV +",
+            "   reduction kernels + a diagonal Jacobi preconditioner. Direct systems",
+            "   (LDL^T / LU): cuDSS factorizes M once, at the first solve, and each",
+            "   call is one cuDSS solve. No matrix inverse is ever formed or used. */",
             "",
         ]
         for name, fac in ir.factorizations.items():
             lines.append(f"#define FOM_FAC_{name.upper()}_DIM {fac.dim}")
-            where = "device CG" if fac.method == "cg" else f"host {fac.method.upper()}"
+            where = "device CG" if fac.method == "cg" else f"cuDSS {fac.method.upper()}"
             lines.append(
                 f"void fom_lin_solve_{name}(const fom_float *b, fom_float *x);  "
                 f"/* {where}, dim {fac.dim}, nnz {fac.nnz} */"
@@ -490,9 +596,8 @@ class CudaTarget(EmbeddedCTarget):
 
     def _linsolve_source(self, ir: FomIR) -> str:
         lines = [
-            "/* Deterministic linear solves for the CUDA target. CG solves run on",
-            "   the device (kernels below); direct LDL^T/LU triangular solves are",
-            "   sequential and run on the host behind a device-pointer wrapper.",
+            "/* Deterministic linear solves for the CUDA target, all on the device:",
+            "   CG kernels below, and cuDSS for the direct (LDL^T / LU) systems.",
             "   No matrix inverse is ever formed or used. */",
             '#include "fom_linsolve.h"',
             "",
@@ -502,51 +607,128 @@ class CudaTarget(EmbeddedCTarget):
         if any(fac.method == "cg" for fac in ir.factorizations.values()):
             lines.append(self._cg_shared_helpers())
             lines.append("")
+        if _direct(ir):
+            lines += self._cudss_shared(ir)
         for name, fac in ir.factorizations.items():
-            up = name.upper()
             if fac.method == "cg":
                 lines.append(self._cg_routine_cu(name, fac))
-                lines.append("")
-                continue
-            lines.append(
-                f"/* ---- factorization '{name}' ({fac.method.upper()}, host: triangular"
-                " solves are sequential) ---- */"
-            )
-            lines += _factor_arrays(name, fac)
+            else:
+                lines += self._cudss_routine(name, fac)
             lines.append("")
-            lines.append(
-                self._solve_routine(
-                    name, fac, func_name=f"fom_lin_solve_{name}_host", storage="static"
-                )
-            )
-            lines += [
-                "",
-                f"static fom_float fom_lin_b_{name}[FOM_FAC_{up}_DIM];",
-                f"static fom_float fom_lin_x_{name}[FOM_FAC_{up}_DIM];",
-                "",
-                f'extern "C" void fom_lin_solve_{name}(const fom_float *b, fom_float *x) {{',
-                f"    cudaMemcpy(fom_lin_b_{name}, b, sizeof(fom_float) * FOM_FAC_{up}_DIM,",
-                "               cudaMemcpyDeviceToHost);",
-                f"    fom_lin_solve_{name}_host(fom_lin_b_{name}, fom_lin_x_{name});",
-                f"    cudaMemcpy(x, fom_lin_x_{name}, sizeof(fom_float) * FOM_FAC_{up}_DIM,",
-                "               cudaMemcpyHostToDevice);",
-                "}",
-                "",
-            ]
         return "\n".join(lines)
 
+    def _cudss_shared(self, ir: FomIR) -> list[str]:
+        value = "CUDSS_R_32F" if ir.dtype == "float32" else "CUDSS_R_64F"
+        return [
+            "#include <stdio.h>",
+            "#include <cudss.h>",
+            "",
+            f"#define FOM_DSS_VALUE {value}",
+            "/* cuDSS 0.8 types the CSR row offsets separately from the column indices. */",
+            "#if CUDSS_VERSION >= 800",
+            "#define FOM_DSS_CSR_TYPES CUDSS_R_32I, CUDSS_R_32I",
+            "#else",
+            "#define FOM_DSS_CSR_TYPES CUDSS_R_32I",
+            "#endif",
+            "",
+            "static cudssHandle_t fom_dss_handle = 0;",
+            "",
+            "static void fom_dss_check(cudssStatus_t s, const char *what) {",
+            "    if (s != CUDSS_STATUS_SUCCESS)",
+            '        fprintf(stderr, "fom_linsolve: cuDSS %s failed (status %d)\\n", what, (int)s);',
+            "}",
+            "",
+        ]
+
+    @staticmethod
+    def _cudss_lu_matching(config: str) -> list[str]:
+        """Matching and scaling for LU: it permutes large entries onto the diagonal
+        so cuDSS's fast local pivoting stays accurate, also on a zero-diagonal
+        (indefinite KKT) system. Measured on an A100 (bench_gpu/cudss_probe.cu):
+        accurate to 1e-13 everywhere and as fast as plain local pivoting, which
+        alone missed by up to 1e11; global pivoting was ~15x slower per solve and
+        wrong on a sparse 20000x20000 KKT."""
+        return [
+            "#if CUDSS_VERSION < 800",
+            '#error "LU with matching needs cuDSS >= 0.8"',
+            "#endif",
+            "        {",
+            "            cudssMatchingAlg_t matching = CUDSS_MATCHING_ALG_AUTO;",
+            f"            fom_dss_check(cudssConfigSet({config}, CUDSS_CONFIG_MATCHING_ALG, &matching,",
+            '                                         sizeof(matching)), "matching");',
+            "        }",
+        ]
+
+    def _cudss_routine(self, name: str, fac) -> list[str]:
+        """A direct system through cuDSS: analysis and factorization of the fixed
+        ``M`` at the first call (``M`` is device data, so nothing leaves the
+        GPU), then one cuDSS solve per call on the caller's device vectors."""
+        up = name.upper()
+        n = f"FOM_FAC_{up}_DIM"
+        rowptr, colidx, vals = csr_arrays(fac.A.to_scipy())
+        # The symmetric part for LDL^T (indefinite KKT systems pivot symmetrically).
+        mtype = "CUDSS_MTYPE_SYMMETRIC" if fac.method == "ldlt" else "CUDSS_MTYPE_GENERAL"
+        h = "fom_dss_handle"
+        sys = f"fom_dss_{name}"
+        args = f"{h}, {sys}_config, {sys}_data, {sys}_A, {sys}_x, {sys}_b"
+        return [
+            f"/* ---- solve '{name}' ({fac.method.upper()}, cuDSS on the device) ---- */",
+            _c_int_array(f"FOM_FAC_{up}_A_ROWPTR", rowptr, storage=_DEVICE_CONST),
+            _c_int_array(f"FOM_FAC_{up}_A_COLIDX", colidx, storage=_DEVICE_CONST),
+            _c_array(f"FOM_FAC_{up}_A_VALS", vals, storage=_DEVICE_CONST),
+            "",
+            f"static cudssConfig_t {sys}_config;",
+            f"static cudssData_t {sys}_data;",
+            f"static cudssMatrix_t {sys}_A = 0, {sys}_b, {sys}_x;",
+            "",
+            f'extern "C" void fom_lin_solve_{name}(const fom_float *b, fom_float *x) {{',
+            f"    if (!{sys}_A) {{",
+            "        void *rowptr, *colidx, *vals;",
+            f"        cudaGetSymbolAddress(&rowptr, FOM_FAC_{up}_A_ROWPTR);",
+            f"        cudaGetSymbolAddress(&colidx, FOM_FAC_{up}_A_COLIDX);",
+            f"        cudaGetSymbolAddress(&vals, FOM_FAC_{up}_A_VALS);",
+            f'        if (!{h}) fom_dss_check(cudssCreate(&{h}), "create");',
+            f'        fom_dss_check(cudssConfigCreate(&{sys}_config), "config");',
+            *(self._cudss_lu_matching(f"{sys}_config") if fac.method == "lu" else []),
+            f'        fom_dss_check(cudssDataCreate({h}, &{sys}_data), "data");',
+            f"        fom_dss_check(cudssMatrixCreateCsr(&{sys}_A, {n}, {n}, {fac.A.nnz}, rowptr, "
+            "NULL, colidx, vals,",
+            f"                                           FOM_DSS_CSR_TYPES, FOM_DSS_VALUE, {mtype},",
+            "                                           CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO),",
+            '                      "matrix");',
+            f"        fom_dss_check(cudssMatrixCreateDn(&{sys}_b, {n}, 1, {n}, b, FOM_DSS_VALUE,",
+            '                                          CUDSS_LAYOUT_COL_MAJOR), "rhs");',
+            f"        fom_dss_check(cudssMatrixCreateDn(&{sys}_x, {n}, 1, {n}, x, FOM_DSS_VALUE,",
+            '                                          CUDSS_LAYOUT_COL_MAJOR), "solution");',
+            f'        fom_dss_check(cudssExecute({h}, CUDSS_PHASE_ANALYSIS, {args[len(h) + 2 :]}), "analysis");',
+            f"        fom_dss_check(cudssExecute({h}, CUDSS_PHASE_FACTORIZATION, "
+            f'{args[len(h) + 2 :]}), "factorization");',
+            "    } else {",
+            f"        cudssMatrixSetValues({sys}_b, b);",
+            f"        cudssMatrixSetValues({sys}_x, x);",
+            "    }",
+            f'    fom_dss_check(cudssExecute({h}, CUDSS_PHASE_SOLVE, {args[len(h) + 2 :]}), "solve");',
+            "}",
+        ]
+
     def _cg_shared_helpers(self) -> str:
-        """Kernels shared by every device CG solve: dot product + vector updates."""
+        """Kernels shared by every device CG solve: a two-stage dot product into a
+        device scalar, the scalar steps of the iteration, and the vector updates.
+        The scalars stay on the device; the host reads back only the stop flag."""
         return "\n".join(
             [
                 f"#define FOM_RED_THREADS {_THREADS}",
                 f"#define FOM_RED_BLOCKS {_RED_BLOCKS}",
                 "",
-                "/* Grid-stride dot product with a shared-memory block reduction.",
-                "   The fixed grid keeps the partial buffer statically sized and the",
-                "   in-run floating-point reduction order stable (it still differs",
-                "   from the serial NumPy oracle; CG converges to cg_tol, so both",
-                "   land well within the verify tolerance). */",
+                "/* CG scalars, kept in device memory (one slot array per system). */",
+                "enum { FOM_CG_BB, FOM_CG_THRESH, FOM_CG_RZ, FOM_CG_PAP, FOM_CG_ALPHA, FOM_CG_RR,",
+                "       FOM_CG_RZ_NEW, FOM_CG_BETA, FOM_CG_STOP, FOM_CG_SLOTS };",
+                "",
+                "/* Grid-stride dot product with a shared-memory block reduction, then",
+                "   one block folds the per-block partials into *out. The fixed grid keeps",
+                "   the in-run floating-point reduction order stable (it still differs",
+                "   from the serial NumPy oracle; CG converges to cg_tol, so both land",
+                "   well within the verify tolerance). */",
                 "__global__ void fom_dot_kern(const fom_float *a, const fom_float *b, "
                 "fom_int n, fom_float *partials) {",
                 "    __shared__ fom_float sh[FOM_RED_THREADS];",
@@ -563,41 +745,68 @@ class CudaTarget(EmbeddedCTarget):
                 "    if (threadIdx.x == 0) partials[blockIdx.x] = sh[0];",
                 "}",
                 "",
-                "static fom_float *fom_dot_partials_d = 0;",
-                "static fom_float fom_dot_partials_h[FOM_RED_BLOCKS];",
-                "",
-                "static fom_float fom_device_dot(const fom_float *a, const fom_float *b, "
-                "fom_int n) {",
-                "    fom_int i;",
+                "__global__ void fom_sum_partials_kern(const fom_float *partials, fom_float *out) {",
+                "    __shared__ fom_float sh[FOM_RED_THREADS];",
                 "    fom_float s = 0.0;",
+                "    for (fom_int i = threadIdx.x; i < FOM_RED_BLOCKS; i += blockDim.x) "
+                "s += partials[i];",
+                "    sh[threadIdx.x] = s;",
+                "    __syncthreads();",
+                "    for (fom_int w = blockDim.x >> 1; w > 0; w >>= 1) {",
+                "        if (threadIdx.x < w) sh[threadIdx.x] += sh[threadIdx.x + w];",
+                "        __syncthreads();",
+                "    }",
+                "    if (threadIdx.x == 0) *out = sh[0];",
+                "}",
+                "",
+                "static fom_float *fom_dot_partials_d = 0;",
+                "",
+                "/* *out = a . b, computed and stored on the device. */",
+                "static void fom_device_dot(const fom_float *a, const fom_float *b, fom_int n, "
+                "fom_float *out) {",
                 "    if (!fom_dot_partials_d)",
                 "        cudaMalloc((void **)&fom_dot_partials_d, "
                 "sizeof(fom_float) * FOM_RED_BLOCKS);",
                 "    fom_dot_kern<<<FOM_RED_BLOCKS, FOM_RED_THREADS>>>(a, b, n, "
                 "fom_dot_partials_d);",
-                "    cudaMemcpy(fom_dot_partials_h, fom_dot_partials_d,",
-                "               sizeof(fom_float) * FOM_RED_BLOCKS, cudaMemcpyDeviceToHost);",
-                "    for (i = 0; i < FOM_RED_BLOCKS; ++i) s += fom_dot_partials_h[i];",
-                "    return s;",
+                "    fom_sum_partials_kern<<<1, FOM_RED_THREADS>>>(fom_dot_partials_d, out);",
+                "}",
+                "",
+                "/* The scalar steps of one CG iteration, on one device thread. */",
+                "__global__ void fom_cg_start_kern(fom_float *s, fom_float tol2) {",
+                "    s[FOM_CG_THRESH] = tol2 * s[FOM_CG_BB];",
+                "    s[FOM_CG_STOP] = (s[FOM_CG_BB] == 0.0);",
+                "}",
+                "/* alpha = rz / pAp, or stop (alpha = 0, a no-op update) on breakdown. */",
+                "__global__ void fom_cg_alpha_kern(fom_float *s) {",
+                "    s[FOM_CG_STOP] = (s[FOM_CG_PAP] == 0.0);",
+                "    s[FOM_CG_ALPHA] = s[FOM_CG_STOP] ? 0.0 : s[FOM_CG_RZ] / s[FOM_CG_PAP];",
+                "}",
+                "__global__ void fom_cg_converged_kern(fom_float *s) {",
+                "    if (s[FOM_CG_RR] <= s[FOM_CG_THRESH]) s[FOM_CG_STOP] = 1.0;",
+                "}",
+                "__global__ void fom_cg_beta_kern(fom_float *s) {",
+                "    s[FOM_CG_BETA] = s[FOM_CG_RZ_NEW] / s[FOM_CG_RZ];",
+                "    s[FOM_CG_RZ] = s[FOM_CG_RZ_NEW];",
                 "}",
                 "",
                 "/* x += alpha p; r -= alpha Ap (fused) */",
                 "__global__ void fom_cg_update_xr_kern(fom_float *x, fom_float *r, "
                 "const fom_float *p,",
-                "                                      const fom_float *Ap, fom_float alpha, "
+                "                                      const fom_float *Ap, const fom_float *s, "
                 "fom_int n) {",
                 "    fom_int i = blockIdx.x * blockDim.x + threadIdx.x;",
                 "    if (i >= n) return;",
-                "    x[i] += alpha * p[i];",
-                "    r[i] -= alpha * Ap[i];",
+                "    x[i] += s[FOM_CG_ALPHA] * p[i];",
+                "    r[i] -= s[FOM_CG_ALPHA] * Ap[i];",
                 "}",
                 "",
                 "/* p = z + beta p */",
                 "__global__ void fom_cg_update_p_kern(fom_float *p, const fom_float *z, "
-                "fom_float beta, fom_int n) {",
+                "const fom_float *s, fom_int n) {",
                 "    fom_int i = blockIdx.x * blockDim.x + threadIdx.x;",
                 "    if (i >= n) return;",
-                "    p[i] = z[i] + beta * p[i];",
+                "    p[i] = z[i] + s[FOM_CG_BETA] * p[i];",
                 "}",
             ]
         )
@@ -606,15 +815,24 @@ class CudaTarget(EmbeddedCTarget):
         """Device-resident Jacobi-preconditioned CG for one SPD system.
 
         Mirrors :func:`fomtools.codegen.factorize._pcg_solve` exactly (same
-        iteration, same stopping test ``r.r <= tol^2 (b.b)``); the host drives
-        the outer loop, every vector kernel and the SpMV run on the device, and
-        only the dot-product scalars cross back per iteration.
+        iteration, same stopping test ``r.r <= tol^2 (b.b)``, same breakdown
+        exit); every vector, dot product and scalar step runs on the device, and
+        the host, which drives the loop, reads back only the stop flag.
         """
         up = name.upper()
         n = f"FOM_FAC_{up}_DIM"
         tol2 = _fmt_float(fac.cg_tol * fac.cg_tol)
         maxit = int(fac.cg_max_iter)
         rowptr, colidx, vals = csr_arrays(fac.A.to_scipy())
+        spmv, spmv_blocks = _matvec_kernel(
+            f"__global__ void fom_cg_{name}_spmv_kern",
+            fac.dim,
+            fac.A.nnz,
+            ("csr", f"FOM_FAC_{up}_A_ROWPTR", f"FOM_FAC_{up}_A_COLIDX", f"FOM_FAC_{up}_A_VALS"),
+            "=",
+            x="p",
+            out="Ap",
+        )
         out = [
             f"/* ---- solve '{name}' (CG, preconditioned conjugate gradient, on the"
             " device) ---- */",
@@ -623,16 +841,8 @@ class CudaTarget(EmbeddedCTarget):
             _c_array(f"FOM_FAC_{up}_A_VALS", vals, storage=_DEVICE_CONST),
             _c_array(f"FOM_FAC_{up}_MINV", fac.minv, storage=_DEVICE_CONST),
             "",
-            "/* Ap = A @ p (sparse CSR matvec, one thread per row) */",
-            f"__global__ void fom_cg_{name}_spmv_kern(const fom_float *p, fom_float *Ap) {{",
-            "    fom_int i = blockIdx.x * blockDim.x + threadIdx.x;",
-            f"    if (i >= {n}) return;",
-            "    fom_float s = 0.0;",
-            f"    for (fom_int k = FOM_FAC_{up}_A_ROWPTR[i]; k < FOM_FAC_{up}_A_ROWPTR[i + 1]; "
-            "++k)",
-            f"        s += FOM_FAC_{up}_A_VALS[k] * p[FOM_FAC_{up}_A_COLIDX[k]];",
-            "    Ap[i] = s;",
-            "}",
+            "/* Ap = A @ p (sparse CSR matvec) */",
+            *spmv,
             "",
             "/* x = 0; r = b; z = Minv .* r; p = z */",
             f"__global__ void fom_cg_{name}_init_kern(const fom_float *b, fom_float *x, "
@@ -654,44 +864,50 @@ class CudaTarget(EmbeddedCTarget):
             "}",
             "",
             f"static fom_float *fom_cg_{name}_r = 0, *fom_cg_{name}_z = 0;",
-            f"static fom_float *fom_cg_{name}_p = 0, *fom_cg_{name}_Ap = 0;",
+            f"static fom_float *fom_cg_{name}_p = 0, *fom_cg_{name}_Ap = 0, *fom_cg_{name}_s = 0;",
             "",
+            "/* Every vector and scalar stays on the device; the host reads back only",
+            "   the stop flag (one scalar per iteration) to end the loop. */",
             f'extern "C" void fom_lin_solve_{name}(const fom_float *b, fom_float *x) {{',
             f"    const fom_int n = {n};",
             "    const fom_int blocks = (n + FOM_RED_THREADS - 1) / FOM_RED_THREADS;",
-            "    fom_float bb, thresh, rz, rz_new, pAp, alpha, beta, rr;",
+            "    fom_float *s, stop;",
             "    fom_int it;",
             f"    if (!fom_cg_{name}_r) {{",
             f"        cudaMalloc((void **)&fom_cg_{name}_r, sizeof(fom_float) * n);",
             f"        cudaMalloc((void **)&fom_cg_{name}_z, sizeof(fom_float) * n);",
             f"        cudaMalloc((void **)&fom_cg_{name}_p, sizeof(fom_float) * n);",
             f"        cudaMalloc((void **)&fom_cg_{name}_Ap, sizeof(fom_float) * n);",
+            f"        cudaMalloc((void **)&fom_cg_{name}_s, sizeof(fom_float) * FOM_CG_SLOTS);",
             "    }",
+            f"    s = fom_cg_{name}_s;",
             f"    fom_cg_{name}_init_kern<<<blocks, FOM_RED_THREADS>>>(b, x, fom_cg_{name}_r,",
             f"                                                        fom_cg_{name}_z, "
             f"fom_cg_{name}_p);",
-            "    bb = fom_device_dot(b, b, n);",
-            "    if (bb == 0.0) return;  /* x was zeroed by the init kernel */",
-            f"    thresh = (fom_float){tol2} * bb;",
-            f"    rz = fom_device_dot(fom_cg_{name}_r, fom_cg_{name}_z, n);",
+            "    fom_device_dot(b, b, n, s + FOM_CG_BB);",
+            f"    fom_cg_start_kern<<<1, 1>>>(s, (fom_float){tol2});",
+            "    cudaMemcpy(&stop, s + FOM_CG_STOP, sizeof(fom_float), cudaMemcpyDeviceToHost);",
+            "    if (stop != 0.0) return;  /* b == 0: x was zeroed by the init kernel */",
+            f"    fom_device_dot(fom_cg_{name}_r, fom_cg_{name}_z, n, s + FOM_CG_RZ);",
             f"    for (it = 0; it < {maxit}; ++it) {{",
-            f"        fom_cg_{name}_spmv_kern<<<blocks, FOM_RED_THREADS>>>(fom_cg_{name}_p, "
+            f"        fom_cg_{name}_spmv_kern<<<{spmv_blocks}, FOM_RED_THREADS>>>(fom_cg_{name}_p, "
             f"fom_cg_{name}_Ap);",
-            f"        pAp = fom_device_dot(fom_cg_{name}_p, fom_cg_{name}_Ap, n);",
-            "        if (pAp == 0.0) break;",
-            "        alpha = rz / pAp;",
+            f"        fom_device_dot(fom_cg_{name}_p, fom_cg_{name}_Ap, n, s + FOM_CG_PAP);",
+            "        fom_cg_alpha_kern<<<1, 1>>>(s);",
             f"        fom_cg_update_xr_kern<<<blocks, FOM_RED_THREADS>>>(x, fom_cg_{name}_r,",
             f"                                                          fom_cg_{name}_p, "
-            f"fom_cg_{name}_Ap, alpha, n);",
-            f"        rr = fom_device_dot(fom_cg_{name}_r, fom_cg_{name}_r, n);",
-            "        if (rr <= thresh) break;",
+            f"fom_cg_{name}_Ap, s, n);",
+            f"        fom_device_dot(fom_cg_{name}_r, fom_cg_{name}_r, n, s + FOM_CG_RR);",
+            "        fom_cg_converged_kern<<<1, 1>>>(s);",
+            "        cudaMemcpy(&stop, s + FOM_CG_STOP, sizeof(fom_float), "
+            "cudaMemcpyDeviceToHost);",
+            "        if (stop != 0.0) break;",
             f"        fom_cg_{name}_precond_kern<<<blocks, FOM_RED_THREADS>>>(fom_cg_{name}_r, "
             f"fom_cg_{name}_z);",
-            f"        rz_new = fom_device_dot(fom_cg_{name}_r, fom_cg_{name}_z, n);",
-            "        beta = rz_new / rz;",
+            f"        fom_device_dot(fom_cg_{name}_r, fom_cg_{name}_z, n, s + FOM_CG_RZ_NEW);",
+            "        fom_cg_beta_kern<<<1, 1>>>(s);",
             f"        fom_cg_update_p_kern<<<blocks, FOM_RED_THREADS>>>(fom_cg_{name}_p, "
-            f"fom_cg_{name}_z, beta, n);",
-            "        rz = rz_new;",
+            f"fom_cg_{name}_z, s, n);",
             "    }",
             "}",
         ]
@@ -700,12 +916,27 @@ class CudaTarget(EmbeddedCTarget):
     # -- build ---------------------------------------------------------------
     def _makefile(self, ir: FomIR | None = None) -> str:
         guard, guard_rules = self._objective_guard(ir)
+        if ir is not None and _direct(ir):
+            cudss = [
+                "# cuDSS, for the direct linear solves on the device: CUDSS_HOME, by default",
+                "# the nvidia-cudss wheel found when this directory was generated.",
+                f"CUDSS_HOME ?= {_cudss_home()}",
+                "CUDSS_LIB = $(firstword $(wildcard $(CUDSS_HOME)/lib/libcudss.so "
+                "$(CUDSS_HOME)/lib/libcudss.so.0 $(CUDSS_HOME)/lib64/libcudss.so))",
+                "LINSOLVE_FLAGS = -I$(CUDSS_HOME)/include",
+                "# nvcc rejects a library file named *.so.0 (the wheel's only name): hand",
+                "# it to the host linker directly.",
+                "LDLIBS = -Xlinker $(CUDSS_LIB) -Xlinker -rpath=$(dir $(CUDSS_LIB))",
+            ]
+        else:
+            cudss = ["LINSOLVE_FLAGS =", "LDLIBS ="]
         return "\n".join(
             [
                 "CC ?= cc",
                 "NVCC ?= nvcc",
                 "CFLAGS ?= -O3 -Iinclude -Itest",
                 "NVCCFLAGS ?= -O3 -Iinclude -Itest",
+                *cudss,
                 "",
                 "CU_SRC = src/fom_solver.cu src/fom_ops.cu src/fom_linsolve.cu "
                 "src/fom_objective.cu",
@@ -717,7 +948,15 @@ class CudaTarget(EmbeddedCTarget):
                 "fom_ops.o: src/fom_ops.cu",
                 "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
                 "fom_linsolve.o: src/fom_linsolve.cu",
-                "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
+                *(
+                    [
+                        '\t@test -n "$(CUDSS_HOME)" || (echo "cuDSS not found: pip install '
+                        'nvidia-cudss-cu13, or set CUDSS_HOME"; exit 1)'
+                    ]
+                    if ir is not None and _direct(ir)
+                    else []
+                ),
+                "\t$(NVCC) $(NVCCFLAGS) $(LINSOLVE_FLAGS) -c $< -o $@",
                 "fom_objective.o: src/fom_objective.cu",
                 "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
                 "fom_data.o: src/fom_data.c",
@@ -739,9 +978,9 @@ class CudaTarget(EmbeddedCTarget):
                 f"compile:{guard} $(OBJS) $(CHECK_OBJS) test/verify_main.c test/bench_main.c",
                 _KERNEL_CHECK_RECIPE,
                 "\t$(CC) $(CFLAGS) -c test/verify_main.c -o verify_main.o",
-                "\t$(NVCC) $(NVCCFLAGS) $(OBJS) $(CHECK_OBJS) verify_main.o -o verify_bin",
+                "\t$(NVCC) $(NVCCFLAGS) $(OBJS) $(CHECK_OBJS) verify_main.o -o verify_bin $(LDLIBS)",
                 "\t$(CC) $(CFLAGS) -c test/bench_main.c -o bench_main.o",
-                "\t$(NVCC) $(NVCCFLAGS) $(OBJS) bench_main.o -o bench_bin",
+                "\t$(NVCC) $(NVCCFLAGS) $(OBJS) bench_main.o -o bench_bin $(LDLIBS)",
                 "",
                 "# Run-verification (requires a GPU): check the solver vs the oracle.",
                 "verify: compile",
@@ -752,8 +991,8 @@ class CudaTarget(EmbeddedCTarget):
                 "\t./bench_bin",
                 "",
                 "lib: $(CU_SRC) src/fom_data.c",
-                "\t$(NVCC) $(NVCCFLAGS) --shared -Xcompiler -fPIC $(CU_SRC) src/fom_data.c "
-                "-o libfomsolver.so",
+                "\t$(NVCC) $(NVCCFLAGS) $(LINSOLVE_FLAGS) --shared -Xcompiler -fPIC $(CU_SRC) "
+                "src/fom_data.c -o libfomsolver.so $(LDLIBS)",
                 "",
                 "clean:",
                 "\trm -f verify_bin bench_bin *.o libfomsolver.so",
@@ -779,8 +1018,8 @@ class CudaTarget(EmbeddedCTarget):
                 "",
                 "`src/fom_solver.cu` orchestrates the iteration; the deterministic",
                 "device code lives in `src/fom_ops.cu` (matrix-vector kernels, CSR",
-                "where structured), `src/fom_linsolve.cu` (device CG; host LDL^T/LU",
-                "behind a staging wrapper - triangular solves are sequential) and",
+                "where structured), `src/fom_linsolve.cu` (device CG, or cuDSS for",
+                "LDL^T/LU; set CUDSS_HOME if cuDSS was not found at generation) and",
                 "`src/fom_objective.cu` (the verification objective). All",
                 "`fom_apply_*` / `fom_lin_solve_*` arguments are DEVICE pointers.",
                 "Host-side numeric data lives in `src/fom_data.c`. See `SPEC.md`.",
