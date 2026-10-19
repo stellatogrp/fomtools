@@ -22,9 +22,9 @@ you can:
 ## Example
 
 The following code verifies FISTA on a family of Lasso problems
-$\min_s \tfrac12\|Ds - x\|_2^2 + \lambda\|s\|_1$, where the data vector $x$ ranges over the
-box $[0, 1]^m$. After each iteration it computes the worst-case fixed-point residual
-$\|s^{k+1} - s^k\|_\infty$ over all such $x$.
+$`\min_s \tfrac12\|Ds - x\|_2^2 + \lambda\|s\|_1`$, where the data vector $`x`$ ranges over
+the box $`[0, 1]^m`$. After each iteration it computes the worst-case fixed-point residual
+$`\|s^{k+1} - s^k\|_\infty`$ over all such $`x`$.
 
 ```python3
 import numpy as np
