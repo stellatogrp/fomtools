@@ -7,7 +7,7 @@ Read the following sources to understand the current state:
 2. fomtools/verifier.py (Verifier class API)
 3. fomtools/codegen/ (codegen API: generate.py, ir.py, config)
 4. fomtools/cvxpygen/ (CVXPYgen integration)
-5. CLAUDE.md and .claude/CLAUDE.md (project context)
+5. AGENTS.md (project context for developers)
 
 Then update these files to reflect the current docs/API:
 - skills/fomtools/SKILL.md (main skill file)
