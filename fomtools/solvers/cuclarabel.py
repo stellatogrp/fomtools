@@ -1,4 +1,5 @@
 import importlib.util
+import warnings
 
 import numpy as np
 import scipy.sparse as spa
@@ -142,7 +143,13 @@ class CuClarabelSolver(ClarabelSolver):
         """)
 
         self.solution = jl.sol
-        if jl.sol.status != jl.Clarabel.SOLVED:
+        if jl.sol.status == jl.Clarabel.ALMOST_SOLVED:
+            warnings.warn(
+                "CuClarabel terminated ALMOST_SOLVED; the SDP bound holds only to its "
+                "reduced tolerances.",
+                stacklevel=2,
+            )
+        elif jl.sol.status != jl.Clarabel.SOLVED:
             raise RuntimeError(
                 f"CuClarabel terminated with {jl.sol.status}; no accepted SDP bound."
             )

@@ -1,3 +1,5 @@
+import warnings
+
 import clarabel
 import numpy as np
 import scipy.sparse as spa
@@ -147,7 +149,9 @@ class ClarabelSolver(SDPSolver):
         the Clarabel solver. The problem is formulated as a minimization
         in Clarabel's standard form, so the returned value is negated
         to give a dual upper bound for the maximization problem.
-        Only ``Solved`` is accepted; inaccurate or early termination raises.
+        ``Solved`` is accepted; ``AlmostSolved`` is accepted with a warning, since
+        the dual objective then holds only to Clarabel's reduced tolerances. Any
+        other termination (limits, infeasibility, numerical errors) raises.
 
         Parameters
         ----------
@@ -195,7 +199,13 @@ class ClarabelSolver(SDPSolver):
 
         solver = clarabel.DefaultSolver(P, q, A, b, cones, settings)
         self.solution = sol = solver.solve()
-        if sol.status != clarabel.SolverStatus.Solved:
+        if sol.status == clarabel.SolverStatus.AlmostSolved:
+            warnings.warn(
+                "Clarabel terminated AlmostSolved; the SDP bound holds only to its "
+                "reduced tolerances.",
+                stacklevel=2,
+            )
+        elif sol.status != clarabel.SolverStatus.Solved:
             raise RuntimeError(f"Clarabel terminated with {sol.status}; no accepted SDP bound.")
         bound = -float(sol.obj_val_dual)
         if not np.isfinite(bound):

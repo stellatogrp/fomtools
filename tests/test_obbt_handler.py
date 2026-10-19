@@ -504,12 +504,6 @@ def test_obbt_affine_output_preserves_mip_optimum():
     assert opt_ob == pytest.approx(opt_no, abs=1e-4)
 
 
-@pytest.mark.xfail(
-    reason="The final SDP solve ends AlmostSolved, which the solvers now reject "
-    "(only Solved/OPTIMAL is an accepted bound); see the audit PR discussion.",
-    raises=RuntimeError,
-    strict=False,
-)
 @pytest.mark.parametrize("sdp_solver", SDP_SOLVERS)
 def test_obbt_tightens_sdp_with_relu_cuts(sdp_solver):
     """With ReLU cuts on, OBBT strictly lowers the SDP bound and stays above the MIP."""

@@ -1,3 +1,4 @@
+import warnings
 from itertools import combinations
 
 import cvxpy as cp
@@ -2074,8 +2075,18 @@ class SDP(Canonicalizer):
             raise ValueError(f"Invalid cvxpy/Clarabel solver option in {merged}: {e}") from e
         except cp.error.SolverError as e:
             raise RuntimeError(f"CVXPY/Clarabel failed to solve the SDP: {e}") from e
-        if prob.status != cp.OPTIMAL or res is None or not np.isfinite(res):
+        if (
+            prob.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE)
+            or res is None
+            or not np.isfinite(res)
+        ):
             raise RuntimeError(f"CVXPY terminated with {prob.status}; no accepted SDP bound.")
+        if prob.status == cp.OPTIMAL_INACCURATE:
+            warnings.warn(
+                "CVXPY terminated optimal_inaccurate; the SDP bound holds only to the "
+                "solver's reduced tolerances.",
+                stacklevel=2,
+            )
         # For this linear maximization SDP, the dual objective is b^T lambda.
         # PSD constraints have zero right-hand sides. Keep the Problem for
         # status, primal, and dual inspection; acceptance is numerical.

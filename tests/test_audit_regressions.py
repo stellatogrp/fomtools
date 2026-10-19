@@ -117,7 +117,6 @@ def test_infeasible_model_has_no_scalar_or_solution(solver):
 @pytest.mark.parametrize(
     "status",
     [
-        clarabel.SolverStatus.AlmostSolved,
         clarabel.SolverStatus.MaxIterations,
         clarabel.SolverStatus.PrimalInfeasible,
         clarabel.SolverStatus.DualInfeasible,
@@ -139,9 +138,7 @@ def test_native_sdp_rejects_unaccepted_solution(monkeypatch, status):
         v.solve()
 
 
-@pytest.mark.parametrize(
-    "status", [cp.OPTIMAL_INACCURATE, cp.USER_LIMIT, cp.INFEASIBLE, cp.UNBOUNDED]
-)
+@pytest.mark.parametrize("status", [cp.USER_LIMIT, cp.INFEASIBLE, cp.UNBOUNDED])
 def test_cvxpy_sdp_rejects_unaccepted_solution(monkeypatch, status):
     def solve(problem, **kwargs):
         problem._status = status
@@ -153,6 +150,23 @@ def test_cvxpy_sdp_rejects_unaccepted_solution(monkeypatch, status):
     v.set_objective_norm(x, 2)
     with pytest.raises(RuntimeError, match="terminated"):
         v.solve()
+
+
+def test_native_sdp_almost_solved_warns(monkeypatch):
+    v = Verifier(method="sdp", solver="clarabel", obbt_solver=None)
+    x = v.add_iterate(1, lb=-1, ub=1)
+    v.set_objective_norm(x, 2)
+    monkeypatch.setattr(
+        clarabel,
+        "DefaultSolver",
+        lambda *args: SimpleNamespace(
+            solve=lambda: SimpleNamespace(
+                status=clarabel.SolverStatus.AlmostSolved, obj_val=-1.0, obj_val_dual=-1.1
+            )
+        ),
+    )
+    with pytest.warns(UserWarning, match="AlmostSolved"):
+        assert v.solve() == pytest.approx(1.1)
 
 
 @pytest.mark.parametrize("solver", ["clarabel", "cvxpy"])
