@@ -12,7 +12,7 @@
  * (fom_ops.cu). The clip bounds and the dual constant are host arrays in
  * fom_data.c, so we upload them to the device once in fom_setup. All vectors
  * stay on the device for the whole loop (pointer swap, no per-iteration full-
- * vector copies); only the residual partials cross back to the host.
+ * vector copies); only the residual scalar crosses back to the host.
  */
 #include <cuda_runtime.h>
 
@@ -26,7 +26,6 @@
 
 static fom_float *d_state = 0, *d_new_state = 0, *d_t0 = 0, *d_t1 = 0;
 static fom_float *d_p0 = 0, *d_lo = 0, *d_hi = 0, *d_t1c = 0, *d_red = 0;
-static fom_float h_red[RED_BLOCKS];
 
 /* box projection: v = clip(v, lo, hi) elementwise */
 __global__ void clip_kern(fom_float *v, const fom_float *lo, const fom_float *hi, int n) {
@@ -66,13 +65,24 @@ __global__ void maxdiff_kern(const fom_float *a, const fom_float *b, int n,
     if (threadIdx.x == 0) partials[blockIdx.x] = sh[0];
 }
 
+/* one block folds the per-block partials into partials[0] */
+__global__ void maxfold_kern(fom_float *partials) {
+    __shared__ fom_float sh[RED_BLOCKS];
+    sh[threadIdx.x] = partials[threadIdx.x];
+    __syncthreads();
+    for (int w = RED_BLOCKS >> 1; w > 0; w >>= 1) {
+        if (threadIdx.x < w && sh[threadIdx.x + w] > sh[threadIdx.x])
+            sh[threadIdx.x] = sh[threadIdx.x + w];
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) partials[0] = sh[0];
+}
+
 static fom_float device_max_diff(const fom_float *a, const fom_float *b, int n) {
-    fom_float m = 0.0;
-    int i;
+    fom_float m;
     maxdiff_kern<<<RED_BLOCKS, THREADS>>>(a, b, n, d_red);
-    cudaMemcpy(h_red, d_red, sizeof(fom_float) * RED_BLOCKS, cudaMemcpyDeviceToHost);
-    for (i = 0; i < RED_BLOCKS; ++i)
-        if (h_red[i] > m) m = h_red[i];
+    maxfold_kern<<<1, RED_BLOCKS>>>(d_red);
+    cudaMemcpy(&m, d_red, sizeof(fom_float), cudaMemcpyDeviceToHost);
     return m;
 }
 

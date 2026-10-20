@@ -10,7 +10,7 @@ class Polyhedron(Set):
     r"""
     The polyhedron $\{x : A x \le b\}$.
 
-    Backed by :class:`~fomtools.proxable_functions.ind_polyhedral.IndPolyhedral`,
+    Backed by `IndPolyhedral`,
     whose prox solves the projection via a KKT system. ``dual_ub`` bounds the
     inequality multipliers and is required by the MIP/SDP lowering.
 
@@ -40,11 +40,11 @@ class HalfSpace(Polyhedron):
     r"""
     The half-space $\{x : a^\top x \le b\}$ (a single linear inequality).
 
-    A :class:`Polyhedron` with a single row: ``A = a`` (shape ``(1, n)``) and RHS vector
+    A `Polyhedron` with a single row: ``A = a`` (shape ``(1, n)``) and RHS vector
     ``b = [b]``. The inherited ``self.A``/``self.b`` therefore carry the usual polyhedral
     meaning (``self.b`` is the length-1 RHS vector, *not* a bare scalar); the scalar normal
     is kept on ``self.a``. Backed by
-    :class:`~fomtools.proxable_functions.ind_half_space.IndHalfSpace`, which projects in
+    `IndHalfSpace`, which projects in
     closed form (no dual bound needed).
 
     Parameters
@@ -72,7 +72,7 @@ class Simplex(Polyhedron):
     r"""
     The scaled probability simplex $\{x : x \ge 0,\ \mathbf{1}^\top x = a\}$.
 
-    Backed by :class:`~fomtools.proxable_functions.ind_simplex.IndSimplex`.
+    Backed by `IndSimplex`.
 
     Parameters
     ----------

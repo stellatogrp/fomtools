@@ -1,4 +1,4 @@
-"""Extract a :class:`~fomtools.codegen.ir.FomIR` from a built ``Verifier``.
+"""Extract a `FomIR` from a built ``Verifier``.
 
 The verifier records an *unrolled* chain of steps (one block per iteration).
 Code generation needs the opposite: a single, stationary iteration *body* that a
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 import scipy.sparse as spa
+import scipy.sparse.linalg as spla
 
 from fomtools.codegen.config import Backend, CodegenConfig, SolveMethod, Version
 from fomtools.codegen.factorize import Factorization, factorize, is_spd
@@ -35,11 +36,19 @@ from fomtools.linearexpression import LinearExpression
 from fomtools.steps import Affine, Relu, SaturatedLinear, SoftThreshold
 
 
-def _densify(coeff) -> np.ndarray:
-    """Return a 2-D dense float array for a (possibly sparse) coefficient."""
+def _sparse(coeff) -> spa.csr_matrix:
+    """Return a 2-D CSR float matrix for a (possibly dense) coefficient.
+
+    Coefficient blocks are assembled sparse: on large problems they are almost
+    all zeros, and a dense copy grows with the square of the dimension.
+    """
     if spa.issparse(coeff):
-        return np.asarray(coeff.todense(), dtype=float)
-    return np.atleast_2d(np.asarray(coeff, dtype=float))
+        return spa.csr_matrix(coeff, dtype=float)
+    return spa.csr_matrix(np.atleast_2d(np.asarray(coeff, dtype=float)))
+
+
+def _zeros(rows: int, cols: int) -> spa.csr_matrix:
+    return spa.csr_matrix((rows, cols), dtype=float)
 
 
 def _row_slice_expr(expr: LinearExpression, rows) -> LinearExpression:
@@ -136,12 +145,9 @@ def _eval_step_fresh(step, values: dict[LinearExpression, np.ndarray]) -> np.nda
     """
     rhs_val = eval_expr(step.arg, values)
     if isinstance(step, Affine):
-        mat = (
-            np.asarray(step.output_mat.todense(), dtype=float)
-            if spa.issparse(step.output_mat)
-            else np.asarray(step.output_mat, dtype=float)
-        )
-        return np.linalg.solve(mat, rhs_val)
+        if spa.issparse(step.output_mat):
+            return np.asarray(spla.spsolve(spa.csc_matrix(step.output_mat), rhs_val)).reshape(-1)
+        return np.linalg.solve(np.asarray(step.output_mat, dtype=float), rhs_val)
     if isinstance(step, SoftThreshold):
         return np.sign(rhs_val) * np.maximum(np.abs(rhs_val) - step.lambd, 0.0)
     if isinstance(step, Relu):
@@ -227,7 +233,7 @@ def _resolve_solve_method(output_mat, config: CodegenConfig) -> str:
 def normalize_iterates(verifier, iterates) -> list[list[LinearExpression]]:
     """Normalize a recorded iterate sequence to one group per *iteration*.
 
-    Accepts an :class:`~fomtools.iteratetrajectory.IterateTrajectory` or a plain
+    Accepts an `IterateTrajectory` or a plain
     sequence, and drops a leading entry that is the *initial* iterate rather than
     the result of an iteration: a trajectory keeps the initial iterate in slot 0,
     while hand-built lists go both ways. The test is structural -- an entry that
@@ -293,7 +299,7 @@ def _as_list(x) -> list:
 def resolve_structure(verifier, next_state, state=None, params=None):
     """Resolve the iteration body, state leaves, and parameter leaves.
 
-    Shared by :func:`extract_ir` and the reference oracle so both agree on what
+    Shared by `extract_ir` and the reference oracle so both agree on what
     constitutes one iteration. Returns ``(next_state_exprs, body_steps,
     body_fresh, state_leaves, param_leaves)``.
     """
@@ -345,8 +351,9 @@ def extract_ir(
     params=None,
     config: CodegenConfig | None = None,
     name: str = "fom",
+    iterates=None,
 ) -> FomIR:
-    """Build a :class:`FomIR` for one iteration of the FOM recorded in ``verifier``.
+    """Build a `FomIR` for one iteration of the FOM recorded in ``verifier``.
 
     Parameters
     ----------
@@ -366,11 +373,21 @@ def extract_ir(
         Code-generation configuration (supplies the termination spec / dtype).
     name:
         Human-friendly FOM name used for file naming.
+    iterates:
+        Optional recorded iterate sequence. Used only under
+        ``TerminationKind.OBJECTIVE``, to locate an objective written at the last
+        recorded iteration (see `fomtools.codegen.objective`).
 
     Returns
     -------
     FomIR
         The single-iteration intermediate representation.
+
+    Raises
+    ------
+    ObjectiveExtractionError
+        Under ``TerminationKind.OBJECTIVE``, if no objective is set on the
+        verifier or it reads something the generated loop does not carry.
     """
     config = config or CodegenConfig()
     next_state_exprs, body_steps, body_fresh, state_leaves, param_leaves = resolve_structure(
@@ -443,6 +460,21 @@ def extract_ir(
             f"inferred state dimension ({state_dim})."
         )
 
+    # --- verification objective (early exit on the certified metric) ----------
+    objective = None
+    if config.termination.uses_objective:
+        from fomtools.codegen.objective import extract_objective
+
+        objective = extract_objective(
+            verifier,
+            state_layout,
+            next_state_exprs,
+            param_map,
+            tmp_map,
+            matrices,
+            iterates=normalize_iterates(verifier, iterates) if iterates is not None else None,
+        )
+
     # --- initial state + param specs -----------------------------------------
     init = _initial_state(state_layout)
     state_spec = StateSpec(
@@ -470,6 +502,7 @@ def extract_ir(
         factorizations=factorizations,
         dtype=config.dtype,
         name=name,
+        objective=objective,
     )
 
 
@@ -516,12 +549,12 @@ def _build_linear_op(expr, prefix, state_layout, param_map, tmp_map, matrices, o
     for leaf, _, dim, _ in state_layout:
         coeff = expr.decomposition_dict.get(leaf)
         if coeff is None:
-            state_blocks.append(np.zeros((out_dim, dim)))
+            state_blocks.append(_zeros(out_dim, dim))
         else:
-            state_blocks.append(_densify(coeff))
+            state_blocks.append(_sparse(coeff))
             any_state = True
     if any_state:
-        mat = np.hstack(state_blocks) if state_blocks else np.zeros((out_dim, 0))
+        mat = spa.hstack(state_blocks, format="csr") if state_blocks else _zeros(out_dim, 0)
         mname = f"{prefix}_state"
         matrices[mname] = MatrixData(name=mname, array=mat)
         terms.append(Term(source="state", matrix=mname))
@@ -529,10 +562,7 @@ def _build_linear_op(expr, prefix, state_layout, param_map, tmp_map, matrices, o
     # parameter blocks
     for leaf, (pname, _) in param_map.items():
         coeff = expr.decomposition_dict.get(leaf)
-        if coeff is None:
-            continue
-        dense = _densify(coeff)
-        if not np.any(dense):
+        if coeff is None or _sparse(coeff).count_nonzero() == 0:
             continue
         mname = f"{prefix}_p_{pname}"
         matrices[mname] = MatrixData.from_coeff(mname, coeff)
@@ -541,10 +571,7 @@ def _build_linear_op(expr, prefix, state_layout, param_map, tmp_map, matrices, o
     # temporary blocks (earlier body steps)
     for leaf, (tname, _) in tmp_map.items():
         coeff = expr.decomposition_dict.get(leaf)
-        if coeff is None:
-            continue
-        dense = _densify(coeff)
-        if not np.any(dense):
+        if coeff is None or _sparse(coeff).count_nonzero() == 0:
             continue
         mname = f"{prefix}_t_{tname}"
         matrices[mname] = MatrixData.from_coeff(mname, coeff)
@@ -575,12 +602,12 @@ def _build_state_update(
         rows = []
         for e in next_state_exprs:
             coeff = e.decomposition_dict.get(leaf)
-            rows.append(_densify(coeff) if coeff is not None else np.zeros((e.ndim, dim)))
+            rows.append(_sparse(coeff) if coeff is not None else _zeros(e.ndim, dim))
             if coeff is not None:
                 any_state = True
-        state_blocks.append(np.vstack(rows))
+        state_blocks.append(spa.vstack(rows, format="csr"))
     if any_state:
-        mat = np.hstack(state_blocks) if state_blocks else np.zeros((total, 0))
+        mat = spa.hstack(state_blocks, format="csr") if state_blocks else _zeros(total, 0)
         matrices["su_state"] = MatrixData(name="su_state", array=mat)
         terms.append(Term(source="state", matrix="su_state"))
 
@@ -591,12 +618,12 @@ def _build_state_update(
         for e in next_state_exprs:
             coeff = e.decomposition_dict.get(leaf)
             if coeff is not None:
-                rows.append(_densify(coeff))
+                rows.append(_sparse(coeff))
                 present = True
             else:
-                rows.append(np.zeros((e.ndim, tdim)))
+                rows.append(_zeros(e.ndim, tdim))
         if present:
-            mat = np.vstack(rows)
+            mat = spa.vstack(rows, format="csr")
             mname = f"su_t_{tname}"
             matrices[mname] = MatrixData(name=mname, array=mat)
             terms.append(Term(source=f"tmp:{tname}", matrix=mname))
@@ -608,12 +635,12 @@ def _build_state_update(
         for e in next_state_exprs:
             coeff = e.decomposition_dict.get(leaf)
             if coeff is not None:
-                rows.append(_densify(coeff))
+                rows.append(_sparse(coeff))
                 present = True
             else:
-                rows.append(np.zeros((e.ndim, pdim)))
+                rows.append(_zeros(e.ndim, pdim))
         if present:
-            mat = np.vstack(rows)
+            mat = spa.vstack(rows, format="csr")
             mname = f"su_p_{pname}"
             matrices[mname] = MatrixData(name=mname, array=mat)
             terms.append(Term(source=f"param:{pname}", matrix=mname))

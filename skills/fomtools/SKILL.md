@@ -9,7 +9,7 @@ license: Apache-2.0
 
 # FOMTools
 
-FOMTools is a Python toolbox for **formal verification of first-order optimization methods** and **code generation of embedded solvers**. You define a FOM as a sequence of steps, prove worst-case convergence via MIP or SDP, and optionally generate a fast C/CUDA solver from it.
+FOMTools is a Python toolbox for **performance analysis of first-order optimization methods** and **code generation of embedded solvers**. You define a FOM as a sequence of steps, bound finite-iteration worst-case performance via MIP or SDP, and optionally generate a fast C/CUDA solver from it.
 
 ## When to Use This Skill
 
@@ -22,26 +22,13 @@ FOMTools is a Python toolbox for **formal verification of first-order optimizati
 
 ## Quick Start
 
-```python
-import numpy as np
-from fomtools.verifier import Verifier
-
-K, n = 10, 3
-step_size = 0.01
-P = np.random.normal(size=(n, n))
-P = P @ P.T
-
-vp = Verifier(solver="gurobi")
-z = [None] * (K + 1)
-z[0] = vp.add_iterate(dim=n, lb=-1.0, ub=-1.0)
-q_param = vp.add_param(dim=n, lb=-1.0, ub=1.0)
-
-for k in range(1, K + 1):
-    z[k] = vp.step.relu(z[k - 1] - step_size * (P @ z[k - 1] + q_param))
-    vp.set_infinity_norm_objective(z[k] - z[k - 1])
-    res = vp.solve(huchette_cuts=True)
-    vp.post_process(z[k], z[0], [res])
-```
+Follow the executable example in `docs/index.md`, which is tested directly.
+Use `Verifier()` for the default HiGHS backend, `ndim=` for variables,
+`set_objective_norm(expr, ord=np.inf)`, and `solve(convex_hull_cuts=True)`.
+MIP returns a finite best upper bound and raises when none is available.
+SDP accepts only accurate optimal termination. Numerical tolerances still apply.
+Use `post_process` only with certified bounds for all successive infinity-norm
+residuals from reference to target; a final-step bound alone is insufficient.
 
 ## Architecture Overview
 
@@ -51,9 +38,9 @@ The verification pipeline follows: **Step -> StepDecomposer -> Canonicalizer -> 
 
 | `method=` | Canonicalizer | Solvers | Use case |
 |-----------|--------------|---------|----------|
-| `"mip"` | `MIP` | Gurobi, HiGHS | Exact verification via mixed-integer programming |
-| `"sdp"` | `SDP` | Clarabel, cuClarabel | Semidefinite relaxation (supports RLT/triangle cuts) |
-| `"simulator"` | Simulator | (none) | Numerical simulation only, no proof |
+| `"mip"` | `MIP` | HiGHS (default), Gurobi | Exact formulations for verification via mixed-integer programming |
+| `"sdp"` | `SDP` | Clarabel, CVXPY/Clarabel, cuClarabel | Semidefinite relaxation (supports RLT/triangle cuts) |
+| `"simulator"` | Simulator | (none) | Sampled residuals and distributional risk bounds |
 
 ### Step Operators
 
@@ -63,8 +50,7 @@ Access via `vp.step.<name>(arg, ...)`:
 |------|--------|-------------|
 | `relu` | `vp.step.relu(x)` | ReLU activation / projection onto non-negative orthant |
 | `soft_threshold` | `vp.step.soft_threshold(x, lambd=t)` | Soft thresholding (proximal of L1 norm) |
-| `saturated_linear` | `vp.step.saturated_linear(x, lb, ub)` | Box projection / clipping |
-| `affine` | `vp.step.affine(x, output_mat=M)` | Linear solve `M \ x` |
+| `satlin` | `vp.step.satlin(x, l=l, u=u)` | Box projection / clipping |
 | `implicit_linear` | `vp.step.implicit_linear(x, output_mat=M)` | Implicit linear solve (used in ADMM/KKT) |
 
 ### Key Classes
@@ -77,7 +63,7 @@ For detailed API signatures and parameters, read `references/api.md`.
 
 ## Code Generation
 
-FOMTools generates OSQP-style embedded C solvers from verified FOMs. An LLM coding agent writes the solver and iterates against a Python reference oracle until numerically verified.
+FOMTools generates OSQP-style embedded C solvers from verified FOMs. An LLM coding agent writes the solver and iterates against a Python reference oracle until checked on sampled inputs.
 
 ### Basic Codegen
 
@@ -120,10 +106,26 @@ config = CodegenConfig(
 result = vp.codegen_rolled("out/ista", next_state=z[1], config=config)
 ```
 
+To stop on the verified metric itself, set the objective on the recording and use
+`TerminationKind.OBJECTIVE` (checked every 25 iterations by default and at the
+last one; `ord=2` is the squared norm, as in verification):
+
+```python
+vp.set_objective_norm(z[K] - z[K - 1], ord=np.inf)
+config = CodegenConfig(
+    termination=TerminationSpec(kind=TerminationKind.OBJECTIVE, max_iters=K, tol=1e-6),
+)
+result = vp.codegen("out/ista", iterates=z, config=config)  # stops by K if r^K <= tol is verified
+```
+
+The objective may read `w^K`, `w^{K-1}`, parameters, and ReLU steps recorded after
+the loop (`max(Ax - u, 0)`); anything else raises `ObjectiveExtractionError` with
+the fix. See `references/codegen.md`.
+
 ### Performance Profiling
 
 ```python
-result = vp.codegen("out/ista", iterates=z, run_phase_b=True, profile=True)
+result = vp.codegen("out/ista", iterates=z, code_optimization=True, profile=True)
 print(result.timing.summary())
 ```
 
@@ -194,14 +196,14 @@ For full CVXPYgen integration docs, read `references/cvxpygen.md`.
 ## Installation
 
 ```bash
-pip install -e .               # basic
-pip install -e ".[dev]"        # development (pytest, ruff)
-pip install -e ".[codegen]"    # code generation
-pip install -e ".[cvxpygen]"   # CVXPYgen integration
-pip install -e ".[docs]"       # documentation (mkdocs)
+uv pip install -e .               # basic
+uv pip install -e ".[dev]"        # development (pytest, ruff)
+uv pip install -e ".[codegen]"    # code generation
+uv pip install -e ".[cvxpygen]"   # CVXPYgen integration
+uv pip install -e ".[docs]"       # documentation (mkdocs)
 ```
 
-Requires Python 3.12+. Core deps: `numpy`, `scipy`, `gurobipy`/`highspy`. Optional: `cvxpy`, `torch`/`jax` (import lazily).
+Requires Python 3.12+. Core dependencies include `numpy`, `scipy`, `highspy`, and `cvxpy`. Gurobi is optional and requires a suitable license. `torch`/`jax` are optional neural-network dependencies.
 
 ## CLI
 
@@ -240,9 +242,9 @@ z[k] = vp.step.soft_threshold(At @ z[k-1] + Bt @ b_param, lambd=t)
 
 ### Box-Constrained QP
 ```python
-z[k] = vp.step.saturated_linear(z[k-1] - step_size * grad, lb=lb, ub=ub)
+z[k] = vp.step.satlin(z[k-1] - step_size * grad, l=lb, u=ub)
 ```
 
 ## Source Code
 
-GitHub: [stellatogrp/algo_verify](https://github.com/stellatogrp/algo_verify)
+GitHub: [stellatogrp/fomtools](https://github.com/stellatogrp/fomtools)

@@ -18,12 +18,12 @@ The nonnegative least-squares instance is
 
 $$
 \begin{array}{ll}
-    \text{minimize} & (1/2)\lVert Az - x \rVert_2^2 \\
+    \text{minimize} & (1/2)\|Az - x\|_2^2 \\
     \text{subject to} & z \ge 0.
 \end{array}
 $$
 
-The notebook uses a small dense matrix \(A\), a boxed input vector \(x\), and a
+The notebook uses a small dense matrix $A$, a boxed input vector $x$, and a
 fixed positive starting vector.
 
 ## Method
@@ -31,7 +31,7 @@ fixed positive starting vector.
 The solver uses projected gradient descent:
 
 $$
-z^{k+1} = \max\{z^k - \eta A^\top(Az^k - x), 0\}.
+z^{k+1} = \max\{z^k - \eta A^T(Az^k - x), 0\}.
 $$
 
 Both the NumPy reference and the generated C solver run the same update rule for

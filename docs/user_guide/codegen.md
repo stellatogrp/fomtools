@@ -25,8 +25,8 @@ or an explicit `driver=`. Recording the method requires no coding agent.
 Write the algorithm as a loop, exactly as you would to verify it, and keep the
 iterate sequence. An
 [`iterate_trajectory`](../api/verifier.md#fomtools.Verifier.iterate_trajectory) is
-the tidiest way to hold it — see [accumulating methods](#accumulating-methods)
-for why — but any list works:
+the tidiest way to hold it (see [accumulating methods](#accumulating-methods)
+for why), but any list works:
 
 ```python
 import numpy as np
@@ -167,9 +167,10 @@ assert result.success
 ```
 
 Generating from a recorded run runs that run, so there is no horizon to stop short
-of and `codegen` rejects a tolerance-based criterion rather than quietly ignoring
-it. Reach for `codegen_rolled` when you want a stopping rule, or `codegen` when
-you want the algorithm you recorded.
+of and `codegen` rejects the infinity-norm criterion rather than quietly ignoring
+it. Reach for `codegen_rolled` when you want that stopping rule, or `codegen` when
+you want the algorithm you recorded. The verification objective (next section) is
+the exception: `codegen` accepts it.
 
 `TerminationSpec` also takes `check_termination` (named after OSQP's setting):
 the residual is computed and tested only every `check_termination` iterations,
@@ -179,6 +180,52 @@ time for direct-method FOMs, and checking less often overshoots the stopping
 point by up to `check_termination - 1` full iterations. Raise it only for
 matrix-free methods on large problems, where a single iteration is cheap
 relative to a pass over the state.
+
+### Stopping on the verification objective
+
+`TerminationKind.INF_NORM_CHANGE` stops on `||x_k - x_{k-1}||_inf` over the whole
+state, which is not the quantity you verified when your objective reads a scaled
+or partial iterate, or is a KKT residual. `TerminationKind.OBJECTIVE` stops on the
+objective itself, the one set with `set_objective_norm`, in the norm it was set
+with (`ord=2` is the squared two-norm, as in verification):
+
+```python
+vp.set_objective_norm(H @ (z[K] - z[K - 1]), ord=np.inf)
+
+config = CodegenConfig(
+    termination=TerminationSpec(kind=TerminationKind.OBJECTIVE, max_iters=K, tol=1e-6),
+)
+result = vp.codegen("out/ista", iterates=z, config=config)
+```
+
+The solver tests `r^k <= tol` every `check_termination` iterations (default 25)
+and always at the last one, and reports `r^k` in `solution.residual`. The test is
+then exactly the certified quantity: if verification shows `r^K <= tol` over the
+whole parameter set, the generated solver is guaranteed to stop by iteration `K`
+with `FOM_SOLVED`. It also means experiments can time every solver at the same
+tolerance without searching over iteration counts.
+
+The objective is written at iteration `K` in terms of `w^K` and `w^{K-1}`, and is
+mapped exactly onto what the loop holds at the end of an iteration: the new and
+current state, the parameters, the step outputs of the iteration (when the
+objective is written on the iteration the solver was extracted from), and ReLU
+steps recorded after the loop for one-sided terms such as `max(Ax - u, 0)`. A row
+holding a ReLU must hold only that term. An objective written after the loop, as
+above, needs the recorded iterates to locate iteration `K`; `codegen` has them,
+and `codegen_rolled` takes them through `iterates=`. Anything the loop does not
+carry (an iterate older than `w^{K-1}`, an iterate accumulated as a non-leaf
+expression, a parameter the iteration never reads) raises
+`ObjectiveExtractionError` saying what to change: carry the older iterate in the
+state, or record the iterates with `iterate_trajectory`.
+
+The metric is generated as `fom_objective(...)` in its own source,
+`src/fom_objective.c` (beside the kernels in `src/fom_ops.cu` on CUDA), which the
+coding agent may never edit, even where it may rewrite the matrix-vector
+products; the agent's loop only decides when to call it. `make verify` checks the stopping iteration, the
+objective value and the status against the reference oracle, at the default
+settings and at other runtime `check_termination` and `max_iter`. An unrolled run
+(one that does not roll back up) evaluates the objective once, after its single
+pass.
 
 This requires a coding agent. Enable the real Claude Agent SDK driver with
 `FOMTOOLS_CODEGEN_AGENT=1` (requires authentication), or pass an explicit driver
@@ -224,29 +271,32 @@ from fom_solver import Solver
 
 solver = Solver()
 out = solver.solve(p0=b)          # {"x", "iter", "residual", "status"}
+solver.update_settings(tol=1e-8, check_termination=10, max_iter=500)  # runtime
 ```
 
-## Performance: timing, profiling, and the optimization loop
+## Performance: timing, profiling, and the code optimization phase
 
-Pass `run_phase_b=True, profile=True` (the default for the `fomtools-codegen`
+Pass `code_optimization=True, profile=True` (the default for the `fomtools-codegen`
 CLI with `--driver agent`) to (a) measure the speed of the generated solver
-against the Python reference, and (b) enter an iterative, profile-guided
-optimization phase:
+against the Python reference, and (b) enter the code optimization phase, an
+iterative, profile-guided rewrite of the solver:
 
 ```python
 result = vp.codegen(
     "out/ista", iterates=z, name="ista",
-    run_phase_b=True, profile=True,
+    code_optimization=True, profile=True,
 )
 print(result.timing.summary())
 ```
 
-After Phase A verifies, the orchestrator records a baseline (Python reference
-time, the initial generated C time, and a profiling breakdown). Then the agent
+After the translation phase verifies, the orchestrator records a baseline (Python
+reference time, the translated generated-C time, and a profiling breakdown). Then the agent
 runs a loop: **profile → optimize the hottest region → `make verify` (correctness
 is re-checked every round) → `make bench` → repeat** until gains level off. A
 change that breaks verification is never kept, and if the whole phase leaves the
-solver regressed, the verified Phase-A solver is restored automatically.
+solver regressed, the verified translated solver is restored automatically. The
+files the agent may rewrite, and how each is checked, are described
+[below](#what-the-agent-may-rewrite-and-how-it-is-checked).
 
 `result.timing` (a `TimingReport`) holds `python_us`, `c_initial_us`,
 `c_final_us`, the speedup factors (`speedup_codegen`, `speedup_optimization`,
@@ -256,11 +306,11 @@ them, e.g.:
 ```
 Timing summary (per solve):
   Python reference (before codegen):   1328.250 us
-  Generated C (initial, phase A):         1.753 us
-  Generated C (optimized, phase B):       1.640 us
-  Speedup from codegen (Py -> C):         757.7x
-  Speedup from optimization (A -> B):       1.07x
-  Total speedup (Py -> optimized C):      810.0x
+  Generated C (translated):              1.753 us
+  Generated C (optimized):               1.640 us
+  Speedup from codegen (Py -> C):       757.7x
+  Speedup from code optimization:       1.07x
+  Total speedup (Py -> optimized C):    809.9x
 Profiling breakdown (hottest first):
   soft_threshold              20.246 us   51.21%  (1000000 calls)
   state_update                19.288 us   48.79%  (1000000 calls)
@@ -272,20 +322,136 @@ The portable region profiler (`include/fom_profile.h`) is compiled in only for
 the shipped `make verify` / `make lib` builds, so profiling never affects the
 production solver.
 
+### Time and turn budgets
+
+Each agent phase runs under a budget, set per run on `CodegenConfig`:
+
+| setting | default | bounds |
+|---|---|---|
+| `agent_timeout_s` | 600 s (10 min) | wall-clock time of the translation phase |
+| `agent_optimize_timeout_s` | 7200 s (2 h) | wall-clock time of the code optimization phase |
+| `agent_optimize_max_turns` | 200 | agent turns of the code optimization phase |
+
+Translation is a bounded task and rarely needs more than a few minutes. The code
+optimization phase is open-ended, and on a GPU every round (an `nvcc` build,
+`make verify`, `make bench`) is slow, so it gets two hours and enough turns that
+time, not turns, ends a run. Raise them for larger problems:
+
+```python
+config = CodegenConfig(agent_optimize_timeout_s=4 * 3600, agent_optimize_max_turns=400)
+result = generate_code(..., config=config, code_optimization=True)
+```
+
+or, on the command line, `--translate-timeout`, `--optimize-timeout` (seconds)
+and `--optimize-max-turns`. The budgets apply to whichever agent driver runs, a
+driver you build yourself included: one built without a config takes the run's.
+When a budget runs out the agent is stopped, whatever it wrote is re-verified and
+benchmarked as usual, and the report says so (in that case the agent may not have
+written its own summary). For reference, a CUDA CG solve stopped at 30 minutes
+had already gone from 2.05 s to 0.114 s per solve and was still improving.
+
 ### What changed, and a marker-free production build
 
-When Phase B runs, two extra artifacts are written:
+When the code optimization phase runs, two extra artifacts are written:
 
 - `OPTIMIZATIONS.md` — a durable record of the run: the timing summary, the
-  agent's own notes, and a **unified diff of the solver** from the initial
-  (phase A) version to the optimized one, so you can see exactly what was
-  changed. Also available programmatically as `result.optimization_diff`.
-- `release/fom_solver.c` — a **production copy with the profiling markers and
-  the `fom_profile.h` include stripped**. The markers are already no-ops outside
-  `make profile`, so this is behavior- and performance-identical; it is just a
-  clean, dependency-free source for embedding. Build it with `make release`
-  (which links the shared library from `release/`), or drop it in for
-  `src/fom_solver.c`.
+  agent's own notes, a **unified diff of every rewritten source** from the
+  translated version to the optimized one, so you can see exactly what was
+  changed, and a **kernel-check table** (see below). Also available
+  programmatically as `result.optimization_diff` and `result.kernel_checks`.
+- `release/fom_solver.c` (with `release/fom_linsolve.c` and `release/fom_ops.c`)
+  — a **production copy with the profiling markers and the `fom_profile.h`
+  include stripped**. The markers are already no-ops outside `make profile`, so
+  this is behaviour- and performance-identical; it is just a clean,
+  dependency-free source for embedding. Build it with `make release` (which links
+  the shared library from `release/`), or drop it in for the `src/` files.
+
+### What the agent may rewrite, and how it is checked
+
+The translation phase writes only `src/fom_solver.c`. The code optimization
+phase may also rewrite the two linear parts of the solver, where most of the time
+goes. The package restores every other file before each check, so the numeric
+data cannot change:
+
+| file | in the code optimization phase | checked by `make verify` |
+|---|---|---|
+| `src/fom_solver.c` (the iteration) | rewritten by the agent | end to end, against the Python reference on sampled parameters |
+| `src/fom_linsolve.c` (linear solves) | rewritten by the agent | each `fom_lin_solve_<name>` against the reference solve of its factorization, on random right-hand sides |
+| `src/fom_ops.c` (matrix-vector products) | rewritten by the agent | each `fom_apply_<name>` exactly against its matrix (below) |
+| `src/fom_data.c`, `src/fom_objective.c`, `include/`, `test/`, `Makefile` | package only | — |
+
+A matrix-vector routine is a linear map, so it can be checked for **every**
+input, not just sampled ones. `make verify` runs each `fom_apply_<name>` next to a
+package-written reference (`test/ops_ref.c`) that reads the same `fom_data.c`
+arrays, starting both from the same nonzero `out` (so the routine must still
+accumulate, `out += M @ x`). The tolerance scales with `M @ x`, not with that
+starting value, so each entry is held to `tol_verify` relative to itself:
+
+- on **every unit vector** when the matrix is small enough
+  (`cols × (nnz + rows) ≤ 1e8`): this recovers the routine's matrix column by
+  column, and a wrong coefficient is reported by its entry;
+- on **two random vectors** always, which also catches a routine that branches
+  on its input; above the budget these are the whole check.
+
+The check stores no matrix-sized data: the expected values are computed in C from
+`fom_data.c`, and the only stored data are the random probe vectors.
+
+Only code inside `fom_apply_<name>` goes through this check, so these rules keep
+every coefficient there. A rewrite that breaks one is discarded:
+
+- the solver may not read the `FOM_MAT_<name>` data of a matrix it multiplies
+  by; it calls `fom_apply_<name>`. This rule already holds at translation
+  (`make verify` applies it there too), so the code optimization phase starts
+  from a solver that multiplies only through the checked routines. In
+  `fom_ops.c`, a routine is `fom_apply_<name>` with every helper it calls (on
+  CUDA, its `__global__` kernel); it may read only its own matrix's data, no
+  other code (a macro, static data, an unreached function) may read matrix data,
+  and every function but the `fom_apply_<name>` entry points must be `static`;
+- the solver and `fom_ops.c` may not add floating-point constants other than
+  `0`, `0.5`, `1` and `2`: decimal or hexadecimal float literals, or integer
+  literals cast to a floating type (coefficients come from `fom_data.c`);
+- `fom_setup` and `fom_update_params`, and any function of the solver they
+  reach, may not add uses of `fom_apply_*`, which is how a matrix would be
+  rebuilt by probing it. This also rules out hoisting a product that depends
+  only on the parameters out of the iteration and into `fom_update_params`: a
+  syntactic rule cannot tell a parameter vector from a unit vector, and the
+  guarantee is worth more than that speedup;
+- every function the rules inspect must be a single plain C definition they can
+  find; one they cannot find, or one defined twice (in `#if` branches, say), is
+  a violation, not a skipped rule.
+
+Literals and setup calls the translated file already had are exempt; in
+`fom_ops.c`, per routine (and outside the routines, only against what the
+translated file had outside them). The literal rule is syntactic: an integer coefficient
+(`3 * x[j]`) or one computed from allowed constants gets past it, and the
+numerical checks (exact for `fom_apply_<name>`, sampled for the solver) are what
+catch those. `make verify` reports these rules while the agent works; the
+pipeline applies them again when it collects the rewrite, and that check
+decides.
+
+`OPTIMIZATIONS.md` records the outcome for the shipped `fom_ops.c`:
+
+```
+| matrix | shape | nnz | rewritten | check | probes | max error |
+|---|---|---|---|---|---|---|
+| `t0_state` | 140x228 | 228 | no | basis | 230 | 0.000e+00 |
+| `su_state` | 228x228 | 228 | yes | basis | 230 | 0.000e+00 |
+```
+
+A routine counts as rewritten when its body, a helper it reaches, or the file
+scope (macros, static data) changed. The table is followed by any rule
+violations found in the collected rewrite. `result.kernel_checks` holds the same
+rows.
+
+The large-scale CUDA target follows the same policy where `make verify` runs on
+a GPU (detected with `nvidia-smi`, or forced with `FOMTOOLS_CUDA_RUN=1`):
+`fom_ops.cu` and `fom_linsolve.cu` are editable, and the direct checks stage
+each probe through device buffers and compare the result with the same host
+reference. The device copies of the matrices live in the package-owned
+`include/fom_ops_data.cuh`, and the objective in `src/fom_objective.cu`, so a
+rewrite cannot change either. Without a GPU, verify only compiles, so only
+`fom_solver.cu` is editable there; its rules still hold from translation on,
+and `make compile` applies them.
 
 ## Linear solves: factorized, never inverted
 
@@ -299,15 +465,16 @@ reciprocals). The factors live in `src/fom_linsolve.c` and are called as
 side and calls them. `CodegenConfig(solve_method=...)` can force `LDLT`/`LU`;
 `CG` (an indirect method for large/GPU problems) is reserved for a future
 backend. The choice can depend on problem type and the CPU/GPU target — but a
-matrix inverse is never formed or stored. The LDLᵀ factorization uses a
-fill-reducing (reverse Cuthill–McKee) ordering so the factor stays sparse (on the
-MPC KKT, 552 vs 19600 dense entries).
+matrix inverse is never formed or stored. The LDLᵀ factorization (by QDLDL)
+uses a fill-reducing approximate-minimum-degree ordering so the factor stays
+sparse (on the MPC KKT, 552 vs 19600 dense entries).
 
 Likewise, every `matrix @ vector` product in the iteration is emitted as a
-**sparse CSR** operation (`fom_apply_<name>` in `fom_ops.c`) when the matrix is
+**sparse CSR** operation (`fom_apply_<name>` in `fom_ops.c`, over CSR arrays in
+`fom_data.c`) when the matrix is
 structured — the OSQP/MPC selection, dynamics, and state-update blocks are highly
 sparse — and dense only when the matrix genuinely is. Together these make the
-*initial* generated solver fast natively (no reliance on the optimization phase
+*initial* generated solver fast natively (no reliance on the code optimization phase
 to recover structure): on the MPC example the un-optimized C solver already runs
 ~29× faster than the NumPy reference.
 
@@ -453,6 +620,7 @@ fomtools-codegen --example dr        --out out/dr    --scaffold-only
 fomtools-codegen --example mpc       --out out/mpc   --driver agent   # OSQP MPC, larger
 fomtools-codegen --example fista     --out out/fista --scaffold-only  # a recorded run
 fomtools-codegen --example scheduled --out out/sched --scaffold-only  # a declared coefficient
+fomtools-codegen --module my_fom.py  --out out/mine  --tol 1e-6 --objective  # stop on the objective
 ```
 
 The built-in `mpc` example is a model-predictive-control QP solved with **OSQP's
@@ -471,7 +639,11 @@ both side by side is the quickest way to see what declaring a coefficient buys.
 
 `--scaffold-only` emits everything except the solver body (useful to inspect the
 spec and data before invoking the agent). `--no-roll` keeps a recorded run
-unrolled even when it could be rolled back up.
+unrolled even when it could be rolled back up. `--translate-timeout`,
+`--optimize-timeout` (seconds) and `--optimize-max-turns` set the agent's
+budgets for this run ([above](#time-and-turn-budgets)). `--tol` alone stops on the
+infinity-norm change; with `--objective` it stops on the verification objective
+the module set on its recording, and `--check-termination N` sets the interval.
 
 A custom FOM can be supplied with `--module mymodule.py`, where the module defines
 `build_fom()` returning a dict. Which key you provide selects the path:

@@ -8,7 +8,6 @@ app = marimo.App(width="medium")
 def _():
     import statistics
     import sys
-    import textwrap
     import time
     from pathlib import Path
 
@@ -55,16 +54,17 @@ def _():
         run_lasso_codegen_benchmark,
         solve_ista_numpy,
         statistics,
-        textwrap,
         timing_file,
         time,
     )
 
 
 @app.cell(hide_code=True)
-def _(mo, textwrap):
-    mo.md(textwrap.dedent(r"""
+def _(mo):
+    mo.md(r"""
     # Lasso: Python vs Codegen
+
+    [Back to the code generation tutorials](./)
 
     In this tutorial we benchmark iterative soft-thresholding for the Lasso problem:
 
@@ -86,17 +86,15 @@ def _(mo, textwrap):
     The problem construction, ISTA step, and NumPy reference solver are shared with the [Lasso verification tutorial](../verification/lasso.html).
     The generated C is timed after code generation, then timed again after the C-editing optimization pass.
     """)
-    )
     return
 
 
 @app.cell(hide_code=True)
-def _(mo, textwrap):
-    mo.md(textwrap.dedent(r"""
+def _(mo):
+    mo.md(r"""
     We generate a small sparse dictionary $D$, sample sparse signals, and use those samples to define the range of possible inputs $x$.
     Both implementations run the same update rule for the same number of iterations.
     """)
-    )
     return
 
 

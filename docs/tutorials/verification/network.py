@@ -68,6 +68,8 @@ def _(mo):
     mo.md(r"""
     # Problem setup: Network flow optimization
 
+    [Back to the verification tutorials](./)
+
     In this tutorial, we verify first-order methods for the minimum-cost network flow example from Section 4.2 of [Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330).
 
     Suppose that we are given a set of $n_s$ supply nodes and $n_d$ demand nodes, which constructs a bipartite graph with capacitated directed edges from supply nodes to demand nodes.
@@ -209,14 +211,14 @@ def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    We verify the performance of PDHG and its momentum variant up to a fixed iteration budget $K>0$. As in the NNLS tutorial, we compare randomly sampled simulations with exact MIP verification. Unlike NNLS, there is no PEPit comparison here; the reason is explained alongside the figures below. The SDP-relaxed verification problem for the same example is covered in the [SDP verification](sdp.html) tutorial.
+    We verify the performance of PDHG and its momentum variant up to a fixed iteration budget $K>0$. As in the NNLS tutorial, we compare randomly sampled simulations with exact MIP verification. Unlike NNLS, there is no PEPit comparison here; the reason is explained alongside the figures below.
     """)
     return
 
 
 @app.cell
 def _():
-    K = 4  # Maximum iteration number
+    K = 22  # Maximum iteration number
     return (K,)
 
 

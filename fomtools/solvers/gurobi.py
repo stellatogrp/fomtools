@@ -103,6 +103,34 @@ class GurobiSolver(MIPSolver):
                     self.vector_var_map[leaf].Start = np.asarray(value, dtype=float).reshape(-1)
         self.model.update()
 
+    def get_best_bound(self) -> float:
+        status = self.model.Status
+        usable = {
+            gp.GRB.OPTIMAL,
+            gp.GRB.TIME_LIMIT,
+            gp.GRB.NODE_LIMIT,
+            gp.GRB.ITERATION_LIMIT,
+            gp.GRB.SOLUTION_LIMIT,
+            gp.GRB.INTERRUPTED,
+            gp.GRB.USER_OBJ_LIMIT,
+            gp.GRB.WORK_LIMIT,
+            gp.GRB.MEM_LIMIT,
+        }
+        if status not in usable:
+            raise RuntimeError(f"Gurobi terminated with status {status}; no usable best bound.")
+        try:
+            # Continuous optimal models need not expose ObjBound.
+            bound = (
+                self.model.ObjVal
+                if status == gp.GRB.OPTIMAL and not self.model.IsMIP
+                else self.model.ObjBound
+            )
+        except (AttributeError, gp.GurobiError) as exc:
+            raise RuntimeError(f"Gurobi status {status} has no best bound.") from exc
+        if not np.isfinite(bound) or abs(bound) >= gp.GRB.INFINITY:
+            raise RuntimeError(f"Gurobi status {status} has no finite best bound.")
+        return float(bound)
+
     def has_solution(self) -> bool:
         """Whether the last solve produced a feasible solution."""
         return self.model.SolCount > 0
@@ -375,8 +403,8 @@ class GurobiSolver(MIPSolver):
 
         Encodes ``sum_i (a_i^T x + b_i)^2  op  radius_sq`` where ``op`` is given by
         ``sense``. The squared two-norm is built as ``gp_expr @ gp_expr`` (a dot product),
-        the same construct used by :meth:`set_two_norm_objective`. The const term ``b`` is
-        included via :meth:`expression_to_solver`.
+        the same construct used by `set_two_norm_objective`. The const term ``b`` is
+        included via `expression_to_solver`.
 
         The ``>=`` / ``==`` senses are nonconvex quadratic constraints; ``NonConvex=2`` is
         set for them so Gurobi accepts the model across versions (the convex ``<=`` sense
@@ -466,7 +494,9 @@ class GurobiSolver(MIPSolver):
             A 1-D array of shape ``(expression.ndim,)`` containing the evaluated values
             of the expression at the current model solution.
         """
-        out = 0
+        if not self.has_solution():
+            raise RuntimeError("No feasible incumbent available.")
+        out = np.array(expression.const, dtype=float, copy=True)
         for k, v in expression.decomposition_dict.items():
             out += v @ [self.model.getVarByName(var).X for var in self.vector_var_map[k].VarName]
         return out

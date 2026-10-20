@@ -213,7 +213,14 @@ class StepDecomposer:
             If this decomposer's ``_PROX_DECOMPOSERS`` registry has no
             entry for the concrete type of ``prox_function``.
         """
-        proxer = self._PROX_DECOMPOSERS.get(type(prox_function).__name__.lower())
+        proxer = next(
+            (
+                self._PROX_DECOMPOSERS[cls.__name__.lower()]
+                for cls in type(prox_function).__mro__
+                if cls.__name__.lower() in self._PROX_DECOMPOSERS
+            ),
+            None,
+        )
         if proxer is None:
             raise NotImplementedError(
                 f"{self.__class__.__name__} does not support {type(prox_function).__name__}"
@@ -472,14 +479,14 @@ class StepDecomposer:
 
         Independent of $\gamma$ (indicator prox). This is the equality-only case of
         the generic QP (``P = I``, ``q = -arg``, no inequalities), so it routes through
-        :meth:`_qp_kkt`, which posts ``x == arg - A^T nu`` and ``A x == b`` (no
+        `_qp_kkt`, which posts ``x == arg - A^T nu`` and ``A x == b`` (no
         complementarity — there are no inequality constraints). The tight initial
         bounds on ``u`` and ``ν`` are still derived here via interval propagation
         through a throwaway ``LinearExpression`` that represents $M_{\text{block}}^{-1}$
-        applied to the stacked right-hand side (built via :func:`solve_linexpr`) and
+        applied to the stacked right-hand side (built via `solve_linexpr`) and
         passed to ``_qp_kkt`` as ``primal_bounds`` / ``nu_bounds``; OBBT tightens them
         further. ``b`` may be numeric data or a ``LinearExpression`` parameter (lifted
-        uniformly via :meth:`_lift_to_le`).
+        uniformly via `_lift_to_le`).
 
         Backend-independent: registered on the base class. Simulator
         defers (no per-step activation callback for an implicitly
@@ -542,17 +549,18 @@ class StepDecomposer:
     ) -> LinearExpression:
         r"""
         Shared KKT lowering for the convex QP
-        :math:`\min_x \tfrac12 x^\top P x + q^\top x` s.t. :math:`A_{eq} x = b_{eq}`,
-        :math:`C_{ineq} x \le d_{ineq}`.
+        $\min_x \tfrac12 x^\top P x + q^\top x$ s.t. $A_{eq} x = b_{eq}$,
+        $C_{ineq} x \le d_{ineq}$.
 
         Posts the KKT system
 
-        .. math::
-            P x + q + A_{eq}^\top \nu + C_{ineq}^\top \lambda = 0,\quad
-            A_{eq} x = b_{eq},\quad C_{ineq} x \le d_{ineq},\quad
-            0 \le \lambda \perp (d_{ineq} - C_{ineq} x) \ge 0,
+        $$
+        P x + q + A_{eq}^\top \nu + C_{ineq}^\top \lambda = 0,\quad
+        A_{eq} x = b_{eq},\quad C_{ineq} x \le d_{ineq},\quad
+        0 \le \lambda \perp (d_{ineq} - C_{ineq} x) \ge 0,
+        $$
 
-        with :math:`\nu` free and :math:`\lambda \ge 0`. The linear rows precede the
+        with $\nu$ free and $\lambda \ge 0$. The linear rows precede the
         (non-convex) complementarity so OBBT tightens ``x``/``lambda`` first. ``P``
         may be ``None``/identity (stationarity becomes ``x = -(q + ...)``), a general
         PSD matrix (``P @ x == -(q + ...)``), or all-zero for an LP
@@ -641,11 +649,11 @@ class StepDecomposer:
         r"""
         Projection onto ``{Au <= b}`` and an optional ``{Cu = d}``, as the QP
         ``min (1/2)||u - arg||^2`` over that polyhedron. A thin wrapper over
-        :meth:`_qp_kkt` with ``P = I`` and ``q = -arg``.
+        `_qp_kkt` with ``P = I`` and ``q = -arg``.
 
         Note the naming inversion preserved for the existing callers: here ``A`` is the
         **inequality** matrix and ``C`` the **equality** matrix (the opposite of the
-        general-QP ``A_eq``/``C_ineq`` convention used by :meth:`_qp_kkt`).
+        general-QP ``A_eq``/``C_ineq`` convention used by `_qp_kkt`).
 
         Parameters
         ----------
@@ -682,11 +690,11 @@ class StepDecomposer:
 
     def decompose_quadraticprogram(self, step) -> LinearExpression:
         r"""
-        Lower a :class:`QuadraticProgram` / :class:`LinearProgram` step to its KKT
-        system via :meth:`_qp_kkt`.
+        Lower a `QuadraticProgram` / `LinearProgram` step to its KKT
+        system via `_qp_kkt`.
 
         ``q`` defaults to ``-step.arg`` (projection convenience) when ``None``;
-        ``b`` and ``d`` are lifted to ``LinearExpression`` via :meth:`_lift_to_le`
+        ``b`` and ``d`` are lifted to ``LinearExpression`` via `_lift_to_le`
         (numeric or parameter, uniformly). Raises ``ValueError`` eagerly if the QP has
         inequality constraints but no finite ``dual_ub`` (the inequality dual is not
         auto-boundable). Registered in the MIP and SDP ``_DECOMPOSERS`` under both
@@ -729,8 +737,8 @@ class StepDecomposer:
         self, prox: IndPolyhedral, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
-        Lower the polyhedral-set indicator prox :math:`\operatorname{proj}_{\{Au \le b\}}`
-        via :meth:`_prox_polyhedral_kkt` (inequality-only). The complementarity big-M needs
+        Lower the polyhedral-set indicator prox $\operatorname{proj}_{\{Au \le b\}}$
+        via `_prox_polyhedral_kkt` (inequality-only). The complementarity big-M needs
         a finite bound on ``lambda``; the user must supply it via ``prox.dual_ub`` (the
         LP-relaxed dual of a general polytope is unbounded, so it cannot be auto-derived).
         Raises ``ValueError`` eagerly if ``dual_ub`` is ``None``.
@@ -764,9 +772,9 @@ class StepDecomposer:
         self, prox: IndSimplex, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
-        Lower the simplex indicator prox :math:`\operatorname{proj}_{\{u \ge 0,\ 1^\top u = a\}}`
+        Lower the simplex indicator prox $\operatorname{proj}_{\{u \ge 0,\ 1^\top u = a\}}$
         as the mixed polyhedron ``{Au <= b, Cu = d}`` with ``A = -I``, ``b = 0``, ``C = 1^T``,
-        ``d = a``, via :meth:`_prox_polyhedral_kkt`.
+        ``d = a``, via `_prox_polyhedral_kkt`.
 
         The simplex is bounded, so the duals are bounded and derived analytically from the
         input box (no user ``dual_ub``): with ``u_i = (x_i - nu)_+`` and ``lambda_i =
@@ -809,26 +817,28 @@ class StepDecomposer:
         self, prox: IndBallL1, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
-        Lower the :math:`\ell_1`-ball indicator prox onto the lifted KKT system.
+        Lower the $\ell_1$-ball indicator prox onto the lifted KKT system.
 
-        Projection onto :math:`\{u : \|u\|_1 \le r\}` is the QP
-        :math:`\min_{u,t} \tfrac12\|u-\text{arg}\|^2` s.t. :math:`-t \le u \le t`,
-        :math:`\mathbf{1}^\top t \le r`. With multipliers :math:`\alpha` (``u <= t``),
-        :math:`\beta` (``-u <= t``), :math:`\mu` (``1^T t <= r``):
+        Projection onto $\{u : \|u\|_1 \le r\}$ is the QP
+        $\min_{u,t} \tfrac12\|u-\text{arg}\|^2$ s.t. $-t \le u \le t$,
+        $\mathbf{1}^\top t \le r$. With multipliers $\alpha$ (``u <= t``),
+        $\beta$ (``-u <= t``), $\mu$ (``1^T t <= r``):
 
-        .. math::
-            u = \text{arg} - \alpha + \beta,\quad \alpha + \beta = \mu\mathbf{1},\\
-            0 \le \alpha \perp (t - u) \ge 0,\ \
-            0 \le \beta \perp (t + u) \ge 0,\ \
-            0 \le \mu \perp (r - \mathbf{1}^\top t) \ge 0.
+        $$
+        u = \text{arg} - \alpha + \beta,\quad \alpha + \beta = \mu\mathbf{1},\\
+        0 \le \alpha \perp (t - u) \ge 0,\ \
+        0 \le \beta \perp (t + u) \ge 0,\ \
+        0 \le \mu \perp (r - \mathbf{1}^\top t) \ge 0.
+        $$
 
-        The projection is routed through the generic QP core :meth:`_qp_kkt` on the
+        The projection is routed through the generic QP core `_qp_kkt` on the
         lifted variable ``x = [u; t]`` (dim ``2n``) with ``P = diag(I_n, 0_n)``,
         ``q = [-arg; 0]`` and the stacked inequalities
 
-        .. math::
-            C_{ineq} = \begin{bmatrix} I & -I \\ -I & -I \\ 0 & \mathbf{1}^\top \end{bmatrix},
-            \quad d_{ineq} = [0; 0; r].
+        $$
+        C_{ineq} = \begin{bmatrix} I & -I \\ -I & -I \\ 0 & \mathbf{1}^\top \end{bmatrix},
+        \quad d_{ineq} = [0; 0; r].
+        $$
 
         The single stacked dual ``lambda = [alpha; beta; mu]`` and the one complementarity
         ``lambda ⊥ (d_ineq - C_ineq x)`` reproduce the three bespoke complementarities
@@ -1068,14 +1078,14 @@ class StepDecomposer:
         self, prox: NormInf, arg: LinearExpression, gamma: float = 1.0
     ) -> LinearExpression:
         r"""
-        Lower the :math:`\ell_\infty`-norm prox via Moreau decomposition:
+        Lower the $\ell_\infty$-norm prox via Moreau decomposition:
 
         $$
             \operatorname{prox}_{\gamma\lambda\|\cdot\|_\infty}(v)
             = v - \operatorname{proj}_{\{\|\cdot\|_1 \le \gamma\lambda\}}(v).
         $$
 
-        Reuses :meth:`prox_indballl1` for the ℓ1-ball projection (radius ``γλ``), so the
+        Reuses `prox_indballl1` for the ℓ1-ball projection (radius ``γλ``), so the
         KKT + complementarity encoding, the auto-derived dual bound, and both the MIP and
         SDP backends are inherited. ``gamma * prox.lambd`` is a scalar when ``λ`` is a
         scalar and a dim-1 ``LinearExpression`` when ``λ`` is a parameter; ``IndBallL1``
@@ -1095,13 +1105,14 @@ class StepDecomposer:
         r"""
         Lower the 1-D total-variation prox (fused lasso) via its KKT system.
 
-        For :math:`\min_x \tfrac12\|x-\text{arg}\|^2 + \tau\|Dx\|_1` (``τ = γλ``, ``D`` the
+        For $\min_x \tfrac12\|x-\text{arg}\|^2 + \tau\|Dx\|_1$ (``τ = γλ``, ``D`` the
         first-difference operator), with equality multiplier ``u`` and the split
         ``Dx = z⁺ - z⁻`` (``z⁺,z⁻ ≥ 0``):
 
-        .. math::
-            x = \text{arg} - D^\top u,\quad Dx = z^+ - z^-,\quad
-            0 \le (\tau - u) \perp z^+ \ge 0,\quad 0 \le (\tau + u) \perp z^- \ge 0.
+        $$
+        x = \text{arg} - D^\top u,\quad Dx = z^+ - z^-,\quad
+        0 \le (\tau - u) \perp z^+ \ge 0,\quad 0 \le (\tau + u) \perp z^- \ge 0.
+        $$
 
         The complementarities' nonnegativity sides encode the dual box ``-τ ≤ u ≤ τ``, so all
         bounds are derived from the data (no user ``dual_ub``): ``u ∈ [-τ, τ]`` and ``z⁺/z⁻``
@@ -1157,9 +1168,9 @@ class StepDecomposer:
         $$
 
         This is the unconstrained case of the generic QP, so it routes through
-        :meth:`_qp_kkt` with ``P = I + gamma*Q`` and ``q_qp = gamma*q - arg`` (the
-        prox objective expands to :math:`\tfrac12 x^\top(I+\gamma Q)x + (\gamma q -
-        \text{arg})^\top x`). With no equality/inequality blocks, ``_qp_kkt`` creates
+        `_qp_kkt` with ``P = I + gamma*Q`` and ``q_qp = gamma*q - arg`` (the
+        prox objective expands to $\tfrac12 x^\top(I+\gamma Q)x + (\gamma q -
+        \text{arg})^\top x$). With no equality/inequality blocks, ``_qp_kkt`` creates
         only the primal iterate and posts the single stationarity equality
         ``(I + gamma*Q) x == arg - gamma*q`` — no duals, no complementarity. Bounds
         on ``x`` are derived in ``_qp_kkt`` via ``solve_linexpr(M, arg - gamma*q)``

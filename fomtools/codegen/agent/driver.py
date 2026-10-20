@@ -1,8 +1,8 @@
 """The (mockable) coding-agent interface.
 
 Code generation delegates the actual translation of the Intermediate Representation (IR) into
-target source to an :class:`AgentDriver`. The real driver shells out to the Claude Agent SDK; the
-:class:`~fomtools.codegen.agent.stub.StubAgentDriver` drops a known-good source so
+target source to an `AgentDriver`. The real driver shells out to the Claude Agent SDK; the
+`StubAgentDriver` drops a known-good source so
 the whole pipeline is testable without an LLM.
 """
 
@@ -38,12 +38,12 @@ class AgentTask:
     instructions:
         The natural-language task description / prompt for the agent.
     phase:
-        ``"A_translate"`` for the initial faithful translation, ``"B_optimize"``
-        for the performance pass.
+        ``"translation"`` for the translation phase (the initial faithful
+        translation), ``"code_optimization"`` for the code optimization phase.
     max_turns:
         Maximum agent turns before giving up.
     bench_cmd:
-        Optional benchmark command for the optimization phase.
+        Optional benchmark command for the code optimization phase.
     restore_hook:
         Optional callable invoked before each verify to restore the
         deterministic files (Makefile, headers, numeric data, solve/ops). The
@@ -57,7 +57,7 @@ class AgentTask:
     solver_rel_path: str
     verify_cmd: list[str]
     instructions: str = ""
-    phase: Literal["A_translate", "B_optimize"] = "A_translate"
+    phase: Literal["translation", "code_optimization"] = "translation"
     max_turns: int = 40
     bench_cmd: list[str] | None = None
     restore_hook: Callable[[], None] | None = None
@@ -78,7 +78,7 @@ class AgentResult:
         Only the agent's own output, concatenated across attempts, with no
         verify/build output and no harness commentary mixed in. Use this when
         reading anything the agent *said* — notably
-        :func:`~fomtools.codegen.postprocess.extract_agent_notes`, which would
+        `extract_agent_notes`, which would
         otherwise have to pick the agent's words out of compiler noise.
     turns_used:
         Number of attempts (or turns) consumed producing this result.
@@ -87,7 +87,7 @@ class AgentResult:
     truncated:
         Whether any attempt was cut short by its wall-clock budget. A truncated
         attempt can still leave correct code on disk, so this is independent of
-        :attr:`success`; it means the agent had no chance to finish, and in
+        `success`; it means the agent had no chance to finish, and in
         particular may never have written its summary.
     """
 
@@ -146,8 +146,8 @@ class AgentBackendError(RuntimeError):
 class AgentDriver(ABC):
     """Abstract coding-agent that generates a source file until verify passes.
 
-    Subclasses implement :meth:`run` to drive a particular backend (the real
-    Claude/Codex/Pi CLIs, or :class:`~fomtools.codegen.agent.stub.StubAgentDriver`
+    Subclasses implement `run` to drive a particular backend (the real
+    Claude/Codex/Pi CLIs, or `StubAgentDriver`
     for tests). The driver owns only ``task.solver_rel_path``; all other files
     are restored via ``task.restore_hook`` before each verify.
 
@@ -182,6 +182,7 @@ def run_verify_loop(
     max_attempts: int = 5,
     max_turns: int = 16,
     truncated_probe: Callable[[], bool] | None = None,
+    budget_s: float | None = None,
 ) -> AgentResult:
     """Drive a real coding backend against ``task.verify_cmd`` until it passes.
 
@@ -203,13 +204,19 @@ def run_verify_loop(
     max_attempts:
         How many prompt/verify rounds to attempt.
     max_turns:
-        Per-attempt turn budget for the translation phase (the optimization
-        phase uses ``task.max_turns`` instead).
+        Per-attempt turn budget for the translation phase (the code
+        optimization phase uses ``task.max_turns`` instead).
     truncated_probe:
         Optional callable the backend supplies to report whether its last
         attempt was cut short by a wall-clock budget. Its result is recorded on
-        :attr:`AgentResult.truncated`, so a caller can say so rather than
+        `AgentResult.truncated`, so a caller can say so rather than
         presenting a half-finished run as a complete one.
+    budget_s:
+        Wall-clock budget, in seconds, for the whole phase: every attempt shares
+        it, and no new attempt starts once it is spent. It is published to the
+        backend as ``task.extra["budget"]`` (a
+        `TimeBudget`) so an attempt can
+        enforce the time left. ``None`` leaves the phase unbounded.
 
     Returns
     -------
@@ -230,10 +237,25 @@ def run_verify_loop(
     agent_parts: list[str] = []
     prompt = task.instructions
 
-    # Larger turn budget for the open-ended optimization phase.
-    turns = task.max_turns if task.phase == "B_optimize" else max(max_turns, 20)
+    # Larger turn budget for the open-ended code optimization phase.
+    turns = task.max_turns if task.phase == "code_optimization" else max(max_turns, 20)
 
+    budget = None
+    if budget_s is not None:
+        from fomtools.codegen.agent.budget import TimeBudget
+
+        budget = TimeBudget.starting_now(float(budget_s))
+        task.extra["budget"] = budget
+
+    attempts_made = 0
     for attempt in range(max_attempts):
+        if budget is not None and attempt > 0 and budget.remaining() <= 0:
+            log_parts.append(
+                f"\n[fomtools: the {budget_s:g}s budget for this phase is spent; "
+                "no further attempts.]\n"
+            )
+            break
+        attempts_made = attempt + 1
         log_parts.append(f"\n===== agent attempt {attempt + 1} =====\n")
         # The agent hitting its turn cap (or any transient error) must not crash
         # the run: capture it and let the authoritative verify below decide,
@@ -275,15 +297,17 @@ def run_verify_loop(
             + output[:4000]
             + "..."
             + output[-4000:]
-            + "\nFix `"
-            + task.solver_rel_path
-            + "` and make it pass."
+            + "\nFix "
+            + ", ".join(
+                f"`{rel}`" for rel in task.extra.get("editable_paths", (task.solver_rel_path,))
+            )
+            + " and make it pass."
         )
 
     return AgentResult(
         success=False,
         log="".join(log_parts),
         agent_log="".join(agent_parts),
-        turns_used=max_attempts,
+        turns_used=attempts_made,
         truncated=bool(truncated_probe and truncated_probe()),
     )

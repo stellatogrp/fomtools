@@ -63,8 +63,8 @@ def test_affine_recovery_is_exact():
     """base + gamma * slope must reproduce a directly extracted IR at any gamma."""
     case = build_scheduled(max_iters=20)
     ir = extract_scheduled_ir(case["build"], case["schedules"], config=case["config"])
-    base = ir.matrices["t0_state"].array
-    slope = ir.matrices["t0_state__d_gamma"].array
+    base = ir.matrices["t0_state"].dense()
+    slope = ir.matrices["t0_state__d_gamma"].dense()
 
     for gamma in (0.05, 0.5, 0.9, 1.7):
         direct = case["build"](gamma=gamma)
@@ -74,7 +74,7 @@ def test_affine_recovery_is_exact():
             state=direct.state,
             config=case["config"],
         )
-        assert np.abs(base + gamma * slope - ref.matrices["t0_state"].array).max() < 1e-14
+        assert np.abs(base + gamma * slope - ref.matrices["t0_state"].dense()).max() < 1e-14
 
 
 def test_first_momentum_value_is_zero_but_the_schedule_is_not_frozen():

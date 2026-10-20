@@ -76,6 +76,8 @@ def _(mo):
     mo.md(r"""
     # Problem setup: Constrained optimal control
 
+    [Back to the verification tutorials](./)
+
     In this tutorial, we verify an OSQP-style ADMM method for a finite-horizon constrained optimal control problem. The system has state $s_t \in \mathbf{R}^{n_s}$, input $u_t \in \mathbf{R}^{n_u}$, and initial state parameter $x$.
 
     \begin{array}{lll}
@@ -215,14 +217,14 @@ def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    We now describe how to use `fomtools` to verify the worst-case convergence rate of the OSQP-style ADMM method for constrained optimal control. We compare randomly sampled simulations, exact MIP verification, and a PEPit bound, up to $K$ iterations. The SDP-relaxed verification problem for the same example is covered in the [SDP verification](sdp.html) tutorial. The initial state parameter $x$ can either be fixed at $x_\text{init}$ or allowed to vary over its prescribed box.
+    We now describe how to use `fomtools` to verify the worst-case convergence rate of the OSQP-style ADMM method for constrained optimal control. We compare randomly sampled simulations, exact MIP verification, and a PEPit bound, up to $K$ iterations. The initial state parameter $x$ can either be fixed at $x_\text{init}$ or allowed to vary over its prescribed box.
     """)
     return
 
 
 @app.cell
 def _():
-    K = 7  # Maximum iteration number
+    K = 20  # Maximum iteration number
     fix_initial_x = True  # False lets x vary over [x_lb, x_ub].
     return K, fix_initial_x
 

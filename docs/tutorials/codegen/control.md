@@ -19,8 +19,8 @@ The problem is a short-horizon linear-quadratic control problem:
 $$
 \begin{array}{ll}
     \text{minimize} &
-        (1/2)\sum_{t=0}^{H-1} x_t^\top Q x_t
-        + (1/2)\sum_{t=0}^{H-2} u_t^\top R u_t \\
+        (1/2)\sum_{t=0}^{H-1} x_t^T Q x_t
+        + (1/2)\sum_{t=0}^{H-2} u_t^T R u_t \\
     \text{subject to} &
         x_{t+1} = A x_t + B u_t,\quad t=0,\ldots,H-2, \\
     &   x_0 = x_{\mathrm{init}}, \\
@@ -28,22 +28,22 @@ $$
 \end{array}
 $$
 
-The notebook uses \(H=2\), condenses the dynamics into a quadratic program in a
-single decision vector \(z\), and encodes the fixed initial state and input box
-as bounds \(\ell \le z \le u\):
+The notebook uses $H=2$, condenses the dynamics into a quadratic program in a
+single decision vector $z$, and encodes the fixed initial state and input box
+as bounds $\ell \le z \le u$:
 
 $$
 \begin{array}{ll}
-    \text{minimize} & (1/2)z^\top Pz + q^\top z \\
+    \text{minimize} & (1/2)z^T Pz + q^T z \\
     \text{subject to} & \ell \le z \le u.
 \end{array}
 $$
 
 ## Method
 
-The solver uses the alternating direction method of multipliers. With \(M=I\),
-penalty \(\rho\), regularization \(\sigma\), and projection
-\(\Pi_{[\ell,u]}\), each iteration is
+The solver uses the alternating direction method of multipliers. With $M=I$,
+penalty $\rho$, regularization $\sigma$, and projection
+$\Pi_{[\ell,u]}$, each iteration is
 
 $$
 w^k = \Pi_{[\ell,u]}(v^k),

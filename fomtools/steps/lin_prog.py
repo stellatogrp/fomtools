@@ -14,9 +14,9 @@ class LinearProgram(QuadraticProgram):
         \quad\text{s.t.}\quad A x = b,\; C x \le d.
     $$
 
-    A :class:`QuadraticProgram` specialization with ``P = 0`` (stored as a sparse
+    A `QuadraticProgram` specialization with ``P = 0`` (stored as a sparse
     zero matrix). The KKT system drops the quadratic term: stationarity becomes
-    the dual-only equality :math:`q + A^\top \nu + C^\top \lambda = 0`, so the
+    the dual-only equality $q + A^\top \nu + C^\top \lambda = 0$, so the
     primal ``x`` is pinned by primal feasibility + complementarity rather than by
     stationarity. Because stationarity no longer bounds ``x``, finite primal
     bounds must come from ``primal_bounds`` or OBBT over ``{Ax = b, Cx <= d}``.
@@ -27,7 +27,7 @@ class LinearProgram(QuadraticProgram):
         Linear cost; its dimension defines ``n``. Required (no ``-arg`` default
         makes sense for an LP cost). A scalar ``q`` is rejected (cannot size the LP).
     A, b, C, d, dual_ub, primal_bounds, nu_bounds, arg, relax_binary_vars
-        See :class:`QuadraticProgram`.
+        See `QuadraticProgram`.
     """
 
     def __init__(
@@ -77,7 +77,7 @@ class StandardFormLinearProgram(LinearProgram):
         \quad\text{s.t.}\quad A x = b,\; x \ge 0.
     $$
 
-    A :class:`LinearProgram` with ``q = c``, equality ``(A, b)``, and the non-negativity
+    A `LinearProgram` with ``q = c``, equality ``(A, b)``, and the non-negativity
     constraint ``x >= 0`` written as the inequality ``-I x <= 0`` (``C = -I``, ``d = 0``).
     No new lowering logic — it reuses the entire ``LinearProgram`` / ``_qp_kkt`` machinery
     (the step decomposer resolves it to the ``LinearProgram`` decomposer via the class MRO).
@@ -89,7 +89,7 @@ class StandardFormLinearProgram(LinearProgram):
     A, b : optional
         Equality matrix ``(p, n)`` and right-hand side (dim ``p``).
     dual_ub, primal_bounds, nu_bounds, arg, relax_binary_vars
-        See :class:`QuadraticProgram`. ``dual_ub`` is required (the ``x >= 0`` inequality is
+        See `QuadraticProgram`. ``dual_ub`` is required (the ``x >= 0`` inequality is
         always present, so the decomposer needs a finite bound on its multiplier).
     """
 

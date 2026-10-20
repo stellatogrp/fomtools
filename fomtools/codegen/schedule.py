@@ -2,7 +2,7 @@
 
 This module holds only the data structure and its input coercion. The extraction
 pass that recovers such coefficients from a recording and lowers them into the IR
-is :mod:`fomtools.codegen.extract_scheduled`.
+is `fomtools.codegen.extract_scheduled`.
 
 Some first-order methods use a coefficient that changes with the iteration
 index: an accelerated method's momentum, a decaying step size, an anchor weight.
@@ -11,19 +11,19 @@ every iteration simply gets its own number. Rolling that tape back into a loop i
 where the dependence on ``k`` would otherwise be lost -- declaring it as a
 schedule is what preserves it.
 
-A :class:`Schedule` carries such a coefficient as a table of values, one per
+A `Schedule` carries such a coefficient as a table of values, one per
 iteration, computed here in Python at generation time. The emitted C reads the
 table at the loop counter, so the iteration stays division-free and needs no
 ``libm`` call and no extra workspace state:
 
-.. code-block:: c
+```c
+static const fom_float FOM_SCHED_gamma[FOM_MAX_ITER] = { 0.0, 0.333, ... };
 
-    static const fom_float FOM_SCHED_gamma[FOM_MAX_ITER] = { 0.0, 0.333, ... };
-
-    for (it = 0; it < work->settings.max_iter; ++it) {
-        fom_float g = FOM_SCHED_gamma[it];
-        ...
-    }
+for (it = 0; it < work->settings.max_iter; ++it) {
+    fom_float g = FOM_SCHED_gamma[it];
+    ...
+}
+```
 
 Indexing convention
 -------------------
@@ -34,7 +34,7 @@ Nothing here knows what any particular method's coefficient is.
 
 Only needed to get a *compact* solver for a method whose coefficients vary. The
 same method can be recorded as an ordinary loop and generated as written, with no
-schedule declared at all -- see :mod:`fomtools.codegen.extract_unrolled`.
+schedule declared at all -- see `fomtools.codegen.extract_unrolled`.
 """
 
 from __future__ import annotations
@@ -80,14 +80,14 @@ class Schedule:
 
 
 def as_schedule(name: str, spec, n_iters: int) -> Schedule:
-    """Coerce a user-supplied schedule into a :class:`Schedule` of length ``n_iters``.
+    """Coerce a user-supplied schedule into a `Schedule` of length ``n_iters``.
 
     Parameters
     ----------
     name:
         Identifier for the schedule.
     spec:
-        A :class:`Schedule`, a callable mapping the 0-based iteration index to a
+        A `Schedule`, a callable mapping the 0-based iteration index to a
         float, or a sequence of at least ``n_iters`` values.
     n_iters:
         Number of iterations the generated loop can run, i.e.
@@ -96,7 +96,7 @@ def as_schedule(name: str, spec, n_iters: int) -> Schedule:
     Raises
     ------
     ValueError
-        If a sequence or :class:`Schedule` is shorter than ``n_iters``. The
+        If a sequence or `Schedule` is shorter than ``n_iters``. The
         generated loop can run that far, so a shorter table would be read out of
         bounds; supply a callable instead if the horizon is not known up front.
     """

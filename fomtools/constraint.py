@@ -14,7 +14,7 @@ def is_binary_free(constraint: "Constraint") -> bool:
     ``constraint.lhs.decomposition_dict`` is flagged ``is_binary``. Such
     constraints are safe to add to the OBBT handler's LP (which must remain a
     pure linear program). Binary leaves are created via
-    :meth:`LinearExpression.from_int` with ``is_binary=True`` (e.g. the big-M
+    `LinearExpression.from_int` with ``is_binary=True`` (e.g. the big-M
     indicator variables in the MIP canonicalizer).
 
     Parameters
@@ -59,7 +59,7 @@ class Constraint:
     is_linear: bool
         ``True`` for ordinary (in)equality constraints, which are linear and safe to
         forward to the OBBT handler's LP. Non-convex subclasses (e.g.
-        :class:`ComplementarityConstraint`) override this to ``False``.
+        `ComplementarityConstraint`) override this to ``False``.
     """
 
     is_linear = True
@@ -153,7 +153,7 @@ class EqualityConstraint(Constraint):
 
     def __init__(self, lhs, rhs):
         """
-        Initialize an instance of :class:`EqualityConstraint` class.
+        Initialize an instance of `EqualityConstraint` class.
 
         Parameters
         ----------
@@ -224,11 +224,11 @@ class ComplementarityConstraint(Constraint):
 
     i.e. for every coordinate $i$ at most one of $e_{1,i}, e_{2,i}$ is nonzero.
 
-    Unlike :class:`EqualityConstraint`/:class:`InequalityConstraint`, this relation is
+    Unlike `EqualityConstraint`/`InequalityConstraint`, this relation is
     not reducible to a single ``lhs op 0`` expression, so it stores both expressions
     verbatim (it does **not** invoke ``Constraint.__init__``). It is non-convex and is
     lowered to a backend-specific encoding (big-M + binaries in the MIP canonicalizer).
-    Instances are typically created via :func:`complementarity` or
+    Instances are typically created via `complementarity` or
     ``Verifier.complementarity`` rather than by the constructor directly.
 
     Attributes
@@ -245,7 +245,7 @@ class ComplementarityConstraint(Constraint):
 
     def __init__(self, expr1: "LinearExpression", expr2: "LinearExpression"):
         """
-        Initialize a :class:`ComplementarityConstraint`.
+        Initialize a `ComplementarityConstraint`.
 
         Parameters
         ----------
@@ -300,7 +300,7 @@ class QuadraticConstraint(Constraint):
     $$
 
     i.e. ``op`` compares the squared two-norm of ``expr`` against a nonnegative scalar
-    ``radius_sq``. Like :class:`ComplementarityConstraint`, this is not a single
+    ``radius_sq``. Like `ComplementarityConstraint`, this is not a single
     ``lhs op 0`` linear relation, so it stores the expression verbatim (it does **not**
     invoke ``Constraint.__init__``) and sets ``is_linear = False`` so it is never
     forwarded to the OBBT LP. The ``<=`` sense is convex; ``>=`` / ``==`` are nonconvex
@@ -330,7 +330,7 @@ class QuadraticConstraint(Constraint):
 
     def __init__(self, expr: "LinearExpression", radius_sq, sense: str):
         """
-        Initialize a :class:`QuadraticConstraint`.
+        Initialize a `QuadraticConstraint`.
 
         Parameters
         ----------
@@ -371,9 +371,9 @@ class SumSquares:
     Symbolic atom representing the sum of squared entries of a linear expression,
     ``sum_squares(expr) = \sum_i (a_i^\top x + b_i)^2`` (the squared two-norm).
 
-    This object is not a :class:`LinearExpression` (it is quadratic). Its only purpose
-    is to build a :class:`QuadraticConstraint` via a comparison operator, e.g.
-    ``sum_squares(expr) <= r**2``. Created via :func:`sum_squares` or
+    This object is not a `LinearExpression` (it is quadratic). Its only purpose
+    is to build a `QuadraticConstraint` via a comparison operator, e.g.
+    ``sum_squares(expr) <= r**2``. Created via `sum_squares` or
     ``Verifier.sum_squares``.
 
     Attributes
@@ -406,7 +406,7 @@ def sum_squares(expr: "LinearExpression") -> SumSquares:
     constraint.
 
     Compare the returned object against a nonnegative scalar to form a
-    :class:`QuadraticConstraint`::
+    `QuadraticConstraint`::
 
         vp.add_constraint(sum_squares(expr) <= r**2)   # ||A x + b||_2^2 <= r^2
         vp.add_constraint(sum_squares(expr) >= r**2)   # nonconvex shell

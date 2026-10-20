@@ -1,7 +1,8 @@
 """Tests for the large-scale (OpenMP / CUDA) targets.
 
 OpenMP is built serially and numerically verified against the oracle (portable).
-CUDA is compile-checked only and skipped without ``nvcc`` (no GPU in CI).
+CUDA is compile-checked when ``nvcc`` is available and run-verified on a GPU
+(the cluster); otherwise those tests are skipped.
 """
 
 import shutil
@@ -23,6 +24,7 @@ from fomtools.codegen.config import (
 from fomtools.codegen.emit import scaffold
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.targets import get_target
+from fomtools.codegen.targets.large_scale_cuda import CudaTarget
 
 GOLDEN_ROOT = Path(__file__).parent / "golden" / "ista"
 OPENMP_GOLDEN = GOLDEN_ROOT / "large_scale_openmp" / "fom_solver.c"
@@ -258,11 +260,12 @@ def test_cuda_cg_scaffold_emits_device_cg(tmp_path):
     assert "FOM_FAC_T0_L_DATA" not in lin  # no triangular factor, no inverse
 
 
-def test_cuda_direct_solve_stays_on_host(tmp_path):
-    # Triangular solves have loop-carried dependencies: the LU solve runs on
-    # the host behind a device-pointer staging wrapper.
+def test_cuda_direct_solve_runs_on_the_device_through_cudss(tmp_path, monkeypatch):
+    # Nothing leaves the GPU: cuDSS factorizes the system matrix (device data) at
+    # the first solve and solves on the caller's device vectors; no host staging.
     from tests.codegen.conftest import build_dr
 
+    monkeypatch.setenv("CUDSS_HOME", "/opt/cudss")
     case = build_dr()
     cfg = _cuda_config()
     ir = extract_ir(case["verifier"], case["next_state"], config=cfg, name="dr")
@@ -270,9 +273,25 @@ def test_cuda_direct_solve_stays_on_host(tmp_path):
     assert fac.method == "lu"
     scaffold(ir, tmp_path, cfg)
     lin = (tmp_path / "src" / "fom_linsolve.cu").read_text()
-    assert f"static void fom_lin_solve_{name}_host(" in lin
     assert f'extern "C" void fom_lin_solve_{name}(' in lin
-    assert "cudaMemcpyDeviceToHost" in lin and "cudaMemcpyHostToDevice" in lin
+    assert "#include <cudss.h>" in lin and "CUDSS_MTYPE_GENERAL" in lin
+    assert "CUDSS_MATCHING_ALG_AUTO" in lin  # keeps local pivoting accurate
+    assert "CUDSS_PIVOT_GLOBAL_ROW" not in lin  # the slow path
+    assert "CUDSS_PHASE_FACTORIZATION" in lin and "CUDSS_PHASE_SOLVE" in lin
+    assert "cudaMemcpy" not in lin  # the matrix and the vectors stay on the device
+    assert f"__device__ static const fom_float FOM_FAC_{name.upper()}_A_VALS[" in lin
+    mk = (tmp_path / "Makefile").read_text()
+    assert "CUDSS_HOME ?= /opt/cudss" in mk and "$(LDLIBS)" in mk
+
+
+def test_cuda_cg_links_no_cudss(tmp_path):
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg()
+    ir = extract_ir(case["verifier"], case["next_state"], config=_cuda_cg_config(), name="cgqp")
+    scaffold(ir, tmp_path, _cuda_cg_config())
+    assert "cudss" not in (tmp_path / "src" / "fom_linsolve.cu").read_text()
+    assert "LDLIBS =\n" in (tmp_path / "Makefile").read_text()
 
 
 def test_cuda_verify_command_compile_only_without_gpu(monkeypatch):
@@ -298,7 +317,7 @@ def test_cuda_compile_builds_verify_and_bench(tmp_path):
     scaffold(ir, tmp_path, _cuda_config())
     mk = (tmp_path / "Makefile").read_text()
     assert "verify_bin" in mk and "bench_bin" in mk
-    assert "compile: $(OBJS) test/verify_main.c test/bench_main.c" in mk
+    assert "compile: $(OBJS) $(CHECK_OBJS) test/verify_main.c test/bench_main.c" in mk
     assert (tmp_path / "test" / "bench_main.c").exists()
 
 
@@ -478,3 +497,131 @@ def test_openmp_wrapper_matches_oracle(tmp_path, requires_compiler):
     out = solver.solve(p0=case["data"]["b"])
     expected = oracle.solve(param_values={"p0": case["data"]["b"]})
     assert np.allclose(out["x"], expected.solution, atol=1e-6)
+
+
+@pytest.mark.skipif(not CudaTarget._can_run_on_gpu(), reason="needs a GPU (or FOMTOOLS_CUDA_RUN=1)")
+def test_cuda_direct_check_keeps_a_right_kernel_and_rejects_a_wrong_one(tmp_path):
+    # On a GPU, fom_ops.cu is editable under the CPU targets' direct check.
+    from tests.codegen.conftest import build_ista
+
+    mark = "/* rewritten by the code optimization phase */"
+    sig = "static __global__ void fom_apply_t0_state_kern(const fom_float *x, fom_float *out) {"
+
+    def same(text: str) -> str:
+        return mark + "\n" + text
+
+    def wrong(text: str) -> str:  # entry (0, 1) off by one, no float literal
+        head, rest = text.split(sig, 1)
+        body, tail = rest.split("    out[i] += s;\n}", 1)
+        return (
+            mark
+            + "\n"
+            + head
+            + sig
+            + body
+            + "    if (i == 0) s += x[1];\n    out[i] += s;\n}"
+            + tail
+        )
+
+    case = build_ista()
+    for rewrite, kept in ((same, True), (wrong, False)):
+        out = tmp_path / rewrite.__name__
+        result = generate_code(
+            case["verifier"],
+            case["next_state"],
+            out,
+            config=_cuda_config(),
+            driver=StubAgentDriver(CUDA_GOLDEN, extra_sources={"src/fom_ops.cu": rewrite}),
+            name="ista",
+            code_optimization=True,
+        )
+        assert result.translate.success, result.translate.log
+        assert "OPSCHECK name=t0_state mode=basis" in result.translate.log
+        if kept:
+            assert "VERIFY OK" in result.optimize.log, result.optimize.log
+        else:
+            assert not result.optimization_kept
+            assert "fom_apply_t0_state entry (0, 1) is off by" in result.optimize.log
+            assert mark not in (out / "src" / "fom_ops.cu").read_text()
+
+
+def test_cuda_cg_reads_back_only_its_stop_flag(tmp_path):
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg()
+    ir = extract_ir(case["verifier"], case["next_state"], config=_cuda_cg_config(), name="cgqp")
+    scaffold(ir, tmp_path, _cuda_cg_config())
+    lin = (tmp_path / "src" / "fom_linsolve.cu").read_text()
+    copies = [ln for ln in lin.splitlines() if "cudaMemcpy(" in ln]
+    assert len(copies) == 2 and all("FOM_CG_STOP" in ln for ln in copies)
+    assert "fom_dot_partials_h" not in lin  # partials are folded on the device
+
+
+def _cuda_direct_cases():
+    from tests.codegen.conftest import build_indefinite_kkt, build_spd_cg
+
+    spd = build_spd_cg()
+    spd["config"] = _cuda_cg_config().model_copy(update={"solve_method": SolveMethod.LDLT})
+    kkt = build_indefinite_kkt()
+    kkt["config"] = _cuda_auto_config(max_iters=60)
+    return [("ldlt", spd), ("lu", kkt)]
+
+
+@pytest.mark.skipif(not CudaTarget._can_run_on_gpu(), reason="needs a GPU (or FOMTOOLS_CUDA_RUN=1)")
+@pytest.mark.parametrize("method", ["ldlt", "lu"])
+def test_cuda_cudss_solve_verifies_and_its_direct_check_catches_a_wrong_matrix(tmp_path, method):
+    # cuDSS on the device (LDL^T for the SPD system, LU for the indefinite KKT):
+    # the solver verifies end to end, and a fom_linsolve.cu that solves a
+    # different matrix is caught by the direct check against the reference solve.
+    [case] = [c for m, c in _cuda_direct_cases() if m == method]
+    mark = "/* rewritten by the code optimization phase */"
+
+    def wrong(text: str) -> str:
+        head, rest = text.split("FOM_FAC_T0_A_VALS[", 1)
+        size, rest = rest.split("] = {", 1)
+        first, tail = rest.split(",", 1)
+        return mark + "\n" + head + f"FOM_FAC_T0_A_VALS[{size}] = {{{float(first) * 2!r}," + tail
+
+    result = generate_code(
+        case["verifier"],
+        case["next_state"],
+        tmp_path,
+        config=case["config"],
+        driver=StubAgentDriver(CUDA_CG_GOLDEN, extra_sources={"src/fom_linsolve.cu": wrong}),
+        name="cgqp",
+        code_optimization=True,
+    )
+    assert result.translate.success, result.translate.log
+    lin = (tmp_path / "src" / "fom_linsolve.cu").read_text()
+    assert ("CUDSS_MTYPE_SYMMETRIC" if method == "ldlt" else "CUDSS_MTYPE_GENERAL") in lin
+    assert not result.optimization_kept
+    assert "fom_lin_solve_t0 differs from its reference solve" in result.optimize.log
+    assert mark not in lin
+
+
+def test_cuda_matvecs_give_dense_rows_a_warp(tmp_path):
+    # Dense-enough rows get one warp per row (coalesced loads + shuffle sum);
+    # very sparse rows (the identity blocks here) keep one thread per row.
+    import fomtools.codegen.kernel_rules as kernel_rules
+    from fomtools.codegen.targets.embedded_c import _matvec_matrix_names
+    from tests.codegen.conftest import build_spd_cg
+
+    case = build_spd_cg(n=40)
+    ir = extract_ir(case["verifier"], case["next_state"], config=_cuda_cg_config(), name="cgqp")
+    scaffold(ir, tmp_path, _cuda_cg_config())
+    lin = (tmp_path / "src" / "fom_linsolve.cu").read_text()
+    spmv = lin[lin.index("fom_cg_t0_spmv_kern(") : lin.index("/* x = 0;")]
+    assert "__shfl_down_sync" in spmv and "k += 32" in spmv
+    ops = (tmp_path / "src" / "fom_ops.cu").read_text()
+    identity = ops[
+        ops.index("fom_apply_t0_state_kern(") : ops.index('extern "C" void fom_apply_t0_state(')
+    ]
+    assert "one thread per row" in identity and "__shfl" not in identity
+    assert kernel_rules.check("ops", ops, _matvec_matrix_names(ir)) == []
+
+
+def test_cuda_optimization_hints_only_where_the_kernels_are_editable(monkeypatch):
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "1")
+    assert "CUDA graph" in get_target(_cuda_config()).agent_notes()
+    monkeypatch.setenv("FOMTOOLS_CUDA_RUN", "0")
+    assert "CUDA graph" not in get_target(_cuda_config()).agent_notes()

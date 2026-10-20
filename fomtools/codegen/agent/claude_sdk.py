@@ -22,7 +22,7 @@ Authentication works in two modes:
 
 The common SDK-backend machinery (retry loop wiring, child environment, CLI
 auth-error handling, SDK→CLI fallback) lives in
-:class:`~fomtools.codegen.agent.sdk_base.SdkAgentDriver`; this module supplies
+`SdkAgentDriver`; this module supplies
 only the Claude-specific argv and in-process SDK invocation.
 """
 
@@ -39,7 +39,7 @@ from fomtools.codegen.agent.sdk_base import (
 class ClaudeAgentDriver(SdkAgentDriver):
     """Drive code generation with the Claude Agent SDK (or the ``claude`` CLI).
 
-    A concrete :class:`~fomtools.codegen.agent.sdk_base.SdkAgentDriver` that runs
+    A concrete `SdkAgentDriver` that runs
     a real Claude coding agent through the authoritative retry loop. It prefers
     the in-process Python SDK and falls back to the ``claude`` CLI in headless
     mode. Claude has no filesystem sandbox of its own, so ``bypass_sandbox`` is
@@ -74,7 +74,7 @@ class ClaudeAgentDriver(SdkAgentDriver):
         Returns
         -------
         list of str
-            The argument vector to pass to :func:`subprocess.run`.
+            The argument vector to pass to `subprocess.run`.
 
         Note
         -----
@@ -103,6 +103,31 @@ class ClaudeAgentDriver(SdkAgentDriver):
         if self.model:
             argv += ["--model", self.model]
         return argv
+
+    def _sdk_options(self, task: AgentTask, max_turns: int) -> dict:
+        """Keyword arguments for ``ClaudeAgentOptions`` for one attempt.
+
+        When the phase has a wall-clock budget (``task.extra["budget"]``), its
+        hooks check the time around every tool call; see
+        `fomtools.codegen.agent.budget`.
+        """
+        env = self._child_env()
+        budget = task.extra.get("budget")
+        return dict(
+            cwd=str(task.workdir),
+            add_dirs=[str(task.workdir)],
+            allowed_tools=_ALLOWED_TOOLS,
+            permission_mode=self.cli_permission_mode,
+            max_turns=max_turns,
+            # Append to (rather than replace) the Claude Code system prompt so
+            # the agent keeps its tool-use behavior.
+            system_prompt={"type": "preset", "preset": "claude_code", "append": _SYSTEM_PROMPT},
+            # Forward ANTHROPIC_API_KEY into the spawned CLI so an explicit key
+            # is used; omitted entirely in auth mode (subscription/OAuth login).
+            **({"env": env} if env else {}),
+            **({"model": self.model} if self.model else {}),
+            **({"hooks": budget.hooks()} if budget is not None else {}),
+        )
 
     def _invoke_sdk(self, task: AgentTask, prompt: str, max_turns: int) -> str:
         """Run one attempt in-process via the ``claude_agent_sdk`` Python SDK.
@@ -148,23 +173,11 @@ class ClaudeAgentDriver(SdkAgentDriver):
                 "claude_agent_sdk cannot run in-process inside a running event loop"
             )
 
+        budget = task.extra.get("budget")
+
         async def _run() -> str:
             chunks: list[str] = []
-            env = self._child_env()
-            options = ClaudeAgentOptions(
-                cwd=str(task.workdir),
-                add_dirs=[str(task.workdir)],
-                allowed_tools=_ALLOWED_TOOLS,
-                permission_mode=self.cli_permission_mode,
-                max_turns=max_turns,
-                # Append to (rather than replace) the Claude Code system prompt so
-                # the agent keeps its tool-use behavior.
-                system_prompt={"type": "preset", "preset": "claude_code", "append": _SYSTEM_PROMPT},
-                # Forward ANTHROPIC_API_KEY into the spawned CLI so an explicit key
-                # is used; omitted entirely in auth mode (subscription/OAuth login).
-                **({"env": env} if env else {}),
-                **({"model": self.model} if self.model else {}),
-            )
+            options = ClaudeAgentOptions(**self._sdk_options(task, max_turns))
             try:
                 async for message in query(prompt=prompt, options=options):
                     for block in getattr(message, "content", []) or []:
@@ -181,10 +194,27 @@ class ClaudeAgentDriver(SdkAgentDriver):
                 # and record that the run was cut short; the caller's verify
                 # decides success either way.
                 self._truncated = True
+                knob = (
+                    "CodegenConfig.agent_optimize_max_turns"
+                    if task.phase == "code_optimization"
+                    else "the driver's max_turns"
+                )
                 chunks.append(
                     f"\n[fomtools: the {self.label} agent stopped early "
                     f"({_redact_exception(exc)}); any output above is partial. Raise "
-                    "CodegenConfig.agent_optimize_max_turns to give it more turns.]\n"
+                    f"{knob} to give it more turns.]\n"
+                )
+            if budget is not None and budget.exhausted:
+                self._truncated = True
+                knob = (
+                    "agent_optimize_timeout_s"
+                    if task.phase == "code_optimization"
+                    else "agent_timeout_s"
+                )
+                chunks.append(
+                    f"\n[fomtools: the {self.label} agent used its {budget.total_s:g}s budget "
+                    f"for this phase and was stopped; raise CodegenConfig.{knob} to give it "
+                    "longer.]\n"
                 )
             return "\n".join(chunks)
 

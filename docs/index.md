@@ -1,20 +1,24 @@
-# Welcome to FOM Tools's documentation!
+# FOMTools
 
 FOMTools is a Python package that provides tools to verify the performance
 of first-order iterative methods applied on parametric quadratic optimization.
 
+To install the package and the FOMTools agent skill for coding agents, see
+[Get started](get_started.md).
+
 ## Quick Start
 
-This example verifies the behavior of projected gradient descent applied to the parametric quadratic program
+This example uses the default open-source HiGHS solver to verify the behavior of projected
+gradient descent applied to the parametric quadratic program
 
 $$
 \begin{array}{ll}
-	\text{minimize} & \frac{1}{2} z^\top P z + q^\top z \\
+	\text{minimize} & \frac{1}{2} z^T P z + q^T z \\
 	\text{subject to} & z \geq 0,
 \end{array}
 $$
 
-where $z \in \mathbb{R}^n$ is the optimization variable, $P \in \mathbb{R}^{n \times n}$ is a fixed symmetric positive semidefinite matrix, and $q \in \mathbb{R}^n$ is a problem parameter.
+where $z \in \mathbf{R}^n$ is the optimization variable, $P \in \mathbf{R}^{n \times n}$ is a fixed symmetric positive semidefinite matrix, and $q \in \mathbf{R}^n$ is a problem parameter.
 The parameter satisfies $\|q - q_{\mathrm{nominal}}\|_\infty \leq \delta$, where $\delta$ is `q_offset` in the code.
 
 Projected gradient descent uses the update
@@ -31,19 +35,20 @@ import numpy as np
 from fomtools.verifier import Verifier
 
 
-K = 10          # number of iterations
+K = 5          # number of iterations
 n = 3           # dimension of the iterate
 step_size = 0.01
 q_offset = 1.0
 
-vp = Verifier() # initialize verifier (uses HiGHS by default)
+rng = np.random.default_rng(0)
+vp = Verifier(params={"output_flag": False})
 
 z = [None] * (K + 1)
 # set up initial iterate
 z[0] = vp.add_iterate(ndim=n, lb=-1.0, ub=-1.0)
 
-q_nominal = np.random.normal(size=n)
-P = np.random.normal(size=(n, n))
+q_nominal = rng.normal(size=n)
+P = rng.normal(size=(n, n))
 P = P @ P.T
 
 # q is a problem parameter
@@ -56,14 +61,17 @@ for k in range(1, K + 1):
     z[k] = vp.step.relu(z[k - 1] - step_size * (P @ z[k - 1] + q_param))
 
     # objective: maximize ||z_k - z_{k-1}||_∞
-    vp.set_infinity_norm_objective(z[k] - z[k - 1])
+    vp.set_objective_norm(z[k] - z[k - 1], ord=np.inf)
 
     # solve the resulting verification problem
     res = vp.solve(convex_hull_cuts=True)
     results.append(res)
 
+    # Sum all certified successive residual bounds from z[0] to z[k].
+    vp.post_process(z[k], z[0], results)
+
 print(f"opt q_param at last K: {vp.get_solution_value(q_param)}")
-print(f"vp_gurobi residuals: {results}")
+print(f"Worst-case residual upper bounds: {results}")
 
 ```
 
@@ -73,17 +81,69 @@ mixed-integer optimization.
 
 Beyond this example, FOMTools supports verification of a wide range of iterative methods,
 including projected gradient methods, proximal operators, and algorithms with nonlinearities.
-For a guided introduction, see the [FOMTools tutorials](tutorials/index.md) and the
-[example gallery](tutorials/verification.md), which cover applications in optimization.
+For a guided introduction, see the [FOMTools tutorials](tutorials/index.md), which cover
+[verification](tutorials/verification.md) and [code generation](tutorials/codegen.md)
+examples from optimization and control.
 
-FOMTools relies on mathematical programming solvers such as Gurobi and Highs to solve the
+FOMTools relies on mathematical programming solvers such as HiGHS (the default) and Gurobi to solve the
 resulting verification problems.
+
+## Returned bounds and numerical checks
+
+`solve()` returns a finite MIP best bound, including after a time limit when one
+is available. It raises `RuntimeError` for unusable termination states or missing
+bounds. An incumbent is a feasible example. There is no public accessor for it yet; the internal
+`vp.canonicalizer._solved_copy["objVal"]` holds its value and `["status"]` its native status. `get_solution_value` requires an incumbent.
+
+SDP solves ([experimental](user_guide/sdp.md)) require an accurate optimal termination and return the dual objective.
+Inaccurate, infeasible, unbounded, and early terminations raise `RuntimeError`.
+The solved copy retains `last_solver.solution` for native Clarabel and
+`last_problem` for CVXPY. These are numerical bounds subject to solver tolerances,
+not exact-arithmetic proofs. OBBT also uses numerical LP solves; outward padding
+reduces sensitivity to small solver errors but is not a rigorous certificate.
+
+The simulator returns sampled residuals. Its default infinity-norm differences
+follow public step/prox outputs, excluding internal KKT and prox variables.
+For algorithms with several state blocks or intermediate operations, set an
+explicit objective at each iteration. Statistical risk bounds require independent
+evaluation samples from the specified distribution and a fixed tolerance.
+
+`post_process` is valid only when its list contains upper bounds on **every**
+successive infinity-norm difference from the reference to the target over the same
+family. Do not pass a final-step bound alone, an incumbent, or a sample maximum.
+Generated-code checks likewise compare sampled numerical executions and do not
+prove floating-point equivalence for all inputs.
+
+## Benchmarks
+
+The benchmarks and the code to reproduce the experiments in our
+[paper](https://arxiv.org/abs/2610.26743) are in a separate repository,
+[stellatogrp/fomtools_experiments](https://github.com/stellatogrp/fomtools_experiments).
 
 ## Development
 
-This repository is by Vinit Ranjan, Jisun Park, Stefano Gualandi, Andrea Lodi, Bartolomeo Stellato,
-Daniel Deza, and Anushka Acharya and contains the Python source code to reproduce experiments
-in our paper [Exact Verification of First-Order Methods via Mixed-Integer Linear
-Programming](https://arxiv.org/abs/2412.11330).
+FOMTools is developed by Vinit Ranjan, Daniel Deza, Anushka Acharya, Jisun Park, and
+Bartolomeo Stellato. The mixed-integer verification builds on our earlier paper
+[Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330)
+with Stefano Gualandi and Andrea Lodi.
 
-Source Code: [https://github.com/stellatogrp/fomtools](https://github.com/stellatogrp/fomtools)
+- Source code: [github.com/stellatogrp/fomtools](https://github.com/stellatogrp/fomtools)
+- PyPI: [pypi.org/project/fomtools](https://pypi.org/project/fomtools/)
+- Installation: see [Get started](get_started.md)
+
+## Citing
+
+If you use FOMTools for published work, we encourage you to cite our
+[paper](https://arxiv.org/abs/2610.26743):
+
+```bibtex
+@article{ranjan2026fomtools,
+  title   = {{FOMTools}: Development and {AI}-Assisted Code Generation for First-Order Methods},
+  author  = {Ranjan, Vinit and Deza, Daniel and Acharya, Anushka and Park, Jisun and Stellato, Bartolomeo},
+  journal = {arXiv preprint arXiv:2610.26743},
+  year    = {2026},
+}
+```
+
+The mixed-integer verification method is described in
+[Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330).

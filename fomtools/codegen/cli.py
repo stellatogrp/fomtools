@@ -44,17 +44,38 @@ def _load_module_fom(path: str) -> dict:
 
 
 def _build_config(args) -> CodegenConfig:
-    kind = TerminationKind.INF_NORM_CHANGE if args.tol is not None else TerminationKind.MAX_ITERS
+    if args.objective and args.tol is None:
+        raise SystemExit("--objective stops on the verification objective at --tol; pass --tol")
+    if args.tol is None:
+        kind = TerminationKind.MAX_ITERS
+    elif args.objective:
+        kind = TerminationKind.OBJECTIVE
+    else:
+        kind = TerminationKind.INF_NORM_CHANGE
     return CodegenConfig(
         version=Version(args.version),
         backend=Backend(args.backend),
-        termination=TerminationSpec(kind=kind, max_iters=args.max_iter, tol=args.tol),
+        termination=TerminationSpec(
+            kind=kind,
+            max_iters=args.max_iter,
+            tol=args.tol,
+            check_termination=args.check_termination,
+        ),
         solve_method=SolveMethod(args.solve_method),
         dtype=args.dtype,
+        **{
+            field: value
+            for field, value in (
+                ("agent_timeout_s", args.translate_timeout),
+                ("agent_optimize_timeout_s", args.optimize_timeout),
+                ("agent_optimize_max_turns", args.optimize_max_turns),
+            )
+            if value is not None  # unset: the CodegenConfig default
+        },
     )
 
 
-def _make_driver(args):
+def _make_driver(args, config):
     if args.driver == "stub":
         from fomtools.codegen.agent.stub import StubAgentDriver
 
@@ -65,7 +86,7 @@ def _make_driver(args):
         from fomtools.codegen.agent import make_agent_driver
 
         try:
-            return make_agent_driver(backend=args.agent)
+            return make_agent_driver(backend=args.agent, config=config)
         except ValueError as exc:  # unknown backend name
             raise SystemExit(str(exc)) from exc
     return None
@@ -100,19 +121,53 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--max-iter", type=int, default=1000)
     p.add_argument("--tol", type=float, default=None, help="enable inf-norm-change termination")
-    p.add_argument("--dtype", choices=["float64", "float32"], default="float64")
     p.add_argument(
-        "--phase-b",
-        dest="phase_b",
+        "--objective",
         action="store_true",
-        default=None,
-        help="run the iterative performance-optimization phase (default: on for --driver agent)",
+        help="with --tol, stop on the verification objective set on the recording "
+        "(set_objective_norm) instead of the inf-norm change",
     )
     p.add_argument(
-        "--no-phase-b", dest="phase_b", action="store_false", help="skip the optimization phase"
+        "--check-termination",
+        type=int,
+        default=None,
+        help="check the termination criterion every N iterations (default: 1 for the "
+        "inf-norm change, 25 for the objective; 0 disables early exit)",
+    )
+    p.add_argument("--dtype", choices=["float64", "float32"], default="float64")
+    p.add_argument(
+        "--code-optimization",
+        dest="code_optimization",
+        action="store_true",
+        default=None,
+        help="run the code optimization phase (default: on for --driver agent)",
+    )
+    p.add_argument(
+        "--no-code-optimization",
+        dest="code_optimization",
+        action="store_false",
+        help="skip the code optimization phase",
     )
     p.add_argument(
         "--no-profile", dest="profile", action="store_false", help="skip timing/profiling"
+    )
+    p.add_argument(
+        "--translate-timeout",
+        type=int,
+        metavar="SECONDS",
+        help="wall-clock budget of the translation phase (default: 600)",
+    )
+    p.add_argument(
+        "--optimize-timeout",
+        type=int,
+        metavar="SECONDS",
+        help="wall-clock budget of the code optimization phase (default: 7200)",
+    )
+    p.add_argument(
+        "--optimize-max-turns",
+        type=int,
+        metavar="N",
+        help="turn budget of the code optimization phase (default: 200)",
     )
     p.add_argument("--scaffold-only", action="store_true", help="emit files but skip the agent")
     p.add_argument(
@@ -129,7 +184,7 @@ def _extract_fom(fom: dict, config, roll: bool = True):
     """Extract the IR for a FOM dict: unrolled, stationary, or scheduled.
 
     Unpacks the dict and hands the same arguments to the same dispatch
-    :func:`~fomtools.codegen.generate.generate_code` uses, so ``--scaffold-only``
+    `generate_code` uses, so ``--scaffold-only``
     cannot preview an IR the full run would have rejected.
     """
     from fomtools.codegen.generate import extract_fom_ir
@@ -161,10 +216,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"scaffolded {fom.get('name', 'fom')} into {args.out}")
         return 0
 
-    driver = _make_driver(args)
-    # Phase B defaults on for the real agent (the product flow) and off for the
+    driver = _make_driver(args, config)
+    # The code optimization phase defaults on for the real agent (the product flow) and off for the
     # stub (which cannot meaningfully optimize), unless the user is explicit.
-    run_phase_b = args.phase_b if args.phase_b is not None else (args.driver == "agent")
+    code_optimization = (
+        args.code_optimization if args.code_optimization is not None else args.driver == "agent"
+    )
     try:
         result = generate_code(
             fom["build"] if fom.get("schedules") else fom["verifier"],
@@ -175,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
             state=fom.get("state"),
             params=fom.get("params"),
             name=fom.get("name", "fom"),
-            run_phase_b=run_phase_b,
+            code_optimization=code_optimization,
             profile=args.profile,
             schedules=fom.get("schedules"),
             iterates=fom.get("iterates"),

@@ -6,6 +6,7 @@ layout as the emitted header) and exposes an OSQP-like ``Solver`` class:
     from fom_solver import Solver
     solver = Solver()                 # loads libfomsolver.{so,dylib}
     out = solver.solve(p0=my_param)   # -> {"x", "iter", "residual", "status"}
+    solver.update_settings(tol=1e-6, check_termination=10)  # runtime FomSettings
 """
 
 from __future__ import annotations
@@ -124,6 +125,14 @@ class Solver:
         self._work = FomWorkspace()
         self._settings = FomSettings()
         self._lib.fom_set_default_settings(ctypes.byref(self._settings))
+        self._lib.fom_setup(ctypes.byref(self._work), ctypes.byref(self._settings))
+
+    def update_settings(self, **settings):
+        """Change runtime settings (``max_iter``, ``tol``, ``check_termination``)."""
+        for name, value in settings.items():
+            if name not in ("max_iter", "tol", "check_termination"):
+                raise ValueError(f"unknown setting {{name!r}}")
+            setattr(self._settings, name, value)
         self._lib.fom_setup(ctypes.byref(self._work), ctypes.byref(self._settings))
 
     def solve(self, **params):

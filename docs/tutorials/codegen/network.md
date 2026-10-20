@@ -17,28 +17,28 @@ The problem is a capacitated min-cost network-flow linear program:
 
 $$
 \begin{array}{ll}
-    \text{minimize} & c^\top z \\
+    \text{minimize} & c^T z \\
     \text{subject to} & A_s z \le b_s, \\
     & A_d z = x, \\
     & 0 \le z \le u.
 \end{array}
 $$
 
-Here \(z\) is the edge-flow vector, \(c\) contains edge costs, \(A_s\) maps flows
-to supply-node usage, \(b_s\) contains supply capacities, \(A_d\) maps flows to
-demand-node balance, \(x\) is the demand parameter, and \(u\) contains edge
+Here $z$ is the edge-flow vector, $c$ contains edge costs, $A_s$ maps flows
+to supply-node usage, $b_s$ contains supply capacities, $A_d$ maps flows to
+demand-node balance, $x$ is the demand parameter, and $u$ contains edge
 capacities. The notebook uses a complete bipartite graph from supply nodes to
 demand nodes.
 
 ## Method
 
-The solver uses a primal-dual projected update. With step size \(\eta\), supply
-dual variable \(v\), and demand-balance dual variable \(w\), each iteration is
+The solver uses a primal-dual projected update. With step size $\eta$, supply
+dual variable $v$, and demand-balance dual variable $w$, each iteration is
 
 $$
 z^{k+1}
 = \Pi_{[0,u]}\left(
-    z^k - \eta(c + A_s^\top v^k - A_d^\top w^k)
+    z^k - \eta(c + A_s^T v^k - A_d^T w^k)
 \right),
 $$
 

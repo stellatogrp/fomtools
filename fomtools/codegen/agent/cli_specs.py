@@ -4,17 +4,17 @@ Most real backends are the same shape: a non-interactive CLI that takes a prompt
 edits files inside a working directory, and loops internally until done. They
 differ only in *data* — the executable, a couple of flags, how the prompt and
 working directory are passed, which env var holds the API key, and the strings
-that mark an auth failure. :class:`CliAgentSpec` captures exactly those
+that mark an auth failure. `CliAgentSpec` captures exactly those
 differences so a single generic driver
-(:class:`~fomtools.codegen.agent.cli_driver.CliAgentDriver`) can drive any of
+(`CliAgentDriver`) can drive any of
 them.
 
 This makes code generation agent-agnostic: an example spec for the Cursor CLI
 ships in ``agents.yaml``, and users add *their own* agents with no code changes —
-either at runtime via :func:`register_agent`, or declaratively via a YAML config
-file (see :func:`load_user_specs`). Anything that is not a prompt-in/files-out
+either at runtime via `register_agent`, or declaratively via a YAML config
+file (see `load_user_specs`). Anything that is not a prompt-in/files-out
 CLI (an in-process SDK, a JSON-RPC subprocess, an HTTP API) is still served by
-implementing the :class:`~fomtools.codegen.agent.driver.AgentDriver` ABC
+implementing the `AgentDriver` ABC
 directly — e.g. the Claude/Codex SDK drivers and the Pi (pi.dev) RPC driver.
 """
 
@@ -60,7 +60,7 @@ class CliAgentSpec:
 
     Everything that varies between Cursor and any user-supplied agent is
     a field here; the invocation logic lives once in
-    :class:`~fomtools.codegen.agent.cli_driver.CliAgentDriver`.
+    `CliAgentDriver`.
 
     Attributes
     ----------
@@ -81,7 +81,7 @@ class CliAgentSpec:
         it just uses the process working directory.
     sysprompt_flag:
         Flag for an extra system prompt (Claude's ``--append-system-prompt``);
-        ``None`` means :data:`SYSTEM_PROMPT` is prepended to the task prompt.
+        ``None`` means `SYSTEM_PROMPT` is prepended to the task prompt.
     api_key_env:
         Primary env var holding the API key (``"OPENAI_API_KEY"``); a resolved
         key is forwarded here to force API-key auth over any on-disk login.

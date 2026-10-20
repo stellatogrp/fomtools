@@ -92,10 +92,41 @@ Note: use a *relative* `code_dir` — CVXPYgen registers the wrapper by importin
   propagated bounds) and records the method in a `Verifier` — see
   `fomtools/cvxpygen/builders.py` for the built-ins as templates.
 
+## Equilibration
+
+By default (`auto_equilibrate=True`) the canonical QP is Ruiz-equilibrated
+before the FOM is built, as OSQP does: diagonal scalings `D` (variables) and
+`E` (constraint rows) from ten passes over the KKT matrix `[[P, A'], [A, 0]]`,
+and a cost scaling `c`. The solver iterates on `c D P D`, `c D q`, `E A D`,
+`E l`, `E u`; the bridge scales the parameters in and the solution out
+(`x = D x~`, `y = E y~ / c`), so `problem.solve(method='CPG')` returns the
+original problem's primal and dual solution, and the reported residuals are
+those of the original problem. The parameter bounds the generated code is
+verified on are scaled exactly. Pass `auto_equilibrate=False` to build the FOM
+on the canonical QP unchanged (`fomtools.cvxpygen.scaling` has the routines).
+
+The cost scaling `c` is fixed at generation time, so it is computed from the
+largest `|q|` the parameter bounds allow, not from the current `q`. Very wide
+`param_bounds` (or a large `bound_margin`) on parameters entering `q` can
+therefore shrink `c` and flatten `P`: the solution is still correct, but
+convergence can be slower than without equilibration. The parameter bounds now
+affect conditioning as well as verification, so keep them as tight as the
+application allows.
+
+## Code optimization
+
+`code_optimization=True` runs the code optimization phase after translation
+(see the code generation tutorial): the coding agent rewrites the translated
+solver, its linear solves and its matrix-vector products for speed, and the
+rewrite is kept only if it passes verification again (including the direct
+checks of each solve and product) and is benchmarked faster. Its budget comes from `config`
+(`agent_optimize_timeout_s`, two hours by default, and `agent_optimize_max_turns`; see
+[time and turn budgets](../user_guide/codegen.md#time-and-turn-budgets)).
+
 ## The three generation paths
 
 A builder declares which path it wants with `@fom_builder(...)`, mirroring the
-dispatch in [`generate_code`](codegen.md). Undecorated callables are `rolled`,
+dispatch in [`generate_code`](../api/codegen.md#fomtools.codegen.generate_code). Undecorated callables are `rolled`,
 so builders written against the earlier API keep working unchanged.
 
 | Path | Builder returns | Emits | Runtime settings |
@@ -213,6 +244,41 @@ a solver only advertises settings it can actually honor:
   struct at all for such a solver, and `CPG_Info.iter` reports the number of
   iterations the straight-line body performs.
 
+`tol` and `check_termination` exist only when the termination kind uses them
+(`INF_NORM_CHANGE` or `OBJECTIVE`); under the default `MAX_ITERS` the check is
+compiled out, so CVXPYgen rejects a runtime `tol` rather than ignoring it.
+
+### Stopping on OSQP's residuals
+
+The built-in builders set OSQP's residuals as the verification objective,
+
+```
+max(||Ax - clamp(Ax, l, u)||_inf, ||Px + q + A'y||_inf)
+```
+
+(`|A_eq x - b|` on the equality rows, `max(A_in x - u, 0)` on the inequality
+rows), so `TerminationKind.OBJECTIVE` stops exactly where OSQP would with
+`eps_abs = tol`, `eps_rel = 0` and `scaled_termination = False`:
+
+```python
+from fomtools.codegen import CodegenConfig, TerminationKind, TerminationSpec
+
+config = CodegenConfig(
+    termination=TerminationSpec(kind=TerminationKind.OBJECTIVE, max_iters=4000, tol=1e-6)
+)
+result = fcpg.generate_solver(problem, "out_qp", fom="admm", config=config)
+problem.solve(method="CPG", tol=1e-5, check_termination=10)
+```
+
+The residuals are tested every `check_termination` iterations (default 25) and at
+`max_iter`, and the `pri_res` / `dua_res` the bridge reports are the two halves
+of the objective at the stop. With `auto_equilibrate` (the default) the FOM iterates
+on the Ruiz-equilibrated QP, and `scale_qp` records its scalings in
+`QPData.unscale = (D, E, c)`, so the objective is still measured in the original
+problem's units, the same units the bridge reports. A custom builder
+can reuse `fomtools.cvxpygen.builders.set_residual_objective(v, qp, exprs, x, y)`
+on the primal and dual iterate its iteration produces.
+
 ## Limitations
 
 - Parameters may enter only the canonical **vectors**: the objective's linear
@@ -225,6 +291,9 @@ a solver only advertises settings it can actually honor:
   with `dtype='float64'` (the canonical CVXPYgen data is double precision).
 - One solver instance per binary (the bridge globals are unprefixed, as in
   CVXPYgen's statically-allocated backends).
+- With equilibration on, a runtime `tol` compares successive iterates of the
+  *scaled* problem; the reported residuals are always those of the original
+  problem.
 - Each `cpg_solve()` cold-starts the FOM from its initial state
   (`fom_update_params` resets the iterate), so an anchored method's anchor is
   always the zero vector.

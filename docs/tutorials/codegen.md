@@ -10,20 +10,24 @@ rule it uses.
 
 ## Examples
 
-* **Lasso** — [notebook](codegen/lasso.html), [write-up](codegen/lasso.md) —
+* **Lasso** ([notebook](codegen/lasso.html), [write-up](codegen/lasso.md)):
   ISTA on a small $\ell_1$-regularized least-squares problem, built from a
   soft-threshold step.
-* **Optimal control** — [notebook](codegen/control.html),
-  [write-up](codegen/control.md) — a finite-horizon linear-quadratic control
+* **Optimal control** ([notebook](codegen/control.html),
+  [write-up](codegen/control.md)):
+  a finite-horizon linear-quadratic control
   problem with input bounds, solved by ADMM with a saturated linear step.
-* **Network flow** — [notebook](codegen/network.html),
-  [write-up](codegen/network.md) — a capacitated min-cost network-flow problem,
+* **Network flow** ([notebook](codegen/network.html),
+  [write-up](codegen/network.md)):
+  a capacitated min-cost network-flow problem,
   solved by PDHG.
-* **Nonnegative least squares** — [notebook](codegen/nnls.html),
-  [write-up](codegen/nnls.md) — projected gradient descent, whose projection
+* **Nonnegative least squares** ([notebook](codegen/nnls.html),
+  [write-up](codegen/nnls.md)):
+  projected gradient descent, whose projection
   onto the nonnegative orthant is a ReLU step.
-* **Portfolio** — [notebook](codegen/portfolio.html),
-  [write-up](codegen/portfolio.md) — a mean–variance portfolio problem, solved
+* **Portfolio** ([notebook](codegen/portfolio.html),
+  [write-up](codegen/portfolio.md)):
+  a mean–variance portfolio problem, solved
   by ADMM.
 
 The [summary table](codegen/speedup_results.md) collects the timings of all five

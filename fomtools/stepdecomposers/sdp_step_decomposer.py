@@ -20,7 +20,7 @@ class SDPStepDecomposer(StepDecomposer):
     Every cut acts on one ReLU at a time, so the difference of the two pieces
     loses the convex hull of the composite map ``v -> z`` over the input bounds
     ``[v_l, v_u]``. Each decomposition therefore also registers that hull as
-    linear inequalities (see :meth:`_add_hull_rows`); the canonicalizer's
+    linear inequalities (see `_add_hull_rows`); the canonicalizer's
     inequality cuts then multiply them with the bounds of every variable they
     involve (the parameters and earlier iterates included):
 

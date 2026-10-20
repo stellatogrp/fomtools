@@ -1,11 +1,11 @@
 """Generic driver for any headless coding-agent CLI, configured by a spec.
 
-A single :class:`CliAgentDriver` drives every prompt-in/files-out CLI backend
+A single `CliAgentDriver` drives every prompt-in/files-out CLI backend
 (the example Cursor spec and any user-registered agent); the per-tool differences
 live in
-:class:`~fomtools.codegen.agent.cli_specs.CliAgentSpec`. This is the agent-agnostic
+`CliAgentSpec`. This is the agent-agnostic
 core: the authoritative verify/retry loop is shared via
-:func:`~fomtools.codegen.agent.driver.run_verify_loop`, and authentication is
+`run_verify_loop`, and authentication is
 forced to API-key mode when a key is available (the key is forwarded into the
 spawned process environment so it takes precedence over any on-disk login).
 """
@@ -30,14 +30,14 @@ from fomtools.codegen.agent.driver import (
 
 
 class CliAgentDriver(AgentDriver):
-    """Drive code generation with a headless CLI described by a :class:`CliAgentSpec`.
+    """Drive code generation with a headless CLI described by a `CliAgentSpec`.
 
-    A concrete :class:`~fomtools.codegen.agent.driver.AgentDriver` for every
+    A concrete `AgentDriver` for every
     prompt-in/files-out CLI backend (the example Cursor spec and user-registered
     agents).
     All per-tool differences are carried by the ``spec``; this class supplies the
     agent-agnostic core and shares the authoritative verify/retry loop via
-    :func:`~fomtools.codegen.agent.driver.run_verify_loop`.
+    `run_verify_loop`.
 
     Methods
     -------
@@ -161,7 +161,7 @@ class CliAgentDriver(AgentDriver):
         Preflights that the CLI binary is on PATH and, when the spec requires
         it, persists an API-key login as a side effect. It then resolves the
         task workdir to an absolute path and hands control to
-        :func:`~fomtools.codegen.agent.driver.run_verify_loop`, which repeatedly
+        `run_verify_loop`, which repeatedly
         invokes the CLI and runs the verify command to decide success.
 
         Parameters
@@ -195,24 +195,31 @@ class CliAgentDriver(AgentDriver):
         # the subprocess cwd would be doubled.
         workdir = str(Path(task.workdir).resolve())
         self._truncated = False
+
+        def attempt_timeout() -> int | None:
+            # Each attempt gets what is left of the phase budget.
+            budget = task.extra.get("budget")
+            return max(1, int(budget.remaining())) if budget is not None else None
+
         return run_verify_loop(
             task,
             lambda prompt, max_turns: self._invoke_agent(
-                self._build_argv(workdir, prompt), workdir, timeout=self._timeout_for(task.phase)
+                self._build_argv(workdir, prompt), workdir, timeout=attempt_timeout()
             ),
             max_attempts=self.max_attempts,
             max_turns=self.max_turns,
             truncated_probe=lambda: self._truncated,
+            budget_s=self._timeout_for(task.phase),
         )
 
     def _timeout_for(self, phase: str) -> int | None:
-        """Wall-clock budget for one attempt, from the codegen config if present.
+        """Wall-clock budget for the phase, from the codegen config if present.
 
         Returns ``None`` to run unbounded, preserving this driver's historical
         behaviour when no config supplies a budget.
         """
         config = getattr(self, "config", None)
-        key = "agent_optimize_timeout_s" if phase == "B_optimize" else "agent_timeout_s"
+        key = "agent_optimize_timeout_s" if phase == "code_optimization" else "agent_timeout_s"
         value = getattr(config, key, None)
         return int(value) if value else None
 
@@ -234,7 +241,7 @@ class CliAgentDriver(AgentDriver):
         Returns
         -------
         list of str
-            The argument vector to pass to :func:`subprocess.run`.
+            The argument vector to pass to `subprocess.run`.
         """
         spec = self.spec
         argv = [self.bin, *spec.base_args, *spec.flags, *self.extra_args]
@@ -257,7 +264,7 @@ class CliAgentDriver(AgentDriver):
         """Run one agent attempt by shelling out to the CLI.
 
         Executes ``argv`` in ``workdir`` with the child environment from
-        :meth:`_child_env` (API-key auth injected when configured), capturing
+        `_child_env` (API-key auth injected when configured), capturing
         output. Success is left to the caller's verify command; this method only
         returns the captured text or fails fast on an unrecoverable auth error.
 

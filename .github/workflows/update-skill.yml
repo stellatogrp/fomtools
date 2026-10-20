@@ -1,13 +1,12 @@
 name: Update FOMTools Skill
 
 on:
-  push:
+  pull_request:
     branches: [main]
     paths:
       - 'docs/**'
       - 'fomtools/**'
-      - 'CLAUDE.md'
-      - '.claude/CLAUDE.md'
+      - 'AGENTS.md'
 
 permissions:
   contents: write

@@ -23,7 +23,7 @@ class IndBallL1(ProxableFunction):
     r : float or LinearExpression
         Ball radius $r \ge 0$, or a dim-1 ``LinearExpression`` treated as a
         parameter by the verification lowering.
-    dual_ub : float, np.ndarray, or None, default None
+    dual_ub : float or None, default None
         Upper bound on the KKT multipliers used by the verification lowering.
         ``None`` auto-derives a valid bound from the input box.
 
@@ -63,7 +63,7 @@ class IndBallL1(ProxableFunction):
     def __init__(
         self,
         r: float | LinearExpression,
-        dual_ub: float | np.ndarray | None = None,
+        dual_ub: float | None = None,
     ):
         super().__init__()
         if hasattr(r, "decomposition_dict"):  # dim-1 LinearExpression parameter

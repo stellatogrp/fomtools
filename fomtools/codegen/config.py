@@ -3,7 +3,7 @@
 These dataclasses describe *what* the user wants generated (target language,
 embedded vs. large-scale, termination criterion, numerical dtype) without
 touching the algorithm-specific intermediate representation, which lives in
-:mod:`fomtools.codegen.ir`.
+`fomtools.codegen.ir`.
 """
 
 from __future__ import annotations
@@ -72,35 +72,65 @@ class TerminationKind(str, Enum):
     ``MAX_ITERS`` runs a fixed iteration count (exactly matches the verifier /
     simulator semantics, so it is the most robust to verify). ``INF_NORM_CHANGE``
     additionally stops early once ``||x_k - x_{k-1}||_inf <= tol``.
+
+    ``OBJECTIVE`` stops early once the *verification objective* ``r^k`` -- the
+    performance metric set with `set_objective_norm`,
+    e.g. a fixed-point or KKT residual, in the norm it was set with -- is at most
+    ``tol``. The stopping test is then exactly the certified quantity: if
+    verification shows ``r^K <= tol`` over the whole parameter set, the generated
+    solver stops within ``K`` iterations. The norm follows the verifier's
+    convention, so ``ord=2`` is the *squared* two-norm and ``tol`` bounds it.
     """
 
     MAX_ITERS = "max_iters"
     INF_NORM_CHANGE = "inf_norm_change"
+    OBJECTIVE = "objective"
+
+
+#: Default ``check_termination`` per criterion. The infinity-norm change is fused
+#: into the state copy, so checking it every iteration is nearly free. The
+#: verification objective costs its own matrix-vector products (a KKT residual
+#: reads the problem data again), so it is checked every 25 iterations, as OSQP
+#: does by default.
+_CHECK_TERMINATION_DEFAULTS = {"objective": 25}
+_TOL_KINDS = (TerminationKind.INF_NORM_CHANGE, TerminationKind.OBJECTIVE)
 
 
 class TerminationSpec(BaseModel):
     """Termination criterion for the generated solve loop.
 
-    Parameters
+    Attributes
     ----------
-    kind:
-        Either fixed iteration count or infinity-norm change with early exit.
-    max_iters:
+    kind : TerminationKind
+        Fixed iteration count, infinity-norm change, or the verification
+        objective, each with early exit except the first.
+    max_iters : int
         Hard upper bound on iterations. Always required: embedded targets size
         their (static) iteration accounting from it and every loop needs a guard.
-    tol:
-        Tolerance for the ``INF_NORM_CHANGE`` criterion. Ignored for
-        ``MAX_ITERS``. Must be positive when the criterion uses it.
-    check_termination:
-        How often the ``INF_NORM_CHANGE`` criterion is evaluated (the name and
-        semantics follow OSQP's setting): ``N`` checks every ``N`` iterations
-        (residual computed only then), ``0`` disables checking entirely (the
-        loop runs ``max_iters``; equivalent to ``MAX_ITERS`` but keeps the
-        criterion recorded). The default is 1 because the generated check is an
+    tol : float or None
+        Tolerance for the ``INF_NORM_CHANGE`` and ``OBJECTIVE`` criteria. Ignored
+        for ``MAX_ITERS``. Must be positive when the criterion uses it. For
+        ``OBJECTIVE`` it bounds the verification objective as the verifier defines
+        it, so with a 2-norm objective (``ord=2``) it bounds the SQUARED norm:
+        ``tol=1e-6`` stops once ``||r||_2 <= 1e-3``, not ``1e-6``.
+    check_termination : int
+        How often the criterion is evaluated (the name and semantics follow
+        OSQP's setting): ``N`` checks every ``N`` iterations (residual computed
+        only then), ``0`` disables early exit. Ignored for ``MAX_ITERS``.
+
+        For ``INF_NORM_CHANGE`` the default is 1 because the generated check is an
         infinity norm fused into the state copy (measured 1-2.5% of iteration
         time for direct-method FOMs), not extra residual matvecs; raise it for
-        matrix-free methods on large problems where iterations are cheap.
-        Ignored for ``MAX_ITERS``.
+        matrix-free methods on large problems where iterations are cheap. With
+        ``0`` the loop runs ``max_iters`` (equivalent to ``MAX_ITERS`` but keeps
+        the criterion recorded).
+
+        For ``OBJECTIVE`` the default is 25: the objective costs its own
+        matrix-vector products. The objective is also evaluated and tested at the
+        last iteration (``k == max_iter``), whatever ``N`` is, so the reported
+        residual is always the objective at the returned iterate and a solver run
+        to a verified horizon reports ``FOM_SOLVED``. With ``0`` it is evaluated
+        only there.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -108,27 +138,66 @@ class TerminationSpec(BaseModel):
     kind: TerminationKind = TerminationKind.MAX_ITERS
     max_iters: int = Field(ge=1, default=1000, description="Hard upper bound on iterations.")
     tol: float | None = Field(
-        default=None, description="Tolerance for the ``INF_NORM_CHANGE`` criterion."
+        default=None,
+        description="Tolerance for the ``INF_NORM_CHANGE`` and ``OBJECTIVE`` criteria.",
     )
     check_termination: int = Field(
-        ge=0, default=1, description="How often the ``INF_NORM_CHANGE`` criterion is evaluated."
+        ge=0,
+        default=1,
+        description=(
+            "How often the termination criterion is evaluated (default 1 for "
+            "``INF_NORM_CHANGE``, 25 for ``OBJECTIVE``)."
+        ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_check_termination(cls, data):
+        # The default interval depends on the criterion, so fill it here rather
+        # than in the field.
+        if isinstance(data, dict) and data.get("check_termination") is None:
+            data = dict(data)
+            data.pop("check_termination", None)
+            kind = TerminationKind(data.get("kind", TerminationKind.MAX_ITERS))
+            if kind.value in _CHECK_TERMINATION_DEFAULTS:
+                data["check_termination"] = _CHECK_TERMINATION_DEFAULTS[kind.value]
+        return data
 
     @model_validator(mode="after")
     def _check_tol(self) -> "TerminationSpec":
-        if self.kind == TerminationKind.INF_NORM_CHANGE and (self.tol is None or self.tol <= 0):
-            raise ValueError("tol must be a positive float for the inf_norm_change criterion")
+        if self.kind in _TOL_KINDS and (self.tol is None or self.tol <= 0):
+            raise ValueError(f"tol must be a positive float for the {self.kind.value} criterion")
         return self
 
     @property
     def uses_tolerance(self) -> bool:
-        """Whether the loop checks the tolerance criterion at all.
+        """Whether the loop checks the infinity-norm change criterion at all.
 
         Single source of truth shared by the emitted header (``FOM_USE_TOL``)
         and the reference oracle, so the generated code and the verification
         ground truth can never disagree on when early exit is possible.
         """
         return self.kind == TerminationKind.INF_NORM_CHANGE and self.check_termination > 0
+
+    @property
+    def uses_objective(self) -> bool:
+        """Whether the loop evaluates the verification objective (``FOM_USE_OBJECTIVE``).
+
+        True even with ``check_termination == 0``: the objective is then still
+        evaluated, and tested, once at the last iteration.
+        """
+        return self.kind == TerminationKind.OBJECTIVE
+
+    def is_check_iteration(self, k: int, max_iter: int | None = None) -> bool:
+        """Whether the 1-based iteration ``k`` evaluates the ``OBJECTIVE`` criterion.
+
+        Every ``check_termination``-th iteration, and the last one (``max_iter``,
+        defaulting to ``max_iters``). Shared by the oracle and the emitted
+        verify data so both test at the same iterations.
+        """
+        last = self.max_iters if max_iter is None else max_iter
+        check = self.check_termination
+        return k == last or (check > 0 and k % check == 0)
 
 
 class CodegenConfig(BaseModel):
@@ -158,9 +227,18 @@ class CodegenConfig(BaseModel):
         Number of random parameter instances drawn for the golden verify data.
     seed : int
         RNG seed for reproducible verify-sample generation.
+    agent_timeout_s : int
+        Wall-clock budget, in seconds, for the translation phase, shared by
+        all of its agent attempts. Default 600.
+    agent_optimize_max_turns : int
+        Turn budget for one coding-agent attempt at the code optimization
+        phase. Default 200.
+    agent_optimize_timeout_s : int
+        Wall-clock budget, in seconds, for the code optimization phase.
+        Default 7200.
     cg_auto_min_dim : int
         Dimension threshold for the ``AUTO`` → CG upgrade on the large-scale
-        CUDA backend (see :class:`SolveMethod`). Raise it to keep more systems
+        CUDA backend (see `SolveMethod`). Raise it to keep more systems
         on a direct factorization; lower it to prefer CG for smaller SPD
         systems. Ignored for non-CUDA backends and explicit solve methods.
     """
@@ -186,32 +264,39 @@ class CodegenConfig(BaseModel):
         ge=1,
         default=600,
         description=(
-            "Wall-clock budget, in seconds, for one coding-agent attempt at the "
-            "translation phase. The phase is a bounded task, so the default is "
-            "generous for it."
+            "Wall-clock budget, in seconds, for the translation phase, shared by "
+            "all of its agent attempts. The agent is told the time left after each "
+            "tool call, a shell command cannot outlive it, and once it is spent the "
+            "agent is stopped (after a short grace period to write its summary) "
+            "and no further attempt starts. The phase is a bounded task, so the "
+            "default is generous for it."
         ),
     )
     agent_optimize_max_turns: int = Field(
         ge=1,
-        default=60,
+        default=200,
         description=(
-            "Turn budget for one coding-agent attempt at the optimization phase. "
+            "Turn budget for one coding-agent attempt at the code optimization phase. "
             "The phase is a profile/rewrite/verify/benchmark loop, so a method "
             "with more structure to exploit needs more turns; exhausting the "
             "budget leaves the verified solver in place but costs the agent's own "
-            "summary of what it did."
+            "summary of what it did. Sized so the wall-clock budget, not turns, "
+            "is what ends a run at the default."
         ),
     )
     agent_optimize_timeout_s: int = Field(
         ge=1,
-        default=1800,
+        default=7200,
         description=(
-            "Wall-clock budget, in seconds, for one coding-agent attempt at the "
-            "optimization phase. Larger than the translation budget because the "
-            "phase is open-ended: profile, rewrite, re-verify, benchmark, repeat. "
-            "An attempt killed part-way still leaves whatever it had written on "
-            "disk (which the pipeline re-verifies), but loses the agent's own "
-            "summary of what it did and why."
+            "Wall-clock budget, in seconds, for the code optimization phase, "
+            "enforced as for agent_timeout_s. Larger than the translation budget "
+            "because the phase is open-ended: profile, rewrite, re-verify, "
+            "benchmark, repeat, and each round of a GPU kernel rewrite (nvcc "
+            "build, verify, benchmark) is slow. Two hours by default: a CUDA CG "
+            "solve stopped at 30 minutes was still improving. A stopped agent "
+            "still leaves whatever it had written on disk, which the pipeline "
+            "re-verifies and benchmarks. The gates that run after the agent "
+            "(verify, benchmark, profile) take seconds and are outside the budget."
         ),
     )
     cg_auto_min_dim: int = Field(

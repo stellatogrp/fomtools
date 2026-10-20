@@ -23,7 +23,7 @@ class NormInf(ProxableFunction):
         Weight $\lambda \ge 0$ (a single scalar, since the $\ell_\infty$ norm is
         not separable), or a dim-1 ``LinearExpression`` treated as a parameter
         by the verification lowering.
-    dual_ub : float, np.ndarray, or None, default None
+    dual_ub : float or None, default None
         Upper bound forwarded to the underlying ``IndBallL1`` projection.
         ``None`` auto-derives a valid bound from the input box; supply a value
         when that bound is loose (e.g. large asymmetric inputs).
@@ -56,7 +56,7 @@ class NormInf(ProxableFunction):
     def __init__(
         self,
         lambd: float | LinearExpression = 1.0,
-        dual_ub: float | np.ndarray | None = None,
+        dual_ub: float | None = None,
     ):
         super().__init__()
         if hasattr(lambd, "decomposition_dict"):  # dim-1 LinearExpression parameter

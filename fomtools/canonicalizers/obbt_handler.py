@@ -25,13 +25,20 @@ class OBBTHandler(Canonicalizer):
     Attributes
     ----------
     solver : Solver
-        A ready-to-use instance of a subclass of :class:`Solver`
+        A ready-to-use instance of a subclass of `Solver`
         (e.g., ``gurobi.Gurobi()``).
+    crossing_tol : float
+        Largest relative crossing ``min > max`` of an OBBT bound pair treated as
+        LP solver noise; such entries are swapped and buffered outward by the
+        same amount. Defaults to Gurobi's default feasibility and optimality
+        tolerances.
+    crossing_repairs : int
+        Number of bound entries repaired this way so far.
     """
 
-    def __init__(self, solver: str, solver_params: dict = None):
+    def __init__(self, solver: str, solver_params: dict = None, crossing_tol: float = 1e-6):
         """
-        Initialize an instance of :class:`OBBTHandler`.
+        Initialize an instance of `OBBTHandler`.
 
         Parameters
         ----------
@@ -43,8 +50,12 @@ class OBBTHandler(Canonicalizer):
         solver_params : dict or None, optional
             Parameters passed verbatim to the OBBT solver (e.g.
             ``{"OutputFlag": 0}`` for Gurobi).
+        crossing_tol : float, default 1e-6
+            See the class attribute of the same name.
         """
         super().__init__(solver_params=solver_params, solver=solver)
+        self.crossing_tol = crossing_tol
+        self.crossing_repairs = 0
 
     def add_var(self, var: LinearExpression) -> None:
         """
@@ -132,7 +143,8 @@ class OBBTHandler(Canonicalizer):
         For each element in the linear expression, this method solves
         minimization and maximization problems to compute potentially
         tighter bounds. The returned bounds are the intersection of the
-        input bounds and the computed bounds.
+        input bounds and the computed bounds, padded outward by
+        ``1e-6 * max(1, abs(bound))``. This does not certify rounding errors.
 
         Parameters
         ----------
@@ -175,10 +187,36 @@ class OBBTHandler(Canonicalizer):
 
         # Both the raw LP bounds (min/max solves for the same index) and their
         # intersection with the input bounds can cross by solver noise (e.g.
-        # input ub = 0, LP lb = 2e-17); repair so downstream bound_propagation
-        # does not raise. Crossings beyond the tolerance raise (genuine bug).
-        lb_out, ub_out = repair_crossed_bounds(lb_out, ub_out)
-        return repair_crossed_bounds(np.maximum(lb, lb_out), np.minimum(ub, ub_out))
+        # input ub = 0, LP lb = 2e-17), up to the LP tolerances. Swap such
+        # entries and buffer them outward by the tolerance so the interval
+        # stays valid. Crossings beyond the tolerance raise (genuine bug).
+        if not (np.isfinite(lb_out).all() and np.isfinite(ub_out).all()):
+            log.info("bound tightening failed: nonfinite LP objective")
+            return None
+        lb_out, ub_out = self._repair(lb_out, ub_out)
+        # Pad the LP bounds outward to cover small LP solver errors, matching the
+        # objective-bound padding policy. This is a numerical safeguard, not a
+        # directed-rounding certificate.
+        lb_out = lb_out - 1e-6 * np.maximum(1.0, np.abs(lb_out))
+        ub_out = ub_out + 1e-6 * np.maximum(1.0, np.abs(ub_out))
+        lb_new, ub_new = self._repair(np.maximum(lb, lb_out), np.minimum(ub, ub_out))
+        # The buffer must not loosen the input bounds (e.g. a ReLU output's
+        # lb = 0). The repaired interval always meets [lb, ub], so this clip
+        # cannot cross it again.
+        return np.maximum(lb_new, lb), np.minimum(ub_new, ub)
+
+    def _repair(self, lb: np.ndarray, ub: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """``repair_crossed_bounds`` at the LP tolerance, counting and logging repairs."""
+        lb, ub = np.asarray(lb, dtype=float), np.asarray(ub, dtype=float)
+        crossed = lb > ub
+        if np.any(crossed):
+            self.crossing_repairs += int(crossed.sum())
+            log.info(
+                "OBBT: repaired %d crossed bound(s), largest crossing %.3e",
+                int(crossed.sum()),
+                float(np.max(lb - ub)),
+            )
+        return repair_crossed_bounds(lb, ub, tol=self.crossing_tol, buffer=self.crossing_tol)
 
     # ------------------------------------------------------------------
     # Linear (binary-free) canonicalization of steps into the OBBT LP.
@@ -203,7 +241,7 @@ class OBBTHandler(Canonicalizer):
         """
         Add the affine equality ``output_mat @ output == arg`` to the OBBT LP.
 
-        ``output_mat`` is a documented attribute of the :class:`Affine` step
+        ``output_mat`` is a documented attribute of the `Affine` step
         interface; this mirrors ``MIP.canonicalize_affine`` exactly (both rely
         on the same equality), so the two stay consistent if ``Affine`` is
         refactored.

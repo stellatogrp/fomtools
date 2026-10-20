@@ -83,25 +83,27 @@ class LinearExpression:
             matrices in the `decomposition_dict`.
         """
 
+        for leaf, mat in decomposition_dict.items():
+            if not isinstance(leaf, LinearExpression) or not leaf.is_leaf:
+                raise ValueError("Decomposition keys must be leaf expressions.")
+            if len(mat.shape) != 2 or mat.shape[1] != leaf.ndim:
+                raise ValueError(
+                    "Each coefficient must be a matrix with one column per leaf entry."
+                )
         shapes = {mat.shape[0] for mat in decomposition_dict.values()}
         if len(shapes) > 1:
             raise ValueError(
-                f"""All coefficient matrices must have the same number of rows;
-                    found row counts {len(shapes)}"""
+                f"All coefficient matrices must have the same number of rows: {shapes}"
             )
-
-        self.ndim = shapes.pop() if len(shapes) == 1 else 0
+        self.ndim = next(iter(shapes), 0)
         if const is not None:
-            if self.ndim == 0:
-                self.ndim = const.shape[0]
-
-            try:
-                np.broadcast_shapes(const.shape, (1, self.ndim))
-            except ValueError:
-                raise ValueError(
-                    "Matrix for a constant must have same number of rows as decomposition dict."
-                )
-
+            const = np.asarray(const, dtype=float)
+            if const.ndim != 1:
+                raise ValueError("The constant must be a one-dimensional vector.")
+            if not shapes:
+                self.ndim = const.size
+            if const.shape != (self.ndim,):
+                raise ValueError("The constant must have one entry per coefficient row.")
         self.const = np.zeros(self.ndim) if const is None else const
         self.decomposition_dict = decomposition_dict
         self.counter = LinearExpression.counter
@@ -323,18 +325,16 @@ class LinearExpression:
             If the `scalar` is not an instance of int or float.
 
         """
-        try:
-            return LinearExpression(
-                decomposition_dict={
-                    k: v * np.float64(scalar) for k, v in self.decomposition_dict.items()
-                },
-                const=self.const * np.float64(scalar),
-            )
-        except ValueError:
+        factor = np.asarray(scalar)
+        if factor.ndim != 0 or not np.issubdtype(factor.dtype, np.number):
             raise TypeError(
-                f"""Can only multiply by int or float, got {type(scalar)}. If intending to use
-                 a matrix, use the @ symbol with the matrix on the left."""
+                "LinearExpression multiplication requires a scalar; use a matrix @ expression for vector scaling."
             )
+        factor = float(factor)
+        return LinearExpression(
+            {leaf: coeff * factor for leaf, coeff in self.decomposition_dict.items()},
+            const=self.const * factor,
+        )
 
     def __rmul__(self, scalar: Union[float, int]) -> Self:
         """
@@ -785,13 +785,13 @@ def stack(exprs: list[LinearExpression]) -> LinearExpression:
 
 def solve_linexpr(M, expr: LinearExpression) -> LinearExpression:
     r"""
-    Build a ``LinearExpression`` representing :math:`M^{-1}\,\text{expr}`
-    without forming :math:`M^{-1}` explicitly.
+    Build a ``LinearExpression`` representing $M^{-1}\,\text{expr}$
+    without forming $M^{-1}$ explicitly.
 
     Each leaf coefficient and the constant are computed via
     ``np.linalg.solve(M, ...)`` (dense ``M``) or an LU-factorized
     ``splu.solve(...)`` (sparse ``M``) — the same pattern as
-    :attr:`fomtools.steps.affine.Affine.output_mat_inverse`.
+    `fomtools.steps.affine.Affine.output_mat_inverse`.
 
     The returned ``LinearExpression`` is intended for **interval-propagating
     bounds through an implicit inverse**; it should not be registered with

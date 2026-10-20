@@ -16,8 +16,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
+
 from fomtools.cvxpygen.builders import BaseFomSpec
-from fomtools.cvxpygen.qpdata import QPData
+from fomtools.cvxpygen.qpdata import CVXPYGEN_INF, QPData
+from fomtools.cvxpygen.scaling import Scaling
 
 _BANNER = (
     "/* Bridge between CVXPYgen canonicalization code and the fomtools solver.\n"
@@ -29,7 +32,8 @@ def cmake_solver_sources(target) -> list[str]:
     """CMake source paths (cvxpygen ``solver_code`` scope) for one target.
 
     Mirrors the translation units the target actually scaffolds — the solver
-    body, the numeric data, and the matrix-vector / linear-solve sources, which
+    body, the numeric data, the matrix-vector / linear-solve sources and the
+    ``fom_objective`` source (written for every IR, so listing it is safe), which
     become ``.cu`` on the CUDA backend — plus the generated bridge. cvxpygen
     globs this list into its build, so the file extensions must match what the
     target's ``scaffold`` wrote (e.g. ``src/fom_ops.cu`` for CUDA, ``.c`` for
@@ -41,8 +45,10 @@ def cmake_solver_sources(target) -> list[str]:
         "src/fom_data.c",
         target.linsolve_source_path(),
         target.ops_source_path(),
-        "src/cpg_fom_bridge.c",
     ]
+    if target.objective_source_path() not in rel:  # its own file except on CUDA
+        rel.append(target.objective_source_path())
+    rel.append("src/cpg_fom_bridge.c")
     return [f"${{CMAKE_CURRENT_SOURCE_DIR}}/{r}" for r in rel]
 
 
@@ -93,12 +99,51 @@ def _settings_block(prefix: str, settings: tuple[str, ...], schedule_len: int | 
 
 
 def _piece_dims(qp: QPData) -> dict[str, tuple[str, int, int]]:
-    """Map each canonical piece to (Canon_Params member, offset, length)."""
+    """Map each canonical piece to (Canon_Params member, offset, length).
+
+    The offset of a constraint piece is also its first row in the equilibration
+    scaling ``E`` (equality rows first, then inequality rows), which
+    `_param_copy_line` relies on to index ``bridge_E``.
+    """
     return {
         "q": ("q", 0, qp.n),
         "b": ("l", 0, qp.n_eq),
         "u_ineq": ("u", qp.n_eq, qp.n_ineq),
     }
+
+
+def _c_array(name: str, values: np.ndarray) -> str:
+    body = ", ".join(f"{float(v):.17g}" for v in values)
+    return f"static const double {name}[{max(len(values), 1)}] = {{{body or '0'}}};"
+
+
+def _scaling_block(scaling: Scaling) -> str:
+    """Static scaling data: ``x = D x~``, rows scaled by ``E``, cost by ``c``."""
+    return "\n".join(
+        [
+            "/* Ruiz equilibration of the canonical QP (fomtools.cvxpygen.scaling):",
+            " * the solver iterates on c D P D, c D q, E A D, E l, E u. */",
+            _c_array("bridge_D", scaling.D),
+            _c_array("bridge_E", scaling.E),
+            f"static const double bridge_c = {float(scaling.c):.17g};",
+        ]
+    )
+
+
+def _param_copy_line(piece: str, index: int, src: str, offset: int, scaled: bool) -> str:
+    """One element of a canonical piece into ``fom_params.p<index>``, scaled if equilibrated."""
+    value = f"({src})[i]"
+    if not scaled:
+        rhs = value
+    elif piece == "q":
+        rhs = f"bridge_c * bridge_D[i] * {value}"
+    else:
+        # b and u_ineq rows; cvxpygen's +/-1e30 infinities stay infinite. The
+        # Canon_Params offset doubles as the row offset into E (see _piece_dims).
+        e = f"bridge_E[{offset} + i]" if offset else "bridge_E[i]"
+        inf = f"{CVXPYGEN_INF:g}"
+        rhs = f"(({value} >= {inf} || {value} <= -{inf}) ? {value} : {e} * {value})"
+    return f"    fom_params.p{index}[i] = (fom_float)({rhs});"
 
 
 def _residual_block(qp: QPData, prefix: str, has_quad_term: bool) -> str:
@@ -169,6 +214,7 @@ def emit_bridge(
     settings: tuple[str, ...] = ("max_iter", "tol", "check_termination"),
     schedule_len: int | None = None,
     iter_count: int | None = None,
+    scaling: Scaling | None = None,
 ) -> None:
     """Write ``include/cpg_fom_bridge.h`` and ``src/cpg_fom_bridge.c``.
 
@@ -184,6 +230,12 @@ def emit_bridge(
     iteration count, which an unrolled solver needs: its loop runs once, so
     ``solution.iter`` is 1 rather than the number of iterations the emitted
     straight-line body actually performs.
+
+    With ``scaling`` the solver was built on the equilibrated QP
+    (`fomtools.cvxpygen.scaling.scale_qp`): the parameters are scaled on
+    the way in, the primal and dual solution unscaled on the way out
+    (``x = D x~``, ``y = E y~ / c``), and the residuals and objective, which
+    read the original ``Canon_Params``, are those of the original problem.
     """
     solver_code_dir = Path(solver_code_dir)
     n, m = qp.n, qp.m
@@ -225,14 +277,15 @@ extern void {fn}(void);
 
     copies = []
     dims = _piece_dims(qp)
+    if scaling is not None:
+        # _param_copy_line indexes bridge_E by the Canon_Params offset.
+        assert dims["b"][1] == 0 and dims["u_ineq"][1] == qp.n_eq, dims
+        assert len(scaling.E) == qp.n_eq + qp.n_ineq == m, (len(scaling.E), m)
     for i, piece in enumerate(spec.param_copy):
         member, offset, length = dims[piece]
         src = f"{prefix}Canon_Params.{member}" + (f" + {offset}" if offset else "")
-        copies.append(
-            f"  for (i = 0; i < {length}; i++) {{\n"
-            f"    fom_params.p{i}[i] = (fom_float)({src})[i];\n"
-            f"  }}"
-        )
+        line = _param_copy_line(piece, i, src, offset, scaling is not None)
+        copies.append(f"  for (i = 0; i < {length}; i++) {{\n{line}\n  }}")
     copies_src = "\n".join(copies)
 
     if has_quad_term:
@@ -261,6 +314,13 @@ extern void {fn}(void);
         f"static double bridge_Ax[{max(m, 1)}];  /* A x, for the primal residual */\n"
         f"static double bridge_g[{n}];           /* P x + q + A^T y, the dual residual */"
     )
+    if scaling is not None:
+        scratch += "\n" + _scaling_block(scaling)
+        x_out = f"bridge_D[i] * (double)fom_work.solution.x[{spec.primal_offset} + i]"
+        y_out = f"bridge_E[i] * (double)fom_work.solution.x[{spec.dual_offset} + i] / bridge_c"
+    else:
+        x_out = f"(double)fom_work.solution.x[{spec.primal_offset} + i]"
+        y_out = f"(double)fom_work.solution.x[{spec.dual_offset} + i]"
 
     source = f"""\
 {_BANNER}
@@ -299,10 +359,10 @@ void {fn}(void) {{
   fom_status = (int)fom_solve(&fom_work);
 
   for (i = 0; i < {n}; i++) {{
-    sol_x[i] = (double)fom_work.solution.x[{spec.primal_offset} + i];
+    sol_x[i] = {x_out};
   }}
   for (i = 0; i < {m}; i++) {{
-    sol_y[i] = (double)fom_work.solution.x[{spec.dual_offset} + i];
+    sol_y[i] = {y_out};
   }}
 {iter_src}
 

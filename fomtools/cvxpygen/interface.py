@@ -1,18 +1,18 @@
 """The cvxpygen solver interface for fomtools-generated FOM solvers.
 
-:class:`FomtoolsInterface` plugs into cvxpygen as the solver named
+`FomtoolsInterface` plugs into cvxpygen as the solver named
 ``'FOMTOOLS'``: it reuses cvxpygen's QP canonicalization (registered there
-under ``cvxpy_solver_name = 'OSQP'``) and, in :meth:`generate_code`, runs the
+under ``cvxpy_solver_name = 'OSQP'``) and, in `generate_code`, runs the
 fomtools code generator to produce the embedded solver inside cvxpygen's
 ``c/solver_code/`` directory, plus the C bridge from
-:mod:`fomtools.cvxpygen.glue`.
+`fomtools.cvxpygen.glue`.
 
 cvxpygen has no public solver registry — its dispatch is a dict local to
-``Canonicalizer._get_interface_class`` — so :func:`register` wraps that method
+``Canonicalizer._get_interface_class`` — so `register` wraps that method
 (idempotently) to add the ``'FOMTOOLS'`` name without forking cvxpygen.
 Generation options that cvxpygen's plumbing does not carry (FOM choice,
 fomtools config, agent driver, parameter bounds) travel through a
-context-variable set by :func:`fomtools.cvxpygen.api.generate_solver`.
+context-variable set by `fomtools.cvxpygen.api.generate_solver`.
 
 Validated against cvxpygen 1.x (see the seam-canary test in
 ``tests/codegen/test_cvxpygen_register.py``).
@@ -41,6 +41,7 @@ from fomtools.codegen.targets import get_target
 from fomtools.cvxpygen.builders import ScheduledFomSpec, fom_kind, resolve_builder
 from fomtools.cvxpygen.glue import cmake_solver_sources, emit_bridge, write_solver_cmake_stub
 from fomtools.cvxpygen.qpdata import extract_qp_data
+from fomtools.cvxpygen.scaling import ruiz_for, scale_qp
 
 #: (version, backend) combinations the cvxpygen integration can emit a build for.
 _SUPPORTED_TARGETS = frozenset(
@@ -63,6 +64,8 @@ class FomtoolsOptions:
     param_bounds: dict | None = None
     bound_margin: float = 1.0
     allow_unrolled: bool = False
+    code_optimization: bool = False
+    auto_equilibrate: bool = True
 
 
 _OPTIONS: contextvars.ContextVar[FomtoolsOptions | None] = contextvars.ContextVar(
@@ -121,18 +124,20 @@ def _settings_for(kind: str, term) -> dict:
     The rolled and scheduled paths always honor ``max_iter`` (a scheduled
     solver's is additionally capped in the bridge at the length of its
     coefficient tables). ``tol`` and ``check_termination`` exist only when the
-    solver was generated with the ``INF_NORM_CHANGE`` criterion: under
-    ``MAX_ITERS`` the emitted header sets ``FOM_USE_TOL 0`` and the residual
-    check is compiled out, so a ``tol`` setting would be accepted and silently
-    ignored (``problem.solve(method='CPG', tol=1e-4)`` ran every iteration).
-    Leaving it out makes cvxpygen reject the keyword instead. Both stay
-    runtime-tunable when present (the bridge copies them into the FomWorkspace
-    each solve).
+    solver was generated with a criterion that has them: ``INF_NORM_CHANGE``,
+    or ``OBJECTIVE``, where the built-in builders stop on OSQP's unscaled
+    residuals, ``max(||Ax - clamp(Ax, l, u)||_inf, ||Px + q + A'y||_inf) <= tol``
+    (default interval 25). Under ``MAX_ITERS`` the emitted header sets
+    ``FOM_USE_TOL 0`` and the residual check is compiled out, so a ``tol``
+    setting would be accepted and silently ignored
+    (``problem.solve(method='CPG', tol=1e-4)`` ran every iteration). Leaving it
+    out makes cvxpygen reject the keyword instead. Both stay runtime-tunable when
+    present (the bridge copies them into the FomWorkspace each solve).
     """
     if kind == "unrolled":
         return {}
     settings = {"max_iter": Setting(type="cpg_int", default=str(term.max_iters))}
-    if term.kind == TerminationKind.INF_NORM_CHANGE:
+    if term.kind in (TerminationKind.INF_NORM_CHANGE, TerminationKind.OBJECTIVE):
         settings["tol"] = Setting(type="cpg_float", default=repr(float(term.tol)))
         settings["check_termination"] = Setting(type="cpg_int", default=str(term.check_termination))
     return settings
@@ -244,8 +249,22 @@ def _check_ir_matches_kind(ir, kind: str) -> None:
     )
 
 
-def _run_codegen(spec, kind: str, out_dir: Path, config: CodegenConfig, driver) -> CodegenResult:
-    """Call fomtools code generation down the path ``kind`` selects."""
+def _run_codegen(
+    spec,
+    kind: str,
+    out_dir: Path,
+    config: CodegenConfig,
+    driver,
+    *,
+    code_optimization: bool = False,
+) -> CodegenResult:
+    """Call fomtools code generation down the path ``kind`` selects.
+
+    With ``code_optimization`` the code optimization phase runs after
+    translation, with profiling on so its solver is kept only when it is
+    benchmarked faster than the translated one.
+    """
+    phases = dict(code_optimization=code_optimization, profile=code_optimization)
     if kind == "scheduled":
         return fomtools_generate_code(
             spec.build,
@@ -254,6 +273,7 @@ def _run_codegen(spec, kind: str, out_dir: Path, config: CodegenConfig, driver) 
             driver=driver,
             name=spec.name,
             schedules=spec.schedules,
+            **phases,
         )
     return fomtools_generate_code(
         spec.verifier,
@@ -272,6 +292,7 @@ def _run_codegen(spec, kind: str, out_dir: Path, config: CodegenConfig, driver) 
         # next_state (the unrolled path) it is the run to generate.
         iterates=list(spec.iterates) or None,
         param_values=spec.param_values,
+        **phases,
     )
 
 
@@ -369,8 +390,13 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
 
         qp = extract_qp_data(canon, param_bounds=opts.param_bounds, bound_margin=opts.bound_margin)
         _UNBOUNDED_PARAMS.set(qp.unbounded_params)
+        # The FOM iterates on the equilibrated problem; the bridge scales the
+        # parameters in and the solution out, and computes the residuals on the
+        # original canonical data.
+        scaling = ruiz_for(qp) if opts.auto_equilibrate else None
+        qp_fom = scale_qp(qp, scaling) if scaling is not None else qp
         kind = fom_kind(opts.fom)
-        spec = resolve_builder(opts.fom)(qp, **opts.fom_options)
+        spec = resolve_builder(opts.fom)(qp_fom, **opts.fom_options)
         _check_spec_matches_kind(spec, kind)
         if not spec.param_copy:
             raise ValueError(
@@ -381,7 +407,14 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
             _check_unrolled_allowed(opts, config)
 
         solver_code_dir = Path(solver_code_dir)
-        result = _run_codegen(spec, kind, solver_code_dir, config, opts.driver)
+        result = _run_codegen(
+            spec,
+            kind,
+            solver_code_dir,
+            config,
+            opts.driver,
+            code_optimization=opts.code_optimization,
+        )
         if not result.success:
             raise RuntimeError(
                 "fomtools code generation failed to produce a verified solver:\n"
@@ -410,6 +443,7 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
             # is the normalized one, not len(spec.iterates): see
             # _unrolled_iter_count.
             iter_count=_unrolled_iter_count(spec) if result.ir.unrolled else None,
+            scaling=scaling,
         )
         write_solver_cmake_stub(solver_code_dir)
 

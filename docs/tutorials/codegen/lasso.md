@@ -18,11 +18,11 @@ The Lasso instance is
 
 $$
 \begin{array}{ll}
-    \text{minimize} & (1/2)\lVert Ds - x \rVert_2^2 + \lambda \lVert s \rVert_1,
+    \text{minimize} & (1/2)\|Dz - x\|_2^2 + \lambda \|z\|_1,
 \end{array}
 $$
 
-where \(D \in \mathbb{R}^{p \times n}\), \(s \in \mathbb{R}^n\), and \(x\)
+where $D \in \mathbf{R}^{p \times n}$, $z \in \mathbf{R}^n$, and $x$
 is the parameter.
 
 ## Method
@@ -30,8 +30,8 @@ is the parameter.
 The solver uses iterative soft-thresholding:
 
 $$
-s^{k+1} =
-\mathbf{soft}_{\lambda\eta}\left(s^k - \eta D^\top(Ds^k - x)\right).
+z^{k+1} =
+\mathbf{soft}_{\lambda\eta}\left(z^k - \eta D^T(Dz^k - x)\right).
 $$
 
 Both the NumPy reference and the generated C solver run the same update rule for

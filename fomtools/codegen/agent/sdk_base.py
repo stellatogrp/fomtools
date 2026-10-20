@@ -41,7 +41,7 @@ _SYSTEM_PROMPT = (
 class SdkAgentDriver(AgentDriver):
     """Base for the real, SDK-backed coding-agent drivers.
 
-    A concrete :class:`~fomtools.codegen.agent.driver.AgentDriver` that runs a
+    A concrete `AgentDriver` that runs a
     real coding agent through the authoritative retry loop. It prefers an
     in-process Python SDK and falls back to the vendor's CLI in headless mode.
     After each attempt the shared loop runs the verify command itself to decide
@@ -59,8 +59,8 @@ class SdkAgentDriver(AgentDriver):
     subdirectory of a project repository; otherwise a misconfigured
     ``--add-dir`` could expose the surrounding repository to the agent.
 
-    Subclasses set the class attributes :attr:`api_key_env`, :attr:`cli_name`,
-    and :attr:`label`, and implement :meth:`_build_argv` and :meth:`_invoke_sdk`.
+    Subclasses set the class attributes `api_key_env`, `cli_name`,
+    and `label`, and implement `_build_argv` and `_invoke_sdk`.
 
     Methods
     -------
@@ -142,12 +142,12 @@ class SdkAgentDriver(AgentDriver):
             Ignored by backends without a sandbox concept.
         api_key : str, optional
             Explicit API key. When ``None`` it falls back to the
-            :attr:`api_key_env` environment variable; when neither is set the
+            `api_key_env` environment variable; when neither is set the
             backend uses the on-disk vendor login.
         cli_timeout : int, optional
             Wall-clock budget in seconds for one CLI attempt, after which the
             agent process is terminated. Used only when ``config`` carries no
-            budget of its own; see :meth:`_timeout_for_phase`.
+            budget of its own; see `_timeout_for_phase`.
         """
         self.config = config
         self.model = model
@@ -163,15 +163,15 @@ class SdkAgentDriver(AgentDriver):
         self._truncated = False
 
     def _timeout_for_phase(self, phase: str) -> int:
-        """Wall-clock budget for one attempt of ``phase``.
+        """Wall-clock budget for ``phase`` (shared by all of its attempts).
 
-        The optimization phase is open-ended — profile, rewrite, re-verify,
+        The code optimization phase is open-ended — profile, rewrite, re-verify,
         benchmark, repeat — so it gets a larger budget than the bounded
         translation phase. An attempt killed mid-optimization loses the agent's
         own summary, which is the artifact the optimization report is built from.
         """
         config = self.config
-        if phase == "B_optimize":
+        if phase == "code_optimization":
             return int(getattr(config, "agent_optimize_timeout_s", None) or self.cli_timeout)
         return int(getattr(config, "agent_timeout_s", None) or self.cli_timeout)
 
@@ -180,7 +180,7 @@ class SdkAgentDriver(AgentDriver):
 
         Returns ``None`` when no key is configured so the backend keeps its
         default behavior (the on-disk vendor login). Otherwise returns the full
-        parent environment with :attr:`api_key_env` injected, so PATH and the
+        parent environment with `api_key_env` injected, so PATH and the
         rest of the environment are preserved while the key forces API-key auth.
 
         Returns
@@ -196,7 +196,7 @@ class SdkAgentDriver(AgentDriver):
     def run(self, task: AgentTask) -> AgentResult:
         """Generate/refine the solver until the verify command passes.
 
-        Delegates to :func:`~fomtools.codegen.agent.driver.run_verify_loop`,
+        Delegates to `run_verify_loop`,
         supplying a closure that invokes the agent for one attempt. The loop runs
         the verify command itself to decide success and re-prompts with the
         failure output until it passes or the attempt budget is spent.
@@ -226,13 +226,14 @@ class SdkAgentDriver(AgentDriver):
             max_attempts=self.max_attempts,
             max_turns=self.max_turns,
             truncated_probe=lambda: self._truncated,
+            budget_s=self._timeout_for_phase(task.phase),
         )
 
     def _invoke_agent(self, task: AgentTask, prompt: str, max_turns: int) -> str:
         """Run one agent attempt, preferring the SDK and falling back to the CLI.
 
         Tries the in-process Python SDK first (unless ``prefer_cli`` is set); on
-        :class:`ImportError` it shells out to the vendor CLI instead, scoping it
+        `ImportError` it shells out to the vendor CLI instead, scoping it
         to the task's resolved absolute workdir. Success is decided later by the
         caller's verify command, not here.
 
@@ -257,17 +258,19 @@ class SdkAgentDriver(AgentDriver):
             except (ImportError, NotImplementedError):
                 pass  # fall back to CLI
         workdir = str(Path(task.workdir).resolve())
-        return self._invoke_cli(
-            self._build_argv(workdir, prompt),
-            workdir,
-            timeout=self._timeout_for_phase(task.phase),
+        budget = task.extra.get("budget")
+        timeout = (
+            max(1, int(budget.remaining()))
+            if budget is not None
+            else self._timeout_for_phase(task.phase)
         )
+        return self._invoke_cli(self._build_argv(workdir, prompt), workdir, timeout=timeout)
 
     def _invoke_cli(self, argv: list[str], workdir: str, timeout: int | None = None) -> str:
         """Run one attempt by shelling out to the vendor CLI in headless mode.
 
         Executes ``argv`` in ``workdir`` with the child environment from
-        :meth:`_child_env` (the API key injected when configured, otherwise the
+        `_child_env` (the API key injected when configured, otherwise the
         inherited login environment), capturing output. The CLI loops internally
         in headless mode until the task is done. Success is left to the caller's
         verify command; this method only returns the captured text or fails fast
@@ -276,7 +279,7 @@ class SdkAgentDriver(AgentDriver):
         Parameters
         ----------
         argv : list of str
-            The full CLI argument vector, as built by :meth:`_build_argv`.
+            The full CLI argument vector, as built by `_build_argv`.
         workdir : str
             Absolute working directory to run the CLI in.
 
@@ -351,7 +354,7 @@ class SdkAgentDriver(AgentDriver):
         Returns
         -------
         list of str
-            The argument vector to pass to :func:`subprocess.run`.
+            The argument vector to pass to `subprocess.run`.
         """
 
     @abstractmethod

@@ -84,7 +84,7 @@ def _to_numpy(arr) -> np.ndarray:
 
     Used by the CPU-side activations (``tv_activation``, ``polyhedral_activation``,
     ``qp_activation``) whose inner loops run on host (Condat / cvxpy-CLARABEL). On a
-    GPU run this pairs with :func:`_to_like` to bracket each activation with a
+    GPU run this pairs with `_to_like` to bracket each activation with a
     device→host→device transfer. Since these activations run inside
     ``_simulate_batch`` — invoked once per ``solve_model`` (the warm-up is skipped off
     GPU) — a mixed CUDA + cvxpy pipeline incurs that PCIe round-trip every iteration
@@ -96,7 +96,7 @@ def _to_numpy(arr) -> np.ndarray:
 
 
 def _to_like(host: np.ndarray, ref):
-    """Move host numpy ``host`` back to the device of ``ref`` (see :func:`_to_numpy`
+    """Move host numpy ``host`` back to the device of ``ref`` (see `_to_numpy`
     for the GPU round-trip cost this incurs in the CPU-side activations)."""
     if CUDA_AVAILABLE and isinstance(ref, cp.ndarray):
         return cp.asarray(host)
@@ -300,7 +300,7 @@ def tv_activation(lam: float):
     """Activation applying Condat's TV prox to each sample (looped on host).
 
     Host-side loop: on a GPU run the batch is moved device→host and the result back
-    (see :func:`_to_numpy`).
+    (see `_to_numpy`).
     """
 
     def activation(V):
@@ -333,7 +333,7 @@ def polyhedral_activation(A: np.ndarray, b, n: int, m: int, b_is_param: bool):
     Notes
     -----
     The per-sample loop runs on host (cvxpy/CLARABEL has no GPU backend); on a GPU run
-    each call moves the batch device→host and the result back (see :func:`_to_numpy`).
+    each call moves the batch device→host and the result back (see `_to_numpy`).
     """
     import cvxpy as cp_solver
 
@@ -387,7 +387,7 @@ def qp_activation(P, A, C, n: int, p: int, m: int, is_lp: bool):
     Notes
     -----
     The per-sample loop runs on host (cvxpy/CLARABEL has no GPU backend); on a GPU run
-    each call moves the batch device→host and the result back (see :func:`_to_numpy`).
+    each call moves the batch device→host and the result back (see `_to_numpy`).
     """
     import cvxpy as cp_solver
 
@@ -473,6 +473,7 @@ class Simulator(Canonicalizer):
         self._seed_counter = random_seed
         self.step_descriptors = []
         self.residual_specs = {}
+        self.user_iterates = {}
         self.device = 0  # GPU device ID
 
     @staticmethod
@@ -1101,8 +1102,8 @@ class Simulator(Canonicalizer):
         ``activation`` is a callable mapping the assembled input batch
         ``(N, arg.ndim)`` to the output batch ``(N, output_leaf.ndim)``; the result
         is written into ``output_leaf``'s slot. See the subproblem activation
-        factories defined in this module (e.g. :func:`simplex_activation`,
-        :func:`qp_activation`).
+        factories defined in this module (e.g. `simplex_activation`,
+        `qp_activation`).
 
         Parameters
         ----------
@@ -1234,7 +1235,11 @@ class Simulator(Canonicalizer):
             compiled.append((_make_fn(), output_slice, prev_slice, _make_composer()))
         return compiled
 
-    def _compile_residuals(self, simulation_data):
+    def record_iterate(self, expression):
+        """Record a public operation's output after all its internal steps."""
+        self.user_iterates[len(self.step_descriptors) - 1] = expression
+
+    def _compile_residuals(self, simulation_data, specs=None):
         """
         Compile all recorded residual specs into executable functions.
 
@@ -1250,7 +1255,9 @@ class Simulator(Canonicalizer):
             ``residual_fn(z_stacked, p_stacked) -> cp.ndarray`` of shape ``(N,)``.
         """
         compiled = {}
-        for step_idx, (expr_list, norm_ord) in self.residual_specs.items():
+        for step_idx, (expr_list, norm_ord) in (
+            self.residual_specs if specs is None else specs
+        ).items():
             if norm_ord == "zero":
 
                 def _make_zero_fn():
@@ -1332,13 +1339,24 @@ class Simulator(Canonicalizer):
         simulation_data = self._prepare_simulation_data()
         compiled_steps = self._compile_steps(simulation_data)
 
-        has_residual_specs = bool(self.residual_specs)
-        if has_residual_specs:
-            compiled_residuals = self._compile_residuals(simulation_data)
-            n_residuals = len(compiled_residuals)
-        else:
-            compiled_residuals = None
-            n_residuals = len(compiled_steps)
+        specs = self.residual_specs
+        if not specs:
+            specs = {}
+            previous = None
+            for idx, expr in self.user_iterates.items():
+                if previous is not None and idx >= 0:
+                    if expr.ndim != previous.ndim:
+                        raise ValueError(
+                            "Default residuals require equal-sized user iterates; set an explicit objective."
+                        )
+                    specs[idx] = ([expr - previous], np.inf)
+                previous = expr
+            if not specs:
+                raise ValueError(
+                    "Default residuals require an initial iterate; call add_iterate or set an explicit objective."
+                )
+        compiled_residuals = self._compile_residuals(simulation_data, specs)
+        n_residuals = len(compiled_residuals)
 
         with self._get_device_context(self.device):
             z0 = self._to_device(simulation_data["z0"])
@@ -1350,11 +1368,6 @@ class Simulator(Canonicalizer):
                 z_batch = cp.tile(z0, (N, 1))
                 residuals = cp.empty((N, n_residuals), dtype=cp.float32)
                 residual_col = 0
-                # Cache of the previous step's composite-output value, used by
-                # the default residual path so that partial-projection ReLU
-                # (where ``z_new`` only holds the projected outputs) still
-                # produces a residual on the full composite output.
-                prev_composed = None
 
                 for step_idx, (
                     evaluate_fn,
@@ -1365,25 +1378,10 @@ class Simulator(Canonicalizer):
                     z_new = evaluate_fn(z_batch, p_samples)
                     z_batch[:, output_slice] = z_new
 
-                    if has_residual_specs:
-                        if step_idx in compiled_residuals:
-                            residuals[:, residual_col] = compiled_residuals[step_idx](
-                                z_batch, p_samples
-                            )
-                            residual_col += 1
-                    else:
-                        # Default: inf-norm of composite_output[k] - composite_output[k-1].
-                        # For full ReLU/satlin/etc., compose_output returns the freshly
-                        # written leaf value (==z_new). For partial-projection ReLU,
-                        # it assembles the full output (proj rows from the fresh leaf,
-                        # non-proj rows from shared arg leaves).
-                        composed = compose_output(z_batch, p_samples)
-                        if step_idx == 0:
-                            prev_full = z_batch[:, prev_slice]
-                        else:
-                            prev_full = prev_composed
-                        residuals[:, residual_col] = cp.max(cp.abs(composed - prev_full), axis=1)
-                        prev_composed = composed
+                    if step_idx in compiled_residuals:
+                        residuals[:, residual_col] = compiled_residuals[step_idx](
+                            z_batch, p_samples
+                        )
                         residual_col += 1
 
                 return residuals

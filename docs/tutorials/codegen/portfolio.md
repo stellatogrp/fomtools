@@ -13,12 +13,12 @@ uv run marimo edit docs/tutorials/codegen/portfolio.py
 
 ## Problem
 
-The portfolio weights solve a constrained mean-variance problem,
+The portfolio weights $z$ solve a constrained mean-variance problem,
 
 $$
 \begin{array}{ll}
-    \text{minimize} & (1/2)x^\top \Sigma x - r^\top x \\
-    \text{subject to} & 0 \le x \le u,\quad \mathbf{1}^\top x = 1.
+    \text{minimize} & (1/2)z^T \Sigma z - r^T z \\
+    \text{subject to} & 0 \le z \le u,\quad \mathbf{1}^T z = 1.
 \end{array}
 $$
 
@@ -32,22 +32,22 @@ clips an auxiliary variable to the constraint box, solves a small fixed linear
 system, and updates the auxiliary variable. Both the NumPy reference and the
 generated C solver run the same update rule for the same number of iterations.
 
-With \(A = [I;\mathbf{1}^\top]\), lower and upper bounds \(\ell,u\), covariance
-matrix \(\Sigma\), expected return vector \(r\), penalty \(\rho\), and
-regularization \(\sigma\), the update is
+With $A = [I;\mathbf{1}^T]$, lower and upper bounds $\ell,u$, covariance
+matrix $\Sigma$, expected return vector $r$, penalty $\rho$, and
+regularization $\sigma$, the update is
 
 $$
 w^k = \Pi_{[\ell,u]}(v^k),
 $$
 
 $$
-x^{k+1}
-= (\Sigma + \sigma I + \rho A^\top A)^{-1}
-  \left(\sigma x^k + r + \rho A^\top(2w^k - v^k)\right),
+z^{k+1}
+= (\Sigma + \sigma I + \rho A^T A)^{-1}
+  \left(\sigma z^k + r + \rho A^T(2w^k - v^k)\right),
 $$
 
 $$
-v^{k+1} = v^k + Ax^{k+1} - w^k.
+v^{k+1} = v^k + Az^{k+1} - w^k.
 $$
 
 ## Speedup

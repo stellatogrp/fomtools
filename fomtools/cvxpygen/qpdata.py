@@ -10,8 +10,8 @@ where the first ``n_eq`` constraint rows are equalities (``l == u``) and the
 remaining ``n_ineq`` rows are one-sided inequalities (``l == -inf``). Each
 canonical quantity is an affine function of the flattened user parameters.
 
-This module turns cvxpygen's :class:`Canon` object into a solver-agnostic
-:class:`QPData` snapshot for the FOM builders, including interval bounds on the
+This module turns cvxpygen's `Canon` object into a solver-agnostic
+`QPData` snapshot for the FOM builders, including interval bounds on the
 parametric pieces (fomtools parameters need ``lb``/``ub`` for verification
 sampling), propagated exactly through the affine parameter maps.
 """
@@ -55,6 +55,12 @@ class QPData:
     # warning about this is emitted at the ``generate_solver`` call site (so it
     # points at the user's code, not these internals) rather than here.
     unbounded_params: tuple[str, ...] = ()
+    # ``(D, E, c)`` when this is an equilibrated copy of the canonical QP
+    # (``P~ = c D P D``, ``q~ = c D q``, ``A~ = E A D``, bounds scaled by ``E``),
+    # so the solution maps back as ``x = D x~``, ``y = E y~ / c``. ``None`` for
+    # the canonical data itself. The builders use it to measure their residual
+    # objective in the original problem's units.
+    unscale: tuple[np.ndarray, np.ndarray, float] | None = None
 
     @property
     def m(self) -> int:
@@ -142,7 +148,7 @@ def _parametric_rows(mapping: spa.spmatrix) -> np.ndarray:
 
 
 def extract_qp_data(canon, param_bounds: dict | None = None, bound_margin: float = 1.0) -> QPData:
-    """Extract :class:`QPData` from a cvxpygen ``Canon`` (QP canonical form)."""
+    """Extract `QPData` from a cvxpygen ``Canon`` (QP canonical form)."""
     pc = canon.parameter_canon
     pi = canon.parameter_info
 

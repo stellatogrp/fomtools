@@ -68,6 +68,8 @@ def _(mo):
     mo.md(r"""
     # Problem setup: Portfolio optimization
 
+    [Back to the verification tutorials](./)
+
     In this tutorial, we verify an ADMM method for a mean-variance portfolio optimization problem. Given a covariance matrix $\Sigma \succeq 0$, expected return vector $\mu$, and position limit $u_{\max}$, we solve
 
     \begin{array}{ll}
@@ -147,14 +149,14 @@ def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    We compare simulator statistics and exact MIP verification for the portfolio ADMM recurrence, up to $K$ iterations. The SDP-relaxed verification problem for the same example is covered in the [SDP verification](sdp.html) tutorial.
+    We compare simulator statistics and exact MIP verification for the portfolio ADMM recurrence, up to $K$ iterations.
     """)
     return
 
 
 @app.cell
 def _():
-    K = 5  # Maximum iteration number
+    K = 45  # Maximum iteration number
     return (K,)
 
 
