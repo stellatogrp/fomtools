@@ -46,6 +46,7 @@ from fomtools.codegen.ir import (
     NonStationaryFOMError,
     ScheduleFitError,
     Term,
+    max_abs,
 )
 from fomtools.codegen.schedule import as_schedule
 
@@ -93,10 +94,19 @@ class Recording:
     params: Any = None
 
 
-def _scale_of(arr: np.ndarray) -> float:
+def _scale_of(arr) -> float:
     """A magnitude for relative comparisons that never returns zero."""
-    m = float(np.max(np.abs(arr))) if arr.size else 0.0
+    m = max_abs(arr)
     return m if m > 0.0 else 1.0
+
+
+def _sum(blocks) -> np.ndarray:
+    """Sum of dense or sparse blocks (``sum`` would start from the integer 0)."""
+    blocks = list(blocks)
+    total = blocks[0]
+    for block in blocks[1:]:
+        total = total + block
+    return total
 
 
 def _extract_at(build: Callable, point: dict[str, float], config, name: str) -> FomIR:
@@ -116,7 +126,7 @@ def _extract_at(build: Callable, point: dict[str, float], config, name: str) -> 
 
 
 def _linops(ir: FomIR) -> list[LinearOp]:
-    return [step.linear_op for step in ir.body] + [ir.state_update]
+    return ir.linops()
 
 
 def _structure(ir: FomIR) -> dict:
@@ -216,7 +226,7 @@ def _recover_slopes(
         for i, sched in enumerate(names):
             moved = irs[1 + i].matrices[mname].array
             delta = moved - m_at_base
-            if float(np.max(np.abs(delta))) > _VARY_RTOL * scale:
+            if max_abs(delta) > _VARY_RTOL * scale:
                 per_schedule[sched] = delta / (_PROBE_STEP - _PROBE_BASE)
 
         if not per_schedule:
@@ -224,9 +234,9 @@ def _recover_slopes(
             continue
 
         # M(g) = base + sum_n g_n S_n, with m_at_base = M(PROBE_BASE, ..., PROBE_BASE).
-        const_block = m_at_base - _PROBE_BASE * sum(per_schedule.values())
-        predicted = const_block + _PROBE_CHECK * sum(per_schedule.values())
-        err = float(np.max(np.abs(predicted - check_ir.matrices[mname].array)))
+        const_block = m_at_base - _PROBE_BASE * _sum(per_schedule.values())
+        predicted = const_block + _PROBE_CHECK * _sum(per_schedule.values())
+        err = max_abs(predicted - check_ir.matrices[mname].array)
         if err > _FIT_RTOL * scale:
             raise ScheduleFitError(
                 f"coefficient block {mname!r} does not depend affinely on its schedule "
@@ -364,8 +374,24 @@ def extract_scheduled_ir(
         replace(step, linear_op=_rewrite_linop(step.linear_op, slopes)) for step in ref.body
     )
     state_update = _rewrite_linop(ref.state_update, slopes)
+    # The objective is evaluated on the iterate an iteration produced, so a term
+    # that varies with the schedule reads the same table entry as that iteration.
+    objective = None
+    if ref.objective is not None:
+        objective = replace(
+            ref.objective,
+            blocks=tuple(
+                replace(block, linear_op=_rewrite_linop(block.linear_op, slopes))
+                for block in ref.objective.blocks
+            ),
+        )
 
-    used = {t.scale for lin in [*(s.linear_op for s in body), state_update] for t in lin.terms}
+    used = {
+        t.scale
+        for lin in [*(s.linear_op for s in body), state_update]
+        + (objective.linops() if objective is not None else [])
+        for t in lin.terms
+    }
     unused = [n for n in names if n not in used]
     if unused:
         raise ScheduleFitError(
@@ -385,4 +411,5 @@ def extract_scheduled_ir(
         schedules={n: tables[n].values for n in names},
         dtype=ref.dtype,
         name=name,
+        objective=objective,
     )

@@ -103,6 +103,34 @@ class GurobiSolver(MIPSolver):
                     self.vector_var_map[leaf].Start = np.asarray(value, dtype=float).reshape(-1)
         self.model.update()
 
+    def get_best_bound(self) -> float:
+        status = self.model.Status
+        usable = {
+            gp.GRB.OPTIMAL,
+            gp.GRB.TIME_LIMIT,
+            gp.GRB.NODE_LIMIT,
+            gp.GRB.ITERATION_LIMIT,
+            gp.GRB.SOLUTION_LIMIT,
+            gp.GRB.INTERRUPTED,
+            gp.GRB.USER_OBJ_LIMIT,
+            gp.GRB.WORK_LIMIT,
+            gp.GRB.MEM_LIMIT,
+        }
+        if status not in usable:
+            raise RuntimeError(f"Gurobi terminated with status {status}; no usable best bound.")
+        try:
+            # Continuous optimal models need not expose ObjBound.
+            bound = (
+                self.model.ObjVal
+                if status == gp.GRB.OPTIMAL and not self.model.IsMIP
+                else self.model.ObjBound
+            )
+        except (AttributeError, gp.GurobiError) as exc:
+            raise RuntimeError(f"Gurobi status {status} has no best bound.") from exc
+        if not np.isfinite(bound) or abs(bound) >= gp.GRB.INFINITY:
+            raise RuntimeError(f"Gurobi status {status} has no finite best bound.")
+        return float(bound)
+
     def has_solution(self) -> bool:
         """Whether the last solve produced a feasible solution."""
         return self.model.SolCount > 0
@@ -466,7 +494,9 @@ class GurobiSolver(MIPSolver):
             A 1-D array of shape ``(expression.ndim,)`` containing the evaluated values
             of the expression at the current model solution.
         """
-        out = 0
+        if not self.has_solution():
+            raise RuntimeError("No feasible incumbent available.")
+        out = np.array(expression.const, dtype=float, copy=True)
         for k, v in expression.decomposition_dict.items():
             out += v @ [self.model.getVarByName(var).X for var in self.vector_var_map[k].VarName]
         return out

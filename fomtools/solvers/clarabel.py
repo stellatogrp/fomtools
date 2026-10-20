@@ -1,3 +1,5 @@
+import warnings
+
 import clarabel
 import numpy as np
 import scipy.sparse as spa
@@ -97,19 +99,22 @@ class ClarabelSolver(SDPSolver):
                 -1,
             )
         )
-        assert q.shape[0] == vec_problem_dim
+        if q.shape[0] != vec_problem_dim:
+            raise ValueError("Objective dimension does not match the SDP variable.")
 
         symmetrized_Aeq_mats = [sparse_symmetric_vectorize(A, scale_factor=2) for A in Aeq_mats]
         Aeq = spa.vstack(symmetrized_Aeq_mats)
         beq = np.array(beq_consts)
 
-        assert Aeq.shape == (beq.shape[0], vec_problem_dim)
+        if Aeq.shape != (beq.shape[0], vec_problem_dim):
+            raise ValueError("Equality data have inconsistent dimensions.")
 
         symmetrized_Aineq_mats = [sparse_symmetric_vectorize(A, scale_factor=2) for A in Aineq_mats]
         Aineq = spa.vstack(symmetrized_Aineq_mats)
         bineq = np.array(bineq_consts)
 
-        assert Aineq.shape == (bineq.shape[0], vec_problem_dim)
+        if Aineq.shape != (bineq.shape[0], vec_problem_dim):
+            raise ValueError("Inequality data have inconsistent dimensions.")
 
         psd_cone_sizes = []
         psd_cone_selectors = []
@@ -138,12 +143,15 @@ class ClarabelSolver(SDPSolver):
 
     def solve(self, **solve_kwargs):
         """
-        Solve the SDP and return the objective value.
+        Solve the SDP and return its accepted dual upper bound.
 
         Assembles the conic problem from the prepared data and invokes
         the Clarabel solver. The problem is formulated as a minimization
         in Clarabel's standard form, so the returned value is negated
-        to give the maximization objective.
+        to give a dual upper bound for the maximization problem.
+        ``Solved`` is accepted; ``AlmostSolved`` is accepted with a warning, since
+        the dual objective then holds only to Clarabel's reduced tolerances. Any
+        other termination (limits, infeasibility, numerical errors) raises.
 
         Parameters
         ----------
@@ -156,7 +164,7 @@ class ClarabelSolver(SDPSolver):
         Returns
         -------
         float
-            The optimal objective value of the SDP maximization problem.
+            The finite dual objective at the requested numerical tolerances.
 
         Raises
         ------
@@ -167,8 +175,8 @@ class ClarabelSolver(SDPSolver):
         b_psd = [n * (n + 1) // 2 for n in self.cone_dims["psd"]]
         b = np.concatenate([self.beq, self.bineq, np.zeros(sum(b_psd))])
         A = spa.vstack([self.Aeq, self.Aineq, self.M])
-        assert A.shape[0] == b.shape[0]
-        assert A.shape[1] == q.shape[0]
+        if A.shape != (b.shape[0], q.shape[0]):
+            raise ValueError("Conic data have inconsistent dimensions.")
 
         cones = [
             clarabel.ZeroConeT(self.beq.shape[0]),
@@ -190,8 +198,19 @@ class ClarabelSolver(SDPSolver):
                 raise ValueError(f"Invalid Clarabel solver option {k!r}={v!r}: {e}") from e
 
         solver = clarabel.DefaultSolver(P, q, A, b, cones, settings)
-        sol = solver.solve()
-        return -sol.obj_val
+        self.solution = sol = solver.solve()
+        if sol.status == clarabel.SolverStatus.AlmostSolved:
+            warnings.warn(
+                "Clarabel terminated AlmostSolved; the SDP bound holds only to its "
+                "reduced tolerances.",
+                stacklevel=2,
+            )
+        elif sol.status != clarabel.SolverStatus.Solved:
+            raise RuntimeError(f"Clarabel terminated with {sol.status}; no accepted SDP bound.")
+        bound = -float(sol.obj_val_dual)
+        if not np.isfinite(bound):
+            raise RuntimeError("Clarabel returned a nonfinite SDP dual objective.")
+        return bound
 
 
 def sparse_symmetric_vectorize(P, scale_factor=np.sqrt(2)):

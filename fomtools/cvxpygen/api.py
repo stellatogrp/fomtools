@@ -63,6 +63,8 @@ def generate_solver(
     prefix: str = "",
     wrapper: bool = True,
     enable_settings: tuple[str, ...] = (),
+    code_optimization: bool = False,
+    auto_equilibrate: bool = True,
 ) -> CodegenResult:
     """Generate an embedded solver for a parametric CVXPY problem.
 
@@ -108,9 +110,13 @@ def generate_solver(
         ``cpg_set_solver_max_iter`` or ``problem.solve(method='CPG',
         max_iter=...)`` without regenerating) for a rolled or scheduled FOM;
         ``tol`` and ``check_termination`` are emitted too when the termination
-        kind is ``INF_NORM_CHANGE``, the only kind whose generated loop checks a
-        residual (under the default ``MAX_ITERS`` the check is compiled out, so
-        a runtime ``tol`` is rejected rather than ignored). A scheduled one caps
+        kind checks a residual: ``INF_NORM_CHANGE``, or ``OBJECTIVE``, which
+        stops on OSQP's unscaled residuals, ``max(||Ax - clamp(Ax, l, u)||_inf,
+        ||Px + q + A'y||_inf) <= tol`` (OSQP's test with ``eps_abs = tol``,
+        ``eps_rel = 0``, ``scaled_termination = False``), checked every
+        ``check_termination`` iterations (default 25) and at ``max_iter``.
+        Under the default ``MAX_ITERS`` the check is compiled out, so a runtime
+        ``tol`` is rejected rather than ignored. A scheduled one caps
         ``max_iter`` at the length of its coefficient tables, past which the
         emitted accessors would clamp and freeze the coefficients. An unrolled
         FOM exposes no runtime settings: its body is the whole run executed
@@ -130,6 +136,21 @@ def generate_solver(
         for an embedded target — and because the iteration count is then fixed at
         code-generation time, so ``cpg_set_solver_max_iter`` no longer applies.
         Ignored by rolled and scheduled builders.
+    code_optimization:
+        Run the code optimization phase after translation: the coding agent
+        rewrites the translated solver for speed, the rewrite is re-verified and
+        benchmarked, and it is kept only if it passes and is faster. Its budget
+        comes from ``config`` (``agent_optimize_timeout_s``,
+        ``agent_optimize_max_turns``).
+    auto_equilibrate:
+        Ruiz-equilibrate the canonical QP before the FOM is built (default):
+        the solver iterates on ``c D P D``, ``c D q``, ``E A D``, ``E l``, ``E u``
+        (see :mod:`fomtools.cvxpygen.scaling`), and the generated bridge scales
+        the parameters in and the solution out, so ``problem.solve`` returns the
+        original problem's primal and dual solution and the reported residuals
+        are those of the original problem. A runtime ``tol`` compares
+        successive iterates of the scaled problem. ``False`` builds the FOM on
+        the canonical QP unchanged.
     prefix, wrapper, enable_settings:
         Forwarded to ``cvxpygen.cpg.generate_code``. ``wrapper=True`` compiles
         the Python extension module so ``problem.solve(method='CPG')`` works.
@@ -152,6 +173,8 @@ def generate_solver(
         param_bounds=param_bounds,
         bound_margin=bound_margin,
         allow_unrolled=allow_unrolled,
+        code_optimization=code_optimization,
+        auto_equilibrate=auto_equilibrate,
     )
     with pending_options(options):
         cpg.generate_code(

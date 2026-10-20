@@ -13,6 +13,10 @@ complete examples.
 
 ::: fomtools.codegen.CodegenConfig
 
+::: fomtools.codegen.TerminationSpec
+
+::: fomtools.codegen.TerminationKind
+
 ::: fomtools.codegen.extract_unrolled_ir
 
 ::: fomtools.codegen.extract_ir
@@ -20,6 +24,10 @@ complete examples.
 ::: fomtools.codegen.extract_scheduled_ir
 
 ::: fomtools.codegen.FomIR
+
+::: fomtools.codegen.objective.extract_objective
+
+::: fomtools.codegen.ObjectiveExtractionError
 
 ::: fomtools.codegen.ReferenceOracle
 

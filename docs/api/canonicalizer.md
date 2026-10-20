@@ -28,3 +28,11 @@ Canonicalizers translate a verification problem into a solver-ready formulation
       show_root_heading: false
       show_root_toc_entry: false
       heading_level: 3
+
+## SDP canonicalizer
+
+::: fomtools.canonicalizers.sdp
+    options:
+      show_root_heading: false
+      show_root_toc_entry: false
+      heading_level: 3

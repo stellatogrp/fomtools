@@ -869,6 +869,9 @@ codegen = [
     { name = "claude-agent-sdk" },
     { name = "openai-codex" },
 ]
+cuda = [
+    { name = "nvidia-cudss-cu13", marker = "sys_platform == 'linux'" },
+]
 cvxpygen = [
     { name = "cvxpygen" },
     { name = "osqp" },
@@ -933,6 +936,7 @@ requires-dist = [
     { name = "networkx", marker = "extra == 'dev'" },
     { name = "networkx", marker = "extra == 'docs'" },
     { name = "numpy" },
+    { name = "nvidia-cudss-cu13", marker = "sys_platform == 'linux' and extra == 'cuda'" },
     { name = "openai-codex", marker = "extra == 'codegen'" },
     { name = "osqp", marker = "extra == 'cvxpygen'" },
     { name = "pandas", marker = "extra == 'dev'" },
@@ -949,7 +953,7 @@ requires-dist = [
     { name = "scipy" },
     { name = "torch", marker = "extra == 'nn'" },
 ]
-provides-extras = ["gurobi", "gpu", "codegen", "cvxpygen", "dev", "nn", "docs"]
+provides-extras = ["gurobi", "gpu", "cuda", "codegen", "cvxpygen", "dev", "nn", "docs"]
 
 [[package]]
 name = "fonttools"
@@ -2362,6 +2366,18 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/30/7c257e3d5cb4fecb147b93895c66e29c93f8e76d74b45bb418ff0587c4ec/nvidia_cudnn_cu13-9.24.0.43-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:a6812a554a1ff0413e9c52b84c26c050380649ab9615f9c16bded368ce9f421f", size = 650976863, upload-time = "2026-07-02T16:23:39.248Z" },
     { url = "https://files.pythonhosted.org/packages/5c/ba/791cffd048fe5b044e620df55267e3e95c0e6e07d50b41e377c03dfc910f/nvidia_cudnn_cu13-9.24.0.43-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:71f181cd810e90f9b6023b01186fe82d13d65f0ec098581ee201d39fad769e4b", size = 553099438, upload-time = "2026-07-02T16:27:42.58Z" },
+]
+
+[[package]]
+name = "nvidia-cudss-cu13"
+version = "0.8.0.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cuda-toolkit", extra = ["cublas"], marker = "sys_platform == 'linux'" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2b/dc/9a9236a60f833e0c56b61b20419f812f25441ee128570aa26366f5bb421c/nvidia_cudss_cu13-0.8.0.10-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:a1718da03f06b89dda93a35d989a52449249af0aad2d7a517d4120519b97eed1", size = 80481232, upload-time = "2026-06-02T00:02:02.817Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/f8/c9a60c9440dc78c7092f1a0bef3e477039c51a71ac9e219e68c7bda022fa/nvidia_cudss_cu13-0.8.0.10-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:c203d28a015f3184dbcd13581cad03c06a7ce4501692794f2a8b70fc56a376c9", size = 80682451, upload-time = "2026-06-02T00:04:07.868Z" },
 ]
 
 [[package]]

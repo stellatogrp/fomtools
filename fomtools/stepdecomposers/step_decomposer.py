@@ -213,7 +213,14 @@ class StepDecomposer:
             If this decomposer's ``_PROX_DECOMPOSERS`` registry has no
             entry for the concrete type of ``prox_function``.
         """
-        proxer = self._PROX_DECOMPOSERS.get(type(prox_function).__name__.lower())
+        proxer = next(
+            (
+                self._PROX_DECOMPOSERS[cls.__name__.lower()]
+                for cls in type(prox_function).__mro__
+                if cls.__name__.lower() in self._PROX_DECOMPOSERS
+            ),
+            None,
+        )
         if proxer is None:
             raise NotImplementedError(
                 f"{self.__class__.__name__} does not support {type(prox_function).__name__}"

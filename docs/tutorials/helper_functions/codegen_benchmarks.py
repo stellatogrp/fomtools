@@ -51,7 +51,7 @@ def run_lasso_codegen_benchmark(
         state=[state],
         params=[x_param],
         name="lasso_codegen_speedup",
-        run_phase_b=True,
+        code_optimization=True,
         profile=True,
     )
     if not result.translate.success:
@@ -116,7 +116,7 @@ def run_codegen_benchmark(
         driver=make_agent_driver(config=config),
         state=state,
         name=name,
-        run_phase_b=True,
+        code_optimization=True,
         profile=True,
         **kwargs,
     )

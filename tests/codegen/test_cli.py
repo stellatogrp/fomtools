@@ -94,6 +94,29 @@ def test_scaffold_only_from_a_recorded_run(tmp_path, recorded_run_module):
     assert "#define FOM_UNROLLED 0" in (out / "include" / "fom_workspace.h").read_text()
 
 
+def test_objective_termination_from_the_cli(tmp_path):
+    """--objective stops on the objective the module set on its recording."""
+    path = tmp_path / "objective_fom.py"
+    path.write_text(
+        RECORDED_RUN_MODULE.replace(
+            '    return {"verifier": v,',
+            '    v.set_objective_norm(z[STEPS] - z[STEPS - 1], np.inf)\n    return {"verifier": v,',
+        )
+    )
+    out = tmp_path / "out"
+    rc = main(
+        ["--module", str(path), "--out", str(out), "--scaffold-only", "--tol", "1e-6"]
+        + ["--objective", "--check-termination", "5"]
+    )
+    assert rc == 0
+    header = (out / "include" / "fom_workspace.h").read_text()
+    assert "#define FOM_USE_OBJECTIVE 1" in header
+    assert "#define FOM_CHECK_TERMINATION 5" in header
+    assert "fom_objective(" in (out / "include" / "fom_ops.h").read_text()
+    with pytest.raises(SystemExit, match="--tol"):
+        main(["--module", str(path), "--out", str(out), "--scaffold-only", "--objective"])
+
+
 def test_no_roll_keeps_the_recorded_run_unrolled(tmp_path, recorded_run_module):
     out = tmp_path / "out"
     rc = main(["--module", recorded_run_module, "--out", str(out), "--scaffold-only", "--no-roll"])
@@ -170,3 +193,34 @@ def test_scaffold_only_warns_when_nothing_gates_the_rolled_path(tmp_path):
     """The same warning the full run gives, for the same reason."""
     with pytest.warns(UserWarning, match="did not check that the recorded method"):
         main(["--example", "ista", "--out", str(tmp_path), "--scaffold-only"])
+
+
+def test_budgets_are_set_per_run_and_reach_the_agent():
+    # Unset flags keep the CodegenConfig defaults; set ones override them, and the
+    # agent driver gets the run's config (it used to fall back to its own 600 s).
+    from fomtools.codegen.cli import _build_config, _make_driver, build_parser
+    from fomtools.codegen.config import CodegenConfig
+
+    base = ["--example", "ista", "--out", "x"]
+    default = _build_config(build_parser().parse_args(base))
+    assert default.agent_optimize_timeout_s == CodegenConfig().agent_optimize_timeout_s == 7200
+    assert default.agent_optimize_max_turns == 200 and default.agent_timeout_s == 600
+
+    args = build_parser().parse_args(
+        base
+        + [
+            "--translate-timeout",
+            "900",
+            "--optimize-timeout",
+            "14400",
+            "--optimize-max-turns",
+            "400",
+        ]
+    )
+    config = _build_config(args)
+    assert (config.agent_timeout_s, config.agent_optimize_timeout_s) == (900, 14400)
+    assert config.agent_optimize_max_turns == 400
+    driver = _make_driver(args, config)
+    assert driver.config is config
+    assert driver._timeout_for_phase("code_optimization") == 14400
+    assert driver._timeout_for_phase("translation") == 900

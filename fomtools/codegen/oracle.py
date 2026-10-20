@@ -16,7 +16,7 @@ Three evaluators live here:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -41,13 +41,24 @@ from fomtools.codegen.ir import (
 
 @dataclass
 class OracleResult:
-    """Outcome of a reference solve."""
+    """Outcome of a reference solve.
+
+    ``residual`` is what the generated solver reports in ``solution.residual``:
+    the infinity-norm change of the last iteration, or, under
+    ``TerminationKind.OBJECTIVE``, the verification objective at the returned
+    iterate. ``residuals`` always holds the per-iteration infinity-norm change,
+    and ``objectives`` the ``(k, r^k)`` pairs at every iteration the objective
+    was tested. ``solved`` mirrors ``FOM_SOLVED``: the loop exited on its
+    tolerance rather than at ``max_iter``.
+    """
 
     solution: np.ndarray
     iters: int
     residual: float
     trajectory: list[np.ndarray]
     residuals: list[float]
+    objectives: list[tuple[int, float]] = field(default_factory=list)
+    solved: bool = False
 
 
 def _apply_activation(act: ActivationOp, x: np.ndarray, ir: FomIR) -> np.ndarray:
@@ -62,6 +73,17 @@ def _apply_activation(act: ActivationOp, x: np.ndarray, ir: FomIR) -> np.ndarray
         upper = act.upper_scalar if act.upper is None else ir.matrices[act.upper].array
         return np.minimum(np.maximum(x, lower), upper)
     raise ValueError(f"Unknown activation kind: {act.kind}")
+
+
+def objective_norm(values: np.ndarray, norm: str) -> float:
+    """The verifier's norm of an objective vector (``"2"`` is the sum of squares)."""
+    if values.size == 0:
+        return 0.0
+    if norm == "inf":
+        return float(np.max(np.abs(values)))
+    if norm == "1":
+        return float(np.sum(np.abs(values)))
+    return float(np.sum(values * values))
 
 
 class ReferenceOracle:
@@ -84,6 +106,21 @@ class ReferenceOracle:
                 contrib = self.ir.schedules[term.scale][it] * contrib
             out = out + contrib
         return out
+
+    def objective_value(self, sources: dict[str, np.ndarray], it: int) -> float:
+        """The verification objective ``r^k`` at the end of 0-based iteration ``it``.
+
+        ``sources`` must hold ``state`` (``w^{k-1}``), ``new_state`` (``w^k``), the
+        parameters and that iteration's temporaries.
+        """
+        obj = self.ir.objective
+        rows = [
+            _apply_activation(
+                block.activation, self._eval_linop(block.linear_op, sources, it), self.ir
+            )
+            for block in obj.blocks
+        ]
+        return objective_norm(np.concatenate(rows) if rows else np.zeros(0), obj.norm)
 
     def solve(
         self,
@@ -115,11 +152,15 @@ class ReferenceOracle:
 
         trajectory = [state.copy()]
         residuals: list[float] = []
+        objectives: list[tuple[int, float]] = []
+        solved = False
         term = ir.termination
         # Early exit only on "check" iterations: every `check_termination`
         # iterations (0 disables checking), mirroring the generated C exactly.
+        # The objective is also tested at the last iteration.
         check = term.check_termination
         use_tol = term.uses_tolerance
+        use_objective = term.uses_objective
         iters = 0
         for it in range(term.max_iters):
             for step in ir.body:
@@ -133,20 +174,36 @@ class ReferenceOracle:
                 sources[f"tmp:{step.name}"] = val
             new_state = self._eval_linop(ir.state_update, sources, it)
             residual = float(np.max(np.abs(new_state - state))) if new_state.size else 0.0
+            objective = None
+            if use_objective and term.is_check_iteration(it + 1):
+                # Before the state advances: the objective reads w^{k-1} and w^k.
+                sources["new_state"] = new_state
+                objective = self.objective_value(sources, it)
+                objectives.append((it + 1, objective))
             state = new_state
             sources["state"] = state
             trajectory.append(state.copy())
             residuals.append(residual)
             iters += 1
             if use_tol and (it + 1) % check == 0 and residual <= term.tol:
+                solved = True
+                break
+            if objective is not None and objective <= term.tol:
+                solved = True
                 break
 
+        if use_objective:
+            reported = objectives[-1][1] if objectives else 0.0
+        else:
+            reported = residuals[-1] if residuals else 0.0
         return OracleResult(
             solution=state,
             iters=iters,
-            residual=residuals[-1] if residuals else 0.0,
+            residual=reported,
             trajectory=trajectory,
             residuals=residuals,
+            objectives=objectives,
+            solved=solved,
         )
 
 

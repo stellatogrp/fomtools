@@ -133,7 +133,14 @@ class Verifier(object):
         self.method = method.lower()
         self.iterates = []
         self.params = []
+        # Simulator parameters registered without samples (allowed, e.g. for code
+        # generation, which never simulates; ``solve`` then asks for samples).
+        self._unsampled_params = []
         self.steps = []
+        # The most recently set objective as ``(expressions, ord)``, or ``None``
+        # for none / the zero objective. Code generation reads it to stop the
+        # generated solver on the verified metric (TerminationKind.OBJECTIVE).
+        self.objective: tuple[tuple[LinearExpression, ...], int | float] | None = None
 
         self.canonicalizer = self._get_canonicalizer(
             method,
@@ -164,7 +171,7 @@ class Verifier(object):
         self.step_decomposer = decomposer_cls(
             self.canonicalizer,
             self._register_var,
-            self.add_iterate,
+            self._add_aux_iterate,
             self.add_constraint,
         )
         self._step_proxy = _StepProxy(self)
@@ -193,7 +200,7 @@ class Verifier(object):
 
         Examples
         --------
-        >>> vp.solve(K=100)
+        >>> vp.solve()
         >>> vp['mean']
         0.00123
         >>> vp['quantiles'][0.95]
@@ -346,7 +353,7 @@ class Verifier(object):
             case "simulator":
                 return SimulatorStepDecomposer
             case _:
-                raise ValueError(f"Method must be 'mip' or 'sdp', got {method}")
+                raise ValueError(f"Method must be 'mip', 'sdp', or 'simulator', got {method}")
 
     @staticmethod
     def _create_var(
@@ -442,9 +449,23 @@ class Verifier(object):
             If the lower bound is greater than the upper bound.
         """
 
+        iterate = self._add_aux_iterate(ndim, lb, ub, **kwargs)
+        if self.method == "simulator":
+            self.canonicalizer.record_iterate(iterate)
+        return iterate
+
+    def _add_aux_iterate(self, ndim, lb=-np.inf, ub=np.inf, **kwargs):
+        """Register a leaf without making an internal KKT variable a user iterate."""
         self.iterates.append(iterate := self._create_var(ndim, lb, ub))
         self._register_var(iterate, var_type="iterate", **kwargs)
         return iterate
+
+    def _record_output(self, output):
+        if output.is_leaf and not any(output is it for it in self.iterates):
+            self.iterates.append(output)
+        if self.method == "simulator":
+            self.canonicalizer.record_iterate(output)
+        return output
 
     def add_param(
         self, ndim: int, lb: float = -np.inf, ub: float = np.inf, **kwargs
@@ -481,6 +502,17 @@ class Verifier(object):
             length to the dimension of the expression.
         """
         var = self._create_var(ndim, lb, ub)
+        if self.method == "simulator":
+            samples = kwargs.get("samples")
+            if samples is not None:
+                shape = np.shape(samples)
+                if len(shape) != 2 or shape[1] != ndim:
+                    raise ValueError(
+                        f"add_param(ndim={ndim}): samples must have shape "
+                        f"(num_samples, {ndim}), got {shape}."
+                    )
+            elif not (np.all(np.isfinite(var.lb)) and np.array_equal(var.lb, var.ub)):
+                self._unsampled_params.append(var)
         self._register_var(var, var_type="param", **kwargs)
         return var
 
@@ -747,7 +779,7 @@ class Verifier(object):
             entry for the concrete type of ``function`` in its
             ``_PROX_DECOMPOSERS`` registry.
         """
-        return self.step_decomposer.process_prox(function, arg, gamma)
+        return self._record_output(self.step_decomposer.process_prox(function, arg, gamma))
 
     def project(self, proj_set, arg: LinearExpression) -> LinearExpression:
         r"""
@@ -860,7 +892,7 @@ class Verifier(object):
         # tracked in self.iterates) and returns it; just record the step itself.
         x = self.step_decomposer.process_step(step)
         self.steps.append(step)
-        return x
+        return self._record_output(x)
 
     def linear_program(
         self,
@@ -900,7 +932,7 @@ class Verifier(object):
         )
         x = self.step_decomposer.process_step(step)
         self.steps.append(step)
-        return x
+        return self._record_output(x)
 
     def standard_form_linear_program(
         self,
@@ -936,7 +968,7 @@ class Verifier(object):
         )
         x = self.step_decomposer.process_step(step)
         self.steps.append(step)
-        return x
+        return self._record_output(x)
 
     @property
     def step(self) -> "_StepProxy":
@@ -991,15 +1023,7 @@ class Verifier(object):
         output = self.step_decomposer.process_step(step)
         self.steps.append(step)
 
-        # Track output as iterate only if it's a fresh leaf variable. Use identity
-        # comparison (not ``in``): LinearExpression.__eq__ builds a Constraint, so a
-        # membership test would not behave as expected. Composite KKT-style steps
-        # (e.g. QuadraticProgram) return a leaf already registered via add_iterate;
-        # the guard avoids a double-append in that case.
-        if output.is_leaf and not any(output is it for it in self.iterates):
-            self.iterates.append(output)
-
-        return output
+        return self._record_output(output)
 
     def fixed_point(self, n_dim, operator, lb=-np.inf, ub=np.inf):
         """
@@ -1046,10 +1070,8 @@ class Verifier(object):
         Parameters
         ----------
         k: int
-            Index used by the theory function to compute the constant
-                shift `C`. If it is a leaf node, its lower and upper
-            bounds are tightened based on the propagated bounds of
-            `bound_expr` and the theory function dependent constant `C`.
+            Index passed to the theory function. Its nonnegative value C must
+            uniformly bound the infinity-norm distance from target to reference.
 
         target_expr: LinearExpression
             The expression whose bound to update.
@@ -1061,29 +1083,40 @@ class Verifier(object):
         Returns
         -------
         float
-            The average fractional improvement in the target expression's bound.
+            The fraction of target lower and upper bound entries tightened.
 
         """
 
-        if np.isclose((C := self.theory_func(k)), np.inf):
-            return 0
+        return self._apply_reference_bound(target_expr, ref_expr, self.theory_func(k))
 
-        improv_frac = 0
+    def _apply_reference_bound(self, target_expr, ref_expr, radius):
+        """Intersect a target box with a caller-justified reference box expansion."""
+        radius = float(radius)
+        if np.isnan(radius) or radius < 0:
+            raise ValueError("A reference-bound radius must be nonnegative and not NaN.")
+        if target_expr.ndim != ref_expr.ndim:
+            raise ValueError("Target and reference expressions must have the same dimension.")
+        if np.isposinf(radius):
+            return 0.0
         lb, ub = ref_expr.bound_propagation()
+        old_lb, old_ub = target_expr.bound_propagation()
+        new_lb, new_ub = np.maximum(old_lb, lb - radius), np.minimum(old_ub, ub + radius)
+        if np.any(new_lb > new_ub):
+            raise ValueError("The reference bound contradicts the target bounds.")
+        # Fail unsupported backends before changing any Python or solver bounds.
+        self.canonicalizer.add_theory_cut(radius, target_expr, lb, ub)
         if target_expr.is_leaf:
-            _lb, _ub = lb - C, lb + C
-            target_expr.update_bounds(lb=_lb, ub=_ub)
-
-            improv_frac = (sum(_lb > lb) + sum(_ub < ub)) / (2.0 * len(lb))
-
-        self.canonicalizer.add_theory_cut(C, target_expr, lb, ub)
-
-        # Mirror the (binary-free) theory cut into the OBBT LP so subsequent
-        # bound tightening benefits from it as well.
+            target_expr.update_bounds(new_lb, new_ub)
+            self.canonicalizer.update_bounds(target_expr, target_expr.lb, target_expr.ub)
+            if self.use_obbt_handler:
+                self.obbt_handler.update_bounds(target_expr, target_expr.lb, target_expr.ub)
         if self.use_obbt_handler:
-            theory_cuts = [target_expr >= lb - C, target_expr <= ub + C]
-            self.obbt_handler.add_constraints([c for c in theory_cuts if is_binary_free(c)])
-        return improv_frac
+            cuts = [target_expr >= lb - radius, target_expr <= ub + radius]
+            self.obbt_handler.add_constraints([c for c in cuts if is_binary_free(c)])
+        return float(
+            (np.count_nonzero(new_lb > old_lb) + np.count_nonzero(new_ub < old_ub))
+            / (2 * target_expr.ndim)
+        )
 
     def set_zero_objective(self):
         """
@@ -1092,6 +1125,7 @@ class Verifier(object):
         This method replaces the current objective with a constant
         zero objective, turning it into a feasibility problem.
         """
+        self.objective = None
         self.canonicalizer.set_zero_objective()
 
     def set_infinity_norm_objective(self, expr_list: Sequence[LinearExpression] | LinearExpression):
@@ -1113,6 +1147,7 @@ class Verifier(object):
 
         lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
         self.canonicalizer.set_infinity_norm_objective(expr_list, list(lb), list(ub))
+        self.objective = (tuple(expr_list), np.inf)
 
     def set_two_norm_objective(self, expr_list: Sequence[LinearExpression] | LinearExpression):
         """
@@ -1133,6 +1168,7 @@ class Verifier(object):
 
         lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
         self.canonicalizer.set_two_norm_objective(expr_list, list(lb), list(ub))
+        self.objective = (tuple(expr_list), 2)
 
     def set_one_norm_objective(
         self, expr_list: Sequence[LinearExpression] | LinearExpression
@@ -1152,6 +1188,7 @@ class Verifier(object):
             expr_list = [expr_list]
 
         self.canonicalizer.set_one_norm_objective(expr_list)
+        self.objective = (tuple(expr_list), 1)
 
     def set_objective_norm(
         self,
@@ -1243,8 +1280,13 @@ class Verifier(object):
         Returns
         -------
         float
-            The objective value for the current solution, if the
-            model was solved to optimality.
+            MIP: a finite best upper bound, including after a time limit;
+            raises ``RuntimeError`` if no usable bound is available. SDP: the
+            dual objective after an accurate optimal termination; inaccurate
+            or early termination raises ``RuntimeError``. Bounds are subject
+            to solver numerical tolerances, not exact-arithmetic certificates.
+            Simulator: an array of sampled residuals, with summary statistics
+            available through ``vp["max"]`` and related keys.
         """
         # ``cut_stats`` has one entry per round that added cuts; ``separation_stats``
         # one per round that ran, including a final round that found nothing.
@@ -1282,6 +1324,15 @@ class Verifier(object):
                 self.objective_bound_stats = self.canonicalizer.tighten_objective_bounds()
         if self.method == "mip":
             return self.canonicalizer.solve_model(warm_start=warm_start, **kwargs)
+        if self.method == "simulator" and self._unsampled_params:
+            dims = ", ".join(str(var.ndim) for var in self._unsampled_params)
+            raise ValueError(
+                f"{len(self._unsampled_params)} parameter(s) (ndim {dims}) have no samples. "
+                "The simulator does not sample from bounds: pass "
+                "add_param(ndim, samples=<array of shape (num_samples, ndim)>), drawn "
+                "from the distribution the probabilistic bound should hold for "
+                "(equal finite bounds fix a constant and need no samples)."
+            )
         return self.canonicalizer.solve_model(**kwargs)
 
     def set_start_samples(self, samples: dict) -> None:
@@ -1301,35 +1352,28 @@ class Verifier(object):
             self.canonicalizer.set_start_samples(samples)
 
     def post_process(self, target_expr, ref_expr, residuals):
+        """Tighten a target using certified successive infinity-norm residual bounds.
+
+        The caller must supply nonnegative upper bounds on every successive
+        iterate difference along the path from ``ref_expr`` to ``target_expr``,
+        uniformly over the same parameter/initial-state family. The triangle
+        inequality then bounds their distance by ``sum(residuals)``. Sample
+        maxima, incumbents, squared norms, and a bound for only the final step
+        do not justify this operation. An infinite bound leaves the model unchanged.
+
+        Returns the fraction of target bound entries tightened. Updates leaf
+        bounds in Python, the main solver, and OBBT; composite targets receive
+        the corresponding constraints without changing their constituent leaves.
         """
-        Apply post-processing bound tightening based on accumulated
-        residual values.
-
-        Parameters
-        ----------
-        target_expr: LinearExpression
-            The expression whose bound to update.
-
-        ref_expr: LinearExpression
-            The expression that provides the initial lower and
-            upper bounds.
-
-        residuals: Sequence[float]
-            A sequence of residual values whose sum determines how
-            much the bounds should be relaxed.
-
-        Returns
-        -------
-        float
-            The average fractional improvement in the target expression's bound.
-
-        """
-        delta_sum = np.sum(residuals)
-        _lb = np.maximum(ref_expr.lb - delta_sum, ref_expr.lb)
-        _ub = np.minimum(ref_expr.ub + delta_sum, ref_expr.ub)
-        self.canonicalizer.update_bounds(target_expr, _lb, _ub)
-
-        return (sum(_lb > ref_expr.lb) + sum(_ub < ref_expr.ub)) / (2.0 * len(_lb))
+        residuals = np.asarray(residuals, dtype=float)
+        if (
+            residuals.ndim != 1
+            or residuals.size == 0
+            or np.any(np.isnan(residuals))
+            or np.any(residuals < 0)
+        ):
+            raise ValueError("Residual bounds must be a nonempty vector of nonnegative values.")
+        return self._apply_reference_bound(target_expr, ref_expr, np.sum(residuals))
 
     def neural_network(self, expr: LinearExpression, layers: list) -> LinearExpression:
         """
@@ -1381,7 +1425,7 @@ class Verifier(object):
         state=None,
         params=None,
         name="fom",
-        run_phase_b=False,
+        code_optimization=False,
         profile=False,
         roll=True,
         param_values=None,
@@ -1431,7 +1475,7 @@ class Verifier(object):
             state=state,
             params=params,
             name=name,
-            run_phase_b=run_phase_b,
+            code_optimization=code_optimization,
             profile=profile,
             iterates=iterates,
             param_values=param_values,
@@ -1447,7 +1491,7 @@ class Verifier(object):
         state=None,
         params=None,
         name="fom",
-        run_phase_b=False,
+        code_optimization=False,
         profile=False,
         iterates=None,
         param_values=None,
@@ -1489,7 +1533,7 @@ class Verifier(object):
             state=state,
             params=params,
             name=name,
-            run_phase_b=run_phase_b,
+            code_optimization=code_optimization,
             profile=profile,
             iterates=iterates,
             param_values=param_values,

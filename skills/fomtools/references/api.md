@@ -11,8 +11,8 @@ objectives, and solving.
 Verifier(
     theory_func=None,
     method="mip",          # "mip", "sdp", or "simulator"
-    solver="gurobi",       # "gurobi", "highs", "clarabel", "cuclarabel"
-    obbt_solver="gurobi",  # solver for bound tightening; None to disable
+    solver="highs",       # "gurobi", "highs", "clarabel", "cuclarabel"
+    obbt_solver="highs",  # solver for bound tightening; None to disable
     params=None,           # solver-specific parameters dict
     # SDP-only cut flags (no effect for method != "sdp"):
     rlt_cuts=False,
@@ -30,12 +30,12 @@ Verifier(
 
 ### Core Methods
 
-#### `add_iterate(dim, lb, ub) -> LinearExpression`
-Create an iterate variable with dimension `dim` and bounds `[lb, ub]`.
+#### `add_iterate(ndim, lb, ub) -> LinearExpression`
+Create an iterate variable with dimension `ndim` and bounds `[lb, ub]`.
 Bounds can be scalars (broadcast) or arrays.
 
-#### `add_param(dim, lb, ub) -> LinearExpression`
-Create a parameter variable with dimension `dim` and bounds `[lb, ub]`.
+#### `add_param(ndim, lb, ub) -> LinearExpression`
+Create a parameter variable with dimension `ndim` and bounds `[lb, ub]`.
 Parameters represent uncertain problem data.
 
 #### `add_param_stack(param_list) -> LinearExpression`
@@ -61,8 +61,7 @@ Accessed via `vp.step.<name>(arg, **kwargs)`:
 
 - `vp.step.relu(arg)` -- ReLU / projection onto non-negative orthant
 - `vp.step.soft_threshold(arg, lambd=t)` -- soft thresholding
-- `vp.step.saturated_linear(arg, lb, ub)` -- box projection
-- `vp.step.affine(arg, output_mat=M)` -- linear transformation
+- `vp.step.satlin(arg, l=l, u=u)` -- box projection
 - `vp.step.implicit_linear(arg, output_mat=M)` -- implicit linear solve
 
 All step operators return a `LinearExpression`.
@@ -72,7 +71,7 @@ Alternatively: `vp.run_step(arg, step_cls, relax_binary_vars=False, **kwargs)`.
 ### Proximal Operators
 
 ```python
-vp.prox(func, arg, step_size=1.0) -> LinearExpression
+vp.prox(func, arg, gamma=1.0) -> LinearExpression
 ```
 Compute the proximal operator of `func` at `arg`. `func` is from
 `fomtools.proxable_functions` (e.g., `NormL1`).
@@ -90,35 +89,34 @@ as a bare class (e.g., `NonNegative`).
 These convenience methods set up standard optimization problems on the verifier:
 
 ```python
-vp.quadratic_program(P, q, A=None, b=None, lb=None, ub=None) -> LinearExpression
-vp.linear_program(c, A=None, b=None, lb=None, ub=None) -> LinearExpression
-vp.standard_form_linear_program(c, A, b, n) -> LinearExpression
+vp.quadratic_program(P, q, A=None, b=None, C=None, d=None,
+                     dual_ub=None, primal_bounds=None, nu_bounds=None)
+vp.linear_program(q, A=None, b=None, C=None, d=None,
+                  dual_ub=None, primal_bounds=None, nu_bounds=None)
+vp.standard_form_linear_program(c, A=None, b=None,
+                                dual_ub=None, primal_bounds=None, nu_bounds=None)
 ```
 
-### Objectives
+### Objectives and solving
 
 ```python
-vp.set_infinity_norm_objective(expr)      # maximize ||expr||_inf
-vp.set_two_norm_objective(expr)           # maximize ||expr||_2^2
-vp.set_one_norm_objective(expr)           # maximize ||expr||_1
-vp.set_objective_norm(expr, norm="inf")   # generic: "inf", "two", "one"
-vp.set_zero_objective()                   # set objective to zero
+vp.set_objective_norm(expr, ord=np.inf)  # infinity norm; 1 for one-norm, 2 for squared two-norm
+vp.set_zero_objective()
+result = vp.solve(convex_hull_cuts=True)  # MIP hull cuts; native solver options also accepted
 ```
 
-### Solving
+MIP returns a finite best upper bound even at a time limit when available, and
+raises `RuntimeError` otherwise. The solved copy retains the native status and
+incumbent separately. SDP returns a dual objective only after an accurate optimal
+termination. Simulator returns sampled residual arrays. See `docs/index.md` for
+numerical limitations and result inspection.
 
-```python
-result = vp.solve(**kwargs) -> float
-```
-Solve the verification problem. Returns the optimal value. Keyword arguments
-are forwarded to the canonicalizer (e.g., `huchette_cuts=True` for MIP).
+### Post-processing
 
-### Post-Processing
-
-```python
-vp.post_process(target_expr, ref_expr, residuals)
-```
-Tighten bounds after solving. Call after each `vp.solve()`.
+`vp.post_process(target_expr, ref_expr, residuals)` uses the triangle inequality.
+Supply upper bounds on every successive infinity-norm difference along the path
+from reference to target over the same family. Do not use sample maxima,
+incumbents, squared norms, or a bound only for the last step.
 
 ### Solution Values
 
@@ -131,14 +129,14 @@ vp.get_solution_value(iterate) -> np.ndarray
 ```python
 vp.codegen(out_dir, iterates=None, config=None, driver=None,
            state=None, params=None, name="fom",
-           run_phase_b=False, profile=False, roll=True, param_values=None)
+           code_optimization=False, profile=False, roll=True, param_values=None)
     -> CodegenResult
 ```
 
 ```python
 vp.codegen_rolled(out_dir, next_state, config=None, driver=None,
                   state=None, params=None, name="fom",
-                  run_phase_b=False, profile=False,
+                  code_optimization=False, profile=False,
                   iterates=None, param_values=None)
     -> CodegenResult
 ```
@@ -180,5 +178,5 @@ vp.add_constraint(expr_a <= expr_b)
 
 - `GurobiSolver` -- for MIP verification (requires Gurobi license)
 - `HiGHSSolver` -- open-source MIP solver alternative
-- `ClaravelSolver` -- for SDP verification (Clarabel)
-- `cuClaravelSolver` -- GPU-accelerated SDP (cuClarabel)
+- `ClarabelSolver` -- for SDP verification (Clarabel)
+- `CuClarabelSolver` -- GPU-accelerated SDP (cuClarabel)

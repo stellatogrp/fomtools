@@ -10,7 +10,7 @@ therefore raises the budget itself and requires the answer not to move.
 
 from pathlib import Path
 
-from fomtools.codegen.agent.prompts import phase_a_instructions
+from fomtools.codegen.agent.prompts import translation_instructions
 from fomtools.codegen.emit import scaffold
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.extract_unrolled import extract_unrolled_ir
@@ -80,13 +80,13 @@ def test_spec_permits_rolling_an_identical_run_of_blocks():
     assert "implement them with a loop if that is faster" in md
 
 
-def test_phase_a_prompt_states_the_single_pass_requirement():
+def test_translation_prompt_states_the_single_pass_requirement():
     target = EmbeddedCTarget(build_ista()["config"])
-    prompt = phase_a_instructions(_halpern_ir(), target)
+    prompt = translation_instructions(_halpern_ir(), target)
     assert "UNROLLED" in prompt
     assert "Do not write a loop over iterations" in prompt
 
-    rolled = phase_a_instructions(_rolled_ir(), target)
+    rolled = translation_instructions(_rolled_ir(), target)
     assert "UNROLLED" not in rolled
 
 

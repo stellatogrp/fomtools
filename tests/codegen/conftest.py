@@ -605,3 +605,71 @@ def build_dr_loop(steps=20, collapse_expr="auto", relaxation=None):
         theta = 1.0 if relaxation is None else relaxation(k - 1)
         z[k] = z[k - 1] + theta * (ut - u)
     return v, z, q
+
+
+# --------------------------------------------------------------------------
+# Objective termination: the same methods, stopping on a verification objective
+# --------------------------------------------------------------------------
+def objective_config(*, max_iters=200, tol=1e-6, check_termination=None, dtype="float64", **kw):
+    """A config stopping on the verification objective (default interval: 25)."""
+    return CodegenConfig(
+        termination=TerminationSpec(
+            kind=TerminationKind.OBJECTIVE,
+            max_iters=max_iters,
+            tol=tol,
+            check_termination=check_termination,
+        ),
+        dtype=dtype,
+        **kw,
+    )
+
+
+def build_ista_objective(*, K=3, max_iters=200, tol=1e-6, check_termination=None, **kw):
+    """ISTA stopping on its fixed-point residual ``||x_K - x_{K-1}||_inf``.
+
+    Set the way a verification script sets it: after the loop, on the last
+    recorded iteration. Locating that iteration needs the tape, so generate
+    with ``gate(case)``.
+    """
+    dtype = kw.pop("dtype", "float64")
+    case = build_ista(K=K, max_iters=max_iters, dtype=dtype)
+    its = case["iterates"]
+    case["verifier"].set_objective_norm(its[-1] - its[-2], np.inf)
+    case["config"] = objective_config(
+        max_iters=max_iters, tol=tol, check_termination=check_termination, dtype=dtype, **kw
+    )
+    return case
+
+
+def build_scheduled_objective(*, extrapolated=True, ord=np.inf, max_iters=300, tol=1e-6, **kw):
+    """The scheduled accelerated lasso, stopping on a verification objective.
+
+    With ``extrapolated`` the objective is the prox-gradient residual at the
+    extrapolated point, ``y_{k+1} - (y_k + gamma_k (y_k - y_{k-1}))``, whose
+    coefficients follow the momentum schedule; otherwise it is the fixed-point
+    residual ``y_{k+1} - y_k`` on the second state slot.
+    """
+    ex = scheduled_example()
+    d = ex["data"]
+    n, m, z0 = d["n"], d["m"], d["z0"]
+    threshold = d["lambd"] * d["t"]
+
+    def build(gamma):
+        from fomtools.codegen.extract_scheduled import Recording
+
+        v = Verifier(method="simulator", obbt_solver=None)
+        b = v.add_param(m, lb=d["b"] - 1.0, ub=d["b"] + 1.0)
+        y_prev = v.add_iterate(n, lb=z0, ub=z0)
+        y_curr = v.add_iterate(n, lb=z0, ub=z0)
+        extrap = y_curr + gamma * (y_curr - y_prev)
+        y_next = v.step.soft_threshold(d["At"] @ extrap + d["Bt"] @ b, lambd=threshold)
+        v.set_objective_norm(y_next - (extrap if extrapolated else y_curr), ord)
+        return Recording(v, next_state=[y_curr, y_next], state=[y_prev, y_curr])
+
+    return dict(
+        build=build,
+        schedules=ex["schedules"],
+        config=objective_config(max_iters=max_iters, tol=tol, **kw),
+        data=d,
+        name="scheduled",
+    )

@@ -163,15 +163,15 @@ class SdkAgentDriver(AgentDriver):
         self._truncated = False
 
     def _timeout_for_phase(self, phase: str) -> int:
-        """Wall-clock budget for one attempt of ``phase``.
+        """Wall-clock budget for ``phase`` (shared by all of its attempts).
 
-        The optimization phase is open-ended — profile, rewrite, re-verify,
+        The code optimization phase is open-ended — profile, rewrite, re-verify,
         benchmark, repeat — so it gets a larger budget than the bounded
         translation phase. An attempt killed mid-optimization loses the agent's
         own summary, which is the artifact the optimization report is built from.
         """
         config = self.config
-        if phase == "B_optimize":
+        if phase == "code_optimization":
             return int(getattr(config, "agent_optimize_timeout_s", None) or self.cli_timeout)
         return int(getattr(config, "agent_timeout_s", None) or self.cli_timeout)
 
@@ -226,6 +226,7 @@ class SdkAgentDriver(AgentDriver):
             max_attempts=self.max_attempts,
             max_turns=self.max_turns,
             truncated_probe=lambda: self._truncated,
+            budget_s=self._timeout_for_phase(task.phase),
         )
 
     def _invoke_agent(self, task: AgentTask, prompt: str, max_turns: int) -> str:
@@ -257,11 +258,13 @@ class SdkAgentDriver(AgentDriver):
             except (ImportError, NotImplementedError):
                 pass  # fall back to CLI
         workdir = str(Path(task.workdir).resolve())
-        return self._invoke_cli(
-            self._build_argv(workdir, prompt),
-            workdir,
-            timeout=self._timeout_for_phase(task.phase),
+        budget = task.extra.get("budget")
+        timeout = (
+            max(1, int(budget.remaining()))
+            if budget is not None
+            else self._timeout_for_phase(task.phase)
         )
+        return self._invoke_cli(self._build_argv(workdir, prompt), workdir, timeout=timeout)
 
     def _invoke_cli(self, argv: list[str], workdir: str, timeout: int | None = None) -> str:
         """Run one attempt by shelling out to the vendor CLI in headless mode.

@@ -172,6 +172,7 @@ def test_cmake_solver_sources_embedded_is_all_c(tmp_path):
     assert any(s.endswith("src/fom_solver.c") for s in srcs)
     assert any(s.endswith("src/fom_ops.c") for s in srcs)
     assert any(s.endswith("src/fom_linsolve.c") for s in srcs)
+    assert any(s.endswith("src/fom_objective.c") for s in srcs)
     assert any(s.endswith("src/cpg_fom_bridge.c") for s in srcs)
     assert not any(s.endswith(".cu") for s in srcs)
 
@@ -189,6 +190,8 @@ def test_cmake_solver_sources_cuda_uses_cu():
     assert any(s.endswith("src/fom_solver.cu") for s in srcs)
     assert any(s.endswith("src/fom_ops.cu") for s in srcs)
     assert any(s.endswith("src/fom_linsolve.cu") for s in srcs)
+    assert any(s.endswith("src/fom_objective.cu") for s in srcs)
+    assert len(srcs) == len(set(srcs))
     # Numeric data and the bridge stay host C even on CUDA.
     assert any(s.endswith("src/fom_data.c") for s in srcs)
     assert any(s.endswith("src/cpg_fom_bridge.c") for s in srcs)
@@ -203,3 +206,46 @@ def test_workspace_header_exposes_runtime_check_termination():
     header = get_target(ex["config"])._workspace_header(ir)
     settings_block = header.split("} FomSettings;")[0]
     assert "fom_int check_termination;" in settings_block
+
+
+def test_bridge_without_scaling_copies_and_publishes_unscaled(tmp_path):
+    src = _emit(tmp_path, _qp())
+    assert "bridge_D" not in src and "bridge_E" not in src
+    assert "fom_params.p0[i] = (fom_float)((Canon_Params.q)[i]);" in src
+    assert "sol_x[i] = (double)fom_work.solution.x[0 + i];" in src
+
+
+def test_bridge_with_scaling_scales_parameters_in_and_solution_out(tmp_path):
+    from fomtools.cvxpygen.scaling import Scaling
+
+    qp = _qp()
+    scaling = Scaling(D=np.array([1.0, 2.0, 4.0]), E=np.arange(1.0, 6.0), c=0.5)
+    src = _emit(tmp_path, qp, scaling=scaling)
+
+    assert "static const double bridge_D[3] = {1, 2, 4};" in src
+    assert "static const double bridge_E[5] = {1, 2, 3, 4, 5};" in src
+    assert "static const double bridge_c = 0.5;" in src
+    # q in: c D q.  x out: D x~.  y out: E y~ / c.
+    assert "bridge_c * bridge_D[i] * (Canon_Params.q)[i]" in src
+    assert "sol_x[i] = bridge_D[i] * (double)fom_work.solution.x[0 + i];" in src
+    assert "sol_y[i] = bridge_E[i] * (double)fom_work.solution.x[8 + i] / bridge_c;" in src
+    # Residuals still read the original canonical data.
+    assert "double over = bridge_Ax[i] - Canon_Params.u[i];" in src
+
+
+def test_bridge_scales_inequality_bounds_but_keeps_infinities(tmp_path):
+    from dataclasses import replace
+
+    from fomtools.cvxpygen.scaling import Scaling
+
+    qp = _qp()
+    qp = replace(
+        qp, param_dependent=frozenset({"u_ineq"}), bounds={"u_ineq": (np.zeros(3), np.ones(3))}
+    )
+    spec = replace(_spec(qp), param_copy=("u_ineq",))
+    scaling = Scaling(D=np.ones(3), E=np.arange(1.0, 6.0), c=1.0)
+    emit_bridge(spec, qp, tmp_path, "", has_quad_term=True, scaling=scaling)
+    src = (tmp_path / "src" / "cpg_fom_bridge.c").read_text()
+    # u_ineq rows start after the n_eq = 2 equality rows.
+    assert "bridge_E[2 + i] * (Canon_Params.u + 2)[i]" in src
+    assert ">= 1e+30" in src

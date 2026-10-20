@@ -4,7 +4,8 @@ Code generation must **never** form a matrix inverse. Instead, each affine
 operator ``M w = rhs`` is factorized once, offline, and the generated solver
 applies division-free triangular solves:
 
-* symmetric ``M`` -> **LDL^T** (no pivoting) — but *only* when it factorizes
+* symmetric ``M`` -> **LDL^T** (no pivoting, AMD fill-reducing order, computed
+  by QDLDL, the factorization OSQP uses) — but *only* when it factorizes
   accurately. This is guaranteed for SPD and **quasidefinite** systems (the
   ``[[H, A^T], [A, -G]]`` KKT systems with ``H, G`` positive-definite that arise
   in ADMM/OSQP), which are strongly factorizable. A general symmetric-indefinite
@@ -30,18 +31,25 @@ see :class:`fomtools.codegen.config.SolveMethod`.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
+from functools import cached_property
 
 import numpy as np
+import qdldl
 import scipy.linalg as sla
 import scipy.sparse as spa
-from scipy.sparse.csgraph import reverse_cuthill_mckee
+import scipy.sparse.linalg as spla
 
 #: Relative backward-error threshold above which a no-pivot LDL^T factorization is
 #: rejected (and a pivoted LU used instead). SPD / quasidefinite systems factor to
 #: ~machine precision; a much larger residual signals element growth from a small
 #: pivot on a general symmetric-indefinite matrix.
 _LDLT_RTOL = 1e-9
+
+#: Dimension above which falling back to the dense LU path warns: it allocates an
+#: ``n x n`` dense copy (~3.2 GB at ``n = 20000``) and costs ``O(n^3)`` work.
+_DENSE_LU_WARN_DIM = 5000
 
 
 @dataclass(frozen=True)
@@ -61,10 +69,21 @@ class CSC:
         sp.eliminate_zeros()
         return cls(A.shape[0], A.shape[1], sp.indptr.copy(), sp.indices.copy(), sp.data.copy())
 
-    def to_dense(self) -> np.ndarray:
+    @classmethod
+    def from_sparse(cls, A: spa.spmatrix) -> "CSC":
+        sp = spa.csc_matrix(A, dtype=float, copy=True)
+        sp.sum_duplicates()
+        sp.eliminate_zeros()
+        sp.sort_indices()
+        return cls(sp.shape[0], sp.shape[1], sp.indptr, sp.indices, sp.data)
+
+    def to_scipy(self) -> spa.csc_matrix:
         return spa.csc_matrix(
             (self.data, self.indices, self.indptr), shape=(self.n_rows, self.n_cols)
-        ).toarray()
+        )
+
+    def to_dense(self) -> np.ndarray:
+        return self.to_scipy().toarray()
 
     @property
     def nnz(self) -> int:
@@ -96,8 +115,10 @@ class Factorization:
     uinv:
         Reciprocals of ``diag(U)`` (``lu`` only).
     A:
-        The symmetric positive-definite system matrix (CSC) — ``cg`` only;
-        applied as repeated sparse matrix-vector products, never factorized.
+        The system matrix ``M`` (CSC; its symmetric part when ``M`` counts as
+        symmetric). CG applies it as repeated sparse matrix-vector products; the
+        CUDA target hands it to cuDSS, which factorizes it on the device. Never
+        inverted.
     minv:
         Diagonal Jacobi preconditioner held as reciprocals of ``diag(M)``
         (computed once offline) — ``cg`` only. A diagonal scaling, not a matrix
@@ -127,22 +148,38 @@ class Factorization:
         return self.L.nnz + (self.U.nnz if self.U is not None else 0)
 
     # -- reference solve (mirrors the emitted C) ---------------------------
+    # Sparse operands, built once per factorization: the reference oracle calls
+    # ``solve`` every iteration, and densifying the factor there costs O(dim^2).
+    @cached_property
+    def _L_csr(self) -> spa.csr_matrix:
+        return self.L.to_scipy().tocsr()
+
+    @cached_property
+    def _Lt_csr(self) -> spa.csr_matrix:
+        return self.L.to_scipy().T.tocsr()
+
+    @cached_property
+    def _U_csr(self) -> spa.csr_matrix:
+        return self.U.to_scipy().tocsr()
+
+    @cached_property
+    def _A_csr(self) -> spa.csr_matrix:
+        return self.A.to_scipy().tocsr()
+
     def solve(self, b: np.ndarray) -> np.ndarray:
         b = np.asarray(b, dtype=float).reshape(-1)
         if self.method == "cg":
-            return _pcg_solve(self.A.to_dense(), self.minv, b, self.cg_tol, self.cg_max_iter)
+            return _pcg_solve(self._A_csr, self.minv, b, self.cg_tol, self.cg_max_iter)
         rhs = b[self.perm]  # gather (symmetric perm for LDL^T, row perm for LU)
-        Ld = self.L.to_dense()
-        y = sla.solve_triangular(Ld, rhs, lower=True, unit_diagonal=True)
+        y = spla.spsolve_triangular(self._L_csr, rhs, lower=True, unit_diagonal=True)
         if self.method == "ldlt":
             w = y * self.dinv
-            sol = sla.solve_triangular(Ld.T, w, lower=False, unit_diagonal=True)
+            sol = spla.spsolve_triangular(self._Lt_csr, w, lower=False, unit_diagonal=True)
             x = np.empty_like(sol)
             x[self.perm] = sol  # symmetric scatter
             return x
         # lu: M = P L U  ->  x = U \ (L \ (P^T b)); column order preserved.
-        Ud = self.U.to_dense()
-        return sla.solve_triangular(Ud, y, lower=False, unit_diagonal=False)
+        return spla.spsolve_triangular(self._U_csr, y, lower=False, unit_diagonal=False)
 
 
 def _pcg_solve(
@@ -185,36 +222,40 @@ def _pcg_solve(
     return x
 
 
-def _ldlt_no_pivot(M: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
-    """Up-looking LDL^T without pivoting. Returns (L unit-lower, d) or None if a
-    (near-)zero pivot is hit (matrix not factorizable without pivoting)."""
-    n = M.shape[0]
-    L = np.eye(n)
-    d = np.zeros(n)
-    for j in range(n):
-        dj = M[j, j] - (L[j, :j] ** 2 * d[:j]).sum()
-        if abs(dj) < 1e-12:
-            return None
-        d[j] = dj
-        if j + 1 < n:
-            # L[i,j] = (M[i,j] - sum_{k<j} L[i,k] L[j,k] d_k) / dj
-            acc = M[j + 1 :, j] - (L[j + 1 :, :j] * (L[j, :j] * d[:j])).sum(axis=1)
-            L[j + 1 :, j] = acc / dj
-    return L, d
+def _ldlt_factor(M: spa.csc_matrix) -> tuple[np.ndarray, spa.csc_matrix, np.ndarray] | None:
+    """LDL^T without pivoting in an AMD fill-reducing order, by QDLDL.
+
+    Returns ``(perm, L, d)`` with ``M[perm][:, perm] = L diag(d) L^T`` and ``L``
+    unit lower triangular (diagonal stored first in each column), or ``None`` if
+    a (near-)zero pivot is hit (the matrix is not factorizable without pivoting).
+    Sparse throughout: neither ``M`` nor the factor is ever densified.
+    """
+    try:
+        L, d, perm = qdldl.Solver(spa.csc_matrix(M)).factors()
+    except RuntimeError:  # QDLDL reports a zero pivot by raising
+        return None
+    d = np.asarray(d, dtype=float)
+    if not np.all(np.isfinite(d)) or np.any(np.abs(d) < 1e-12):
+        return None
+    L = spa.csc_matrix(L) + spa.eye(M.shape[0], format="csc")
+    return np.asarray(perm, dtype=int), spa.csc_matrix(L), d
 
 
-def _ldlt_backward_error(L: np.ndarray, d: np.ndarray, M: np.ndarray) -> float:
-    """Relative backward error ``||L diag(d) L^T - M|| / max(1, ||M||)``.
+def _ldlt_backward_error(L, d: np.ndarray, M) -> float:
+    """Relative backward error ``||L diag(d) L^T - M||_F / max(1, ||M||_F)``.
 
     No-pivot LDL^T is unconditionally stable only for SPD and *quasidefinite*
     matrices. For a general symmetric-indefinite matrix a small (but non-zero)
     pivot causes element growth that silently destroys accuracy; this measures
     it so the caller can reject the factorization and use a pivoted method.
+    ``L`` and ``M`` may be dense or sparse.
     """
-    if not (np.all(np.isfinite(L)) and np.all(np.isfinite(d))):
+    L = spa.csc_matrix(L)
+    if not (np.all(np.isfinite(L.data)) and np.all(np.isfinite(d))):
         return np.inf
-    recon = (L * d) @ L.T  # L diag(d) L^T
-    return float(np.linalg.norm(recon - M) / max(1.0, np.linalg.norm(M)))
+    M = spa.csc_matrix(M)
+    recon = L @ spa.diags(d) @ L.T  # L diag(d) L^T
+    return float(spla.norm(recon - M) / max(1.0, spla.norm(M)))
 
 
 def factorize(
@@ -230,49 +271,56 @@ def factorize(
         ``"auto"`` (LDL^T if symmetric else LU), ``"ldlt"``, ``"lu"``, or
         ``"cg"`` (preconditioned conjugate gradient; requires a symmetric
         positive-definite ``M``, intended for large-scale / GPU targets).
+    symmetry_tol:
+        ``M`` counts as symmetric when ``max|M - M^T| <= symmetry_tol *
+        max(1, max|M|)``; the symmetric and CG paths then use ``(M + M^T) / 2``.
     cg_tol:
         Relative-residual stopping tolerance for the ``"cg"`` method (ignored by
         the direct methods). The default ``1e-12`` suits float64; the caller
         loosens it for float32, where ``1e-12`` is below single-precision reach
         (see :func:`fomtools.codegen.extract.extract_ir`).
     """
-    Md = np.asarray(M.todense(), dtype=float) if spa.issparse(M) else np.asarray(M, dtype=float)
-    n = Md.shape[0]
-    if Md.shape[0] != Md.shape[1]:
+    Ms = spa.csc_matrix(M, dtype=float)
+    n = Ms.shape[0]
+    if Ms.shape[0] != Ms.shape[1]:
         raise ValueError("factorize requires a square matrix")
 
     if method not in ("auto", "ldlt", "lu", "cg"):
         raise ValueError(f"unknown solve method {method!r}")
 
-    is_sym = np.allclose(Md, Md.T, atol=symmetry_tol)
+    is_sym = _is_symmetric(Ms, symmetry_tol)
+    if is_sym and method != "lu":
+        # Factor (and, for CG, multiply by) the symmetric part, so roundoff-level
+        # asymmetry that passed the tolerance does not count against the LDL^T
+        # backward-error gate.
+        Ms = _symmetric_part(Ms)
 
     if method == "cg":
-        return _cg_factorization(Md, n, is_sym, cg_tol=cg_tol)
+        return _cg_factorization(Ms, n, is_sym, cg_tol=cg_tol)
 
     chosen = method
     if method == "auto":
         chosen = "ldlt" if is_sym else "lu"
 
     if chosen == "ldlt":
-        # Fill-reducing symmetric ordering (RCM) so the LDL^T factor stays sparse.
-        pattern = spa.csr_matrix((np.abs(Md) > 1e-12).astype(int))
-        perm = np.asarray(reverse_cuthill_mckee(pattern, symmetric_mode=True), dtype=int)
-        Mp = Md[np.ix_(perm, perm)]
-        res = _ldlt_no_pivot(Mp)
-        # Keep LDL^T only when it actually factorizes Mp accurately. No-pivot
-        # LDL^T is guaranteed stable for SPD / quasidefinite systems but can
-        # silently lose accuracy on a general symmetric-indefinite matrix (small
-        # pivot -> element growth); in that case fall back to pivoted LU rather
-        # than emit a factorization that solves the wrong system.
-        if res is not None and _ldlt_backward_error(res[0], res[1], Mp) <= _LDLT_RTOL:
-            L, d = res
-            return Factorization(
-                method="ldlt",
-                dim=n,
-                perm=perm,
-                L=CSC.from_dense(L),
-                dinv=1.0 / d,
-            )
+        # Sparse LDL^T in a fill-reducing (AMD) order, so the factor stays sparse.
+        res = _ldlt_factor(Ms)
+        # Keep LDL^T only when it actually factorizes M[perm][:, perm] accurately.
+        # No-pivot LDL^T is guaranteed stable for SPD / quasidefinite systems but
+        # can silently lose accuracy on a general symmetric-indefinite matrix
+        # (small pivot -> element growth); in that case fall back to pivoted LU
+        # rather than emit a factorization that solves the wrong system.
+        if res is not None:
+            perm, L, d = res
+            if _ldlt_backward_error(L, d, _sym_permute(Ms, perm)) <= _LDLT_RTOL:
+                return Factorization(
+                    method="ldlt",
+                    dim=n,
+                    perm=perm,
+                    L=CSC.from_sparse(L),
+                    dinv=1.0 / d,
+                    A=CSC.from_sparse(Ms),
+                )
         if method == "ldlt":
             # User forced LDL^T but it is not numerically viable here.
             raise ValueError(
@@ -280,10 +328,26 @@ def factorize(
                 "(it is symmetric-indefinite but not quasidefinite). Use "
                 "solve_method='auto' or 'lu' for a pivoted direct factorization."
             )
-        chosen = "lu"  # auto: silently use the robust pivoted method
+        chosen = "lu"  # auto: use the robust pivoted method
 
     # LU with partial pivoting: M = P L U (backward stable for any nonsingular M).
-    P, L, U = sla.lu(Md)
+    # Dense: only general (non-quasidefinite) systems get here.
+    if n > _DENSE_LU_WARN_DIM:
+        if method == "lu":
+            reason = "solve_method='lu' was requested"
+        elif is_sym:
+            reason = "sparse LDL^T failed (zero pivot or backward-error gate)"
+        else:
+            reason = "the matrix is nonsymmetric"
+        warnings.warn(
+            f"factorizing a {n}x{n} system by dense LU because {reason}: this allocates "
+            f"an n x n dense matrix (~{8 * n * n / 1e9:.1f} GB) and costs O(n^3) work. "
+            "A symmetric quasidefinite system (e.g. a regularized KKT matrix) keeps "
+            "the sparse LDL^T path.",
+            UserWarning,
+            stacklevel=2,
+        )
+    P, L, U = sla.lu(Ms.toarray())
     diag_u = np.diag(U)
     scale = max(1.0, float(np.max(np.abs(diag_u))) if diag_u.size else 1.0)
     if diag_u.size == 0 or np.min(np.abs(diag_u)) <= 1e-12 * scale:
@@ -300,11 +364,47 @@ def factorize(
         L=CSC.from_dense(L),
         U=CSC.from_dense(U),
         uinv=1.0 / diag_u,
+        A=CSC.from_sparse(Ms),
     )
 
 
+def _positive_definite(Ms: spa.csc_matrix) -> bool:
+    """Whether the symmetric ``Ms`` is positive-definite: its sparse LDL^T exists,
+    is accurate, and has only positive pivots (``Ms`` is then congruent to a
+    positive diagonal). Never densifies ``Ms``."""
+    res = _ldlt_factor(Ms)
+    if res is None:
+        return False
+    perm, L, d = res
+    return bool(np.all(d > 0)) and _ldlt_backward_error(L, d, _sym_permute(Ms, perm)) <= _LDLT_RTOL
+
+
+def _sym_permute(Ms: spa.spmatrix, perm: np.ndarray) -> spa.csr_matrix:
+    """``Ms[perm][:, perm]``, row-indexing on CSR (the fast axis; slow on CSC)."""
+    return Ms.tocsr()[perm][:, perm]
+
+
+def _symmetric_part(Ms: spa.csc_matrix) -> spa.csc_matrix:
+    """``(Ms + Ms^T) / 2`` in CSC (exactly ``Ms`` when it is already symmetric)."""
+    return spa.csc_matrix((Ms + Ms.T) * 0.5)
+
+
+def _is_symmetric(Ms: spa.csc_matrix, symmetry_tol: float) -> bool:
+    """``max|M - M^T| <= symmetry_tol * max(1, max|M|)``.
+
+    Relative to the largest entry, so roundoff-level asymmetry in a large-scale
+    matrix (entries ~1e4-1e6) still counts as symmetric rather than sending the
+    system to the dense LU path.
+    """
+    asym = Ms - Ms.T
+    if asym.nnz == 0:
+        return True
+    scale = max(1.0, float(np.max(np.abs(Ms.data))) if Ms.nnz else 0.0)
+    return float(np.max(np.abs(asym.data))) <= symmetry_tol * scale
+
+
 def is_spd(M, symmetry_tol: float = 1e-9) -> bool:
-    """True if ``M`` is symmetric positive-definite (cheap Cholesky certificate).
+    """True if ``M`` is symmetric positive-definite (sparse LDL^T certificate).
 
     A non-throwing companion to the SPD check inside :func:`_cg_factorization`,
     used by the ``auto`` solve-method heuristic to decide whether CG is
@@ -312,19 +412,17 @@ def is_spd(M, symmetry_tol: float = 1e-9) -> bool:
     matrix is symmetric *indefinite*, so this returns ``False`` for it and
     ``auto`` keeps such systems on a direct factorization.
     """
-    Md = np.asarray(M.todense(), dtype=float) if spa.issparse(M) else np.asarray(M, dtype=float)
-    if Md.ndim != 2 or Md.shape[0] != Md.shape[1] or Md.shape[0] == 0:
+    if not spa.issparse(M) and np.ndim(M) != 2:
         return False
-    if not np.allclose(Md, Md.T, atol=symmetry_tol):
+    Ms = spa.csc_matrix(M, dtype=float)
+    if Ms.shape[0] != Ms.shape[1] or Ms.shape[0] == 0:
         return False
-    try:
-        np.linalg.cholesky(Md)
-    except np.linalg.LinAlgError:
-        return False
-    return True
+    return _is_symmetric(Ms, symmetry_tol) and _positive_definite(_symmetric_part(Ms))
 
 
-def _cg_factorization(Md: np.ndarray, n: int, is_sym: bool, cg_tol: float = 1e-12) -> Factorization:
+def _cg_factorization(
+    Ms: spa.csc_matrix, n: int, is_sym: bool, cg_tol: float = 1e-12
+) -> Factorization:
     """Build a CG (indirect) solver for a symmetric positive-definite matrix.
 
     Stores the matrix sparsely for repeated matrix-vector products and a
@@ -337,22 +435,20 @@ def _cg_factorization(Md: np.ndarray, n: int, is_sym: bool, cg_tol: float = 1e-1
             "CG requires a symmetric matrix; this system is nonsymmetric. "
             "Use solve_method='lu' (direct) instead."
         )
-    try:
-        np.linalg.cholesky(Md)  # cheap SPD certificate (offline only)
-    except np.linalg.LinAlgError as exc:
+    if not _positive_definite(Ms):  # sparse SPD certificate (offline only)
         raise ValueError(
             "CG requires a symmetric positive-definite matrix; this system is not "
             "positive-definite (e.g. a quasidefinite ADMM/OSQP KKT matrix). Use "
             "solve_method='ldlt' (direct) for symmetric-indefinite systems."
-        ) from exc
-    diag = np.diag(Md)
+        )
+    diag = Ms.diagonal()
     if np.any(diag <= 0):
         raise ValueError("SPD check passed but diagonal has non-positive entry")
     return Factorization(
         method="cg",
         dim=n,
         perm=np.arange(n),
-        A=CSC.from_dense(Md),
+        A=CSC.from_sparse(Ms),
         minv=1.0 / diag,  # diagonal Jacobi preconditioner (reciprocals)
         cg_tol=cg_tol,
         # SPD CG converges in <= n steps in exact arithmetic; allow headroom for

@@ -39,10 +39,28 @@ import numpy as np
 from fomtools.codegen.ir import ActivationOp, FomIR, LinearOp, MatrixData
 
 
+def _canonical(md: MatrixData) -> tuple:
+    """The values of a block in one canonical form, dense or sparse alike:
+    ``(shape, rowptr, colidx, vals)`` of its exact nonzeros."""
+    if md.array.ndim < 2:
+        arr = np.ascontiguousarray(md.array, dtype=np.float64)
+        return (arr.shape, arr)
+    rowptr, colidx, vals = md.csr(tol=0.0)
+    return (tuple(md.shape), rowptr, colidx, vals)
+
+
 def _content_key(md: MatrixData) -> tuple:
-    """Hash bucket for a block: shape plus a digest of its float64 bytes."""
-    arr = np.ascontiguousarray(md.array, dtype=np.float64)
-    return (arr.shape, hashlib.sha1(arr.tobytes()).hexdigest())
+    """Hash bucket for a block: shape plus a digest of its canonical values."""
+    shape, *parts = _canonical(md)
+    digest = hashlib.sha1()
+    for part in parts:
+        digest.update(np.ascontiguousarray(part).tobytes())
+    return (shape, digest.hexdigest())
+
+
+def _same_values(a: MatrixData, b: MatrixData) -> bool:
+    ca, cb = _canonical(a), _canonical(b)
+    return ca[0] == cb[0] and all(np.array_equal(x, y) for x, y in zip(ca[1:], cb[1:]))
 
 
 def _rewrite_linop(lin: LinearOp, alias: dict[str, str]) -> LinearOp:
@@ -77,7 +95,7 @@ def dedup_matrices(ir: FomIR) -> FomIR:
         bucket = buckets.setdefault(_content_key(md), [])
         for other in bucket:
             # Exact comparison: the digest only buckets, it never decides.
-            if np.array_equal(kept[other].array, md.array):
+            if _same_values(kept[other], md):
                 alias[name] = other
                 if kept[other].sparse_pattern is None and md.sparse_pattern is not None:
                     kept[other] = replace(kept[other], sparse_pattern=md.sparse_pattern)
@@ -102,4 +120,13 @@ def dedup_matrices(ir: FomIR) -> FomIR:
             for step in ir.body
         ),
         state_update=_rewrite_linop(ir.state_update, alias),
+        objective=None
+        if ir.objective is None
+        else replace(
+            ir.objective,
+            blocks=tuple(
+                replace(block, linear_op=_rewrite_linop(block.linear_op, alias))
+                for block in ir.objective.blocks
+            ),
+        ),
     )

@@ -16,6 +16,7 @@
  */
 #include "fom_solver.h"
 #include "fom_data.h"
+#include "fom_ops.h"
 #include "fom_profile.h"
 
 void fom_set_default_settings(FomSettings *settings) {
@@ -45,20 +46,17 @@ void fom_update_params(FomWorkspace *work, const FomParams *params) {
 }
 
 fom_int fom_solve(FomWorkspace *work) {
-    int it, i, j;
+    int it, i;
     fom_float lam = FOM_T0_LAMBDA;
 
     for (it = 0; it < work->settings.max_iter; ++it) {
         /* t0 = soft_threshold(At @ state + Bt @ p0) */
         FOM_PROF_BEGIN(soft_threshold);
+        for (i = 0; i < FOM_T0_DIM; ++i) work->acc[i] = 0.0;
+        fom_apply_t0_state(work->state, work->acc);
+        fom_apply_t0_p_p0(work->params.p0, work->acc);
         for (i = 0; i < FOM_T0_DIM; ++i) {
-            fom_float acc = 0.0;
-            for (j = 0; j < FOM_MAT_t0_state_COLS; ++j) {
-                acc += FOM_MAT_t0_state[i * FOM_MAT_t0_state_COLS + j] * work->state[j];
-            }
-            for (j = 0; j < FOM_MAT_t0_p_p0_COLS; ++j) {
-                acc += FOM_MAT_t0_p_p0[i * FOM_MAT_t0_p_p0_COLS + j] * work->params.p0[j];
-            }
+            fom_float acc = work->acc[i];
             if (acc > lam) {
                 work->t0[i] = acc - lam;
             } else if (acc < -lam) {
@@ -71,13 +69,8 @@ fom_int fom_solve(FomWorkspace *work) {
 
         /* new_state = su_t_t0 @ t0 */
         FOM_PROF_BEGIN(state_update);
-        for (i = 0; i < FOM_STATE_DIM; ++i) {
-            fom_float acc = 0.0;
-            for (j = 0; j < FOM_MAT_su_t_t0_COLS; ++j) {
-                acc += FOM_MAT_su_t_t0[i * FOM_MAT_su_t_t0_COLS + j] * work->t0[j];
-            }
-            work->new_state[i] = acc;
-        }
+        for (i = 0; i < FOM_STATE_DIM; ++i) work->new_state[i] = 0.0;
+        fom_apply_su_t_t0(work->t0, work->new_state);
         FOM_PROF_END(state_update);
 
         /* residual = max_abs(new_state - state) */

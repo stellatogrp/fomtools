@@ -23,7 +23,10 @@ The public surface:
   IR reproduces the recorded tape. The first is what catches a method that is not
   stationary; the second gates every unrolled extraction.
 * :class:`CodegenConfig` — what to generate (embedded/large-scale, backend,
-  termination, dtype).
+  termination, dtype). ``TerminationKind.OBJECTIVE`` stops the generated solver
+  on the verification objective set with ``Verifier.set_objective_norm``; see
+  :mod:`fomtools.codegen.objective` for how it is mapped onto the loop and
+  :class:`ObjectiveExtractionError` for what cannot be.
 * :func:`generate_code` — the end-to-end entry point.
 * :class:`AgentDriver` / :class:`StubAgentDriver` — the (mockable) coding-agent
   interface.
@@ -49,6 +52,7 @@ from fomtools.codegen.ir import (
     UnrolledBlowupError,
     UnrolledFidelityError,
 )
+from fomtools.codegen.objective import ObjectiveExtractionError
 from fomtools.codegen.oracle import (
     OracleResult,
     ReferenceOracle,
@@ -84,6 +88,7 @@ __all__ = [
     "ScheduleFitError",
     "UnrolledBlowupError",
     "UnrolledFidelityError",
+    "ObjectiveExtractionError",
     "OracleResult",
     "ReferenceOracle",
     "run_faithful",

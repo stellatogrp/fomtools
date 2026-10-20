@@ -177,8 +177,18 @@ def test_branch_priority_can_be_disabled(monkeypatch):
 def test_mipfocus_default_and_override():
     from fomtools.verifier import Verifier
 
-    assert Verifier(solver="gurobi", params={"OutputFlag": 0}).canonicalizer.solver.model.Params.MIPFocus == 2
-    assert Verifier(solver="gurobi", params={"OutputFlag": 0, "MIPFocus": 0}).canonicalizer.solver.model.Params.MIPFocus == 0
+    assert (
+        Verifier(
+            solver="gurobi", params={"OutputFlag": 0}
+        ).canonicalizer.solver.model.Params.MIPFocus
+        == 2
+    )
+    assert (
+        Verifier(
+            solver="gurobi", params={"OutputFlag": 0, "MIPFocus": 0}
+        ).canonicalizer.solver.model.Params.MIPFocus
+        == 0
+    )
     # The default carries into the solve copy.
     vp, _, z, _ = _pgd_chain("relu", 2, const=0.0, obbt="gurobi")
     vp.set_objective_norm(z[2] - z[1], np.inf)

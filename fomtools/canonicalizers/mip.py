@@ -546,7 +546,9 @@ class MIP(Canonicalizer):
             iterates), sharing the same ``n``. Inputs without samples are held at
             their value if their bounds fix them, and the start is skipped otherwise.
         """
-        self._start_samples = {leaf: np.atleast_2d(np.asarray(v, dtype=float)) for leaf, v in samples.items()}
+        self._start_samples = {
+            leaf: np.atleast_2d(np.asarray(v, dtype=float)) for leaf, v in samples.items()
+        }
 
     def _start_values(self, inputs: dict) -> tuple[dict, dict]:
         """
@@ -570,7 +572,11 @@ class MIP(Canonicalizer):
             if isinstance(step, Affine):
                 values[step.output] = _solve_affine(step, arg)
             elif isinstance(step, Relu):
-                out = np.where(np.isin(np.arange(arg.shape[1]), list(step.proj_indices)), np.maximum(arg, 0.0), arg)
+                out = np.where(
+                    np.isin(np.arange(arg.shape[1]), list(step.proj_indices)),
+                    np.maximum(arg, 0.0),
+                    arg,
+                )
                 leaf = step.output_leaves[0]
                 values[leaf] = out[:, sorted(step.proj_indices)] if leaf is not step.output else out
                 for i, b in binaries.items():
@@ -611,7 +617,9 @@ class MIP(Canonicalizer):
                 info["objective"] = absr.max(axis=1)
 
         for leaf, val in values.items():
-            values[leaf] = np.clip(val, np.asarray(leaf.lb, dtype=float), np.asarray(leaf.ub, dtype=float))
+            values[leaf] = np.clip(
+                val, np.asarray(leaf.lb, dtype=float), np.asarray(leaf.ub, dtype=float)
+            )
         return values, info
 
     def _free_inputs(self) -> list:
@@ -636,7 +644,9 @@ class MIP(Canonicalizer):
             }
             values, info = self._start_values(inputs)
             starts.append({leaf: v[0] for leaf, v in values.items()})
-            stats.append(dict(kind="sequential", objective=_first(info["objective"]), seeded=seeded(values)))
+            stats.append(
+                dict(kind="sequential", objective=_first(info["objective"]), seeded=seeded(values))
+            )
         if self._start_samples:
             n = len(next(iter(self._start_samples.values())))
             inputs = {}
@@ -655,7 +665,11 @@ class MIP(Canonicalizer):
                     k = int(np.argmax(info["objective"]))
                     starts.append({leaf: v[k] for leaf, v in values.items()})
                     stats.append(
-                        dict(kind="sample_max", objective=float(info["objective"][k]), seeded=seeded(values))
+                        dict(
+                            kind="sample_max",
+                            objective=float(info["objective"][k]),
+                            seeded=seeded(values),
+                        )
                     )
         for st in stats:
             st["leaves"] = len(present)
@@ -689,7 +703,9 @@ class MIP(Canonicalizer):
         Returns
         -------
         float
-            The objective value for the current solution.
+            The finite best upper bound on the maximization objective, including
+            after a time limit. Raises ``RuntimeError`` when none is available.
+            Incumbent values and status remain on the solved solver copy.
 
         """
         # Create copy to apply objective without modifying original
@@ -717,7 +733,7 @@ class MIP(Canonicalizer):
             self._warm_start_inputs = {
                 leaf: self._solved_copy.get_solution_value(leaf) for leaf in self._input_leaves
             }
-        return self._solved_copy["objVal"]
+        return self._solved_copy.get_best_bound()
 
     def get_solution_value(self, expression: LinearExpression) -> np.ndarray:
         """
@@ -740,8 +756,8 @@ class MIP(Canonicalizer):
         RuntimeError
             If no solution is available (solve_model() not called).
         """
-        if self._solved_copy is None:
-            raise RuntimeError("No solution available. Call solve_model() first.")
+        if self._solved_copy is None or not self._solved_copy.has_solution():
+            raise RuntimeError("No feasible incumbent available. Call solve_model() first.")
         return self._solved_copy.get_solution_value(expression)
 
     def canonicalize_affine(self, step: Affine) -> None:
@@ -1230,7 +1246,11 @@ def _evaluate(expr: LinearExpression, values: dict):
     for leaf, coeff in expr.decomposition_dict.items():
         if leaf not in values:
             return None
-        term = (coeff @ values[leaf].T).T if spa.issparse(coeff) else values[leaf] @ np.atleast_2d(coeff).T
+        term = (
+            (coeff @ values[leaf].T).T
+            if spa.issparse(coeff)
+            else values[leaf] @ np.atleast_2d(coeff).T
+        )
         out = term if out is None else out + term
     const = np.atleast_1d(np.asarray(expr.const, dtype=float))
     return out + const[None, :] if out is not None else np.tile(const, (1, 1))

@@ -93,7 +93,7 @@ class TimingReport:
 
     @property
     def speedup_optimization(self) -> float | None:
-        """Initial generated C vs. the performance-optimized C (Phase B)."""
+        """Translated generated C vs. the C after the code optimization phase."""
         if self.c_initial_us and self.c_final_us:
             return self.c_initial_us / self.c_final_us
         return None
@@ -111,13 +111,13 @@ class TimingReport:
         if self.python_us is not None:
             lines.append(f"  Python reference (before codegen): {self.python_us:10.3f} us")
         if self.c_initial_us is not None:
-            lines.append(f"  Generated C (initial, phase A):    {self.c_initial_us:10.3f} us")
+            lines.append(f"  Generated C (translated):         {self.c_initial_us:10.3f} us")
         if self.c_final_us is not None:
-            lines.append(f"  Generated C (optimized, phase B):  {self.c_final_us:10.3f} us")
+            lines.append(f"  Generated C (optimized):          {self.c_final_us:10.3f} us")
         if self.speedup_codegen:
             lines.append(f"  Speedup from codegen (Py -> C):    {self.speedup_codegen:8.1f}x")
         if self.speedup_optimization:
-            lines.append(f"  Speedup from optimization (A -> B):{self.speedup_optimization:8.2f}x")
+            lines.append(f"  Speedup from code optimization:   {self.speedup_optimization:8.2f}x")
         if self.speedup_total:
             lines.append(f"  Total speedup (Py -> optimized C): {self.speedup_total:8.1f}x")
         if self.profile:

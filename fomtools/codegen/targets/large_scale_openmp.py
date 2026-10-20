@@ -15,7 +15,9 @@ build.
 
 from __future__ import annotations
 
-from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
+from fomtools.codegen.ir import FomIR
+from fomtools.codegen.targets.base import objective_violations
+from fomtools.codegen.targets.embedded_c import _KERNEL_CHECK_RECIPE, EmbeddedCTarget
 
 
 class OpenMpTarget(EmbeddedCTarget):
@@ -26,20 +28,27 @@ class OpenMpTarget(EmbeddedCTarget):
     #: is unaffected and threading is enabled only with ``OMPFLAGS=-fopenmp``.
     parallel = True
 
-    def static_checks(self, source: str) -> list[str]:
+    def static_checks(self, source: str, ir: FomIR | None = None) -> list[str]:
         # Large-scale targets are not bound by the embedded no-malloc /
-        # division-free invariants.
-        return []
+        # division-free invariants; the objective-termination contract holds.
+        return objective_violations(source, ir)
 
-    def _makefile(self) -> str:
+    def _makefile(self, ir: FomIR | None = None) -> str:
+        guard, guard_rules = self._objective_guard(ir)
         return "\n".join(
             [
                 "CC ?= cc",
                 "CFLAGS ?= -O3 -Wall -Iinclude",
+                "# Link-time optimization lets the compiler inline fom_apply_* (fom_ops.c)",
+                "# into the solver; override with LTOFLAGS= to build without it.",
+                "LTOFLAGS ?= -flto",
                 "# Serial by default for portable verification; real builds use -fopenmp.",
                 "OMPFLAGS ?=",
                 "BENCHFLAGS ?= -O3 -Iinclude",
-                "SRC = src/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c",
+                "SRC = src/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c "
+                "src/fom_objective.c",
+                "# Package-written reference matvecs for verify's direct check of fom_ops.c.",
+                "VERIFY_SRC = $(wildcard test/ops_ref.c)",
                 "",
                 "UNAME_S := $(shell uname -s)",
                 "ifeq ($(UNAME_S),Darwin)",
@@ -48,31 +57,36 @@ class OpenMpTarget(EmbeddedCTarget):
                 "LIBEXT = so",
                 "endif",
                 "",
-                ".PHONY: verify bench profile lib release clean",
+                ".PHONY: verify bench profile lib release clean objective_guard",
                 "",
-                "verify: $(SRC) test/verify_main.c",
-                "\t$(CC) $(CFLAGS) $(OMPFLAGS) -Itest $(SRC) test/verify_main.c -o verify_bin -lm",
+                f"verify:{guard} $(SRC) $(VERIFY_SRC) test/verify_main.c",
+                _KERNEL_CHECK_RECIPE,
+                "\t$(CC) $(CFLAGS) $(LTOFLAGS) $(OMPFLAGS) -Itest $(SRC) $(VERIFY_SRC) test/verify_main.c "
+                "-o verify_bin -lm",
                 "\t./verify_bin",
                 "",
-                "release: release/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c",
-                "\t$(CC) $(CFLAGS) $(OMPFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
-                "src/fom_linsolve.c src/fom_ops.c -o libfomsolver.$(LIBEXT) -lm",
+                "release: release/fom_solver.c src/fom_data.c release/fom_linsolve.c "
+                "release/fom_ops.c src/fom_objective.c",
+                "\t$(CC) $(CFLAGS) $(LTOFLAGS) $(OMPFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
+                "release/fom_linsolve.c release/fom_ops.c src/fom_objective.c "
+                "-o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "bench: $(SRC) test/bench_main.c",
-                "\t$(CC) $(BENCHFLAGS) $(OMPFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",
+                "\t$(CC) $(BENCHFLAGS) $(LTOFLAGS) $(OMPFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",
                 "\t./bench_bin",
                 "",
                 "profile: $(SRC) src/fom_profile.c test/bench_main.c",
-                "\t$(CC) $(BENCHFLAGS) $(OMPFLAGS) -DFOM_PROFILE -Itest $(SRC) src/fom_profile.c "
+                "\t$(CC) $(BENCHFLAGS) $(LTOFLAGS) $(OMPFLAGS) -DFOM_PROFILE -Itest $(SRC) src/fom_profile.c "
                 "test/bench_main.c -o profile_bin -lm",
                 "\t./profile_bin",
                 "",
                 "lib: $(SRC)",
-                "\t$(CC) $(CFLAGS) $(OMPFLAGS) -shared -fPIC $(SRC) -o libfomsolver.$(LIBEXT) -lm",
+                "\t$(CC) $(CFLAGS) $(LTOFLAGS) $(OMPFLAGS) -shared -fPIC $(SRC) -o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "clean:",
                 "\trm -f verify_bin bench_bin profile_bin libfomsolver.so libfomsolver.dylib",
                 "",
+                *guard_rules,
             ]
         )
 

@@ -7,9 +7,10 @@ Two outputs after a run:
   shipped build, so this is purely a cleaner, dependency-free source for
   embedding into other codebases — behaviour and performance are identical.
 * An **optimization report** (``OPTIMIZATIONS.md``) recording the timing summary,
-  the agent's own notes, and a unified diff of the solver from the initial
-  (phase A) to the optimized (phase B) version — a durable record of exactly
-  what changed.
+  the agent's own notes, and a unified diff of the solver from the translated
+  version to the one after the code optimization phase — a durable record of exactly
+  what changed — and, where the matrix-vector products are editable, how each
+  shipped ``fom_apply_<name>`` was checked against its matrix.
 """
 
 from __future__ import annotations
@@ -19,6 +20,13 @@ import re
 from pathlib import Path
 
 from fomtools.codegen.agent.prompts import SUMMARY_BEGIN, SUMMARY_END
+
+# One line per matrix from verify's direct check of fom_apply_<name>.
+_OPSCHECK_RE = re.compile(
+    r"^OPSCHECK name=(?P<name>\S+) mode=(?P<mode>\w+) probes=(?P<probes>\d+) "
+    r"max_err=(?P<max_err>\S+)\s*$",
+    re.MULTILINE,
+)
 
 _PROFILE_INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"fom_profile\.h"\s*$')
 # A line that is solely a FOM_PROF_BEGIN(...)/FOM_PROF_END(...) statement.
@@ -47,17 +55,25 @@ def has_profiling_markers(source: str) -> bool:
     return bool(_PROFILE_INCLUDE_RE.search(source) or "FOM_PROF_BEGIN" in source)
 
 
-def write_production_variant(out_dir: str | Path, solver_rel_path: str) -> Path:
+def write_production_variant(
+    out_dir: str | Path, solver_rel_path: str, extra_rel_paths: tuple[str, ...] = ()
+) -> Path:
     """Write a marker-free production copy of the solver under ``release/``.
+
+    ``extra_rel_paths`` are other sources the code optimization phase may have
+    rewritten (the linear solves, the matrix-vector products); each gets a
+    marker-free copy beside the solver, which ``make release`` compiles.
 
     Returns the path to the emitted production source.
     """
     out_dir = Path(out_dir)
-    src = (out_dir / solver_rel_path).read_text()
-    clean = strip_profiling(src)
-
     release = out_dir / "release"
     release.mkdir(parents=True, exist_ok=True)
+    for rel in extra_rel_paths:
+        (release / Path(rel).name).write_text(strip_profiling((out_dir / rel).read_text()))
+
+    src = (out_dir / solver_rel_path).read_text()
+    clean = strip_profiling(src)
     name = Path(solver_rel_path).name
     dest = release / name
     dest.write_text(clean)
@@ -75,11 +91,11 @@ def write_production_variant(out_dir: str | Path, solver_rel_path: str) -> Path:
 
 
 def unified_solver_diff(before: str, after: str, filename: str) -> str:
-    """Unified diff of the solver source (phase A -> optimized)."""
+    """Unified diff of one source file (translated -> optimized)."""
     diff = difflib.unified_diff(
         before.splitlines(keepends=True),
         after.splitlines(keepends=True),
-        fromfile=f"{filename} (phase A)",
+        fromfile=f"{filename} (translated)",
         tofile=f"{filename} (optimized)",
     )
     return "".join(diff)
@@ -164,6 +180,68 @@ def extract_agent_notes(log: str, max_chars: int = 4000) -> str:
     return "" if _looks_like_prompt_echo(tail) else tail
 
 
+def parse_ops_checks(verify_output: str) -> list[dict]:
+    """The per-matrix ``OPSCHECK`` lines of a ``make verify`` run, in order."""
+    return [
+        {
+            "name": m["name"],
+            "mode": m["mode"],
+            "probes": int(m["probes"]),
+            "max_err": float(m["max_err"]),
+        }
+        for m in _OPSCHECK_RE.finditer(verify_output)
+    ]
+
+
+def _kernel_check_lines(
+    kernel_checks: list[dict],
+    rule_violations: list[str],
+    rewrite_collected: bool,
+    optimize_succeeded: bool,
+) -> list[str]:
+    lines = [
+        "## Kernel checks",
+        "",
+        "Each `fom_apply_<name>` in the shipped `fom_ops.c`, checked by `make verify` "
+        "against the package's reference over the same `fom_data.c` matrix. *basis* "
+        "probes every unit vector, which recovers the routine's matrix column by "
+        "column (an exact check), plus random vectors; *random* uses random vectors "
+        "only (the matrix is over the probe budget).",
+        "",
+    ]
+    if kernel_checks:
+        lines += [
+            "| matrix | shape | nnz | rewritten | check | probes | max error |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for c in kernel_checks:
+            shape = "x".join(str(d) for d in c["shape"])
+            lines.append(
+                f"| `{c['name']}` | {shape} | {c['nnz']} | "
+                f"{'yes' if c['rewritten'] else 'no'} | {c['mode']} | {c['probes']} | "
+                f"{c['max_err']:.3e} |"
+            )
+    else:
+        lines.append("_Not available: the final verify did not report the checks._")
+    lines += ["", "### Rule violations", ""]
+    if not rewrite_collected:
+        lines.append(
+            "_Not checked: the code optimization phase returned no changed, verified "
+            "rewrite, so there was nothing to collect._"
+        )
+    elif rule_violations:
+        lines += ["The collected rewrite broke these rules and was discarded:", ""]
+        lines += [f"- {v}" for v in rule_violations]
+    elif optimize_succeeded:
+        lines.append("_None: the collected rewrite passed the rules and was kept._")
+    else:
+        lines.append(
+            "_None: the collected rewrite passed the rules but was not kept "
+            "(see the outcome above)._"
+        )
+    return lines + [""]
+
+
 def write_optimization_report(
     out_dir: str | Path,
     timing_summary: str,
@@ -171,6 +249,9 @@ def write_optimization_report(
     agent_notes: str,
     optimize_succeeded: bool,
     caveats: list[str] | None = None,
+    kernel_checks: list[dict] | None = None,
+    rule_violations: list[str] | None = None,
+    rewrite_collected: bool = True,
 ) -> Path:
     """Write ``OPTIMIZATIONS.md`` recording timing, agent notes, and the diff.
 
@@ -179,24 +260,37 @@ def write_optimization_report(
     and the diff stay trustworthy in that case (the solver on disk is re-verified
     and benchmarked either way), but an absent or partial notes section must not
     be mistaken for the agent having nothing to say.
+
+    ``kernel_checks`` (one dict per matrix: ``name, shape, nnz, rewritten, mode,
+    probes, max_err``) adds the per-routine check table, with the
+    ``rule_violations`` found when the rewrite was collected; ``None`` (a target
+    whose products are not editable) leaves the section out.
+    ``rewrite_collected`` is False when the phase returned no changed, verified
+    rewrite, so the rules never ran on one.
     """
     out_dir = Path(out_dir)
     lines = ["# Optimization report", ""]
     if timing_summary:
         lines += ["## Timing", "", "```", timing_summary, "```", ""]
     status = (
-        "kept (re-verified correct)" if optimize_succeeded else "not kept (reverted to phase A)"
+        "kept (re-verified correct)"
+        if optimize_succeeded
+        else "not kept (reverted to the translated solver)"
     )
     lines += [f"Optimization outcome: **{status}**.", ""]
     if caveats:
         lines += ["## Caveats", ""]
         lines += [f"- {c}" for c in caveats]
         lines += [""]
+    if kernel_checks is not None:
+        lines += _kernel_check_lines(
+            kernel_checks, rule_violations or [], rewrite_collected, optimize_succeeded
+        )
     lines += ["## What the agent changed", ""]
     if diff.strip():
         lines += ["```diff", diff.rstrip(), "```", ""]
     else:
-        lines += ["_No changes to the solver source (it was already optimal or unchanged)._", ""]
+        lines += ["_No changes to the generated sources (already optimal or unchanged)._", ""]
     if agent_notes.strip():
         lines += ["## Agent notes", "", "```", agent_notes.strip(), "```", ""]
     path = out_dir / "OPTIMIZATIONS.md"

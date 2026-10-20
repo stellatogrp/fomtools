@@ -22,7 +22,7 @@ def _assert_ir_equal(a, b):
     assert [p.name for p in a.params] == [p.name for p in b.params]
     assert set(a.matrices) == set(b.matrices)
     for name, md in a.matrices.items():
-        assert np.allclose(md.array, b.matrices[name].array)
+        assert np.allclose(md.dense(), b.matrices[name].dense())
         assert (md.sparse_pattern is None) == (b.matrices[name].sparse_pattern is None)
     assert len(a.body) == len(b.body)
     for sa, sb in zip(a.body, b.body):
@@ -114,3 +114,19 @@ def test_markdown_renders(tmp_path):
     assert "FOM specification" in md
     assert "Iteration body" in md
     assert "State update" in md
+
+
+def test_direct_factorization_keeps_its_system_matrix(tmp_path):
+    # The CUDA target factorizes A itself (cuDSS), so a direct factorization keeps
+    # it: the A it solves, through a save/load round trip.
+    case = build_dr()
+    ir = extract_ir(case["verifier"], case["next_state"], config=case["config"], name="dr")
+    spec.save(ir, tmp_path)
+    loaded = spec.load(tmp_path)
+    for name, fac in ir.factorizations.items():
+        assert fac.method in ("ldlt", "lu") and fac.A is not None
+        b = np.arange(1.0, fac.dim + 1)
+        assert np.allclose(fac.A.to_scipy() @ fac.solve(b), b)
+        assert np.allclose(
+            loaded.factorizations[name].A.to_scipy().toarray(), fac.A.to_scipy().toarray()
+        )
