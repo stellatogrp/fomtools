@@ -1,9 +1,9 @@
 """Extract a whole recorded run as one unrolled straight-line program.
 
 The other two extraction paths need the method restructured before it can be
-generated. :func:`~fomtools.codegen.extract.extract_ir` wants one *stationary*
+generated. `extract_ir` wants one *stationary*
 iteration that a generated loop repeats, and
-:func:`~fomtools.codegen.extract_scheduled.extract_scheduled_ir` wants the recording as a
+`extract_scheduled_ir` wants the recording as a
 *build function* of the coefficients that vary, whose dependence must be affine.
 Neither accepts the program the user already wrote to verify with: a plain Python
 loop over ``verifier.step.*``.
@@ -18,7 +18,7 @@ slot that nothing updates.
 
 The cost is size, so a recording that did not need unrolling is rolled back up.
 Before unrolling anything we extract iteration one on its own and ask
-:func:`~fomtools.codegen.oracle.check_stationary` whether repeating it reproduces
+`check_stationary` whether repeating it reproduces
 the recorded tape. When it does, that compact IR is what gets emitted, so writing
 a stationary method as a loop costs nothing. **Rolling changes the artifact and
 never the computation**: the rolled IR keeps the recorded horizon, and the same
@@ -31,10 +31,10 @@ loop carries its iterate. Extraction expresses each iterate in terms of leaves a
 earlier temporaries, which is linear in the iteration count when the loop carries
 a *leaf* -- a step output fed into the next step, as in ISTA, FISTA and Halpern --
 and quadratic when it carries a non-leaf accumulation like Douglas-Rachford's
-``z = z + ut - u``. :func:`fomtools.verifier.Verifier.iterate_trajectory`
+``z = z + ut - u``. `fomtools.verifier.Verifier.iterate_trajectory`
 materializes an accumulating iterate as its own variable and restores linear
 growth; a recording that would blow up raises
-:class:`~fomtools.codegen.ir.UnrolledBlowupError` naming it. Repeated coefficient
+`UnrolledBlowupError` naming it. Repeated coefficient
 blocks are then merged by content, so what is unrolled stores its data once
 rather than once per iteration.
 """
@@ -235,7 +235,7 @@ def extract_unrolled_ir(
         The ``Verifier`` holding the recorded steps.
     iterates:
         The iterate sequence, either an
-        :class:`~fomtools.iteratetrajectory.IterateTrajectory` or a plain
+        `IterateTrajectory` or a plain
         sequence of expressions. A leading entry that is the *initial* iterate is
         recognized and dropped, so both conventions work.
     config:
@@ -246,7 +246,7 @@ def extract_unrolled_ir(
         end. ``INF_NORM_CHANGE`` is rejected.
     state, params:
         Optional explicit leaf lists, as for
-        :func:`~fomtools.codegen.extract.extract_ir`.
+        `extract_ir`.
     dedup:
         Merge coefficient blocks holding identical numbers.
     check:
@@ -269,7 +269,7 @@ def extract_unrolled_ir(
         Either a rolled IR (``unrolled`` false, the recorded horizon in
         ``termination.max_iters``), or an unrolled one whose body holds the whole
         run in dependency order with ``state_update`` producing the answer.
-        :attr:`~fomtools.codegen.ir.FomIR.unrolled` says which.
+        `unrolled` says which.
     """
     config = config or CodegenConfig()
     _require_supported_termination(config)

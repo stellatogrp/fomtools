@@ -12,9 +12,9 @@ class Box(Polyhedron):
     r"""
     The axis-aligned box $\{x : l \le x \le u\}$ (element-wise).
 
-    A :class:`~fomtools.sets.polyhedron.Polyhedron` specialization that projects by
+    A `Polyhedron` specialization that projects by
     element-wise clipping; backed by
-    :class:`~fomtools.proxable_functions.ind_box.IndBox`.
+    `IndBox`.
 
     Parameters
     ----------
@@ -38,11 +38,11 @@ class NonNegative(Box):
     r"""
     The non-negative orthant $\{x : x \ge 0\}$, i.e. the box $[0, +\infty)$.
 
-    A parameterless :class:`Box` specialization (``l = 0``, ``u = +\infty``); backed by
-    :class:`~fomtools.proxable_functions.ind_nonnegative.IndNonNegative`, which projects
+    A parameterless `Box` specialization (``l = 0``, ``u = +\infty``); backed by
+    `IndNonNegative`, which projects
     via a single ReLU (more efficient than the generic box/polyhedron path). The box
-    bounds are stored for the inherited :class:`Box`/:class:`Polyhedron` contract but are
-    not used by :meth:`indicator`.
+    bounds are stored for the inherited `Box`/`Polyhedron` contract but are
+    not used by `indicator`.
     """
 
     def __init__(self):
@@ -59,9 +59,9 @@ class NonPositive(Box):
     r"""
     The non-positive orthant $\{x : x \le 0\}$, i.e. the box $(-\infty, 0]$.
 
-    A parameterless :class:`Box` specialization (``l = -\infty``, ``u = 0``); backed by
-    :class:`~fomtools.proxable_functions.ind_nonpositive.IndNonPositive`. The box bounds
-    are stored for the inherited contract but are not used by :meth:`indicator`.
+    A parameterless `Box` specialization (``l = -\infty``, ``u = 0``); backed by
+    `IndNonPositive`. The box bounds
+    are stored for the inherited contract but are not used by `indicator`.
     """
 
     def __init__(self):
@@ -78,7 +78,7 @@ class Point(Box):
     r"""
     The singleton $\{p\}$ (a degenerate box with $l = u = p$).
 
-    Backed by :class:`~fomtools.proxable_functions.ind_point.IndPoint`; projection
+    Backed by `IndPoint`; projection
     is the constant map $x \mapsto p$.
 
     Parameters

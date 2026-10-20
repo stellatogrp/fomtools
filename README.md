@@ -132,11 +132,26 @@ Optional extras:
 | `codegen`  | LLM coding-agent backends for code generation      |
 | `cvxpygen` | CVXPYgen integration                               |
 | `nn`       | Neural-network verification (PyTorch, JAX, Flax)   |
+| `all`      | All of the above (GPU packages skipped on macOS)   |
 | `dev`      | Development tools                                  |
 | `docs`     | Documentation build dependencies                   |
 
 For example, `pip install "fomtools[gurobi,codegen]"`, or
-`pip install -e ".[gurobi,codegen]"` from source.
+`pip install -e ".[gurobi,codegen]"` from source. Use `pip install "fomtools[all]"`
+to install every optional feature.
+
+### Agent skill
+
+FOMTools ships an [Agent Skill](https://agentskills.io/) in
+[`skills/fomtools`](skills/fomtools/SKILL.md) that teaches coding agents (Claude
+Code, Codex, Cursor, and others) the FOMTools API. Install it with the
+[`skills` CLI](https://github.com/vercel-labs/skills) (requires Node.js):
+
+```bash
+npx skills add stellatogrp/fomtools -g
+```
+
+See [Get started](https://stellatogrp.github.io/fomtools/get_started/) for details.
 
 FOMTools is not a solver. It relies on mathematical programming solvers such as
 [HiGHS](https://highs.dev) (the default) and [Gurobi](https://www.gurobi.com) to solve

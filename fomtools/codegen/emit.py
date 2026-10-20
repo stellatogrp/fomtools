@@ -1,4 +1,4 @@
-"""Scaffold an emitted-solver directory from a :class:`FomIR`.
+"""Scaffold an emitted-solver directory from a `FomIR`.
 
 This writes every deterministic artifact (ABI header, numeric data, verify
 harness, build files, Python wrapper) but *not* the solver body
@@ -24,7 +24,7 @@ def scaffold(
 ) -> TargetDescriptor:
     """Write the deterministic skeleton for ``ir`` into ``out_dir``.
 
-    Returns the :class:`TargetDescriptor` used (so callers can find the verify
+    Returns the `TargetDescriptor` used (so callers can find the verify
     command and the solver-source path).
     """
     config = config or CodegenConfig()

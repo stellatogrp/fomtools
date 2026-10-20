@@ -5,30 +5,47 @@ from fomtools.proxable_functions import ProxableFunction
 
 class IndHalfSpace(ProxableFunction):
     r"""
-    Indicator of the closed half-space $\{x \in \mathbb{R}^n : a^\top x \le b\}$.
+    Indicator of the closed half-space $\{x : a^\top x \le b\}$.
 
     Represents
 
     $$
-        I_{\{a^\top x \le b\}}(x) = \begin{cases}
+        f(x) = I_{\{a^\top x \le b\}}(x) = \begin{cases}
             0       & \text{if } a^\top x \le b \\
             +\infty & \text{otherwise.}
         \end{cases}
     $$
 
-    The defining vector ``a`` must be nonzero; otherwise the half-space
-    is either all of $\mathbb{R}^n$ (when $b \ge 0$) or empty (when
-    $b < 0$), and the projection denominator $\|a\|^2$ vanishes.
+    Parameters
+    ----------
+    a : np.ndarray
+        Nonzero normal vector of shape ``(n,)``. (For $a = 0$ the set would be
+        all of $\mathbb{R}^n$ or empty, and the projection is undefined.)
+    b : float
+        Offset.
+
+    Raises
+    ------
+    ValueError
+        If ``a`` is the zero vector.
+
+    See Also
+    --------
+    IndPolyhedral : Intersection of several half-spaces $\{Ax \le b\}$.
 
     Notes
     -----
-    The proximal operator is the Euclidean projection onto the half-space:
+    **Proximal operator.** The Euclidean projection onto the half-space,
 
     $$
-        \operatorname{prox}_{\gamma I}(v) \;=\; v - \frac{\max(0,\, a^\top v - b)}{\|a\|^2}\, a,
+        \operatorname{prox}_{\gamma f}(v)
+        = v - \frac{\max(0,\, a^\top v - b)}{\|a\|_2^2}\, a,
     $$
 
     independent of $\gamma$.
+
+    **Verification lowering.** ``prox_indhalfspace`` posts a single scalar
+    ``Relu`` step on $(a^\top v - b)/\|a\|_2^2$ and lifts it back along $a$.
     """
 
     def __init__(self, a: np.ndarray, b: float):
@@ -43,7 +60,7 @@ class IndHalfSpace(ProxableFunction):
 
     def eval(self, x: np.ndarray) -> float:
         r"""
-        Evaluate $I_{\{a^\top x \le b\}}(x)$.
+        Evaluate $f(x) = I_{\{a^\top x \le b\}}(x)$.
 
         Parameters
         ----------
@@ -61,26 +78,32 @@ class IndHalfSpace(ProxableFunction):
 
     def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Project ``arg`` onto the half-space $\{a^\top x \le b\}$.
+        Project ``arg`` onto the half-space $\{x : a^\top x \le b\}$.
 
-        The prox of an indicator function is the projection onto its
-        feasible set, independent of $\gamma$.
+        Computes $\text{arg} - \max(0,\, a^\top \text{arg} - b)\, a / \|a\|_2^2$.
 
         Parameters
         ----------
         arg : np.ndarray
             Input point.
         gamma : float, default 1.0
-            Step size (ignored for indicator functions; kept for interface
-            consistency).
+            Step size; unused, since the projection is independent of $\gamma$.
 
         Returns
         -------
         np.ndarray
-            The projection $\text{arg} - \max(0, a^\top\text{arg} - b)/\|a\|^2 \cdot a$.
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{arg})$.
         """
         excess = max(0.0, float(np.dot(self.a, arg)) - self.b)
         return arg - (excess / self._norm_a_sq) * self.a
 
     def grad(self, x: np.ndarray) -> np.ndarray:
+        """
+        Not defined: indicator functions are not differentiable.
+
+        Raises
+        ------
+        NotImplementedError
+            Always.
+        """
         raise NotImplementedError("Indicator functions are not differentiable.")

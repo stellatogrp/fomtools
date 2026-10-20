@@ -17,13 +17,13 @@ and try again.
 To inspect the available skills before installing them, run:
 
 ```bash
-npx skills add stellatogrp/algo_verify --list
+npx skills add stellatogrp/fomtools --list
 ```
 
 Install the skill globally so it is available across projects:
 
 ```bash
-npx skills add stellatogrp/algo_verify -g
+npx skills add stellatogrp/fomtools -g
 ```
 
 The installer detects supported agents and asks where to install the skill.

@@ -3,7 +3,7 @@
 These dataclasses describe *what* the user wants generated (target language,
 embedded vs. large-scale, termination criterion, numerical dtype) without
 touching the algorithm-specific intermediate representation, which lives in
-:mod:`fomtools.codegen.ir`.
+`fomtools.codegen.ir`.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ class TerminationKind(str, Enum):
     additionally stops early once ``||x_k - x_{k-1}||_inf <= tol``.
 
     ``OBJECTIVE`` stops early once the *verification objective* ``r^k`` -- the
-    performance metric set with :meth:`~fomtools.verifier.Verifier.set_objective_norm`,
+    performance metric set with `set_objective_norm`,
     e.g. a fixed-point or KKT residual, in the norm it was set with -- is at most
     ``tol``. The stopping test is then exactly the certified quantity: if
     verification shows ``r^K <= tol`` over the whole parameter set, the generated
@@ -99,21 +99,21 @@ _TOL_KINDS = (TerminationKind.INF_NORM_CHANGE, TerminationKind.OBJECTIVE)
 class TerminationSpec(BaseModel):
     """Termination criterion for the generated solve loop.
 
-    Parameters
+    Attributes
     ----------
-    kind:
+    kind : TerminationKind
         Fixed iteration count, infinity-norm change, or the verification
         objective, each with early exit except the first.
-    max_iters:
+    max_iters : int
         Hard upper bound on iterations. Always required: embedded targets size
         their (static) iteration accounting from it and every loop needs a guard.
-    tol:
+    tol : float or None
         Tolerance for the ``INF_NORM_CHANGE`` and ``OBJECTIVE`` criteria. Ignored
         for ``MAX_ITERS``. Must be positive when the criterion uses it. For
         ``OBJECTIVE`` it bounds the verification objective as the verifier defines
         it, so with a 2-norm objective (``ord=2``) it bounds the SQUARED norm:
         ``tol=1e-6`` stops once ``||r||_2 <= 1e-3``, not ``1e-6``.
-    check_termination:
+    check_termination : int
         How often the criterion is evaluated (the name and semantics follow
         OSQP's setting): ``N`` checks every ``N`` iterations (residual computed
         only then), ``0`` disables early exit. Ignored for ``MAX_ITERS``.
@@ -203,30 +203,42 @@ class TerminationSpec(BaseModel):
 class CodegenConfig(BaseModel):
     """Top-level knobs controlling a code-generation run.
 
-    Parameters
+    Attributes
     ----------
-    version:
+    version : Version
         Embedded (no malloc / division-light) or large-scale.
-    backend:
+    backend : Backend
         Target language. ``CUDA`` / ``OPENMP`` are only meaningful with
         ``version == LARGE_SCALE``; ``C`` pairs with ``EMBEDDED``.
-    termination:
+    termination : TerminationSpec
         Loop termination criterion.
-    dtype:
+    solve_method : SolveMethod
+        Linear-system solution strategy. ``AUTO`` selects an appropriate
+        direct or iterative method from the version, backend, and problem size.
+    dtype : {"float64", "float32"}
         Floating-point type emitted in the C ABI (``"float64"`` or
         ``"float32"``). Large-scale GPU backends commonly prefer ``float32``.
-    tol_verify:
+    tol_verify : float or None
         Tolerance used by the equivalence harness when comparing generated-code
         output against the Python reference oracle. When left unset it defaults
         by dtype (1e-6 for float64, 1e-4 for float32, since single precision
         cannot meet a 1e-6 gate); set it explicitly to override.
-    num_verify_samples:
+    num_verify_samples : int
         Number of random parameter instances drawn for the golden verify data.
-    seed:
+    seed : int
         RNG seed for reproducible verify-sample generation.
-    cg_auto_min_dim:
+    agent_timeout_s : int
+        Wall-clock budget, in seconds, for the translation phase, shared by
+        all of its agent attempts. Default 600.
+    agent_optimize_max_turns : int
+        Turn budget for one coding-agent attempt at the code optimization
+        phase. Default 200.
+    agent_optimize_timeout_s : int
+        Wall-clock budget, in seconds, for the code optimization phase.
+        Default 7200.
+    cg_auto_min_dim : int
         Dimension threshold for the ``AUTO`` → CG upgrade on the large-scale
-        CUDA backend (see :class:`SolveMethod`). Raise it to keep more systems
+        CUDA backend (see `SolveMethod`). Raise it to keep more systems
         on a direct factorization; lower it to prefer CG for smaller SPD
         systems. Ignored for non-CUDA backends and explicit solve methods.
     """

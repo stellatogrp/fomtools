@@ -25,7 +25,7 @@ class OBBTHandler(Canonicalizer):
     Attributes
     ----------
     solver : Solver
-        A ready-to-use instance of a subclass of :class:`Solver`
+        A ready-to-use instance of a subclass of `Solver`
         (e.g., ``gurobi.Gurobi()``).
     crossing_tol : float
         Largest relative crossing ``min > max`` of an OBBT bound pair treated as
@@ -38,7 +38,7 @@ class OBBTHandler(Canonicalizer):
 
     def __init__(self, solver: str, solver_params: dict = None, crossing_tol: float = 1e-6):
         """
-        Initialize an instance of :class:`OBBTHandler`.
+        Initialize an instance of `OBBTHandler`.
 
         Parameters
         ----------
@@ -232,7 +232,7 @@ class OBBTHandler(Canonicalizer):
     # ------------------------------------------------------------------
 
     def _add_binary_free(self, constraints: List[Constraint]) -> None:
-        """Check the constraints are binary-free, then add them to the LP."""
+        """Check that the constraints are binary-free, then add them to the LP."""
         if not all(is_binary_free(c) for c in constraints):
             raise ValueError("OBBT handler received a constraint involving a binary variable")
         self.add_constraints(constraints)
@@ -241,7 +241,7 @@ class OBBTHandler(Canonicalizer):
         """
         Add the affine equality ``output_mat @ output == arg`` to the OBBT LP.
 
-        ``output_mat`` is a documented attribute of the :class:`Affine` step
+        ``output_mat`` is a documented attribute of the `Affine` step
         interface; this mirrors ``MIP.canonicalize_affine`` exactly (both rely
         on the same equality), so the two stay consistent if ``Affine`` is
         refactored.

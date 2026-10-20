@@ -785,13 +785,13 @@ def stack(exprs: list[LinearExpression]) -> LinearExpression:
 
 def solve_linexpr(M, expr: LinearExpression) -> LinearExpression:
     r"""
-    Build a ``LinearExpression`` representing :math:`M^{-1}\,\text{expr}`
-    without forming :math:`M^{-1}` explicitly.
+    Build a ``LinearExpression`` representing $M^{-1}\,\text{expr}$
+    without forming $M^{-1}$ explicitly.
 
     Each leaf coefficient and the constant are computed via
     ``np.linalg.solve(M, ...)`` (dense ``M``) or an LU-factorized
     ``splu.solve(...)`` (sparse ``M``) — the same pattern as
-    :attr:`fomtools.steps.affine.Affine.output_mat_inverse`.
+    `fomtools.steps.affine.Affine.output_mat_inverse`.
 
     The returned ``LinearExpression`` is intended for **interval-propagating
     bounds through an implicit inverse**; it should not be registered with

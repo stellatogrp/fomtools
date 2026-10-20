@@ -12,9 +12,9 @@ from fomtools.steps.step import Step
 
 class Canonicalizer:
     """
-    A base class for mathematical-optimization methods. This class
-    defines a common interface for mixed-integer programming (MIP),
-    and semidefinite programming (SDP).
+    A base class for mathematical-optimization canonicalizers. This class
+    defines a common interface for mixed-integer programming (MIP)
+    and semidefinite programming (SDP) encodings.
 
     Subclasses declare a class-level ``_CANONICALIZERS`` dict mapping the
     lowercase step class name (e.g. ``"relu"``) to the function that
@@ -24,7 +24,7 @@ class Canonicalizer:
     Attributes
     ----------
     solver: Solver
-        A ready-to-use instance of a subclass of :class:`Solver`
+        A ready-to-use instance of a subclass of `Solver`
         (e.g., ``gurobi.Gurobi()``).
 
     """
@@ -33,7 +33,7 @@ class Canonicalizer:
 
     def __init__(self, solver_params: dict = None, solver: str = "highs"):
         """
-        Initialize an instance of :class:`Method`.
+        Initialize an instance of `Canonicalizer`.
 
         Parameters
         ----------
@@ -43,8 +43,9 @@ class Canonicalizer:
 
         solver: str, default "gurobi"
             Case-insensitive identifier for the solver to use. Supported
-            values (and common aliases) include:
+            values and common aliases include:
             - ``"gurobi"``, ``"grb"``
+            - ``"highs"``
         """
         self.solver_params = solver_params
         self.obbt_handler = None
@@ -75,7 +76,7 @@ class Canonicalizer:
         Returns
         -------
         Solver
-            A ready-to-use instance of a subclass of :class:`Solver`
+            A ready-to-use instance of a subclass of `Solver`
             (e.g., ``gurobi.Gurobi()``).
 
         Raises
@@ -124,7 +125,7 @@ class Canonicalizer:
 
         Parameters
         ----------
-        var : LinearExpression
+        iterate : LinearExpression
             Linear expression object to add to the canonicalizer.
 
         Raises
@@ -231,7 +232,7 @@ class Canonicalizer:
         Parameters
         ----------
         expr_list : list[LinearExpression]
-            List of expressions whose infinity-norm maximum is the objective.
+            List of expressions whose maximum absolute value is the objective.
         lb : np.ndarray, optional
             Lower bounds for the expressions (may be used by some backends).
         ub : np.ndarray, optional

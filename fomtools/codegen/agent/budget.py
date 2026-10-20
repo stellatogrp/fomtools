@@ -1,7 +1,7 @@
 """Wall-clock budget for one agent phase, enforced turn by turn through SDK hooks.
 
 The in-process Claude SDK has no wall-clock limit of its own, only a turn cap,
-and a single turn can run a long benchmark. A :class:`TimeBudget` instead checks
+and a single turn can run a long benchmark. A `TimeBudget` instead checks
 the clock around every tool call, through the SDK's public hook API
 (``ClaudeAgentOptions(hooks=...)``):
 

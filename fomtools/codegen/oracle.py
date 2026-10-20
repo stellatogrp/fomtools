@@ -2,16 +2,16 @@
 
 Three evaluators live here:
 
-* :class:`ReferenceOracle` runs the **rolled** loop directly from a
-  :class:`~fomtools.codegen.ir.FomIR`. This is the truth that emitted C code is
+* `ReferenceOracle` runs the **rolled** loop directly from a
+  `FomIR`. This is the truth that emitted C code is
   compared against by the verify harness.
-* :func:`run_faithful` runs the same loop straight from the ``Verifier``'s step
+* `run_faithful` runs the same loop straight from the ``Verifier``'s step
   objects (solving the affine system rather than reusing its folded inverse).
   Agreement between the two validates that IR extraction preserved the algorithm.
-* :func:`run_recorded_tape` replays the verifier's **unrolled** tape once, in
+* `run_recorded_tape` replays the verifier's **unrolled** tape once, in
   recorded order. Unlike the other two it is not rolled, so it is the only thing
   here that can disagree with a wrongly-rolled IR — which makes it the ground
-  truth behind :func:`check_stationary`.
+  truth behind `check_stationary`.
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def objective_norm(values: np.ndarray, norm: str) -> float:
 
 
 class ReferenceOracle:
-    """Rolled NumPy executor of a :class:`FomIR`."""
+    """Rolled NumPy executor of a `FomIR`."""
 
     def __init__(self, ir: FomIR):
         self.ir = ir
@@ -302,7 +302,7 @@ def run_recorded_tape(
     param_values:
         Maps each parameter *leaf* to its value vector.
     state, params:
-        Optional explicit leaf lists, as for :func:`run_faithful`.
+        Optional explicit leaf lists, as for `run_faithful`.
     x0:
         Optional initial state; defaults to the fixed values of the state leaves.
 
@@ -354,7 +354,7 @@ def check_stationary(
     Extraction reads one iteration and repeats it. That is only faithful if the
     algorithm really is stationary, or if whatever varies was declared as a
     schedule. This compares the rolled trajectory against
-    :func:`run_recorded_tape` over the recorded horizon and raises if they part
+    `run_recorded_tape` over the recorded horizon and raises if they part
     company.
 
     Raises
@@ -432,8 +432,8 @@ def check_unrolled(
     The unrolled body is the whole run, so only its *final* state is comparable
     with the tape; the intermediate iterates are temporaries rather than states.
 
-    Unlike :func:`check_stationary`, this needs nothing from the caller:
-    ``param_values`` defaults to :func:`sample_param_values`. That is why the
+    Unlike `check_stationary`, this needs nothing from the caller:
+    ``param_values`` defaults to `sample_param_values`. That is why the
     unrolled path can gate itself unconditionally where the rolled path has to
     warn when it was given no data to check with.
 

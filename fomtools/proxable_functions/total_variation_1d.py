@@ -3,6 +3,7 @@ import warnings
 import cvxpy as cp
 import numpy as np
 
+from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import ProxableFunction
 
 _SHORT_SIGNAL_MSG = (
@@ -13,8 +14,17 @@ _SHORT_SIGNAL_MSG = (
 
 def diff_matrix(n: int) -> np.ndarray:
     r"""
-    First-difference operator :math:`D \in \mathbb{R}^{(n-1) \times n}`,
-    with :math:`(Dx)_i = x_{i+1} - x_i`.
+    Build the first-difference operator $D$, with $(Dx)_i = x_{i+1} - x_i$.
+
+    Parameters
+    ----------
+    n : int
+        Signal length.
+
+    Returns
+    -------
+    np.ndarray
+        The matrix $D \in \mathbb{R}^{(n-1) \times n}$.
     """
     D = np.zeros((n - 1, n))
     rows = np.arange(n - 1)
@@ -25,26 +35,57 @@ def diff_matrix(n: int) -> np.ndarray:
 
 class TotalVariation1D(ProxableFunction):
     r"""
-    Proximal operator of the 1-D total-variation penalty
-    :math:`f(x) = \lambda \|Dx\|_1 = \lambda \sum_i |x_{i+1} - x_i|`.
+    1-D total variation.
 
-    The prox is the 1-D fused-lasso signal approximator
+    Represents
 
     $$
-        \operatorname{prox}_{\gamma f}(v)
-        = \arg\min_x\ \tfrac12\|x - v\|_2^2 + \gamma\lambda\|Dx\|_1,
+        f(x) = \lambda \|Dx\|_1 = \lambda \sum_i |x_{i+1} - x_i|,
     $$
 
-    lowered for verification (``prox_totalvariation1d``) via the KKT system
-    ``x = v - Dᵀu``, ``Dx = z⁺ - z⁻``, ``0 ≤ (γλ ∓ u) ⊥ z^{±} ≥ 0``.
+    where $D$ is the first-difference operator (see ``diff_matrix``). Convex
+    and piecewise linear.
 
     Parameters
     ----------
-    lambd : float or LinearExpression
-        Non-negative scalar weight, or a dim-1 ``LinearExpression`` parameter.
+    lambd : float or LinearExpression, default 1.0
+        Weight $\lambda \ge 0$, or a dim-1 ``LinearExpression`` treated as a
+        parameter by the verification lowering.
+
+    Raises
+    ------
+    ValueError
+        If ``lambd`` is negative, or a ``LinearExpression`` ``lambd`` is not
+        dim-1.
+
+    See Also
+    --------
+    NormL1 : The case $D = I$.
+
+    Notes
+    -----
+    **Proximal operator.** The 1-D fused-lasso signal approximator,
+
+    $$
+        \operatorname{prox}_{\gamma f}(v)
+        = \arg\min_x\ \tfrac{1}{2}\|x - v\|_2^2 + \gamma\lambda\|Dx\|_1.
+    $$
+
+    For a signal of length $n < 2$, $f \equiv 0$ and the prox is the identity.
+
+    **Verification lowering.** ``prox_totalvariation1d`` encodes the KKT system
+
+    $$
+        x = v - D^\top u,\quad Dx = z^+ - z^-,\quad
+        0 \le (\gamma\lambda - u) \perp z^+ \ge 0,\quad
+        0 \le (\gamma\lambda + u) \perp z^- \ge 0
+    $$
+
+    with complementarity constraints. All variable bounds are derived from the
+    data, so no ``dual_ub`` is needed.
     """
 
-    def __init__(self, lambd=1.0):
+    def __init__(self, lambd: float | LinearExpression = 1.0):
         super().__init__()
         if hasattr(lambd, "decomposition_dict"):  # dim-1 LinearExpression parameter
             if lambd.ndim != 1:
@@ -59,25 +100,48 @@ class TotalVariation1D(ProxableFunction):
         return float(self.lambd)
 
     def eval(self, x: np.ndarray) -> float:
-        r"""Evaluate :math:`f(x) = \lambda \sum_i |x_{i+1} - x_i|`."""
+        r"""
+        Evaluate $f(x) = \lambda \sum_i |x_{i+1} - x_i|$.
+
+        A ``LinearExpression`` ``lambd`` uses its constant value.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Point at which to evaluate the function.
+
+        Returns
+        -------
+        float
+            The function value $f(x)$.
+        """
         x = np.asarray(x, dtype=float)
         return self._lambd_value() * float(np.sum(np.abs(np.diff(x))))
 
     def prox(self, arg: np.ndarray, gamma: float = 1.0) -> np.ndarray:
         r"""
-        Compute :math:`\operatorname{prox}_{\gamma \lambda \|D\cdot\|_1}(\text{arg})`.
+        Compute $\operatorname{prox}_{\gamma f}(\text{arg})$.
+
+        Solved numerically with CVXPY (Clarabel) as an independent reference; a
+        ``LinearExpression`` ``lambd`` uses its constant value.
 
         Parameters
         ----------
         arg : np.ndarray
             Input signal.
         gamma : float, default 1.0
-            Step size.
+            Step size $\gamma > 0$.
 
         Returns
         -------
         np.ndarray
-            The proximal point.
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{arg})$.
+
+        Warns
+        -----
+        UserWarning
+            If ``arg`` has fewer than 2 entries; ``arg`` is then returned
+            unchanged.
         """
         arg = np.asarray(arg, dtype=float)
         n = arg.shape[0]

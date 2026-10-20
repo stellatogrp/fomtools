@@ -1,3 +1,21 @@
+/* Keep long generated signatures inside the content column. */
+.doc-signature pre,
+.doc-signature code {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* Symbol-type badges (func / class / attr) shouldn't wrap away from the name. */
+.doc-symbol {
+  white-space: nowrap;
+}
+
+/* Parameter tables scroll rather than overflow the page on narrow screens. */
+.doc-contents .md-typeset__table {
+  display: block;
+  overflow-x: auto;
+}
+
 /* Palette matching the logo: slate + Princeton orange (light), gray-200 + sky blue (dark). */
 [data-md-color-scheme="default"] {
   --md-primary-fg-color: #2d3748;

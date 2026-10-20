@@ -26,7 +26,7 @@ sparsely (CSC) plus a diagonal Jacobi preconditioner (held as reciprocals,
 computed once offline) and reaches the solution through repeated sparse
 matrix-vector products. CG needs a few scalar divisions per iteration, so it is
 reserved for the large-scale targets (the embedded target stays division-free);
-see :class:`fomtools.codegen.config.SolveMethod`.
+see `fomtools.codegen.config.SolveMethod`.
 """
 
 from __future__ import annotations
@@ -278,7 +278,7 @@ def factorize(
         Relative-residual stopping tolerance for the ``"cg"`` method (ignored by
         the direct methods). The default ``1e-12`` suits float64; the caller
         loosens it for float32, where ``1e-12`` is below single-precision reach
-        (see :func:`fomtools.codegen.extract.extract_ir`).
+        (see `fomtools.codegen.extract.extract_ir`).
     """
     Ms = spa.csc_matrix(M, dtype=float)
     n = Ms.shape[0]
@@ -406,7 +406,7 @@ def _is_symmetric(Ms: spa.csc_matrix, symmetry_tol: float) -> bool:
 def is_spd(M, symmetry_tol: float = 1e-9) -> bool:
     """True if ``M`` is symmetric positive-definite (sparse LDL^T certificate).
 
-    A non-throwing companion to the SPD check inside :func:`_cg_factorization`,
+    A non-throwing companion to the SPD check inside `_cg_factorization`,
     used by the ``auto`` solve-method heuristic to decide whether CG is
     applicable (CG converges only on SPD systems). A quasidefinite ADMM/OSQP KKT
     matrix is symmetric *indefinite*, so this returns ``False`` for it and

@@ -6,10 +6,10 @@ class AffineSubspace(Set):
     r"""
     The affine subspace $\{x : A x = b\}$.
 
-    Backed by :class:`~fomtools.proxable_functions.ind_affine.IndAffine`, which
+    Backed by `IndAffine`, which
     projects onto the equality set in closed form. Named ``AffineSubspace`` to avoid
-    colliding with the :class:`~fomtools.steps.affine.Affine` *step*. Sits directly
-    under :class:`~fomtools.sets.set.Set` (it is an equality, not an ``Ax <= b``
+    colliding with the `Affine` *step*. Sits directly
+    under `Set` (it is an equality, not an ``Ax <= b``
     inequality polyhedron).
 
     Parameters

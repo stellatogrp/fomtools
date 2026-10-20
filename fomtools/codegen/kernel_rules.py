@@ -141,7 +141,7 @@ def _function_span(code: str, name: str) -> tuple[int, int] | None:
 
 def function_body(code: str, name: str) -> str | None:
     """The body of the C function ``name`` defined in (stripped) ``code``, or
-    ``None`` if it cannot be found (see :func:`_function_span`)."""
+    ``None`` if it cannot be found (see `_function_span`)."""
     span = _function_span(code, name)
     return None if span is None else code[span[0] : span[1]]
 
