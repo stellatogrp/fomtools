@@ -1,4 +1,7 @@
 site_name: FOM Tools
+site_url: https://stellatogrp.github.io/fomtools/
+repo_url: https://github.com/stellatogrp/fomtools
+repo_name: stellatogrp/fomtools
 nav:
   - Home: index.md
   - Installation: installation.md

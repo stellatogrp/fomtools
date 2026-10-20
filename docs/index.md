@@ -65,13 +65,22 @@ which cover applications in optimization.
 FOMTools relies on mathematical programming solvers such as Gurobi and Highs to solve the
 resulting verification problems.
 
+## Benchmarks
+
+The benchmarks and the code to reproduce the experiments in our
+[paper](https://arxiv.org/abs/2610.26743) are in a separate repository,
+[stellatogrp/fomtools_experiments](https://github.com/stellatogrp/fomtools_experiments).
+
 ## Development
 
-This repository is by Vinit Ranjan, Jisun Park, Stefano Gualandi, Andrea Lodi, Bartolomeo Stellato,
-Daniel Deza, and Anushka Acharya and contains the Python source code to reproduce experiments
-in our paper Exact Verification of First-Order Methods via Mixed-Integer Linear Programming.
+FOMTools is developed by Vinit Ranjan, Daniel Deza, Anushka Acharya, Jisun Park, and
+Bartolomeo Stellato. The mixed-integer verification builds on our earlier paper
+[Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330)
+with Stefano Gualandi and Andrea Lodi.
 
-Source Code: [https://github.com/stellatogrp/fomtools](https://github.com/stellatogrp/fomtools)
+- Source code: [github.com/stellatogrp/fomtools](https://github.com/stellatogrp/fomtools)
+- PyPI: [pypi.org/project/fomtools](https://pypi.org/project/fomtools/)
+- Installation: see [Installation](installation.md)
 
 ## Returned bounds and numerical checks
 

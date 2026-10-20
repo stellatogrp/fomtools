@@ -1,7 +1,15 @@
 FOMTools
 ========
 
+[![PyPI](https://img.shields.io/pypi/v/fomtools.svg)](https://pypi.org/project/fomtools/)
+[![Docs](https://img.shields.io/badge/docs-stellatogrp.github.io%2Ffomtools-blue.svg)](https://stellatogrp.github.io/fomtools/)
+
 **Development, analysis, and code generation for first-order methods.**
+
+[Documentation](https://stellatogrp.github.io/fomtools/) |
+[PyPI](https://pypi.org/project/fomtools/) |
+[Paper](https://arxiv.org/abs/2610.26743) |
+[Benchmarks](https://github.com/stellatogrp/fomtools_experiments)
 
 FOMTools is an open-source Python package for developing, analyzing, and deploying
 first-order methods for parametric linear and convex quadratic optimization. You write the
@@ -60,7 +68,7 @@ for k in range(K):
 
 Steps can also be written with proximal operators and projections, e.g.,
 `VP.prox(NormL1(lambd), v, eta)` or `VP.project(Box(l, u), v)`. See the
-[documentation](https://github.com/stellatogrp/fomtools/tree/main/docs) for the full list of proxable functions and sets.
+[documentation](https://stellatogrp.github.io/fomtools/) for the full list of proxable functions and sets.
 
 ## Beyond worst-case verification
 
@@ -132,9 +140,14 @@ the verification problems it builds.
 
 ## Examples
 
-The [tutorials](https://github.com/stellatogrp/fomtools/tree/main/docs/tutorials) cover sparse coding (Lasso), nonnegative least squares,
-network optimization, optimal control, and portfolio rebalancing. Code to reproduce the
-experiments in our [paper](https://arxiv.org/abs/2610.26743) is available at
+The [tutorials](https://stellatogrp.github.io/fomtools/tutorials/) cover sparse coding (Lasso), nonnegative least squares,
+network optimization, optimal control, and portfolio rebalancing.
+
+## Benchmarks
+
+The benchmarks and the code to reproduce the experiments in our
+[paper](https://arxiv.org/abs/2610.26743) (verification, simulation, and code generation on
+CPU and GPU) are in a separate repository,
 [stellatogrp/fomtools_experiments](https://github.com/stellatogrp/fomtools_experiments).
 
 ## Contributing
