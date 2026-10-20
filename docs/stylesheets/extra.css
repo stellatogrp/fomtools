@@ -1,29 +1,52 @@
 /* Palette matching the logo: slate + Princeton orange (light), gray-200 + sky blue (dark). */
 [data-md-color-scheme="default"] {
-  --md-primary-fg-color: #ffffff;
-  --md-primary-fg-color--light: #ffffff;
-  --md-primary-fg-color--dark: #f3f4f6;
-  --md-primary-bg-color: #2d3748;
-  --md-primary-bg-color--light: #2d3748b3;
-  --md-accent-fg-color: #e77500;
-  --md-typeset-a-color: #d06900;
+  --md-primary-fg-color: #2d3748;
+  --md-primary-fg-color--light: #4a5568;
+  --md-primary-fg-color--dark: #1a202c;
+  --md-primary-bg-color: #ffffff;
+  --md-primary-bg-color--light: #ffffffb3;
+  --md-accent-fg-color: #9a4d00;
+  --md-accent-fg-color--transparent: #b35a001a;
+  --md-typeset-a-color: #b35a00;
 }
 
 [data-md-color-scheme="slate"] {
   --md-hue: 221;
   --md-default-bg-color: #111827;
-  --md-primary-fg-color: #111827;
-  --md-primary-fg-color--light: #1f2937;
-  --md-primary-fg-color--dark: #0b1220;
-  --md-primary-bg-color: #e5e7eb;
-  --md-primary-bg-color--light: #e5e7ebb3;
+  --md-primary-fg-color: #e5e7eb;
+  --md-primary-fg-color--light: #f3f4f6;
+  --md-primary-fg-color--dark: #d1d5db;
+  --md-primary-bg-color: #111827;
+  --md-primary-bg-color--light: #111827b3;
   --md-accent-fg-color: #38bdf8;
+  --md-accent-fg-color--transparent: #38bdf81a;
   --md-typeset-a-color: #00a6f4;
 }
 
-/* Swap the header icon for the dark-mode variant. */
-[data-md-color-scheme="slate"] .md-header__button.md-logo img {
-  content: url("../assets/logo/icon-dark.svg");
+/* Header and drawer title: page-colored bar with ink-colored text and icons. */
+[data-md-color-scheme="default"] .md-header,
+[data-md-color-scheme="default"] .md-nav__title[for="__drawer"],
+[data-md-color-scheme="default"] .md-nav__source {
+  --md-primary-fg-color: #ffffff;
+  --md-primary-fg-color--dark: #f3f4f6;
+  --md-primary-bg-color: #2d3748;
+  --md-primary-bg-color--light: #2d3748b3;
+}
+
+[data-md-color-scheme="slate"] .md-header,
+[data-md-color-scheme="slate"] .md-nav__title[for="__drawer"],
+[data-md-color-scheme="slate"] .md-nav__source {
+  --md-primary-fg-color: #111827;
+  --md-primary-fg-color--dark: #1f2937;
+  --md-primary-bg-color: #e5e7eb;
+  --md-primary-bg-color--light: #e5e7ebb3;
+}
+
+/* Show only the active scheme's icon in the header and drawer (the drawer logo overrides Material's
+   #only-light / #only-dark rules). */
+[data-md-color-scheme="default"] .md-logo img[src$="#only-dark"],
+[data-md-color-scheme="slate"] .md-logo img[src$="#only-light"] {
+  display: none;
 }
 
 /* Light search field on the white header. */
@@ -37,16 +60,8 @@
   }
 }
 
-/* Home page: show the lockup in place of the plain-text title. */
-.md-typeset h1.fomtools-title {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-}
-
+/* Home page: the lockup is the h1. */
 .md-typeset img.fomtools-logo {
-  height: 4.5rem;
-  margin: 0.5rem 0 1rem;
+  width: min(22rem, 100%);
+  height: auto;
 }
