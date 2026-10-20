@@ -6,8 +6,7 @@ on:
     paths:
       - 'docs/**'
       - 'fomtools/**'
-      - 'CLAUDE.md'
-      - '.claude/CLAUDE.md'
+      - 'AGENTS.md'
 
 permissions:
   contents: write
