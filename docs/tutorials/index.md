@@ -3,6 +3,8 @@
 These tutorials show many different ways to use FOMTools, following the same path
 a project usually takes: verify a first-order method, generate a fast
 implementation of it, and then drive that implementation from a CVXPY model.
+The notebooks are [marimo](https://marimo.io) files; their sources are in
+[`docs/tutorials` on GitHub](https://github.com/stellatogrp/fomtools/tree/main/docs/tutorials).
 
 ## Sections
 

@@ -78,9 +78,8 @@ jobs:
       - name: Build MkDocs site
         run: mkdocs build --strict
 
-      - name: Deploy to Cloudflare Pages with Wrangler
-        uses: cloudflare/wrangler-action@v4.0.0
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
+      # Pull requests only build the site; pushes to main publish it to the gh-pages
+      # branch, which GitHub Pages serves at https://stellatogrp.github.io/fomtools/
+      - name: Deploy to GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: mkdocs gh-deploy --force

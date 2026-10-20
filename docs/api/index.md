@@ -14,6 +14,9 @@ quantity of interest as [linear expressions](linearexpression.md) and
 or semidefinite program that a [solver](solvers.md) solves to obtain a
 worst-case bound.
 
+The source code of every module is in the
+[`fomtools` package on GitHub](https://github.com/stellatogrp/fomtools/tree/main/fomtools).
+
 ## Modules
 
 * **[Verifier](verifier.md)** holds the
