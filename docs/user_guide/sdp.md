@@ -24,7 +24,7 @@ vp = ft.Verifier(method="sdp", solver="clarabel", obbt_solver=None)
 
 Use `solver="cvxpy"` to solve the relaxation through CVXPY instead, or
 `solver="cuclarabel"` on a GPU (this needs Julia, Clarabel.jl with CUDA, and
-`juliacall`; see [Installation](../installation.md)). ReLU steps are supported directly;
+`juliacall`; see [Get started](../get_started.md#optional-dependencies)). ReLU steps are supported directly;
 soft-thresholding and saturated linear steps are represented through equivalent ReLU
 decompositions.
 

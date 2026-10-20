@@ -8,7 +8,6 @@ app = marimo.App(width="medium")
 def _():
     import statistics
     import sys
-    import textwrap
     import time
     from pathlib import Path
 
@@ -48,16 +47,17 @@ def _():
         run_codegen_benchmark,
         solve_admm_numpy,
         statistics,
-        textwrap,
         timing_file,
         time,
     )
 
 
 @app.cell(hide_code=True)
-def _(mo, textwrap):
-    mo.md(textwrap.dedent(r"""
+def _(mo):
+    mo.md(r"""
     # Optimal Control: Python vs Codegen
+
+    [Back to the code generation tutorials](./)
 
     In this tutorial we benchmark a small finite-horizon control problem for a linear dynamical system.
     The solver uses the alternating direction method of multipliers: each iteration solves a small linear system, projects onto box constraints, and updates the auxiliary variables.
@@ -66,17 +66,15 @@ def _(mo, textwrap):
     The ADMM step and NumPy reference solver are shared with the [control verification tutorial](../verification/control.html).
     The generated C is timed after code generation, then timed again after the C-editing optimization pass.
     """)
-    )
     return
 
 
 @app.cell(hide_code=True)
-def _(mo, textwrap):
-    mo.md(textwrap.dedent(r"""
+def _(mo):
+    mo.md(r"""
     We fix the initial state, input bounds, prediction horizon, and quadratic costs.
     Both implementations run the same update rule for the same number of iterations.
     """)
-    )
     return
 
 

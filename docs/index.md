@@ -3,6 +3,9 @@
 FOMTools is a Python package that provides tools to verify the performance
 of first-order iterative methods applied on parametric quadratic optimization.
 
+To install the package and the FOMTools agent skill for coding agents, see
+[Get started](get_started.md).
+
 ## Quick Start
 
 This example uses the default open-source HiGHS solver to verify the behavior of projected
@@ -78,53 +81,19 @@ mixed-integer optimization.
 
 Beyond this example, FOMTools supports verification of a wide range of iterative methods,
 including projected gradient methods, proximal operators, and algorithms with nonlinearities.
-For a guided introduction, see the [FOMTools tutorials](tutorials/index.md) and the
-[example gallery](tutorials/verification.md), which cover applications in optimization.
+For a guided introduction, see the [FOMTools tutorials](tutorials/index.md), which cover
+[verification](tutorials/verification.md) and [code generation](tutorials/codegen.md)
+examples from optimization and control.
 
-FOMTools relies on mathematical programming solvers such as Gurobi and Highs to solve the
+FOMTools relies on mathematical programming solvers such as HiGHS (the default) and Gurobi to solve the
 resulting verification problems.
-
-## Benchmarks
-
-The benchmarks and the code to reproduce the experiments in our
-[paper](https://arxiv.org/abs/2610.26743) are in a separate repository,
-[stellatogrp/fomtools_experiments](https://github.com/stellatogrp/fomtools_experiments).
-
-## Development
-
-FOMTools is developed by Vinit Ranjan, Daniel Deza, Anushka Acharya, Jisun Park, and
-Bartolomeo Stellato. The mixed-integer verification builds on our earlier paper
-[Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330)
-with Stefano Gualandi and Andrea Lodi.
-
-- Source code: [github.com/stellatogrp/fomtools](https://github.com/stellatogrp/fomtools)
-- PyPI: [pypi.org/project/fomtools](https://pypi.org/project/fomtools/)
-- Installation: see [Installation](installation.md)
-
-## Citing
-
-If you use FOMTools for published work, we encourage you to cite our
-[paper](https://arxiv.org/abs/2610.26743):
-
-```bibtex
-@article{ranjan2026fomtools,
-  title   = {{FOMTools}: Development and {AI}-Assisted Code Generation for First-Order Methods},
-  author  = {Ranjan, Vinit and Deza, Daniel and Acharya, Anushka and Park, Jisun and Stellato, Bartolomeo},
-  journal = {arXiv preprint arXiv:2610.26743},
-  year    = {2026},
-}
-```
-
-The mixed-integer verification method is described in
-[Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330).
 
 ## Returned bounds and numerical checks
 
 `solve()` returns a finite MIP best bound, including after a time limit when one
 is available. It raises `RuntimeError` for unusable termination states or missing
-bounds. An incumbent is a feasible example and is available separately through
-`vp.canonicalizer._solved_copy["objVal"]`; its native status is available through
-`["status"]`. `get_solution_value` requires an incumbent.
+bounds. An incumbent is a feasible example. There is no public accessor for it yet; the internal
+`vp.canonicalizer._solved_copy["objVal"]` holds its value and `["status"]` its native status. `get_solution_value` requires an incumbent.
 
 SDP solves ([experimental](user_guide/sdp.md)) require an accurate optimal termination and return the dual objective.
 Inaccurate, infeasible, unbounded, and early terminations raise `RuntimeError`.
@@ -144,3 +113,37 @@ successive infinity-norm difference from the reference to the target over the sa
 family. Do not pass a final-step bound alone, an incumbent, or a sample maximum.
 Generated-code checks likewise compare sampled numerical executions and do not
 prove floating-point equivalence for all inputs.
+
+## Benchmarks
+
+The benchmarks and the code to reproduce the experiments in our
+[paper](https://arxiv.org/abs/2610.26743) are in a separate repository,
+[stellatogrp/fomtools_experiments](https://github.com/stellatogrp/fomtools_experiments).
+
+## Development
+
+FOMTools is developed by Vinit Ranjan, Daniel Deza, Anushka Acharya, Jisun Park, and
+Bartolomeo Stellato. The mixed-integer verification builds on our earlier paper
+[Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330)
+with Stefano Gualandi and Andrea Lodi.
+
+- Source code: [github.com/stellatogrp/fomtools](https://github.com/stellatogrp/fomtools)
+- PyPI: [pypi.org/project/fomtools](https://pypi.org/project/fomtools/)
+- Installation: see [Get started](get_started.md)
+
+## Citing
+
+If you use FOMTools for published work, we encourage you to cite our
+[paper](https://arxiv.org/abs/2610.26743):
+
+```bibtex
+@article{ranjan2026fomtools,
+  title   = {{FOMTools}: Development and {AI}-Assisted Code Generation for First-Order Methods},
+  author  = {Ranjan, Vinit and Deza, Daniel and Acharya, Anushka and Park, Jisun and Stellato, Bartolomeo},
+  journal = {arXiv preprint arXiv:2610.26743},
+  year    = {2026},
+}
+```
+
+The mixed-integer verification method is described in
+[Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330).

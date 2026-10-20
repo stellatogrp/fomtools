@@ -68,6 +68,8 @@ def _(mo):
     mo.md(r"""
     # Problem setup: Network flow optimization
 
+    [Back to the verification tutorials](./)
+
     In this tutorial, we verify first-order methods for the minimum-cost network flow example from Section 4.2 of [Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330).
 
     Suppose that we are given a set of $n_s$ supply nodes and $n_d$ demand nodes, which constructs a bipartite graph with capacitated directed edges from supply nodes to demand nodes.

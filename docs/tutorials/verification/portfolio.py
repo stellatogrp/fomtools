@@ -68,6 +68,8 @@ def _(mo):
     mo.md(r"""
     # Problem setup: Portfolio optimization
 
+    [Back to the verification tutorials](./)
+
     In this tutorial, we verify an ADMM method for a mean-variance portfolio optimization problem. Given a covariance matrix $\Sigma \succeq 0$, expected return vector $\mu$, and position limit $u_{\max}$, we solve
 
     \begin{array}{ll}

@@ -68,6 +68,8 @@ def _(mo):
     mo.md(r"""
     # Problem setup: Nonnegative Least-squares (NNLS)
 
+    [Back to the verification tutorials](./)
+
     In this tutorial, we show how to use our package to verify the performance of first-order methods solving the nonnegative least-squares (NNLS) problem:
 
     \begin{array}{ll}

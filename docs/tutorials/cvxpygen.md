@@ -121,12 +121,12 @@ solver, its linear solves and its matrix-vector products for speed, and the
 rewrite is kept only if it passes verification again (including the direct
 checks of each solve and product) and is benchmarked faster. Its budget comes from `config`
 (`agent_optimize_timeout_s`, two hours by default, and `agent_optimize_max_turns`; see
-[time and turn budgets](codegen.md#time-and-turn-budgets)).
+[time and turn budgets](../user_guide/codegen.md#time-and-turn-budgets)).
 
 ## The three generation paths
 
 A builder declares which path it wants with `@fom_builder(...)`, mirroring the
-dispatch in [`generate_code`](codegen.md). Undecorated callables are `rolled`,
+dispatch in [`generate_code`](../api/codegen.md#fomtools.codegen.generate_code). Undecorated callables are `rolled`,
 so builders written against the earlier API keep working unchanged.
 
 | Path | Builder returns | Emits | Runtime settings |

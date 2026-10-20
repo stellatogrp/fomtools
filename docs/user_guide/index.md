@@ -3,7 +3,9 @@
 This user guide is a more comprehensive companion to the [Quick Start](../quick_start.md),
 covering more of FOMTools' capabilities.
 
-## [Architecture overview](../api/index.md)
+## Architecture overview
+
+API reference: [API and modules](../api/index.md).
 
 The user writes the first order method as a sequence of operations on expression objects
 that represent iterates and parameters, and that the package maintains internally as affine
@@ -14,7 +16,9 @@ the verification problem into MIP, SDP, or simulator form, and dispatches to the
 solver. The same specification also drives a code generation path, which emits standalone
 solver code for embedded and parallel targets.
 
-## [Linear expressions](../api/linearexpression.md)
+## Linear expressions
+
+API reference: [Linear expressions](../api/linearexpression.md).
 
 Internally, FOMTools represents every quantity in the verification problem as an affine
 combination $Ay + b$ of a stacked vector $y$ of leaf variables. A leaf is an expression that
@@ -25,7 +29,7 @@ sparse matrices, so the package tracks arbitrary affine combinations symbolicall
 
 ```python
 # reuse the imports and dimensions from the workflow above
-demo = ft.Verifier(method="mip", solver="gurobi")
+demo = ft.Verifier(method="mip")
 x_demo = demo.add_param(m, lb=0, ub=1)
 z0 = demo.add_iterate(n, lb=0, ub=0)
 
@@ -47,7 +51,9 @@ constraints can also be imposed on any expression through the `==`, `<=`, and `>
 operators, as above, which is useful for encoding structure in the parameter set such as a
 probability simplex.
 
-## [Choosing a backend](../api/verifier.md)
+## Choosing a backend
+
+API reference: [`Verifier`](../api/verifier.md).
 
 FOMTools supports three backends for analyzing first order methods. All use the same
 algorithm specification, but trade off exactness, cost, and scale.
@@ -63,13 +69,13 @@ description. MIP and simulation handle ReLU, soft thresholding, and saturated li
 directly. The SDP backend represents the latter two through equivalent ReLU decompositions.
 
 ```python
-# MIP: exact worst case analysis
-demo = ft.Verifier(method="mip", solver="gurobi")
+# MIP: exact worst case analysis (HiGHS by default; solver="gurobi" for Gurobi)
+demo = ft.Verifier(method="mip")
 ```
 
 ```python
 # SDP (experimental): upper bound from a semidefinite relaxation
-demo = ft.Verifier(method="sdp", solver="clarabel")
+demo = ft.Verifier(method="sdp", solver="clarabel", obbt_solver=None)
 ```
 
 ```python
@@ -80,7 +86,9 @@ demo = ft.Verifier(method="simulator", solver="numpy")
 The SDP backend is experimental; its options, such as cuts that tighten the relaxation,
 and its limitations are described in [Semidefinite relaxation (experimental)](sdp.md).
 
-## [Steps](../api/steps.md)
+## Steps
+
+API reference: [Steps](../api/steps.md).
 
 A step is a primitive operator that maps an affine input to a possibly PWA output, and is
 the unit at which the package interfaces with each backend. Affine steps, such as gradient
@@ -97,7 +105,9 @@ s_soft = demo.step.soft_threshold(z0 - eta * grad_demo, lambd=lambd * eta)
 s_box = demo.step.satlin(z0 - eta * grad_demo, l=l, u=u)
 ```
 
-## [Proxable functions](../api/proxablefunctions.md)
+## Proxable functions
+
+API reference: [Proxable functions](../api/proxablefunctions.md).
 
 A proxable function in FOMTools is a convex function $f$ whose proximal operator the
 package can encode exactly, for a step size $\gamma > 0$. The library covers 24 functions.
@@ -125,10 +135,12 @@ z_box = demo.project(Box(l, u), z0 - eta * grad_demo)
 Both entry points return an expression, so a proximal gradient step is a single line of user
 code and the decomposition into steps stays hidden.
 
-## [Objectives](../api/verifier.md#fomtools.Verifier.set_objective_norm)
+## Objectives
+
+API reference: [`set_objective_norm`](../api/verifier.md#fomtools.Verifier.set_objective_norm).
 
 The verification problem maximizes a norm of an arbitrary expression, so custom performance
-metrics can go beyond the standard fixed point residual $\lVert s^{k+1} - s^k \rVert$, including scaled
+metrics can go beyond the standard fixed point residual $\|s^{k+1} - s^k\|_\infty$, including scaled
 residuals, residuals involving the problem parameters, and distances to a reference
 expression. The package supports four objectives: the $\ell_1$ norm, the squared $\ell_2$ norm, the
 $\ell_\infty$ norm, and a zero objective for feasibility checks. The objective is set with
@@ -151,7 +163,9 @@ The list interface stacks both residual vectors and maximizes the $\ell_\infty$ 
 dual residual involves the problem parameter `x_demo` through `q`, which is permitted because the objective
 operates on arbitrary expressions.
 
-## [Fixed point encoding](../api/verifier.md#fomtools.Verifier.fixed_point)
+## Fixed point encoding
+
+API reference: [`fixed_point`](../api/verifier.md#fomtools.Verifier.fixed_point).
 
 Distance to optimality metrics require the verification problem to encode an optimal
 solution $z^\star$ of the parametric problem. For first order methods with contractive operators,
@@ -181,7 +195,9 @@ $k$th iterate and the fixed point. The bounds on $z^\star$ must hold for all par
 declared parameter set. They can be overestimated, but the tightness of both the MIP
 formulation and the SDP relaxation depends on reasonable estimates.
 
-## [Code generation](../api/codegen.md)
+## Code generation
+
+API reference: [Code generation](../api/codegen.md).
 
 The same specification that drives verification also drives code generation, so a method
 that has been verified needs no restructuring to be compiled: the program generated from is
@@ -214,7 +230,9 @@ operations, so the generated solver is fast before any optimization pass runs. T
 [code generation guide](codegen.md) covers rolling, tabulated coefficient schedules,
 termination criteria, and the emitted project layout in full.
 
-## [Implementation notes](../api/canonicalizer.md)
+## Implementation notes
+
+API reference: [Canonicalizers](../api/canonicalizer.md).
 
 The package separates the user facing front end, including expressions, steps, objectives, and
 fixed point encoding, from the backend canonicalizers and solvers. All canonicalizers

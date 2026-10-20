@@ -27,6 +27,8 @@ def _(mo):
     mo.md(r"""
     # MPC with CVXPYgen and a generated solver
 
+    [Back to the CVXPYgen tutorial](cvxpygen/)
+
     In this tutorial we model a small model predictive control (MPC) problem in CVXPY and turn it into an embedded C solver.
     [CVXPYgen](https://github.com/cvxgrp/cvxpygen) generates the code that maps the problem parameter to the data of a quadratic program, and FOMTools generates the first-order method that solves that quadratic program.
     Both end up in one C project with a Python wrapper, so the CVXPY problem can be solved through the generated code with `problem.solve(method="CPG")`.

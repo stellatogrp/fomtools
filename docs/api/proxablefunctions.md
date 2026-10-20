@@ -1,7 +1,7 @@
 # Proxable functions
 
-Proxable functions describe the function class an algorithm is verified over,
-each supplying the proximal operator and the representation needed by the
+Proxable functions are convex functions whose proximal operators can be used as
+steps, each supplying a numerical prox and the encoding needed by the
 verification problem. Use `vp.prox(function, arg, gamma=1.0)`; support varies by
 backend, and unsupported operations raise explicitly. They all derive from the
 abstract base class below.

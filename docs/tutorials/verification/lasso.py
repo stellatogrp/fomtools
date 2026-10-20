@@ -68,6 +68,8 @@ def _(mo):
     mo.md(r"""
     # Problem setup: Sparse coding
 
+    [Back to the verification tutorials](./)
+
     In this tutorial, we verify first-order methods for the sparse coding example from Section 4.1 of [Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330).
 
     Consider the following problem of recovering the signal $z_\mathrm{true}$ from its noisy measurement $x = D z_\mathrm{true} + \varepsilon \in \mathbf{R}^p$:

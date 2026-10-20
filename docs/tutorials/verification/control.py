@@ -76,6 +76,8 @@ def _(mo):
     mo.md(r"""
     # Problem setup: Constrained optimal control
 
+    [Back to the verification tutorials](./)
+
     In this tutorial, we verify an OSQP-style ADMM method for a finite-horizon constrained optimal control problem. The system has state $s_t \in \mathbf{R}^{n_s}$, input $u_t \in \mathbf{R}^{n_u}$, and initial state parameter $x$.
 
     \begin{array}{lll}

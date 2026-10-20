@@ -25,9 +25,7 @@ def is_marimo_notebook(path: Path) -> bool:
 
 def discover_notebooks(tutorials_directory: Path = TUTORIALS_DIRECTORY) -> list[Path]:
     """Discover marimo notebooks recursively in a deterministic order."""
-    return sorted(
-        path for path in tutorials_directory.rglob("*.py") if is_marimo_notebook(path)
-    )
+    return sorted(path for path in tutorials_directory.rglob("*.py") if is_marimo_notebook(path))
 
 
 def needs_export(
@@ -100,7 +98,14 @@ def export_tutorials(
 ) -> tuple[list[Path], list[Path]]:
     """Export missing or stale tutorial notebooks and return exported/skipped sources."""
     tutorials_directory = repository_root / "docs" / "tutorials"
-    dependencies = tuple(sorted(tutorials_directory.rglob("_recorded_timings.json")))
+    dependencies = tuple(
+        sorted(
+            [
+                *tutorials_directory.rglob("_recorded_timings.json"),
+                *tutorials_directory.glob("helper_functions/*.py"),
+            ]
+        )
+    )
     exported: list[Path] = []
     skipped: list[Path] = []
 
@@ -124,7 +129,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="regenerate every notebook even when its HTML is current",
     )
     args = parser.parse_args(argv)
-    exported, skipped = export_tutorials(force=args.force)
+    try:
+        exported, skipped = export_tutorials(force=args.force)
+    except TutorialExportError as error:
+        print(error, file=sys.stderr)
+        return 1
     print(f"Marimo tutorials: exported {len(exported)}; already current {len(skipped)}.")
     return 0
 

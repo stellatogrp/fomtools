@@ -5,7 +5,7 @@ repo_name: stellatogrp/fomtools
 edit_uri: edit/main/docs/
 nav:
   - Home: index.md
-  - Installation: installation.md
+  - Get started: get_started.md
   - Quick start: quick_start.md
   - User guide:
       - user_guide/index.md
@@ -24,8 +24,22 @@ nav:
   - Tutorials:
       - tutorials/index.md
       - Verification: tutorials/verification.md
-      - Code generation: tutorials/codegen.md
+      - Code generation:
+          - tutorials/codegen.md
+          - Lasso: tutorials/codegen/lasso.md
+          - Optimal control: tutorials/codegen/control.md
+          - Network flow: tutorials/codegen/network.md
+          - Nonnegative least squares: tutorials/codegen/nnls.md
+          - Portfolio: tutorials/codegen/portfolio.md
+          - Speedup results: tutorials/codegen/speedup_results.md
       - CVXPYgen integration: tutorials/cvxpygen.md
+
+# Marimo session caches, bytecode, and notebook/helper sources are not site pages.
+exclude_docs: |
+  __marimo__/
+  __pycache__/
+  tutorials/**/*.py
+
 theme:
   name: material
   features:

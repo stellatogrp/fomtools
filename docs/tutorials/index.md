@@ -9,7 +9,7 @@ The notebooks are [marimo](https://marimo.io) files; their sources are in
 ## Sections
 
 * **[Verification](verification.md)** contains five notebooks that
-  verify the worst-case performance of first-order methods on example problems —
+  verify the worst-case performance of first-order methods on example problems:
   lasso, optimal control, network flow, nonnegative least squares, and portfolio
   optimization.
 * **[Code generation](codegen.md)** works through the same five problems end to

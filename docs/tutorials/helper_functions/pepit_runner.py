@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 
 
 class PEPitRunner:
@@ -11,6 +12,13 @@ class PEPitRunner:
     def __init__(self, solver: str = "CLARABEL", verbose: bool = False):
         self.solver = solver
         self.verbose = verbose
+
+    def _solve(self, problem) -> float:
+        # CVXPY warns "Solution may be inaccurate" on the larger PEPs; the bound is
+        # still reported, so keep the warning (and its local path) out of the docs.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Solution may be inaccurate")
+            return problem.solve(solver=self.solver, verbose=self.verbose)
 
     def proximal_gradient_residuals(
         self,
@@ -185,7 +193,7 @@ class PEPitRunner:
             x.append(x_next)
 
         problem.set_performance_metric((x[k] - x[k - 1]) ** 2)
-        return problem.solve(solver=self.solver, verbose=self.verbose)
+        return self._solve(problem)
 
     def _accelerated_proximal_gradient_residual(
         self,
@@ -241,7 +249,7 @@ class PEPitRunner:
 
         residual = z[k] - z[k - 1] if variant == "simple" else w[k] - w[k - 1]
         problem.set_performance_metric(residual ** 2)
-        return problem.solve(solver=self.solver, verbose=self.verbose)
+        return self._solve(problem)
 
     def _admm_residual(self, *, k: int, mu: float, L: float, R: float) -> float:
         from PEPit import PEP
@@ -272,7 +280,7 @@ class PEPitRunner:
 
         problem.set_performance_metric(
             (x[k] - x[k - 1]) ** 2 + (u[k] - u[k - 1]) ** 2)
-        return problem.solve(solver=self.solver, verbose=self.verbose)
+        return self._solve(problem)
 
     def _osqp_admm_residual(
         self,
@@ -330,7 +338,7 @@ class PEPitRunner:
         problem.set_performance_metric(
             (z[k] - z[k - 1]) ** 2 + (v[k] - v[k - 1]) ** 2
         )
-        return problem.solve(solver=self.solver, verbose=self.verbose)
+        return self._solve(problem)
 
     def _pdhg_momentum_residual(self, *, k: int, L: float, eta: float, R: float) -> float:
         from PEPit import PEP, Point
@@ -366,7 +374,7 @@ class PEPitRunner:
 
         problem.set_performance_metric(
             (x[k] - x[k - 1]) ** 2 + (u[k] - u[k - 1]) ** 2)
-        return problem.solve(solver=self.solver, verbose=self.verbose)
+        return self._solve(problem)
 
     def _pdhg_residual(self, *, k: int, L: float, eta: float, R: float) -> float:
         from PEPit import PEP, Point
@@ -400,4 +408,4 @@ class PEPitRunner:
 
         problem.set_performance_metric(
             (x[k] - x[k - 1]) ** 2 + (u[k] - u[k - 1]) ** 2)
-        return problem.solve(solver=self.solver, verbose=self.verbose)
+        return self._solve(problem)

@@ -169,6 +169,38 @@ def test_main_forwards_force_and_prints_summary(monkeypatch, capsys):
 
     assert export_marimo.main(["--force"]) == 0
     assert calls == [True]
-    assert capsys.readouterr().out == (
-        "Marimo tutorials: exported 2; already current 1.\n"
-    )
+    assert capsys.readouterr().out == ("Marimo tutorials: exported 2; already current 1.\n")
+
+
+def test_export_tutorials_treats_helper_modules_as_dependencies(tmp_path):
+    tutorials = tmp_path / "docs" / "tutorials"
+    helpers = tutorials / "helper_functions"
+    helpers.mkdir(parents=True)
+    notebook = tutorials / "notebook.py"
+    _write_notebook(notebook)
+    helper = helpers / "helper.py"
+    helper.write_text("def helper():\n    pass\n")
+    output = notebook.with_suffix(".html")
+    output.write_text("html")
+    os.utime(notebook, ns=(1, 1))
+    os.utime(output, ns=(2, 2))
+    os.utime(helper, ns=(3, 3))
+
+    def runner(command, **kwargs):
+        Path(command[command.index("-o") + 1]).write_text("generated")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    exported, skipped = export_marimo.export_tutorials(repository_root=tmp_path, runner=runner)
+
+    assert exported == [notebook]
+    assert skipped == []
+
+
+def test_main_reports_export_errors_without_traceback(monkeypatch, capsys):
+    def failing_export_tutorials(*, force=False):
+        raise export_marimo.TutorialExportError("Failed to export marimo tutorial 'x.py'")
+
+    monkeypatch.setattr(export_marimo, "export_tutorials", failing_export_tutorials)
+
+    assert export_marimo.main([]) == 1
+    assert "Failed to export marimo tutorial 'x.py'" in capsys.readouterr().err

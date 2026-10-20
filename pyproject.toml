@@ -72,6 +72,15 @@ dev = [
 # still imports; drop the bound once flax ships a compatible release.
 nn = ["torch", "jax<0.11.2", "flax"]
 
+# Every runtime extra (not dev or docs). The GPU packages are skipped on macOS,
+# which has no CUDA; on a Linux or Windows machine without a GPU, CuPy is
+# installed but the simulator falls back to NumPy.
+all = [
+       "fomtools[gurobi,codegen,cvxpygen,nn]",
+       "fomtools[gpu]; sys_platform != 'darwin'",
+       "fomtools[cuda]",
+]
+
 docs = [
        "fomtools[gurobi]",
        "marimo",

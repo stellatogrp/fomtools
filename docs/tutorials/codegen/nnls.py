@@ -61,6 +61,8 @@ def _(mo):
     mo.md(r"""
     # NNLS: Verified Code Generation
 
+    [Back to the code generation tutorials](./)
+
     This notebook benchmarks direct NumPy projected gradient descent against
     its verified generated C solver. The problem construction and iteration
     map are shared with the [NNLS verification tutorial](../verification/nnls.html).
@@ -197,11 +199,6 @@ def _(
     {_footer}"""
     )
     summary
-    return
-
-
-@app.cell
-def _():
     return
 
 

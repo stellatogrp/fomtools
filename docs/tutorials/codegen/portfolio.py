@@ -8,7 +8,6 @@ app = marimo.App(width="medium")
 def _():
     import statistics
     import sys
-    import textwrap
     import time
     from pathlib import Path
 
@@ -53,16 +52,17 @@ def _():
         run_codegen_benchmark,
         solve_admm_numpy,
         statistics,
-        textwrap,
         timing_file,
         time,
     )
 
 
 @app.cell(hide_code=True)
-def _(mo, textwrap):
-    mo.md(textwrap.dedent(r"""
+def _(mo):
+    mo.md(r"""
     # Portfolio: Python vs Codegen
+
+    [Back to the code generation tutorials](./)
 
     In this tutorial we benchmark a small mean-variance portfolio problem.
     The portfolio weights must satisfy lower bounds, upper bounds, and a budget equality.
@@ -71,17 +71,15 @@ def _(mo, textwrap):
     We compare a direct NumPy implementation with the verified generated C solver.
     The problem construction, ADMM step, and NumPy reference solver are shared with the [portfolio verification tutorial](../verification/portfolio.html).
     """)
-    )
     return
 
 
 @app.cell(hide_code=True)
-def _(mo, textwrap):
-    mo.md(textwrap.dedent(r"""
+def _(mo):
+    mo.md(r"""
     We generate a positive definite covariance matrix and a vector of expected returns.
     Both implementations start from the same fixed vectors and run the same update rule for the same number of iterations.
     """)
-    )
     return
 
 

@@ -2,7 +2,7 @@
 
 ## Development setup
 
-Follow the environment instructions in [docs/installation.md](docs/installation.md) to create a
+Follow the environment instructions in [docs/get_started.md](docs/get_started.md) to create a
 virtual environment and install `fomtools` in editable mode with its `dev` and `docs` extras.
 
 Install the pre-commit hooks once per clone:

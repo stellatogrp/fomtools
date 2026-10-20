@@ -8,7 +8,6 @@ app = marimo.App(width="medium")
 def _():
     import statistics
     import sys
-    import textwrap
     import time
     from pathlib import Path
 
@@ -55,16 +54,17 @@ def _():
         run_codegen_benchmark,
         solve_pdhg_numpy,
         statistics,
-        textwrap,
         timing_file,
         time,
     )
 
 
 @app.cell(hide_code=True)
-def _(mo, textwrap):
-    mo.md(textwrap.dedent(r"""
+def _(mo):
+    mo.md(r"""
     # Network Flow: Python vs Codegen
+
+    [Back to the code generation tutorials](./)
 
     In this tutorial we benchmark a small capacitated network-flow problem.
     There are supply nodes, demand nodes, edge capacities, and linear edge costs.
@@ -73,18 +73,16 @@ def _(mo, textwrap):
     We compare a direct NumPy implementation with the verified generated C solver.
     The problem construction, PDHG step, and NumPy reference solver are shared with the [network verification tutorial](../verification/network.html).
     """)
-    )
     return
 
 
 @app.cell(hide_code=True)
-def _(mo, textwrap):
-    mo.md(textwrap.dedent(r"""
+def _(mo):
+    mo.md(r"""
     We generate a complete bipartite graph from supply nodes to demand nodes.
     The starting flow is computed once by solving the linear program at the lower-demand endpoint.
     Both implementations then run the same fixed iteration map.
     """)
-    )
     return
 
 

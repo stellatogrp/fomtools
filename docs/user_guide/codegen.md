@@ -25,8 +25,8 @@ or an explicit `driver=`. Recording the method requires no coding agent.
 Write the algorithm as a loop, exactly as you would to verify it, and keep the
 iterate sequence. An
 [`iterate_trajectory`](../api/verifier.md#fomtools.Verifier.iterate_trajectory) is
-the tidiest way to hold it — see [accumulating methods](#accumulating-methods)
-for why — but any list works:
+the tidiest way to hold it (see [accumulating methods](#accumulating-methods)
+for why), but any list works:
 
 ```python
 import numpy as np

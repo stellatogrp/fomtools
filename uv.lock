@@ -865,6 +865,19 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "claude-agent-sdk" },
+    { name = "cupy-cuda12x", marker = "sys_platform != 'darwin'" },
+    { name = "cvxpygen" },
+    { name = "flax" },
+    { name = "gurobipy" },
+    { name = "jax" },
+    { name = "nvidia-cudss-cu13", marker = "sys_platform == 'linux'" },
+    { name = "openai-codex" },
+    { name = "osqp" },
+    { name = "pip" },
+    { name = "torch" },
+]
 codegen = [
     { name = "claude-agent-sdk" },
     { name = "openai-codex" },
@@ -920,6 +933,9 @@ requires-dist = [
     { name = "cvxpy" },
     { name = "cvxpygen", marker = "extra == 'cvxpygen'", specifier = ">=1.0,<2" },
     { name = "flax", marker = "extra == 'nn'" },
+    { name = "fomtools", extras = ["codegen", "cvxpygen", "gurobi", "nn"], marker = "extra == 'all'" },
+    { name = "fomtools", extras = ["cuda"], marker = "extra == 'all'" },
+    { name = "fomtools", extras = ["gpu"], marker = "sys_platform != 'darwin' and extra == 'all'" },
     { name = "fomtools", extras = ["gurobi"], marker = "extra == 'dev'" },
     { name = "fomtools", extras = ["gurobi"], marker = "extra == 'docs'" },
     { name = "gurobipy", marker = "extra == 'gurobi'", specifier = ">=12.0.1" },
@@ -953,7 +969,7 @@ requires-dist = [
     { name = "scipy" },
     { name = "torch", marker = "extra == 'nn'" },
 ]
-provides-extras = ["gurobi", "gpu", "cuda", "codegen", "cvxpygen", "dev", "nn", "docs"]
+provides-extras = ["gurobi", "gpu", "cuda", "codegen", "cvxpygen", "dev", "nn", "all", "docs"]
 
 [[package]]
 name = "fonttools"
