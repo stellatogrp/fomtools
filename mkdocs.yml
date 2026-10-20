@@ -10,6 +10,7 @@ nav:
   - User guide:
       - user_guide/index.md
       - Code generation guide: user_guide/codegen.md
+      - SDP relaxation (experimental): user_guide/sdp.md
   - API and modules:
       - api/index.md
       - Verifier: api/verifier.md

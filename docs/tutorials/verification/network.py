@@ -209,7 +209,7 @@ def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    We verify the performance of PDHG and its momentum variant up to a fixed iteration budget $K>0$. As in the NNLS tutorial, we compare randomly sampled simulations with exact MIP verification. Unlike NNLS, there is no PEPit comparison here; the reason is explained alongside the figures below. The SDP-relaxed verification problem for the same example is covered in the [SDP verification](sdp.html) tutorial.
+    We verify the performance of PDHG and its momentum variant up to a fixed iteration budget $K>0$. As in the NNLS tutorial, we compare randomly sampled simulations with exact MIP verification. Unlike NNLS, there is no PEPit comparison here; the reason is explained alongside the figures below.
     """)
     return
 

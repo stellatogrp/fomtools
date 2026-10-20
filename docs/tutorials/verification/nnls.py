@@ -320,7 +320,7 @@ def _(mo):
 
     We now obtain worst-case guarantee by solving the corresponding verification problem (VP).
     Passing the option `method='mip'` formulates the VP as a mixed-integer linear program (MILP), based on [Exact Verification of First-Order Methods via Mixed-Integer Linear Programming.](https://arxiv.org/abs/2412.11330)
-    The relaxed semidefinite program (SDP) formulation, `method='sdp'`, is covered in the [SDP verification](sdp.html) tutorial.
+
 
     The following function rolls out the same `pgd_step` recurrence over the
     horizon $K$ and maximizes $\|r^k\|_\infty$ at each iteration.

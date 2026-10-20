@@ -117,8 +117,8 @@ VP = ft.Verifier(method="mip", solver="gurobi")
 
 `method="mip"` selects the exact mixed-integer encoding and `solver="gurobi"` chooses the
 solver used to optimize it. MIP encodes the verification problem exactly and returns the true
-worst-case value. Change `method` to `"sdp"` for a semidefinite relaxation or to `"simulator"` for a fast empirical analysis without a formal
-worst-case guarantee. The subsequent algorithm code and objective are unchanged when you switch backends.
+worst-case value. Change `method` to `"simulator"` for a fast empirical analysis without a formal
+worst-case guarantee, or to `"sdp"` for an [experimental semidefinite relaxation](user_guide/sdp.md). The subsequent algorithm code and objective are unchanged when you switch backends.
 
 ## [Steps and Proxable functions](api/steps.md)
 

@@ -146,7 +146,7 @@ def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    In this experiment, we verify the performance of ISTA and FISTA for sparse coding given the iteration budget $K>0$. We compare simulator statistics, exact MIP verification, PEPit bounds, and the in-sample worst-case instances. The SDP-relaxed verification problem for the same example is covered in the [SDP verification](sdp.html) tutorial.
+    In this experiment, we verify the performance of ISTA and FISTA for sparse coding given the iteration budget $K>0$. We compare simulator statistics, exact MIP verification, PEPit bounds, and the in-sample worst-case instances.
     """)
     return
 

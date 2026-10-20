@@ -126,7 +126,7 @@ bounds. An incumbent is a feasible example and is available separately through
 `vp.canonicalizer._solved_copy["objVal"]`; its native status is available through
 `["status"]`. `get_solution_value` requires an incumbent.
 
-SDP solves require an accurate optimal termination and return the dual objective.
+SDP solves ([experimental](user_guide/sdp.md)) require an accurate optimal termination and return the dual objective.
 Inaccurate, infeasible, unbounded, and early terminations raise `RuntimeError`.
 The solved copy retains `last_solver.solution` for native Clarabel and
 `last_problem` for CVXPY. These are numerical bounds subject to solver tolerances,

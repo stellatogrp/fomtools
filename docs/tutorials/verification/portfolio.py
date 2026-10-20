@@ -147,7 +147,7 @@ def _(mo):
     mo.md(r"""
     # Verification Problem
 
-    We compare simulator statistics and exact MIP verification for the portfolio ADMM recurrence, up to $K$ iterations. The SDP-relaxed verification problem for the same example is covered in the [SDP verification](sdp.html) tutorial.
+    We compare simulator statistics and exact MIP verification for the portfolio ADMM recurrence, up to $K$ iterations.
     """)
     return
 

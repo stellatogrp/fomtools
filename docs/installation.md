@@ -60,7 +60,8 @@ Quote extras so shells such as zsh do not interpret the brackets. From PyPI use
 | Neural networks | `uv pip install -e ".[nn]"` | PyTorch/JAX/Flax integrations |
 | Development and docs | `uv pip install -e ".[dev,docs]"` | Tests, lint, and documentation tools; these extras also install Gurobi |
 
-For Gurobi use `Verifier(solver="gurobi")`. For an SDP use
+For Gurobi use `Verifier(solver="gurobi")`. For the
+[experimental SDP relaxation](user_guide/sdp.md) use
 `Verifier(method="sdp", solver="clarabel", obbt_solver=None)` or
 `solver="cvxpy"`. The `cuclarabel` backend needs a CUDA-capable environment.
 
