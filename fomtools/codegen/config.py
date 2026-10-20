@@ -99,21 +99,21 @@ _TOL_KINDS = (TerminationKind.INF_NORM_CHANGE, TerminationKind.OBJECTIVE)
 class TerminationSpec(BaseModel):
     """Termination criterion for the generated solve loop.
 
-    Parameters
+    Attributes
     ----------
-    kind:
+    kind : TerminationKind
         Fixed iteration count, infinity-norm change, or the verification
         objective, each with early exit except the first.
-    max_iters:
+    max_iters : int
         Hard upper bound on iterations. Always required: embedded targets size
         their (static) iteration accounting from it and every loop needs a guard.
-    tol:
+    tol : float or None
         Tolerance for the ``INF_NORM_CHANGE`` and ``OBJECTIVE`` criteria. Ignored
         for ``MAX_ITERS``. Must be positive when the criterion uses it. For
         ``OBJECTIVE`` it bounds the verification objective as the verifier defines
         it, so with a 2-norm objective (``ord=2``) it bounds the SQUARED norm:
         ``tol=1e-6`` stops once ``||r||_2 <= 1e-3``, not ``1e-6``.
-    check_termination:
+    check_termination : int
         How often the criterion is evaluated (the name and semantics follow
         OSQP's setting): ``N`` checks every ``N`` iterations (residual computed
         only then), ``0`` disables early exit. Ignored for ``MAX_ITERS``.
