@@ -56,7 +56,7 @@ for k in range(K):
 
 Steps can also be written with proximal operators and projections, e.g.,
 `VP.prox(NormL1(lambd), v, eta)` or `VP.project(Box(l, u), v)`. See the
-[documentation](docs/) for the full list of proxable functions and sets.
+[documentation](https://github.com/stellatogrp/fomtools/tree/main/docs) for the full list of proxable functions and sets.
 
 ## Beyond worst-case verification
 
@@ -92,7 +92,13 @@ fcpg.generate_solver(problem, "out/qp", fom="admm", param_bounds={q: (q_lb, q_ub
 
 ## Installation
 
-FOMTools requires Python 3.12 or later.
+FOMTools requires Python 3.12 or later. Install it from PyPI:
+
+```bash
+pip install fomtools
+```
+
+To install from source instead:
 
 ```bash
 git clone https://github.com/stellatogrp/fomtools.git
@@ -113,7 +119,8 @@ Optional extras:
 | `dev`      | Development tools                                  |
 | `docs`     | Documentation build dependencies                   |
 
-For example, `pip install -e ".[gurobi,codegen]"`.
+For example, `pip install "fomtools[gurobi,codegen]"`, or
+`pip install -e ".[gurobi,codegen]"` from source.
 
 FOMTools is not a solver. It relies on mathematical programming solvers such as
 [HiGHS](https://highs.dev) (the default) and [Gurobi](https://www.gurobi.com) to solve
@@ -121,7 +128,7 @@ the verification problems it builds.
 
 ## Examples
 
-The [tutorials](docs/tutorials/) cover sparse coding (Lasso), nonnegative least squares,
+The [tutorials](https://github.com/stellatogrp/fomtools/tree/main/docs/tutorials) cover sparse coding (Lasso), nonnegative least squares,
 network optimization, optimal control, and portfolio rebalancing. Code to reproduce the
 experiments in our paper is available at
 [stellatogrp/fomtools_experiments](https://github.com/stellatogrp/fomtools_experiments).
