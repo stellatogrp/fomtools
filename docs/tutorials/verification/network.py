@@ -216,7 +216,7 @@ def _(mo):
 
 @app.cell
 def _():
-    K = 4  # Maximum iteration number
+    K = 22  # Maximum iteration number
     return (K,)
 
 
