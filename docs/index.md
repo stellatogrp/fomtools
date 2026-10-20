@@ -82,6 +82,23 @@ with Stefano Gualandi and Andrea Lodi.
 - PyPI: [pypi.org/project/fomtools](https://pypi.org/project/fomtools/)
 - Installation: see [Installation](installation.md)
 
+## Citing
+
+If you use FOMTools for published work, we encourage you to cite our
+[paper](https://arxiv.org/abs/2610.26743):
+
+```bibtex
+@article{ranjan2026fomtools,
+  title   = {{FOMTools}: Development and {AI}-Assisted Code Generation for First-Order Methods},
+  author  = {Ranjan, Vinit and Deza, Daniel and Acharya, Anushka and Park, Jisun and Stellato, Bartolomeo},
+  journal = {arXiv preprint arXiv:2610.26743},
+  year    = {2026},
+}
+```
+
+The mixed-integer verification method is described in
+[Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330).
+
 ## Returned bounds and numerical checks
 
 `solve()` returns a finite MIP best bound, including after a time limit when one

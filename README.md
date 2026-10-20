@@ -174,3 +174,6 @@ If you use FOMTools for published work, we encourage you to cite our
   year    = {2026},
 }
 ```
+
+The mixed-integer verification method is described in
+[Exact Verification of First-Order Methods via Mixed-Integer Linear Programming](https://arxiv.org/abs/2412.11330).

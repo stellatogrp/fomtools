@@ -2,6 +2,7 @@ site_name: FOM Tools
 site_url: https://stellatogrp.github.io/fomtools/
 repo_url: https://github.com/stellatogrp/fomtools
 repo_name: stellatogrp/fomtools
+edit_uri: blob/main/docs/
 nav:
   - Home: index.md
   - Installation: installation.md
@@ -9,6 +10,8 @@ nav:
   - Tutorials: tutorials.md
 theme:
   name: material
+  features:
+    - content.action.view
   palette:
     - media: "(prefers-color-scheme)"
       toggle:
