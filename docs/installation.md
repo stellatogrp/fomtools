@@ -1,6 +1,12 @@
 # Installation
 
-FOMTools requires Python 3.12 or newer. Use `uv` to create an environment:
+FOMTools requires Python 3.12 or newer. Install the release from PyPI:
+
+```bash
+pip install fomtools
+```
+
+To work from source, use `uv` to create an environment:
 
 ```bash
 git clone https://github.com/stellatogrp/fomtools.git
