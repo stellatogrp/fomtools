@@ -22,9 +22,13 @@ you can:
 ## Example
 
 The following code verifies FISTA on a family of Lasso problems
-$`\min_s \tfrac12\|Ds - x\|_2^2 + \lambda\|s\|_1`$, where the data vector $`x`$ ranges over
-the box $`[0, 1]^m`$. After each iteration it computes the worst-case fixed-point residual
-$`\|s^{k+1} - s^k\|_\infty`$ over all such $`x`$.
+```
+minimize        0.5 ||D s - x||_2^2 + lambda ||s||_1
+```
+
+where `s in R^n` is the optimization variable and the data vector `x` ranges over the box
+`[0, 1]^m`. After each iteration it computes the worst-case fixed-point residual
+`||s^{k+1} - s^k||_inf` over all such `x`.
 
 ```python3
 import numpy as np
@@ -130,7 +134,7 @@ the verification problems it builds.
 
 The [tutorials](https://github.com/stellatogrp/fomtools/tree/main/docs/tutorials) cover sparse coding (Lasso), nonnegative least squares,
 network optimization, optimal control, and portfolio rebalancing. Code to reproduce the
-experiments in our paper is available at
+experiments in our [paper](https://arxiv.org/abs/2610.26743) is available at
 [stellatogrp/fomtools_experiments](https://github.com/stellatogrp/fomtools_experiments).
 
 ## Contributing
@@ -146,13 +150,14 @@ Bartolomeo Stellato.
 
 ## Citing
 
-If you use FOMTools for published work, we encourage you to cite our paper:
+If you use FOMTools for published work, we encourage you to cite our
+[paper](https://arxiv.org/abs/2610.26743):
 
 ```bibtex
 @article{ranjan2026fomtools,
   title   = {{FOMTools}: Development and {AI}-Assisted Code Generation for First-Order Methods},
   author  = {Ranjan, Vinit and Deza, Daniel and Acharya, Anushka and Park, Jisun and Stellato, Bartolomeo},
-  journal = {arXiv preprint arXiv:XXXX.XXXXX},  % TODO: arXiv ID
+  journal = {arXiv preprint arXiv:2610.26743},
   year    = {2026},
 }
 ```
