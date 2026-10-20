@@ -143,7 +143,8 @@ class OBBTHandler(Canonicalizer):
         For each element in the linear expression, this method solves
         minimization and maximization problems to compute potentially
         tighter bounds. The returned bounds are the intersection of the
-        input bounds and the computed bounds.
+        input bounds and the computed bounds, padded outward by
+        ``1e-6 * max(1, abs(bound))``. This does not certify rounding errors.
 
         Parameters
         ----------
@@ -189,7 +190,15 @@ class OBBTHandler(Canonicalizer):
         # input ub = 0, LP lb = 2e-17), up to the LP tolerances. Swap such
         # entries and buffer them outward by the tolerance so the interval
         # stays valid. Crossings beyond the tolerance raise (genuine bug).
+        if not (np.isfinite(lb_out).all() and np.isfinite(ub_out).all()):
+            log.info("bound tightening failed: nonfinite LP objective")
+            return None
         lb_out, ub_out = self._repair(lb_out, ub_out)
+        # Pad the LP bounds outward to cover small LP solver errors, matching the
+        # objective-bound padding policy. This is a numerical safeguard, not a
+        # directed-rounding certificate.
+        lb_out = lb_out - 1e-6 * np.maximum(1.0, np.abs(lb_out))
+        ub_out = ub_out + 1e-6 * np.maximum(1.0, np.abs(ub_out))
         lb_new, ub_new = self._repair(np.maximum(lb, lb_out), np.minimum(ub, ub_out))
         # The buffer must not loosen the input bounds (e.g. a ReLU output's
         # lb = 0). The repaired interval always meets [lb, ub], so this clip

@@ -127,7 +127,9 @@ def test_param_lambd():
 )
 def test_sdp_valid_bound_at_fixed_point(x0, lam):
     """SDP gives a valid (upper) bound on ||prox(x0)||^2 (relaxation not always tight)."""
-    v = _make_verifier("sdp")
+    # With lb == ub the SDP has no interior; Clarabel's default regularization can
+    # stall (InsufficientProgress) there, while 1e-7 solves both instances cleanly.
+    v = Verifier(method="sdp", solver="clarabel", params={"static_regularization_constant": 1e-7})
     x = v.add_param(len(x0), lb=x0, ub=x0)
     out = v.prox(TotalVariation1D(lam), x)
     v.set_objective_norm(out, 2)

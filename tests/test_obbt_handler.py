@@ -325,11 +325,12 @@ def test_affine_obbt_tightens_when_constrained(solver):
 # --------------------------------------------------------------------------
 
 
-def build_relu_linsolve_chain(obbt, solver, *, method="mip", K=2, identity=False, **kwargs):
+def build_relu_linsolve_chain(
+    obbt, solver, *, method="mip", K=2, identity=False, t=0.5, seed=0, **kwargs
+):
     """ReLU followed by an implicit linear solve ``M w = relu(.) - z`` per iteration."""
-    np.random.seed(0)
+    np.random.seed(seed)
     n = m = 3
-    t = 0.5
     A = np.random.normal(size=(m, n))
     W = np.eye(n) - t * A.T @ A
     G = t * A.T
@@ -427,8 +428,10 @@ def test_obbt_buffers_noise_crossing():
     handler = _stub_handler(values)
     lb, ub = handler.obbt(_StubExpr(["a", "b"]), np.full(2, -5.0), np.full(2, 5.0))
     assert lb[0] <= 0.2 and ub[0] >= 0.2 + 5e-7
-    assert lb[0] >= 0.2 - 2e-6 and ub[0] <= 0.2 + 2e-6
-    assert (lb[1], ub[1]) == (-1.0, 1.0)
+    # Crossing buffer (1e-6) plus the relative LP padding (1e-6 * max(1, |v|)).
+    assert lb[0] >= 0.2 - 3e-6 and ub[0] <= 0.2 + 3e-6
+    assert lb[1] == pytest.approx(-1.0 - 1e-6, abs=1e-12)
+    assert ub[1] == pytest.approx(1.0 + 1e-6, abs=1e-12)
     assert handler.crossing_repairs == 1
 
 
@@ -439,7 +442,8 @@ def test_obbt_buffer_does_not_loosen_input_bounds():
     handler = _stub_handler(values)
     lb, ub = handler.obbt(_StubExpr(["a"]), np.zeros(1), np.zeros(1))
     assert (lb[0], ub[0]) == (0.0, 0.0)
-    assert handler.crossing_repairs == 1
+    # The outward LP padding already removes the crossing, so no repair is needed.
+    assert handler.crossing_repairs == 0
 
 
 def test_obbt_still_rejects_large_crossing():
@@ -505,17 +509,20 @@ def test_obbt_affine_output_preserves_mip_optimum():
 def test_obbt_tightens_sdp_with_relu_cuts(sdp_solver):
     """With ReLU cuts on, OBBT strictly lowers the SDP bound and stays above the MIP."""
     K = 3
+    # A smaller step and this seed keep the no-OBBT baseline (wide IBP bounds)
+    # well conditioned; with t=0.5 Clarabel can end in NumericalError there.
+    inst = {"K": K, "t": 0.25, "seed": 5}
     cuts = {"triangle_cuts": True, "relu_envelope_cuts": True}
     opts = []
-    # The no-OBBT baseline (wide IBP bounds) is too poorly scaled for the cvxpy
-    # Clarabel wrapper, so it always runs on native Clarabel.
+    # The no-OBBT baseline is too poorly scaled for the cvxpy Clarabel wrapper,
+    # so it always runs on native Clarabel.
     for obbt, solver in [(None, "clarabel"), ("highs", sdp_solver)]:
-        v, it = build_relu_linsolve_chain(obbt, solver, method="sdp", K=K, **cuts)
+        v, it = build_relu_linsolve_chain(obbt, solver, method="sdp", **inst, **cuts)
         v.set_objective_norm(it[-1] - it[-2], 2)
         opts.append(v.solve())
     opt_no, opt_ob = opts
 
-    v_mip, it_mip = build_relu_linsolve_chain("gurobi", "gurobi", K=K)
+    v_mip, it_mip = build_relu_linsolve_chain("gurobi", "gurobi", **inst)
     v_mip.set_objective_norm(it_mip[-1] - it_mip[-2], 2)
     opt_mip = v_mip.solve()
 

@@ -12,9 +12,8 @@ def efficient_csc_pad(matrix, new_shape):
     M_old, N_old = matrix.shape
     M_new, N_new = new_shape
 
-    assert M_new >= M_old and N_new >= N_old, (
-        f"New shape {(M_new, N_new)} must be >= old shape {(M_old, N_old)}"
-    )
+    if M_new < M_old or N_new < N_old:
+        raise ValueError(f"New shape {(M_new, N_new)} must be >= old shape {(M_old, N_old)}")
 
     if M_new == M_old and N_new == N_old:
         return matrix
@@ -35,7 +34,15 @@ def get_submatrix_selection_matrix(n, indices, scale=np.sqrt(2)):
     """
     indices = np.array(indices)
     r = len(indices)
-    assert r <= n
+    if (
+        indices.ndim != 1
+        or r > n
+        or not np.issubdtype(indices.dtype, np.integer)
+        or np.any(indices < 0)
+        or np.any(indices >= n)
+        or len(set(indices)) != r
+    ):
+        raise ValueError("Submatrix indices must be distinct integers in [0, n).")
 
     # 1. Generate local coordinates using the swap trick.
     #    np.tril_indices returns (rows, cols) for the lower triangle.

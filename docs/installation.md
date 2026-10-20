@@ -1,73 +1,35 @@
-## Installation
-Before you can use the `fomtools` package, ensure that your system meets the following prerequisites:
+# Installation
 
-* Python 3.12 or later
-* Pip package manager
+FOMTools requires Python 3.12 or newer. Use `uv` to create an environment:
 
-Clone the repository and enter it:
-
-    git clone git@github.com:stellatogrp/fomtools.git
-    cd fomtools
-
-
-## Creating a fomtools environment
-All of `fomtools`'s dependencies are on [PyPi](https://pypi.org). We have developed and tested
-`fomtools` on Python 3.12, but it should work on later Python versions as well. You can create a new
-virtual environment using `venv`, and install dependencies using `pip`.
-
-1. Verify that Python 3.12 or newer is installed on your system.
-
-        python --version
-
-2. Create a new environment and activate it.
-
-        python -m venv .venv
-        source .venv/bin/activate
-
-3. In the activated environment, install the `fomtools` package in editable mode, along with
-its dev and docs extras:
-
-        pip install -e .[dev, docs]
-
-## Optional extras
-
-The base install uses HiGHS as the default MIP solver. Additional solver
-backends and features are available as extras:
-
-| Extra      | Description                                       |
-|------------|---------------------------------------------------|
-| `gurobi`   | Gurobi solver backend (`pip install fomtools[gurobi]`) |
-| `codegen`  | LLM coding-agent backends for code generation     |
-| `gpu`      | CuPy for GPU-accelerated SDP solving              |
-| `cvxpygen` | CVXPYgen integration                              |
-| `nn`       | Neural-network verification (PyTorch, JAX, Flax)  |
-| `dev`      | Development tools (includes Gurobi)               |
-| `docs`     | Documentation build dependencies                  |
-
-To use Gurobi as the solver backend:
-
-    pip install fomtools[gurobi]
-
-Then pass `solver="gurobi"` to the `Verifier`:
-
-```python
-vp = Verifier(solver="gurobi")
+```bash
+git clone https://github.com/stellatogrp/fomtools.git
+cd fomtools
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install -e .
 ```
 
-## Using a different Python version than the system default
-If your Python version is not 3.12 or later, or if  you're getting errors when using a non-tested
-Python version, we recommend using the [uv](https://github.com/astral-sh/uv) tool to create a virtual
-environment with the correct Python version. `uv` is quick to [install](https://github.com/astral-sh/uv?tab=readme-ov-file#installation)
-and easy to use, both locally as well as on research clusters.
+The base package includes HiGHS, the default MIP solver, and CVXPY with Clarabel
+for CPU SDP solves. It does not require a Gurobi license.
 
-Once `uv` is installed.
+## Optional dependencies
 
-1. Create a new environment with Python 3.12 and activate it.
+Quote extras so shells such as zsh do not interpret the brackets.
 
-        uv venv --python 3.12
-        source .venv/bin/activate
+| Extra | Installation | Purpose |
+|---|---|---|
+| Gurobi | `uv pip install -e ".[gurobi]"` | Optional MIP/MIQP/MIQCP backend; a suitable Gurobi license is required |
+| Code generation | `uv pip install -e ".[codegen]"` | Coding-agent SDKs; authentication is configured separately |
+| CVXPYgen | `uv pip install -e ".[cvxpygen]"` | High-level problem-modeling integration |
+| GPU | `uv pip install -e ".[gpu]"` | CuPy for CUDA simulation; GPU SDP additionally requires Julia, Clarabel.jl with CUDA, and juliacall |
+| Neural networks | `uv pip install -e ".[nn]"` | PyTorch/JAX/Flax integrations |
+| Development and docs | `uv pip install -e ".[dev,docs]"` | Tests, lint, and documentation tools; these extras also install Gurobi |
 
-2. In the activated environment, install the `fomtools` package in editable mode, along with
-   its dev and docs extras:
+For Gurobi use `Verifier(solver="gurobi")`. For an SDP use
+`Verifier(method="sdp", solver="clarabel", obbt_solver=None)` or
+`solver="cvxpy"`. The `cuclarabel` backend needs a CUDA-capable environment.
 
-        pip install -e .[dev, docs]
+Run the tests with `uv run --no-sync pytest` and build the documentation with
+`uv run --no-sync mkdocs build`. Some tests require optional dependencies,
+a compiler, or a Gurobi license. Real coding-agent tests are opt-in.

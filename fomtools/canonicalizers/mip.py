@@ -703,7 +703,9 @@ class MIP(Canonicalizer):
         Returns
         -------
         float
-            The objective value for the current solution.
+            The finite best upper bound on the maximization objective, including
+            after a time limit. Raises ``RuntimeError`` when none is available.
+            Incumbent values and status remain on the solved solver copy.
 
         """
         # Create copy to apply objective without modifying original
@@ -731,7 +733,7 @@ class MIP(Canonicalizer):
             self._warm_start_inputs = {
                 leaf: self._solved_copy.get_solution_value(leaf) for leaf in self._input_leaves
             }
-        return self._solved_copy["objVal"]
+        return self._solved_copy.get_best_bound()
 
     def get_solution_value(self, expression: LinearExpression) -> np.ndarray:
         """
@@ -754,8 +756,8 @@ class MIP(Canonicalizer):
         RuntimeError
             If no solution is available (solve_model() not called).
         """
-        if self._solved_copy is None:
-            raise RuntimeError("No solution available. Call solve_model() first.")
+        if self._solved_copy is None or not self._solved_copy.has_solution():
+            raise RuntimeError("No feasible incumbent available. Call solve_model() first.")
         return self._solved_copy.get_solution_value(expression)
 
     def canonicalize_affine(self, step: Affine) -> None:

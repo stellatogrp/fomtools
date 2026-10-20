@@ -1,4 +1,5 @@
 import importlib.util
+import warnings
 
 import numpy as np
 import scipy.sparse as spa
@@ -141,5 +142,18 @@ class CuClarabelSolver(ClarabelSolver):
             global sol = Clarabel.solve!(solver)
         """)
 
-        obj_val = float(jl.sol.obj_val)
-        return -obj_val
+        self.solution = jl.sol
+        if jl.sol.status == jl.Clarabel.ALMOST_SOLVED:
+            warnings.warn(
+                "CuClarabel terminated ALMOST_SOLVED; the SDP bound holds only to its "
+                "reduced tolerances.",
+                stacklevel=2,
+            )
+        elif jl.sol.status != jl.Clarabel.SOLVED:
+            raise RuntimeError(
+                f"CuClarabel terminated with {jl.sol.status}; no accepted SDP bound."
+            )
+        bound = -float(jl.sol.obj_val_dual)
+        if not np.isfinite(bound):
+            raise RuntimeError("CuClarabel returned a nonfinite SDP dual objective.")
+        return bound

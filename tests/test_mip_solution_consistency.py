@@ -128,7 +128,9 @@ def test_softthreshold_seed10_regression():
     true 0.7325 to 0.8791. Assert the returned iterates are on-graph and the
     reported objective equals the true forward-simulated objective."""
     vp, z, bp, At, Bt, lam, K = _build_ista(seed=10, K=2)
-    objval = vp.solve()
+    bound = vp.solve()
+    objval = vp.canonicalizer._solved_copy["objVal"]
+    assert bound >= objval - TEST_EPS
 
     # The regression must actually exercise the bug regime.
     assert "left-or-middle" in _softthreshold_cases_seen(vp)
@@ -156,7 +158,9 @@ def test_softthreshold_solution_on_graph(seed, K, obbt_solver):
     the true forward-simulated objective — across seeds, depths, and OBBT on/off
     (the OBBT fresh/stale-bounds path)."""
     vp, z, bp, At, Bt, lam, K = _build_ista(seed=seed, K=K, obbt_solver=obbt_solver)
-    objval = vp.solve()
+    bound = vp.solve()
+    objval = vp.canonicalizer._solved_copy["objVal"]
+    assert bound >= objval - TEST_EPS
     n_checked = _assert_softthreshold_steps_on_graph(vp)
     assert n_checked > 0  # the sweep must actually contain soft-threshold rows
     true_obj = _ista_forward_objective(vp, z, bp, At, Bt, lam, K)
@@ -307,7 +311,9 @@ def test_satlin_solution_on_graph_mixed(seed, K, obbt_solver):
     objective equals the true forward-simulated objective — across seeds, depths, and
     OBBT on/off, in the box-straddling regime that exposed the lower-or-middle bug."""
     vp, z, q_param, P, q, lo, hi, t, K = _build_boxpgd(seed, K, obbt_solver)
-    objval = vp.solve()
+    bound = vp.solve()
+    objval = vp.canonicalizer._solved_copy["objVal"]
+    assert bound >= objval - TEST_EPS
     for step in vp.steps:
         if isinstance(step, SaturatedLinear):
             arg = np.atleast_1d(vp.get_solution_value(step.arg))
