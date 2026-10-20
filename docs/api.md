@@ -1,5 +1,8 @@
 ## API and modules
 
+The source code of every module is in the
+[`fomtools` package on GitHub](https://github.com/stellatogrp/fomtools/tree/main/fomtools).
+
 ### Contents
 * [Verifier](api/verifier.md)
 * [Linear Expression](api/linearexpression.md)

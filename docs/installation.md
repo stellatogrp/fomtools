@@ -1,10 +1,29 @@
 # Installation
 
-FOMTools requires Python 3.12 or newer. Install the release from PyPI:
+FOMTools requires Python 3.12 or newer.
+
+## From PyPI
+
+Install the latest release from [PyPI](https://pypi.org/project/fomtools/):
 
 ```bash
 pip install fomtools
 ```
+
+Optional dependencies are installed as extras (see the table below), for example:
+
+```bash
+pip install "fomtools[gurobi,codegen]"
+```
+
+To upgrade to a newer release and check the installed version:
+
+```bash
+pip install --upgrade fomtools
+python -c "import fomtools; print(fomtools.__version__)"
+```
+
+## From source
 
 To work from source, use `uv` to create an environment:
 
@@ -21,7 +40,8 @@ for CPU SDP solves. It does not require a Gurobi license.
 
 ## Optional dependencies
 
-Quote extras so shells such as zsh do not interpret the brackets.
+Quote extras so shells such as zsh do not interpret the brackets. From PyPI use
+`pip install "fomtools[<extra>]"`; from a source checkout use the commands below.
 
 | Extra | Installation | Purpose |
 |---|---|---|
