@@ -133,6 +133,9 @@ class Verifier(object):
         self.method = method.lower()
         self.iterates = []
         self.params = []
+        # Simulator parameters registered without samples (allowed, e.g. for code
+        # generation, which never simulates; ``solve`` then asks for samples).
+        self._unsampled_params = []
         self.steps = []
         # The most recently set objective as ``(expressions, ord)``, or ``None``
         # for none / the zero objective. Code generation reads it to stop the
@@ -485,6 +488,17 @@ class Verifier(object):
             length to the dimension of the expression.
         """
         var = self._create_var(ndim, lb, ub)
+        if self.method == "simulator":
+            samples = kwargs.get("samples")
+            if samples is not None:
+                shape = np.shape(samples)
+                if len(shape) != 2 or shape[1] != ndim:
+                    raise ValueError(
+                        f"add_param(ndim={ndim}): samples must have shape "
+                        f"(num_samples, {ndim}), got {shape}."
+                    )
+            elif not (np.all(np.isfinite(var.lb)) and np.array_equal(var.lb, var.ub)):
+                self._unsampled_params.append(var)
         self._register_var(var, var_type="param", **kwargs)
         return var
 
@@ -1260,6 +1274,15 @@ class Verifier(object):
                 self.objective_bound_stats = self.canonicalizer.tighten_objective_bounds()
         if self.method == "mip":
             return self.canonicalizer.solve_model(warm_start=warm_start, **kwargs)
+        if self.method == "simulator" and self._unsampled_params:
+            dims = ", ".join(str(var.ndim) for var in self._unsampled_params)
+            raise ValueError(
+                f"{len(self._unsampled_params)} parameter(s) (ndim {dims}) have no samples. "
+                "The simulator does not sample from bounds: pass "
+                "add_param(ndim, samples=<array of shape (num_samples, ndim)>), drawn "
+                "from the distribution the probabilistic bound should hold for "
+                "(equal finite bounds fix a constant and need no samples)."
+            )
         return self.canonicalizer.solve_model(**kwargs)
 
     def set_start_samples(self, samples: dict) -> None:

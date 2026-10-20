@@ -7,6 +7,7 @@ evaluated separately for each sample.
 """
 
 import numpy as np
+import pytest
 
 from fomtools.proxable_functions import IndBox
 from fomtools.verifier import Verifier
@@ -178,3 +179,32 @@ def test_parameter_dependent_satlin_evaluates_both_bounds_per_sample():
     residuals = vp.solve()
 
     np.testing.assert_allclose(residuals, 0.0, atol=1e-7)
+
+
+def test_param_without_samples_raises_a_clear_error():
+    """Bounds alone do not define a distribution: the simulator asks for samples."""
+    v = Verifier(method="simulator", obbt_solver=None)
+    x = v.add_param(ndim=3, lb=-1.0, ub=1.0)  # allowed: code generation never simulates
+    z0 = v.add_iterate(ndim=3, init=np.zeros(3))
+    v.step.implicit_linear(z0 + x, output_mat=np.eye(3))
+    with pytest.raises(ValueError, match=r"1 parameter\(s\) \(ndim 3\) have no samples"):
+        v.solve()
+
+
+def test_param_with_wrong_sample_shape_raises():
+    v = Verifier(method="simulator", obbt_solver=None)
+    with pytest.raises(
+        ValueError, match=r"samples must have shape \(num_samples, 3\), got \(10, 2\)"
+    ):
+        v.add_param(ndim=3, samples=np.zeros((10, 2)))
+
+
+def test_param_pinned_by_equal_bounds_needs_no_samples():
+    """A parameter fixed by equal finite bounds is a constant, so samples are optional."""
+    v = Verifier(method="simulator", obbt_solver=None)
+    x = v.add_param(ndim=1, samples=np.full((5, 1), 3.0))
+    c = v.add_param(ndim=1, lb=2.0, ub=2.0)
+    z0 = v.add_iterate(ndim=1, init=np.zeros(1))
+    v.step.implicit_linear(z0 + x + c, output_mat=np.eye(1))
+    residuals = np.asarray(v.solve())
+    np.testing.assert_allclose(residuals[:, -1], 5.0)
