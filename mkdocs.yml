@@ -1,4 +1,4 @@
-site_name: FOM Tools
+site_name: FOMTools
 site_url: https://stellatogrp.github.io/fomtools/
 repo_url: https://github.com/stellatogrp/fomtools
 repo_name: stellatogrp/fomtools
@@ -10,6 +10,8 @@ nav:
   - Tutorials: tutorials.md
 theme:
   name: material
+  logo: assets/logo/icon.svg
+  favicon: assets/logo/favicon.svg
   features:
     - content.action.edit
   palette:
@@ -20,12 +22,16 @@ theme:
 
     - media: "(prefers-color-scheme: light)"
       scheme: default
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
 
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to system preference
@@ -49,10 +55,14 @@ plugins:
               ignore_init_summary: true
 
 markdown_extensions:
+  - attr_list
   - pymdownx.superfences
   - pymdownx.arithmatex:
       generic: true
       smart_dollar: true
+
+extra_css:
+  - stylesheets/extra.css
 
 extra_javascript:
   - javascripts/mathjax.js

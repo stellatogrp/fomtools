@@ -1,5 +1,9 @@
-FOMTools
-========
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/stellatogrp/fomtools/main/docs/assets/logo/logo-dark.svg">
+    <img alt="FOMTools" src="https://raw.githubusercontent.com/stellatogrp/fomtools/main/docs/assets/logo/logo.svg" height="72">
+  </picture>
+</h1>
 
 [![PyPI](https://img.shields.io/pypi/v/fomtools.svg)](https://pypi.org/project/fomtools/)
 [![Docs](https://img.shields.io/badge/docs-stellatogrp.github.io%2Ffomtools-blue.svg)](https://stellatogrp.github.io/fomtools/)
