@@ -84,7 +84,7 @@ def _to_numpy(arr) -> np.ndarray:
 
     Used by the CPU-side activations (``tv_activation``, ``polyhedral_activation``,
     ``qp_activation``) whose inner loops run on host (Condat / cvxpy-CLARABEL). On a
-    GPU run this pairs with :func:`_to_like` to bracket each activation with a
+    GPU run this pairs with `_to_like` to bracket each activation with a
     device→host→device transfer. Since these activations run inside
     ``_simulate_batch`` — invoked once per ``solve_model`` (the warm-up is skipped off
     GPU) — a mixed CUDA + cvxpy pipeline incurs that PCIe round-trip every iteration
@@ -96,7 +96,7 @@ def _to_numpy(arr) -> np.ndarray:
 
 
 def _to_like(host: np.ndarray, ref):
-    """Move host numpy ``host`` back to the device of ``ref`` (see :func:`_to_numpy`
+    """Move host numpy ``host`` back to the device of ``ref`` (see `_to_numpy`
     for the GPU round-trip cost this incurs in the CPU-side activations)."""
     if CUDA_AVAILABLE and isinstance(ref, cp.ndarray):
         return cp.asarray(host)
@@ -300,7 +300,7 @@ def tv_activation(lam: float):
     """Activation applying Condat's TV prox to each sample (looped on host).
 
     Host-side loop: on a GPU run the batch is moved device→host and the result back
-    (see :func:`_to_numpy`).
+    (see `_to_numpy`).
     """
 
     def activation(V):
@@ -333,7 +333,7 @@ def polyhedral_activation(A: np.ndarray, b, n: int, m: int, b_is_param: bool):
     Notes
     -----
     The per-sample loop runs on host (cvxpy/CLARABEL has no GPU backend); on a GPU run
-    each call moves the batch device→host and the result back (see :func:`_to_numpy`).
+    each call moves the batch device→host and the result back (see `_to_numpy`).
     """
     import cvxpy as cp_solver
 
@@ -387,7 +387,7 @@ def qp_activation(P, A, C, n: int, p: int, m: int, is_lp: bool):
     Notes
     -----
     The per-sample loop runs on host (cvxpy/CLARABEL has no GPU backend); on a GPU run
-    each call moves the batch device→host and the result back (see :func:`_to_numpy`).
+    each call moves the batch device→host and the result back (see `_to_numpy`).
     """
     import cvxpy as cp_solver
 
@@ -1102,8 +1102,8 @@ class Simulator(Canonicalizer):
         ``activation`` is a callable mapping the assembled input batch
         ``(N, arg.ndim)`` to the output batch ``(N, output_leaf.ndim)``; the result
         is written into ``output_leaf``'s slot. See the subproblem activation
-        factories defined in this module (e.g. :func:`simplex_activation`,
-        :func:`qp_activation`).
+        factories defined in this module (e.g. `simplex_activation`,
+        `qp_activation`).
 
         Parameters
         ----------

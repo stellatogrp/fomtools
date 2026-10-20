@@ -24,7 +24,7 @@ class Canonicalizer:
     Attributes
     ----------
     solver: Solver
-        A ready-to-use instance of a subclass of :class:`Solver`
+        A ready-to-use instance of a subclass of `Solver`
         (e.g., ``gurobi.Gurobi()``).
 
     """
@@ -33,7 +33,7 @@ class Canonicalizer:
 
     def __init__(self, solver_params: dict = None, solver: str = "highs"):
         """
-        Initialize an instance of :class:`Canonicalizer`.
+        Initialize an instance of `Canonicalizer`.
 
         Parameters
         ----------
@@ -76,7 +76,7 @@ class Canonicalizer:
         Returns
         -------
         Solver
-            A ready-to-use instance of a subclass of :class:`Solver`
+            A ready-to-use instance of a subclass of `Solver`
             (e.g., ``gurobi.Gurobi()``).
 
         Raises

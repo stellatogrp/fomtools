@@ -15,7 +15,7 @@ backends — no API key is forwarded: the child inherits the environment unchang
 and Pi resolves its own credentials. Like every real backend it needs
 authentication (a logged-in ``pi`` via ``/login``, or a provider key such as
 ``ANTHROPIC_API_KEY``) and so never runs in CI; the deterministic pipeline is
-exercised via :class:`~fomtools.codegen.agent.stub.StubAgentDriver`.
+exercised via `StubAgentDriver`.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from fomtools.codegen.agent.sdk_base import _SYSTEM_PROMPT, SdkAgentDriver
 class PiDevAgentDriver(SdkAgentDriver):
     """Drive code generation with the Pi (pi.dev) agent.
 
-    A concrete :class:`~fomtools.codegen.agent.sdk_base.SdkAgentDriver` that runs
+    A concrete `SdkAgentDriver` that runs
     a real Pi coding agent through the authoritative retry loop. Pi has no Python
     SDK, so the in-process SDK path is unimplemented and every attempt is served
     by the headless ``pi --print`` CLI. Pi loops internally until the run ends,
@@ -37,7 +37,7 @@ class PiDevAgentDriver(SdkAgentDriver):
     -------
     run
         Generate/refine the solver source until the verify command passes
-        (inherited from :class:`~fomtools.codegen.agent.sdk_base.SdkAgentDriver`).
+        (inherited from `SdkAgentDriver`).
 
     Attributes
     ----------
@@ -91,14 +91,14 @@ class PiDevAgentDriver(SdkAgentDriver):
         workdir : str
             Absolute working directory. Accepted for interface parity with the
             other backends; Pi takes no cwd flag, so it is applied via the
-            subprocess cwd in :meth:`_invoke_cli` instead of the argv.
+            subprocess cwd in `_invoke_cli` instead of the argv.
         prompt : str
             The task prompt for this attempt.
 
         Returns
         -------
         list of str
-            The argument vector to pass to :func:`subprocess.run`.
+            The argument vector to pass to `subprocess.run`.
         """
         argv = ["pi", "--print", "--approve"]
         if self.model:
@@ -111,7 +111,7 @@ class PiDevAgentDriver(SdkAgentDriver):
 
         Pi's SDK is Node-only, so there is no in-process path to drive. This
         override exists only to satisfy the abstract method; the backend always
-        runs through the ``pi --print`` CLI built by :meth:`_build_argv`.
+        runs through the ``pi --print`` CLI built by `_build_argv`.
 
         Parameters
         ----------

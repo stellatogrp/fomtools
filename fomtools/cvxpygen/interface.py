@@ -1,18 +1,18 @@
 """The cvxpygen solver interface for fomtools-generated FOM solvers.
 
-:class:`FomtoolsInterface` plugs into cvxpygen as the solver named
+`FomtoolsInterface` plugs into cvxpygen as the solver named
 ``'FOMTOOLS'``: it reuses cvxpygen's QP canonicalization (registered there
-under ``cvxpy_solver_name = 'OSQP'``) and, in :meth:`generate_code`, runs the
+under ``cvxpy_solver_name = 'OSQP'``) and, in `generate_code`, runs the
 fomtools code generator to produce the embedded solver inside cvxpygen's
 ``c/solver_code/`` directory, plus the C bridge from
-:mod:`fomtools.cvxpygen.glue`.
+`fomtools.cvxpygen.glue`.
 
 cvxpygen has no public solver registry — its dispatch is a dict local to
-``Canonicalizer._get_interface_class`` — so :func:`register` wraps that method
+``Canonicalizer._get_interface_class`` — so `register` wraps that method
 (idempotently) to add the ``'FOMTOOLS'`` name without forking cvxpygen.
 Generation options that cvxpygen's plumbing does not carry (FOM choice,
 fomtools config, agent driver, parameter bounds) travel through a
-context-variable set by :func:`fomtools.cvxpygen.api.generate_solver`.
+context-variable set by `fomtools.cvxpygen.api.generate_solver`.
 
 Validated against cvxpygen 1.x (see the seam-canary test in
 ``tests/codegen/test_cvxpygen_register.py``).

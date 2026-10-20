@@ -1,6 +1,6 @@
 """Extraction for methods whose coefficients vary with the iteration index.
 
-:func:`~fomtools.codegen.extract.extract_ir` reads one recorded iteration and
+`extract_ir` reads one recorded iteration and
 bakes its coefficients in as constants. That is correct for a stationary method
 and silently wrong for anything else: FISTA recorded this way collapses to plain
 ISTA, because its first momentum coefficient is zero.
@@ -9,9 +9,9 @@ The fix rests on a structural fact. A schedule scalar enters the recorded
 ``LinearExpression`` linearly, so every extracted coefficient block is *affine*
 in it:
 
-.. math::
-
-    M(\\gamma) = M_{0} + \\gamma M_{1}.
+$$
+M(\\gamma) = M_{0} + \\gamma M_{1}.
+$$
 
 So we do not need the scalar to stay symbolic through the recording. We ask the
 user for the recording as a *function* of its schedule scalars, evaluate it at a
@@ -20,12 +20,12 @@ One extra probe is held out to validate the fit, which is what catches a
 coefficient that varies in some way a table cannot express.
 
 The recovered slopes are emitted as extra coefficient blocks paired with a
-scaled :class:`~fomtools.codegen.ir.Term`, and the schedule itself becomes a
+scaled `Term`, and the schedule itself becomes a
 table read at the loop counter. Nothing about the stationary path changes.
 
-The tables are :class:`~fomtools.codegen.schedule.Schedule` objects, coerced from
+The tables are `Schedule` objects, coerced from
 whatever the caller supplied by
-:func:`~fomtools.codegen.schedule.as_schedule`; that module is the type, this one
+`as_schedule`; that module is the type, this one
 is the pass over it.
 """
 
@@ -83,7 +83,7 @@ class Recording:
         The iterate expression (or list of them) after exactly one iteration.
     state, params:
         Optional explicit leaf lists, forwarded to
-        :func:`~fomtools.codegen.extract.extract_ir`. Passing ``state``
+        `extract_ir`. Passing ``state``
         explicitly is the usual way to pin a multi-slot layout, such as the
         ``(y^k, y^{k-1})`` pair an accelerated method carries.
     """
@@ -285,13 +285,13 @@ def extract_scheduled_ir(
     ----------
     build:
         A function that records **one** iteration and returns a
-        :class:`Recording`. It is called with one keyword argument per entry of
+        `Recording`. It is called with one keyword argument per entry of
         ``schedules``, and must be free of side effects: it is called several
         times, at different values of those scalars, and must build the same
         algorithm each time.
     schedules:
         Maps a schedule name to a callable of the **0-based** iteration index, a
-        sequence of values, or a :class:`~fomtools.codegen.schedule.Schedule`. A
+        sequence of values, or a `Schedule`. A
         textbook formula written in 1-based ``k`` must be shifted by the caller;
         the coefficient belongs to the method, not to the generator.
     config:

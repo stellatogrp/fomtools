@@ -1,11 +1,11 @@
 """Generic driver for any headless coding-agent CLI, configured by a spec.
 
-A single :class:`CliAgentDriver` drives every prompt-in/files-out CLI backend
+A single `CliAgentDriver` drives every prompt-in/files-out CLI backend
 (the example Cursor spec and any user-registered agent); the per-tool differences
 live in
-:class:`~fomtools.codegen.agent.cli_specs.CliAgentSpec`. This is the agent-agnostic
+`CliAgentSpec`. This is the agent-agnostic
 core: the authoritative verify/retry loop is shared via
-:func:`~fomtools.codegen.agent.driver.run_verify_loop`, and authentication is
+`run_verify_loop`, and authentication is
 forced to API-key mode when a key is available (the key is forwarded into the
 spawned process environment so it takes precedence over any on-disk login).
 """
@@ -30,14 +30,14 @@ from fomtools.codegen.agent.driver import (
 
 
 class CliAgentDriver(AgentDriver):
-    """Drive code generation with a headless CLI described by a :class:`CliAgentSpec`.
+    """Drive code generation with a headless CLI described by a `CliAgentSpec`.
 
-    A concrete :class:`~fomtools.codegen.agent.driver.AgentDriver` for every
+    A concrete `AgentDriver` for every
     prompt-in/files-out CLI backend (the example Cursor spec and user-registered
     agents).
     All per-tool differences are carried by the ``spec``; this class supplies the
     agent-agnostic core and shares the authoritative verify/retry loop via
-    :func:`~fomtools.codegen.agent.driver.run_verify_loop`.
+    `run_verify_loop`.
 
     Methods
     -------
@@ -161,7 +161,7 @@ class CliAgentDriver(AgentDriver):
         Preflights that the CLI binary is on PATH and, when the spec requires
         it, persists an API-key login as a side effect. It then resolves the
         task workdir to an absolute path and hands control to
-        :func:`~fomtools.codegen.agent.driver.run_verify_loop`, which repeatedly
+        `run_verify_loop`, which repeatedly
         invokes the CLI and runs the verify command to decide success.
 
         Parameters
@@ -241,7 +241,7 @@ class CliAgentDriver(AgentDriver):
         Returns
         -------
         list of str
-            The argument vector to pass to :func:`subprocess.run`.
+            The argument vector to pass to `subprocess.run`.
         """
         spec = self.spec
         argv = [self.bin, *spec.base_args, *spec.flags, *self.extra_args]
@@ -264,7 +264,7 @@ class CliAgentDriver(AgentDriver):
         """Run one agent attempt by shelling out to the CLI.
 
         Executes ``argv`` in ``workdir`` with the child environment from
-        :meth:`_child_env` (API-key auth injected when configured), capturing
+        `_child_env` (API-key auth injected when configured), capturing
         output. Success is left to the caller's verify command; this method only
         returns the captured text or fails fast on an unrecoverable auth error.
 

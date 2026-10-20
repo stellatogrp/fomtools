@@ -1,10 +1,10 @@
 """Lower the verification objective onto the generated loop's vectors.
 
 The verification problem measures performance with an objective set by
-:meth:`~fomtools.verifier.Verifier.set_objective_norm`: a norm of linear
+`set_objective_norm`: a norm of linear
 expressions in the iterates, written at iteration ``K`` in terms of ``w^K`` and
 ``w^{K-1}`` (a fixed-point residual ``||w^K - w^{K-1}||``, a KKT residual, ...).
-:attr:`~fomtools.codegen.config.TerminationKind.OBJECTIVE` stops the generated
+`OBJECTIVE` stops the generated
 solver on exactly that quantity, so this module maps the objective onto what
 the rolled loop holds at the end of iteration ``k``:
 
@@ -18,7 +18,7 @@ the rolled loop holds at the end of iteration ``k``:
 The mapping is structural and exact. A leaf coordinate is matched to a state
 row only when that row of the iterate expression *is* the coordinate (a "pure
 copy"), and anything that does not match raises
-:class:`ObjectiveExtractionError` naming what to change. Nothing is ever fitted
+`ObjectiveExtractionError` naming what to change. Nothing is ever fitted
 or approximated, so the generated stopping test computes the expression the
 user wrote.
 
@@ -94,7 +94,7 @@ def objective_c_params(ir: FomIR) -> list[str]:
 
     ``it`` (the 0-based index of the iteration that produced ``new_state``),
     ``state`` (``w^{k-1}``), ``new_state`` (``w^k``), then each parameter and
-    body temporary the objective reads (see :meth:`FomIR.objective_inputs`).
+    body temporary the objective reads (see `FomIR.objective_inputs`).
     """
     params = ["fom_int it", "const fom_float *state", "const fom_float *new_state"]
     params += [f"const fom_float *{objective_c_source(s)}" for s in ir.objective_inputs()]
@@ -371,14 +371,14 @@ def extract_objective(
     iterates=None,
 ) -> ObjectiveSpec:
     """Map the objective set on ``verifier`` onto the loop extracted by
-    :func:`~fomtools.codegen.extract.extract_ir`.
+    `extract_ir`.
 
     Parameters
     ----------
     verifier:
         The recording, with its objective set.
     state_layout, next_state_exprs, param_map, tmp_map:
-        :func:`~fomtools.codegen.extract.extract_ir`'s view of the iteration:
+        `extract_ir`'s view of the iteration:
         ``(leaf, slot, dim, offset)`` per state leaf, the iterate after one
         iteration, and the parameter / temporary leaf maps.
     matrices:

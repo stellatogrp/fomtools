@@ -10,7 +10,7 @@ Emits (deterministically, *not* the solver body):
 * ``test/verify_main.c``      — runs the solver over the samples and checks them.
 * ``Makefile``                — ``make verify`` / ``make lib`` targets.
 * ``README.md``, ``SPEC.md``, ``spec.json``, ``data.npz`` (the IR, at the
-  output root), and the Python wrapper (via :mod:`fomtools.codegen.wrapper`).
+  output root), and the Python wrapper (via `fomtools.codegen.wrapper`).
 
 The coding agent (or a golden fixture) supplies ``src/fom_solver.c``.
 """
@@ -588,8 +588,8 @@ class EmbeddedCTarget(TargetDescriptor):
     # -- reference matvecs for the direct check of a rewritten fom_ops.c ---
     def _ops_editable(self) -> bool:
         """Whether the code optimization phase may rewrite ``fom_ops.c``. The one
-        condition for both the direct check (:meth:`_checked_ops`) and the
-        ``fom_ops.c`` kernel rules (:meth:`_kernel_rule_kinds`): neither is
+        condition for both the direct check (`_checked_ops`) and the
+        ``fom_ops.c`` kernel rules (`_kernel_rule_kinds`): neither is
         shipped without the other."""
         return self.ops_source_path() in self.optimization_editable_paths()
 
@@ -611,7 +611,7 @@ class EmbeddedCTarget(TargetDescriptor):
         """Matrices whose ``fom_apply_<name>`` ``make verify`` checks on its own.
 
         Only when the code optimization phase may rewrite ``fom_ops.c``
-        (:meth:`_ops_editable`): each routine is held to a package-written
+        (`_ops_editable`): each routine is held to a package-written
         reference over the same ``fom_data.c`` arrays, so a rewrite cannot change
         the matrix it applies.
         """
@@ -861,7 +861,7 @@ class EmbeddedCTarget(TargetDescriptor):
     def _cg_routine(self, name: str, fac) -> str:
         """Emit a self-contained Jacobi-preconditioned CG solve.
 
-        Mirrors :func:`fomtools.codegen.factorize._pcg_solve` exactly (same
+        Mirrors `fomtools.codegen.factorize._pcg_solve` exactly (same
         iteration, same stopping test ``r·r <= tol^2 (b·b)``). Uses an internal
         sparse (CSR) matrix-vector product against the stored SPD matrix; never
         forms a factorization or inverse. Division is used for the CG scalars,
@@ -981,7 +981,7 @@ class EmbeddedCTarget(TargetDescriptor):
         """Direct factorizations whose C solve ``make verify`` checks on its own.
 
         Only when the code optimization phase may rewrite the linear solve
-        (:meth:`optimization_editable_paths`): the end-to-end check sees a solve
+        (`optimization_editable_paths`): the end-to-end check sees a solve
         only through the whole iteration, so a rewrite is also held directly to
         the factorization's reference solve. CG is iterative, so its C and
         reference results differ legitimately; it is checked end to end only.
@@ -1039,7 +1039,7 @@ class EmbeddedCTarget(TargetDescriptor):
         """Runtime settings ``make verify`` re-runs an objective-terminated solver at.
 
         Each case is ``(check_termination, max_iter, oracle results per sample)``:
-        the intervals in :data:`_VERIFY_CHECK_INTERVALS`, and a ``max_iter`` that
+        the intervals in `_VERIFY_CHECK_INTERVALS`, and a ``max_iter`` that
         stops every sample short of its own exit, so the solver must honor both
         settings at run time and test the objective at the last iteration.
         """
@@ -1689,7 +1689,7 @@ class EmbeddedCTarget(TargetDescriptor):
     def kernel_checks(
         self, rel: str, source: str, ir: FomIR, baseline: str | None = None
     ) -> list[str]:
-        """The :mod:`~fomtools.codegen.kernel_rules` for a rewritten solver or ``fom_ops.c``.
+        """The `kernel_rules` for a rewritten solver or ``fom_ops.c``.
 
         The solver's rules hold on every target (its products go through
         ``fom_apply_*``, generated or checked); ``fom_ops.c``'s only where it is

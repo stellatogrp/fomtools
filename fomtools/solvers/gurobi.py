@@ -403,8 +403,8 @@ class GurobiSolver(MIPSolver):
 
         Encodes ``sum_i (a_i^T x + b_i)^2  op  radius_sq`` where ``op`` is given by
         ``sense``. The squared two-norm is built as ``gp_expr @ gp_expr`` (a dot product),
-        the same construct used by :meth:`set_two_norm_objective`. The const term ``b`` is
-        included via :meth:`expression_to_solver`.
+        the same construct used by `set_two_norm_objective`. The const term ``b`` is
+        included via `expression_to_solver`.
 
         The ``>=`` / ``==`` senses are nonconvex quadratic constraints; ``NonConvex=2`` is
         set for them so Gurobi accepts the model across versions (the convex ``<=`` sense

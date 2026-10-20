@@ -139,7 +139,7 @@ class SDP(Canonicalizer):
             larger one). For saturated-linear (box projection) steps this flag also
             emits the box normal-cone cuts (per coordinate ``j``: ``r_j(z_j-l_j)>=0``,
             ``r_j(z_j-u_j)>=0`` within a step, and ``r_j^b(z_j^a-z_j^b)<=0`` across
-            same-box steps), via :meth:`_build_box_normalcone_cuts`.
+            same-box steps), via `_build_box_normalcone_cuts`.
         subgrad_mono_cut : bool, default=False
             If True, add the PEP subgradient-monotonicity cuts
             ``<s^i/tau_i - s^j/tau_j, z^i> >= 0`` over ordered pairs of registered
@@ -156,7 +156,7 @@ class SDP(Canonicalizer):
             projection) steps this flag also
             emits the box firm-nonexpansiveness/monotonicity cuts (per coordinate:
             ``(z_j^a-z_j^b)(r_j^a-r_j^b)>=0`` across same-box steps), via
-            :meth:`_build_box_mono_cuts`.
+            `_build_box_mono_cuts`.
         """
         super(SDP, self).__init__(solver_params, solver)
         self.solver_name = solver.lower()  # Store for dispatch
@@ -506,7 +506,7 @@ class SDP(Canonicalizer):
 
             Set ``False`` for the **nonnegativity sides of a complementarity constraint**
             (``e1 >= 0`` / ``e2 >= 0`` emitted by
-            :meth:`_add_complementarity_constraint_impl`). Rationale:
+            `_add_complementarity_constraint_impl`). Rationale:
 
             - The product family is ``O(m^2)`` per constraint — the dominant cut cost —
               and each complementarity adds two such sides, so leaving it on multiplies
@@ -606,8 +606,8 @@ class SDP(Canonicalizer):
         ``e2_i = c2_i^T w``), the product ``e1_i e2_i = c1_i^T X c2_i`` is linear in ``X``.
         For each row ``i`` this adds the equality ``<sym(c1_i c2_i^T), X> = 0`` (the
         cross-product generalization of the equality strengthening in
-        :meth:`_add_equality_constraint_impl`), the nonnegativities ``e1 >= 0`` and
-        ``e2 >= 0`` (via :meth:`_add_inequality_constraint_impl`), and a PSD cone over
+        `_add_equality_constraint_impl`), the nonnegativities ``e1 >= 0`` and
+        ``e2 >= 0`` (via `_add_inequality_constraint_impl`), and a PSD cone over
         ``{0} ∪ vars(e1) ∪ vars(e2)`` so the bilinear entries are constrained.
 
         Parameters
@@ -666,7 +666,7 @@ class SDP(Canonicalizer):
         ``tau`` is the prox threshold (``tau = 1`` for orthant projection / ReLU,
         ``tau = lambda`` for soft-thresholding), and ``func`` names the sublinear
         function the step is the prox of. The subgradient cut builder
-        (:meth:`_build_subgrad_mono_cuts`) consumes this registry and pairs only
+        (`_build_subgrad_mono_cuts`) consumes this registry and pairs only
         steps with the same ``func`` (the cut is invalid across functions).
 
         Parameters
@@ -694,8 +694,8 @@ class SDP(Canonicalizer):
         projection output (``relu(v - l) - relu(v - u) + l`` in the SDP lift), ``v``
         is the input expression (``step.arg``; residual ``r = v - z``), and ``l`` /
         ``u`` are the box bounds (constant arrays or ``LinearExpression`` if
-        parametric). Consumed by :meth:`_build_box_normalcone_cuts` (under
-        ``cross_cut``) and :meth:`_build_box_mono_cuts` (under ``subgrad_mono_cut``).
+        parametric). Consumed by `_build_box_normalcone_cuts` (under
+        ``cross_cut``) and `_build_box_mono_cuts` (under ``subgrad_mono_cut``).
 
         Parameters
         ----------
@@ -1254,7 +1254,7 @@ class SDP(Canonicalizer):
           for each variable index ``p`` appearing in the constraint.
         - ``ineq_square_cuts``: ``g_i^2 <= g_i_lower * g_i`` using a propagated
           lower bound ``g_i_lower`` on ``g_i`` (analog of the per-variable box
-          product in :meth:`add_var`, generalized from ``e_i`` to ``c_i``).
+          product in `add_var`, generalized from ``e_i`` to ``c_i``).
 
         Bounds are read fresh from ``_build_sdp_idx_bounds`` / ``bound_propagation``
         each rebuild so the cuts track leaf tightening (cf. ``_build_triangle_cuts``).
@@ -1438,7 +1438,7 @@ class SDP(Canonicalizer):
         For each step, iterate over output index pairs ``(i, j)``: emit one
         cut whenever row ``i`` has mixed bounds (``arg_lb[i] < 0 <
         arg_ub[i]``) and column ``j`` has finite upper bound. Bounds come
-        from :meth:`_relu_arg_bounds`: the OBBT-tightened ``step.lb``/``step.ub``
+        from `_relu_arg_bounds`: the OBBT-tightened ``step.lb``/``step.ub``
         intersected with a fresh ``step.arg.bound_propagation()`` (which
         reflects any leaf tightening since ``canonicalize_relu`` ran). See
         paper §4.5 eq 25/26 for the derivation.
@@ -1498,7 +1498,7 @@ class SDP(Canonicalizer):
         ``(E_ii (a_i^T x + b_i) + c_i − y_i)(u_j − a_j^T x − b_j) ≥ 0``
         where ``E_ii = u_i / (u_i − l_i)``, ``c_i = −E_ii · l_i``, and
         ``(l_i, u_i, u_j)`` are taken from ``arg_lb`` / ``arg_ub``, the bounds
-        of the ReLU's input expression from :meth:`_relu_arg_bounds` (OBBT
+        of the ReLU's input expression from `_relu_arg_bounds` (OBBT
         bounds intersected with fresh propagation) — see ``_build_triangle_cuts``.
 
         Expanding gives 9 product groups that land in the lifted-matrix
@@ -1581,7 +1581,7 @@ class SDP(Canonicalizer):
         ``y_i >= 0`` is intentionally omitted: the y-leaf box bound (lb >= 0)
         together with the PSD ``2x2`` minor already implies it.
 
-        Bounds come from :meth:`_relu_arg_bounds` (OBBT-tightened ``step.lb``/
+        Bounds come from `_relu_arg_bounds` (OBBT-tightened ``step.lb``/
         ``step.ub`` intersected with fresh propagation; parity with
         ``_build_triangle_cuts``).
         """
@@ -1637,7 +1637,7 @@ class SDP(Canonicalizer):
         - ``beta``   : constant of ``v`` at this row,
         - ``x_bounds``: the input leaves' SDP index ranges (parallel to ``a``).
 
-        Used by :meth:`_build_cross_cuts`. The arg coefficients are read via
+        Used by `_build_cross_cuts`. The arg coefficients are read via
         ``linexpr_to_Amat_and_bounds`` once per step.
         """
         comps = []
@@ -1672,7 +1672,7 @@ class SDP(Canonicalizer):
         ``z_a r_b = sum_p a_b[p] X[ya, x_p] + beta_b X[0, ya] - X[ya, yb] <= 0``.
 
         The diagonal ``a == b`` (``ya == yb``) is the complementarity identity
-        ``z_a r_a = 0`` already encoded exactly by :meth:`canonicalize_relu`, so it
+        ``z_a r_a = 0`` already encoded exactly by `canonicalize_relu`, so it
         is skipped. Each cut registers the minimal PSD cone ``{0, ya, yb} U x_b``
         so its second-moment entries bind without ``full_psd_cone``.
 
@@ -1729,7 +1729,7 @@ class SDP(Canonicalizer):
         - ``e^T F``    -> ``X[0, idxF]``     (first-moment row),
         - ``e^T f``    -> ``M[0, 0]``.
 
-        Generalizes :meth:`_apply_two_norm_objective` (the self case
+        Generalizes `_apply_two_norm_objective` (the self case
         ``<Ax+b, Ax+b>``) to two *different* expressions. The two first-moment
         contributions are accumulated **additively** over the union of their SDP
         indices and scattered once, so a leaf shared by ``expr1`` and ``expr2``
@@ -1784,7 +1784,7 @@ class SDP(Canonicalizer):
             = (1/tau_i)[<v^i, z^i> - <z^i, z^i>]
             - (1/tau_j)[<v^j, z^i> - <z^j, z^i>]``,
 
-        each term a lifted inner product built by :meth:`_cross_innerprod_block`.
+        each term a lifted inner product built by `_cross_innerprod_block`.
         On the orthant (``tau = 1``, ``z`` a ReLU output) this reduces to the
         cross cut; on the soft-threshold (``tau = lambda``, ``z`` composite) it is
         a distinct coupling. Each cut registers a PSD cone over the indices of
@@ -1855,7 +1855,7 @@ class SDP(Canonicalizer):
         r"""
         Emit the per-component cut ``e1 . e2  {<=,>=}  0`` where ``e1``, ``e2`` are
         scalar (length-1) affine expressions. ``tr(M X) = e1 . e2`` via
-        :meth:`_cross_innerprod_block` (inner product of 1-vectors = the scalar
+        `_cross_innerprod_block` (inner product of 1-vectors = the scalar
         product). Registers the minimal PSD cone over the involved leaves so the
         bilinear term binds, then pushes ``+sym`` (for ``<=``) or ``-sym`` (for
         ``>=``) with ub 0 — the standard convention.

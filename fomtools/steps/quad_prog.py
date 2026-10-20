@@ -32,9 +32,9 @@ class QuadraticProgram(Step):
         \quad\text{s.t.}\quad A x = b,\; C x \le d,
     $$
 
-    where :math:`P \in \mathbf{R}^{n\times n}` is a fixed **symmetric PSD** matrix
+    where $P \in \mathbf{R}^{n\times n}$ is a fixed **symmetric PSD** matrix
     (dense ``numpy`` or ``scipy.sparse``), and ``q``, ``b``, ``d`` may be numeric
-    data or :class:`LinearExpression` parameters (carrying dependence on prior
+    data or `LinearExpression` parameters (carrying dependence on prior
     iterates). The verification-side lowering (``decompose_quadraticprogram`` in
     the step decomposer) posts the KKT system
 
@@ -44,12 +44,12 @@ class QuadraticProgram(Step):
         0 \le \lambda \perp (d - C x) \ge 0,
     $$
 
-    with :math:`\nu` a free equality multiplier and :math:`\lambda \ge 0`, using
+    with $\nu$ a free equality multiplier and $\lambda \ge 0$, using
     the complementarity primitive. The MIP big-M encoding of the complementarity
-    needs a finite upper bound on :math:`\lambda`; supply it via ``dual_ub``
+    needs a finite upper bound on $\lambda$; supply it via ``dual_ub``
     whenever inequalities are present (OBBT tightens it further when enabled).
 
-    Invoked via :meth:`Verifier.quadratic_program` rather than the single-``arg``
+    Invoked via `Verifier.quadratic_program` rather than the single-``arg``
     ``run_step`` path: an arbitrary QP has up to three parametric inputs
     (``q``, ``b``, ``d``), and each ``LinearExpression`` already references the
     prior iterates it was built from, so no input is forced into an ``arg`` slot.

@@ -94,7 +94,7 @@ def ruiz_kkt(
 
 
 def ruiz_for(qp: QPData, iters: int = RUIZ_ITERS) -> Scaling:
-    """:func:`ruiz_kkt` for a :class:`QPData`, bounding ``|q|`` over its parameter box."""
+    """`ruiz_kkt` for a `QPData`, bounding ``|q|`` over its parameter box."""
     if "q" in qp.param_dependent:
         lb, ub = qp.bounds["q"]
         q_abs = np.maximum(np.abs(lb), np.abs(ub))

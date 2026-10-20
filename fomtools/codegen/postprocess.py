@@ -111,7 +111,7 @@ def _looks_like_prompt_echo(text: str) -> bool:
     reply. And the harness's own bracketed diagnostics, which describe the agent
     rather than quoting it. Neither belongs in a report section headed "Agent
     notes". The phrases below appear only in
-    :mod:`fomtools.codegen.agent.prompts` or in harness messages.
+    `fomtools.codegen.agent.prompts` or in harness messages.
     """
     lowered = text.lower()
     tells = (
@@ -134,7 +134,7 @@ def _looks_like_prompt_echo(text: str) -> bool:
 def extract_agent_notes(log: str, max_chars: int = 4000) -> str:
     """Extract the agent's own optimization summary from its output.
 
-    Pass the agent-only log (:attr:`~fomtools.codegen.agent.driver.AgentResult.agent_log`),
+    Pass the agent-only log (`agent_log`),
     not the combined one: the combined log interleaves build and verify output,
     so the fallback branches below would otherwise return compiler noise.
 
@@ -147,7 +147,7 @@ def extract_agent_notes(log: str, max_chars: int = 4000) -> str:
     3. the tail of the log.
 
     Returns ``""`` rather than something misleading when the only candidate is
-    our own prompt echoed back (see :func:`_looks_like_prompt_echo`) — an empty
+    our own prompt echoed back (see `_looks_like_prompt_echo`) — an empty
     notes section is honest, whereas the prompt masquerading as a summary is not.
     """
     if not log:

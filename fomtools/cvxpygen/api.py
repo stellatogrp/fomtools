@@ -87,17 +87,17 @@ def generate_solver(
         builder callable ``f(qp: QPData, **fom_options) -> FomSpec``.
 
         A custom builder may target any of the three generation paths by
-        declaring it with :func:`~fomtools.cvxpygen.builders.fom_builder`:
+        declaring it with `fom_builder`:
         ``"rolled"`` (the default — one stationary iteration, repeated),
         ``"scheduled"`` (varying coefficients declared and tabulated, returning a
-        :class:`~fomtools.cvxpygen.builders.ScheduledFomSpec`), or ``"unrolled"``
+        `ScheduledFomSpec`), or ``"unrolled"``
         (the whole recorded run, which also needs ``allow_unrolled=True``).
     fom_options:
         Extra keyword arguments forwarded to the FOM builder (e.g. ``rho``,
         ``alpha`` for ADMM; ``alpha_start``, ``alpha_final``, ``ramp_iters``
         for the relaxed variant; ``step_scale`` for PDHG).
     config:
-        fomtools :class:`~fomtools.codegen.config.CodegenConfig`; supplies the
+        fomtools `CodegenConfig`; supplies the
         termination criterion (``max_iters``/``tol``/``check_termination``)
         among others. Supported targets: the embedded C target and the
         large-scale OpenMP / CUDA targets, all with ``dtype='float64'`` (the
@@ -145,7 +145,7 @@ def generate_solver(
     auto_equilibrate:
         Ruiz-equilibrate the canonical QP before the FOM is built (default):
         the solver iterates on ``c D P D``, ``c D q``, ``E A D``, ``E l``, ``E u``
-        (see :mod:`fomtools.cvxpygen.scaling`), and the generated bridge scales
+        (see `fomtools.cvxpygen.scaling`), and the generated bridge scales
         the parameters in and the solution out, so ``problem.solve`` returns the
         original problem's primal and dual solution and the reported residuals
         are those of the original problem. A runtime ``tol`` compares

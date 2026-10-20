@@ -184,7 +184,7 @@ def _extract_fom(fom: dict, config, roll: bool = True):
     """Extract the IR for a FOM dict: unrolled, stationary, or scheduled.
 
     Unpacks the dict and hands the same arguments to the same dispatch
-    :func:`~fomtools.codegen.generate.generate_code` uses, so ``--scaffold-only``
+    `generate_code` uses, so ``--scaffold-only``
     cannot preview an IR the full run would have rejected.
     """
     from fomtools.codegen.generate import extract_fom_ir

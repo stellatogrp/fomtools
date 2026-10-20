@@ -103,7 +103,7 @@ def _piece_dims(qp: QPData) -> dict[str, tuple[str, int, int]]:
 
     The offset of a constraint piece is also its first row in the equilibration
     scaling ``E`` (equality rows first, then inequality rows), which
-    :func:`_param_copy_line` relies on to index ``bridge_E``.
+    `_param_copy_line` relies on to index ``bridge_E``.
     """
     return {
         "q": ("q", 0, qp.n),
@@ -232,7 +232,7 @@ def emit_bridge(
     straight-line body actually performs.
 
     With ``scaling`` the solver was built on the equilibrated QP
-    (:func:`fomtools.cvxpygen.scaling.scale_qp`): the parameters are scaled on
+    (`fomtools.cvxpygen.scaling.scale_qp`): the parameters are scaled on
     the way in, the primal and dual solution unscaled on the way out
     (``x = D x~``, ``y = E y~ / c``), and the residuals and objective, which
     read the original ``Canon_Params``, are those of the original problem.

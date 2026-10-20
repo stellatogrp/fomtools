@@ -18,7 +18,7 @@ Design decisions (mirroring the CPU emission in ``embedded_c.py``):
   shared-memory block reduction, so the in-run floating-point reduction order
   is stable.
 * **CG runs entirely on the device** (SpMV + dot + axpy kernels), mirroring
-  :func:`fomtools.codegen.factorize._pcg_solve` exactly: same iteration, same
+  `fomtools.codegen.factorize._pcg_solve` exactly: same iteration, same
   stopping test ``r.r <= tol^2 (b.b)``. Only the reduction *order* differs
   from the serial NumPy oracle; CG converges to ``cg_tol`` so both land well
   within the verify tolerance.
@@ -36,7 +36,7 @@ The verify command auto-detects the hardware: on a GPU machine (``nvcc`` +
 ``nvidia-smi`` reporting a device, or ``FOMTOOLS_CUDA_RUN=1``) it is
 ``make verify`` — build *and* run the real comparison against the oracle —
 while CI / dev boxes with no GPU fall back to a ``make compile`` compile-check.
-See :meth:`CudaTarget.verify_command`.
+See `CudaTarget.verify_command`.
 """
 
 from __future__ import annotations
@@ -814,7 +814,7 @@ class CudaTarget(EmbeddedCTarget):
     def _cg_routine_cu(self, name: str, fac) -> str:
         """Device-resident Jacobi-preconditioned CG for one SPD system.
 
-        Mirrors :func:`fomtools.codegen.factorize._pcg_solve` exactly (same
+        Mirrors `fomtools.codegen.factorize._pcg_solve` exactly (same
         iteration, same stopping test ``r.r <= tol^2 (b.b)``, same breakdown
         exit); every vector, dot product and scalar step runs on the device, and
         the host, which drives the loop, reads back only the stop flag.

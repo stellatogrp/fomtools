@@ -1,8 +1,8 @@
 """Backend-aware iterate trajectory container.
 
-An :class:`IterateTrajectory` is a fixed-length, list-like holder of
-:class:`~fomtools.linearexpression.LinearExpression` iterates bound to a
-:class:`~fomtools.verifier.Verifier`. It exists to give users a single idiom
+An `IterateTrajectory` is a fixed-length, list-like holder of
+`LinearExpression` iterates bound to a
+`Verifier`. It exists to give users a single idiom
 for building an algorithm's iterate sequence that automatically makes the right
 representation choice per backend.
 
@@ -49,7 +49,7 @@ _GROWTH_TO_LATCH = 2
 class IterateTrajectory:
     """Fixed-length, list-like sequence of iterates with backend-aware collapsing.
 
-    Created via :meth:`fomtools.verifier.Verifier.iterate_trajectory`. Behaves
+    Created via `fomtools.verifier.Verifier.iterate_trajectory`. Behaves
     like a fixed-length list: index with ``traj[k]`` (negative indices
     supported), assign with ``traj[k] = expr``, take ``len(traj)``, and iterate.
 
@@ -65,7 +65,7 @@ class IterateTrajectory:
         Trajectory-level default collapse policy. ``'auto'`` collapses on
         MIP/simulator and keeps a separate leaf on SDP, and switches to keeping a
         separate leaf once the assigned expressions are seen to accumulate. May be
-        overridden per slot via :meth:`assign`.
+        overridden per slot via `assign`.
     """
 
     def __init__(self, verifier, length: int, collapse_expr="auto"):

@@ -29,7 +29,7 @@ class MIP(Canonicalizer):
     Attributes
     ----------
     solver: Solver
-        A ready-to-use instance of a subclass of :class:`Solver`
+        A ready-to-use instance of a subclass of `Solver`
         (e.g., ``gurobi.Gurobi()``).
     _objective_spec: tuple or None
         Stored objective specification for deferred application.
@@ -128,7 +128,7 @@ class MIP(Canonicalizer):
         $$
 
         ``z = 1`` forces ``e2[i] = 0``; ``z = 0`` forces ``e1[i] = 0``. This mirrors the
-        ReLU big-M idiom in :meth:`_build_relu_constraints`.
+        ReLU big-M idiom in `_build_relu_constraints`.
 
         Parameters
         ----------

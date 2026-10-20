@@ -3,7 +3,7 @@
 These dataclasses describe *what* the user wants generated (target language,
 embedded vs. large-scale, termination criterion, numerical dtype) without
 touching the algorithm-specific intermediate representation, which lives in
-:mod:`fomtools.codegen.ir`.
+`fomtools.codegen.ir`.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ class TerminationKind(str, Enum):
     additionally stops early once ``||x_k - x_{k-1}||_inf <= tol``.
 
     ``OBJECTIVE`` stops early once the *verification objective* ``r^k`` -- the
-    performance metric set with :meth:`~fomtools.verifier.Verifier.set_objective_norm`,
+    performance metric set with `set_objective_norm`,
     e.g. a fixed-point or KKT residual, in the norm it was set with -- is at most
     ``tol``. The stopping test is then exactly the certified quantity: if
     verification shows ``r^K <= tol`` over the whole parameter set, the generated
@@ -227,9 +227,18 @@ class CodegenConfig(BaseModel):
         Number of random parameter instances drawn for the golden verify data.
     seed : int
         RNG seed for reproducible verify-sample generation.
+    agent_timeout_s : int
+        Wall-clock budget, in seconds, for the translation phase, shared by
+        all of its agent attempts. Default 600.
+    agent_optimize_max_turns : int
+        Turn budget for one coding-agent attempt at the code optimization
+        phase. Default 200.
+    agent_optimize_timeout_s : int
+        Wall-clock budget, in seconds, for the code optimization phase.
+        Default 7200.
     cg_auto_min_dim : int
         Dimension threshold for the ``AUTO`` → CG upgrade on the large-scale
-        CUDA backend (see :class:`SolveMethod`). Raise it to keep more systems
+        CUDA backend (see `SolveMethod`). Raise it to keep more systems
         on a direct factorization; lower it to prefer CG for smaller SPD
         systems. Ignored for non-CUDA backends and explicit solve methods.
     """
