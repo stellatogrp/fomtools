@@ -69,16 +69,16 @@ class SimulatorStepDecomposer(StepDecomposer):
     canonicalizer. Three families:
 
     - **Primitive** activations (``Relu``/``SaturatedLinear``/``SoftThreshold``):
-      forwarded directly via :meth:`_process_primitive`.
+      forwarded directly via `_process_primitive`.
     - **Pure linear solve** (``Quadratic``/``LeastSquares``, ``IndAffine``, and the
       equality-only / unconstrained ``QuadraticProgram``): lowered to an
-      :class:`Affine` step (one batched multi-RHS solve, no Python loop).
+      `Affine` step (one batched multi-RHS solve, no Python loop).
     - **Subproblem** activations for the complementarity cases. The simplex,
       ℓ1-ball and ℓ∞-norm proxes use batched solver-free projections; the 1-D
       total-variation prox uses Condat's O(n) algorithm; polyhedral projection and
       inequality QP/LP loop a parametrized cvxpy solve per sample. All are wired
-      through :meth:`Simulator.register_subproblem_step` (the activation factories
-      live alongside it in :mod:`fomtools.canonicalizers.simulator`).
+      through `Simulator.register_subproblem_step` (the activation factories
+      live alongside it in `fomtools.canonicalizers.simulator`).
     """
 
     def _process_primitive(self, step: Step) -> LinearExpression:
@@ -138,7 +138,7 @@ class SimulatorStepDecomposer(StepDecomposer):
         Used by the **prox** lowerings (simplex, ℓ1-ball, ℓ∞-norm, TV, polyhedral),
         which have no Step object and therefore no pre-allocated output leaf — so we
         mint one here via ``LinearExpression.from_int(n)``. This differs from the
-        **step** path (:meth:`_qp_via_cvxpy`), where the ``QuadraticProgram`` step has
+        **step** path (`_qp_via_cvxpy`), where the ``QuadraticProgram`` step has
         already allocated ``step.output`` and we reuse it rather than create another.
         """
         out = LinearExpression.from_int(n)
@@ -152,9 +152,9 @@ class SimulatorStepDecomposer(StepDecomposer):
 
     def prox_quadratic(self, prox, arg: LinearExpression, gamma: float = 1.0) -> LinearExpression:
         r"""
-        Lower a (convex) quadratic / least-squares prox to an :class:`Affine` step.
+        Lower a (convex) quadratic / least-squares prox to an `Affine` step.
 
-        The prox solves :math:`(I + \gamma Q)\,x = \text{arg} - \gamma q`, a single
+        The prox solves $(I + \gamma Q)\,x = \text{arg} - \gamma q$, a single
         linear system whose matrix ``I + γQ`` is positive definite (``Q ⪰ 0``,
         ``γ > 0``) and therefore always nonsingular. Both ``Quadratic`` and
         ``LeastSquares`` expose ``Q`` and ``q`` (the latter as ``Q = AᵀA``,
@@ -171,18 +171,19 @@ class SimulatorStepDecomposer(StepDecomposer):
 
     def prox_indaffine(self, prox, arg: LinearExpression, gamma: float = 1.0) -> LinearExpression:
         r"""
-        Lower the affine-set indicator prox (projection onto :math:`\{Ax = b\}`)
-        to an :class:`Affine` step on the block KKT system
+        Lower the affine-set indicator prox (projection onto $\{Ax = b\}$)
+        to an `Affine` step on the block KKT system
 
-        .. math::
-            \begin{bmatrix} I & A^\top \\ A & 0 \end{bmatrix}
-            \begin{bmatrix} u \\ \nu \end{bmatrix}
-            = \begin{bmatrix} \text{arg} \\ b \end{bmatrix},
+        $$
+        \begin{bmatrix} I & A^\top \\ A & 0 \end{bmatrix}
+        \begin{bmatrix} u \\ \nu \end{bmatrix}
+        = \begin{bmatrix} \text{arg} \\ b \end{bmatrix},
+        $$
 
         returning the primal slice ``u = x[:n]``. The block matrix is invertible
         when ``A`` has full row rank (assumed by ``IndAffine``). ``b`` may be
         numeric data or a ``LinearExpression`` parameter (lifted via
-        :meth:`_lift_to_le`).
+        `_lift_to_le`).
         """
         A, m, n = prox.A, prox.m, prox.n
         b_le = self._lift_to_le(prox.b, m)
@@ -243,13 +244,13 @@ class SimulatorStepDecomposer(StepDecomposer):
 
     def decompose_quadraticprogram(self, step: Step) -> LinearExpression:
         r"""
-        Lower a :class:`QuadraticProgram` / :class:`LinearProgram` step.
+        Lower a `QuadraticProgram` / `LinearProgram` step.
 
         Equality-only / unconstrained QPs with a nonsingular ``P`` are a pure linear
-        system and lower to an :class:`Affine` block-KKT solve (batched). QPs with
+        system and lower to an `Affine` block-KKT solve (batched). QPs with
         inequality constraints, and all LPs (``P = 0``, whose vertex solution is set
         by the active inequalities), are solved per sample with a parametrized cvxpy
-        problem (:func:`qp_activation`).
+        problem (`qp_activation`).
         """
         has_ineq = step.C is not None
         is_lp = getattr(step, "is_lp", False)
@@ -301,7 +302,7 @@ class SimulatorStepDecomposer(StepDecomposer):
         activation = qp_activation(step.P, step.A, step.C, n, p, m, getattr(step, "is_lp", False))
 
         # Reuse the step's own pre-allocated output leaf (unlike the prox path in
-        # :meth:`_register_subproblem`, which must mint a fresh one — a prox has no Step).
+        # `_register_subproblem`, which must mint a fresh one — a prox has no Step).
         out = step.output  # the QP step's own fresh dim-n leaf
         self.register_var(out, var_type="param")
         self.canonicalizer.register_subproblem_step(arg_expr, out, activation)

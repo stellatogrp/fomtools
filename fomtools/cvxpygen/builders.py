@@ -1,7 +1,7 @@
 """First-order-method builders over the canonical QP form.
 
-A *builder* takes a :class:`~fomtools.cvxpygen.qpdata.QPData` snapshot and
-records a first-order method in a fomtools :class:`~fomtools.verifier.Verifier`,
+A *builder* takes a `QPData` snapshot and
+records a first-order method in a fomtools `Verifier`,
 returning a spec that the code generator and the C bridge consume. Built-in
 builders:
 
@@ -21,23 +21,23 @@ extension point.
 Three generation paths
 ----------------------
 A builder returns one of two spec types and declares which path it wants with
-:func:`fom_builder`, mirroring the dispatch in
-:func:`fomtools.codegen.generate.generate_code`:
+`fom_builder`, mirroring the dispatch in
+`fomtools.codegen.generate.generate_code`:
 
 ``"rolled"``
-    A :class:`FomSpec` with ``next_state``: one stationary iteration, which the
+    A `FomSpec` with ``next_state``: one stationary iteration, which the
     generated loop repeats ``config.termination.max_iters`` times. Pass
     ``iterates`` too and generation *checks* that the method really is
     stationary.
 ``"unrolled"``
-    A :class:`FomSpec` with ``next_state=None`` and ``iterates``: the whole
+    A `FomSpec` with ``next_state=None`` and ``iterates``: the whole
     recorded run, which accepts arbitrary per-iteration coefficients, a step
     type that changes with the iteration, and anchored methods. Generation rolls
     it back up when repeating one iteration is verified to reproduce it. The
     horizon is baked in, so this needs ``allow_unrolled=True`` at the
     ``generate_solver`` call.
 ``"scheduled"``
-    A :class:`ScheduledFomSpec`: a build function whose varying coefficients are
+    A `ScheduledFomSpec`: a build function whose varying coefficients are
     declared as schedules and tabulated, giving one emitted block plus a table
     whatever the horizon.
 
@@ -68,7 +68,7 @@ from fomtools.linearexpression import LinearExpression, stack
 from fomtools.verifier import Verifier
 
 #: The generation paths a builder may declare, as named by
-#: :func:`fomtools.codegen.generate.generate_code`.
+#: `fomtools.codegen.generate.generate_code`.
 FOM_KINDS = ("rolled", "unrolled", "scheduled")
 
 
@@ -82,7 +82,7 @@ class BaseFomSpec:
     or ``'u_ineq'`` (last ``n_ineq`` entries of canonical ``u``). The primal /
     dual slices locate the QP solution inside the stacked FOM state.
 
-    Shared by both spec types so :func:`fomtools.cvxpygen.glue.emit_bridge` can
+    Shared by both spec types so `fomtools.cvxpygen.glue.emit_bridge` can
     take either: the bridge cares only about the layout, never about which path
     produced the solver.
     """
@@ -120,13 +120,13 @@ class FomSpec(BaseFomSpec):
     On the unrolled path ``iterates`` is the run itself, and either convention
     works: the recorded iterations alone, or those with the *initial* iterate
     kept in slot 0, as an
-    :class:`~fomtools.iteratetrajectory.IterateTrajectory` holds them.
-    :func:`~fomtools.codegen.extract.normalize_iterates` recognizes a leading
+    `IterateTrajectory` holds them.
+    `normalize_iterates` recognizes a leading
     initial iterate structurally — an entry referencing no recorded step output
     — and drops it, so the emitted run and the iteration count reported through
     ``solver_stats`` both follow the recorded iterations either way. The rolled
     stationarity check is stricter: it replays the tape through
-    :func:`~fomtools.codegen.oracle.run_recorded_tape`, which reads every entry
+    `run_recorded_tape`, which reads every entry
     as an iteration, so a tape passed alongside ``next_state`` must hold the
     recorded iterations only.
     """
@@ -144,19 +144,19 @@ class ScheduledFomSpec(BaseFomSpec):
     """A FOM whose varying coefficients are declared: the ``scheduled`` path.
 
     ``build`` records **one** iteration as a function of its schedule scalars
-    and returns a :class:`fomtools.codegen.extract_scheduled.Recording`; it is
+    and returns a `fomtools.codegen.extract_scheduled.Recording`; it is
     called several times, at different scalar values, so it must be free of side
     effects and must build the same algorithm each time.
 
     ``schedules`` maps each scalar's name to a callable of the **0-based**
     iteration index, a sequence, or a
-    :class:`~fomtools.codegen.schedule.Schedule`. The tables are emitted
+    `Schedule`. The tables are emitted
     alongside the solver and read at the loop counter, so the solver stays one
     block long however far it runs — but only as far as the tables reach, which
     is why the interface refuses a horizon longer than they cover.
 
     The state/parameter leaf lists live inside the ``Recording`` the build
-    function returns, so unlike :class:`FomSpec` this carries none.
+    function returns, so unlike `FomSpec` this carries none.
     """
 
     build: Callable
@@ -221,7 +221,7 @@ def _add_params(v: Verifier, qp: QPData) -> tuple[dict, tuple[str, ...]]:
     """Add runtime parameters for the parametric pieces; bake constants.
 
     Returns ``(exprs, param_copy)`` where ``exprs`` maps each piece in
-    :data:`PIECES` to a ``LinearExpression`` parameter or a constant numpy
+    `PIECES` to a ``LinearExpression`` parameter or a constant numpy
     vector, and ``param_copy`` lists the parametric ones in add order.
     """
     values = {"q": qp.q, "b": qp.b, "u_ineq": qp.u_ineq}
@@ -244,15 +244,15 @@ def _const_like(template: LinearExpression, value: np.ndarray) -> LinearExpressi
 
 
 def _record_iterations(one_iteration: Callable, state: tuple) -> tuple:
-    """Record :data:`_GATE_ITERS` successive iterations of ``one_iteration``.
+    """Record `_GATE_ITERS` successive iterations of ``one_iteration``.
 
     Returns ``(next_state, iterates)``: the iterate after exactly one iteration,
     which is what the rolled extraction reads, and the tape it is checked
     against. The tape holds the recorded iterations *only* — no leading initial
     iterate. The rolled check reads it through
-    :func:`~fomtools.codegen.oracle.run_recorded_tape`, which takes every entry
+    `run_recorded_tape`, which takes every entry
     as an iteration rather than recognizing the leading-initial-iterate
-    convention that :func:`~fomtools.codegen.extract.normalize_iterates`
+    convention that `normalize_iterates`
     implements for the unrolled path.
 
     Recording past the first iteration costs a little simulator time at
@@ -273,7 +273,7 @@ def _gate_param_values(verifier: Verifier, iterates: tuple, state: tuple, params
     A draw inside each declared box rather than its midpoint: the boxes here are
     often symmetric, and a zero parameter makes a soft-threshold or projection
     step trivial, hiding exactly the disagreement the check exists to find (see
-    :func:`~fomtools.codegen.oracle.sample_param_values`).
+    `sample_param_values`).
     """
     return sample_param_values(
         verifier, list(iterates), state=list(state), params=list(params), seed=0
@@ -448,7 +448,7 @@ def build_relaxed_admm_qp(
 ) -> ScheduledFomSpec:
     r"""ADMM whose over-relaxation ``alpha_k`` varies with the iteration index.
 
-    The operator is exactly :func:`build_admm_qp`'s; the only difference is that
+    The operator is exactly `build_admm_qp`'s; the only difference is that
     its relaxation is a schedule instead of a constant, ramping linearly from
     ``alpha_start`` to ``alpha_final`` over ``ramp_iters`` iterations and holding
     there. Douglas-Rachford converges for any relaxation sequence inside

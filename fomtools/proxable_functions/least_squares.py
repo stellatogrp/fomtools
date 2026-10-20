@@ -9,29 +9,45 @@ class LeastSquares(Quadratic):
     r"""
     Least-squares loss.
 
-    Represents the convex smooth function
+    Represents
 
     $$
-        f(x) = \tfrac{1}{2}\|Ax - b\|_2^2.
+        f(x) = \tfrac{1}{2}\|Ax - b\|_2^2
+             = \tfrac{1}{2}\,x^\top (A^\top A)\, x - (A^\top b)^\top x
+               + \tfrac{1}{2}\|b\|_2^2.
     $$
 
-    Expanding the square gives
+    Convex and smooth. This is a ``Quadratic`` with $Q = A^\top A$ and
+    $q = -A^\top b$ plus a constant, so ``prox`` and ``grad`` are inherited;
+    only ``eval`` is overridden to add back $\tfrac{1}{2}\|b\|_2^2$.
+
+    Parameters
+    ----------
+    A : np.ndarray or scipy.sparse matrix
+        Data matrix of shape ``(m, n)``. Sparse input is kept sparse (CSR).
+    b : float, np.ndarray, or LinearExpression
+        Target of shape ``(m,)``. A ``LinearExpression`` is treated as a
+        parameter by the verification lowering.
+
+    Raises
+    ------
+    ValueError
+        If ``A`` is not 2-D, or an array ``b`` has the wrong shape.
+
+    See Also
+    --------
+    Quadratic : Parent class.
+
+    Notes
+    -----
+    **Proximal operator.**
 
     $$
-        f(x) = \tfrac{1}{2}\,x^\top (A^\top A)\, x
-               \;+\; (-A^\top b)^\top x
-               \;+\; \tfrac{1}{2}\|b\|^2,
+        (I + \gamma A^\top A)\, u = v + \gamma A^\top b.
     $$
 
-    so the prox is identical to :class:`Quadratic` with
-    $Q = A^\top A$ and $q = -A^\top b$ — the constant $\tfrac{1}{2}\|b\|^2$
-    drops out of $\arg\min$. The gradient $A^\top(Ax - b)$ equals
-    $Qx + q$, so it is inherited as well. Only :meth:`eval` is overridden,
-    to add back the $\tfrac{1}{2}\|b\|^2$ constant.
-
-    ``b`` may be numeric data or a :class:`LinearExpression` parameter —
-    the constructor computes ``q = -A.T @ b`` uniformly via
-    ``LinearExpression.__rmatmul__``.
+    **Verification lowering.** Registered to ``prox_quadratic``: a single linear
+    equality on a fresh iterate, as for ``Quadratic``.
     """
 
     def __init__(
@@ -62,10 +78,8 @@ class LeastSquares(Quadratic):
         r"""
         Evaluate $f(x) = \tfrac{1}{2}\|Ax - b\|_2^2$.
 
-        Numeric ``A`` and ``b`` only (matches :meth:`Quadratic.eval`
-        numeric-only precedent — ``LinearExpression`` ``b`` is supported
-        for the verification-side lowering but not for this numpy
-        reference).
+        Requires numeric ``b``; a ``LinearExpression`` ``b`` is supported only by
+        the verification lowering.
 
         Parameters
         ----------
@@ -75,12 +89,12 @@ class LeastSquares(Quadratic):
         Returns
         -------
         float
-            The function value.
+            The function value $f(x)$.
 
         Raises
         ------
         TypeError
-            If ``self.b`` is a :class:`LinearExpression`.
+            If ``b`` is a ``LinearExpression``.
         """
         if hasattr(self.b, "decomposition_dict"):
             raise TypeError(

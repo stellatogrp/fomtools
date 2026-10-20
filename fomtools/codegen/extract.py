@@ -1,4 +1,4 @@
-"""Extract a :class:`~fomtools.codegen.ir.FomIR` from a built ``Verifier``.
+"""Extract a `FomIR` from a built ``Verifier``.
 
 The verifier records an *unrolled* chain of steps (one block per iteration).
 Code generation needs the opposite: a single, stationary iteration *body* that a
@@ -233,7 +233,7 @@ def _resolve_solve_method(output_mat, config: CodegenConfig) -> str:
 def normalize_iterates(verifier, iterates) -> list[list[LinearExpression]]:
     """Normalize a recorded iterate sequence to one group per *iteration*.
 
-    Accepts an :class:`~fomtools.iteratetrajectory.IterateTrajectory` or a plain
+    Accepts an `IterateTrajectory` or a plain
     sequence, and drops a leading entry that is the *initial* iterate rather than
     the result of an iteration: a trajectory keeps the initial iterate in slot 0,
     while hand-built lists go both ways. The test is structural -- an entry that
@@ -299,7 +299,7 @@ def _as_list(x) -> list:
 def resolve_structure(verifier, next_state, state=None, params=None):
     """Resolve the iteration body, state leaves, and parameter leaves.
 
-    Shared by :func:`extract_ir` and the reference oracle so both agree on what
+    Shared by `extract_ir` and the reference oracle so both agree on what
     constitutes one iteration. Returns ``(next_state_exprs, body_steps,
     body_fresh, state_leaves, param_leaves)``.
     """
@@ -353,7 +353,7 @@ def extract_ir(
     name: str = "fom",
     iterates=None,
 ) -> FomIR:
-    """Build a :class:`FomIR` for one iteration of the FOM recorded in ``verifier``.
+    """Build a `FomIR` for one iteration of the FOM recorded in ``verifier``.
 
     Parameters
     ----------
@@ -376,7 +376,7 @@ def extract_ir(
     iterates:
         Optional recorded iterate sequence. Used only under
         ``TerminationKind.OBJECTIVE``, to locate an objective written at the last
-        recorded iteration (see :mod:`fomtools.codegen.objective`).
+        recorded iteration (see `fomtools.codegen.objective`).
 
     Returns
     -------

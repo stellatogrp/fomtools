@@ -21,8 +21,8 @@ class Set:
     r"""
     Base class for convex sets onto which we can project.
 
-    A :class:`Set` is the user-facing, math-named counterpart of an *indicator*
-    :class:`~fomtools.proxable_functions.proximal_operator.ProxableFunction`: for a
+    A `Set` is the user-facing, math-named counterpart of an *indicator*
+    `ProxableFunction`: for a
     closed convex set $C$, the Euclidean projection onto $C$ is exactly the proximal
     operator of its indicator $I_C$,
 
@@ -32,20 +32,20 @@ class Set:
     $$
 
     Each concrete set therefore only needs to know its indicator
-    (:meth:`indicator`); projection and membership reuse the indicator's existing
-    numerical ``prox``/``eval``. The verifier-level :meth:`fomtools.verifier.Verifier.project`
-    is a thin wrapper that calls ``prox`` on this indicator, so :class:`Set` adds no
+    (`indicator`); projection and membership reuse the indicator's existing
+    numerical ``prox``/``eval``. The verifier-level `fomtools.verifier.Verifier.project`
+    is a thin wrapper that calls ``prox`` on this indicator, so `Set` adds no
     new lowering logic.
 
     Subclasses form an inheritance tree mirroring the mathematics (e.g.
-    :class:`~fomtools.sets.box.NonNegative` is a :class:`~fomtools.sets.polyhedron.Polyhedron`),
-    but each concrete set overrides :meth:`indicator` to return its *most specific*
+    `NonNegative` is a `Polyhedron`),
+    but each concrete set overrides `indicator` to return its *most specific*
     indicator so the efficient backend lowering is preserved.
     """
 
     def indicator(self) -> ProxableFunction:
         """
-        Return the indicator :class:`ProxableFunction` whose prox is the Euclidean
+        Return the indicator `ProxableFunction` whose prox is the Euclidean
         projection onto this set.
 
         Raises
@@ -79,7 +79,7 @@ class Set:
         $x \in C \iff \Pi_C(x) = x$. This relies only on the indicator's ``prox``
         (which every indicator implements), so it works uniformly across all sets.
 
-        The comparison uses :func:`numpy.allclose` semantics,
+        The comparison uses `numpy.allclose` semantics,
         $\lVert \Pi_C(x) - x \rVert \le \text{tol} + \text{rtol}\,\lvert x \rvert$
         (elementwise): ``tol`` is the absolute tolerance and ``rtol`` adds a relative,
         **scale-aware** slack so large-magnitude points are not held to an unrealistic
@@ -98,14 +98,14 @@ class Set:
 
         Notes
         -----
-        Calls :meth:`project`, which constructs a fresh indicator each call; for tight
-        membership-checking loops reuse a single indicator (see :meth:`project`).
+        Calls `project`, which constructs a fresh indicator each call; for tight
+        membership-checking loops reuse a single indicator (see `project`).
         """
         x = np.asarray(x, dtype=float)
         return bool(np.allclose(self.project(x), x, atol=tol, rtol=rtol))
 
     def _repr_fields(self) -> str:
-        """Constructor-argument string for :meth:`__repr__`; overridden per set."""
+        """Constructor-argument string for `__repr__`; overridden per set."""
         return ""
 
     def __repr__(self) -> str:

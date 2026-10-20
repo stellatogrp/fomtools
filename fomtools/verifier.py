@@ -263,8 +263,8 @@ class Verifier(object):
          Returns
          -------
          Canonicalizer
-             A ready-to-use instance of a subclass of :class:`Canonicalizer`
-             (e.g. :class:`mip.MIP()`).
+             A ready-to-use instance of a subclass of `Canonicalizer`
+             (e.g. `mip.MIP()`).
 
          Raises
          ------
@@ -360,14 +360,14 @@ class Verifier(object):
         ndim: int, lb: list[float] = -np.inf, ub: list[float] = np.inf
     ) -> LinearExpression:
         """
-        Create a :class:LinearExpression variable with the specified
+        Create a `LinearExpression` variable with the specified
         dimension, and lower and upper bounds
 
         Parameters
         ----------
         ndim : int
             Number of dimensions of the variable to create. Defines the size
-            of each coefficient matrix in the associated :class:`LinearExpression`.
+            of each coefficient matrix in the associated `LinearExpression`.
 
         lb: list[float]
             Lower bound of the variable.
@@ -379,7 +379,7 @@ class Verifier(object):
         Returns
         -------
         LinearExpression
-            A new :class:`LinearExpression` of dimenstion `shape`.
+            A new `LinearExpression` of dimenstion `shape`.
 
         Raises
         ------
@@ -404,13 +404,13 @@ class Verifier(object):
 
     def _register_var(self, var: LinearExpression, **kwargs):
         """
-        Register the given :class:`LinearExpression` variable with
+        Register the given `LinearExpression` variable with
         the underlying canonicalizer and OBBT Handler instance.
 
         Parameters
         ----------
         var : LinearExpression
-            A new :class:`LinearExpression` variable to register.
+            A new `LinearExpression` variable to register.
 
         """
         self.canonicalizer.add_var(var, **kwargs)
@@ -422,7 +422,7 @@ class Verifier(object):
     ) -> LinearExpression:
         """
         Create and register an iterate to the Problem instance. This
-        method creates a new :class:`LinearExpression` of dimension `ndim`
+        method creates a new `LinearExpression` of dimension `ndim`
         and registers it with the underlying canonicalizer and OBBT
         Handler instance.
 
@@ -430,7 +430,7 @@ class Verifier(object):
         ----------
         ndim : int
             Number of dimensions of the iterate to create. Defines the size
-            of each coefficient matrix in the associated :class:`LinearExpression`.
+            of each coefficient matrix in the associated `LinearExpression`.
 
         lb : float
             Lower bound of the initial iterate variable.
@@ -441,7 +441,7 @@ class Verifier(object):
         Returns
         -------
         LinearExpression
-            A new :class:`LinearExpression` of dimension `shape`.
+            A new `LinearExpression` of dimension `shape`.
 
         Raises
         ------
@@ -472,14 +472,14 @@ class Verifier(object):
     ) -> LinearExpression:
         """
         Create and register a new parameter. This method creates a new
-        :class:`LinearExpression` of dimension `ndim` and registers it with
+        `LinearExpression` of dimension `ndim` and registers it with
         the underlying canonicalizer and OBBT Handler instance.
 
         Parameters
         ----------
         ndim: int
             Number of dimensions of the parameter to create. Defines the size
-            of each coefficient matrix in the associated :class:`LinearExpression`.
+            of each coefficient matrix in the associated `LinearExpression`.
 
         lb: float
             Lower bound of the parameter.
@@ -490,7 +490,7 @@ class Verifier(object):
         Returns
         -------
         LinearExpression
-            A new :class:`LinearExpression` of dimension `ndim`.
+            A new `LinearExpression` of dimension `ndim`.
 
         Raises
         ------
@@ -520,7 +520,7 @@ class Verifier(object):
         """
         Stack multiple parameters into a single composite LinearExpression.
 
-        Equivalent to :func:`fomtools.stack`; preserved for API consistency
+        Equivalent to `fomtools.stack`; preserved for API consistency
         with ``add_param`` / ``add_iterate``. Does not create a new leaf or
         any solver-side equality constraints — the result is a view sharing
         storage with the input parameters via sparse block-selection matrices.
@@ -530,7 +530,7 @@ class Verifier(object):
         Parameters
         ----------
         param_list: list[LinearExpression]
-            List of :class:`LinearExpression` parameters to stack.
+            List of `LinearExpression` parameters to stack.
 
         Returns
         -------
@@ -543,7 +543,7 @@ class Verifier(object):
     def iterate_trajectory(self, length: int, collapse_expr="auto"):
         """Create a backend-aware iterate trajectory of ``length`` slots.
 
-        Returns an :class:`~fomtools.iteratetrajectory.IterateTrajectory` that
+        Returns an `IterateTrajectory` that
         behaves like a fixed-length list of iterates. Assigning a collapsed
         affine expression (``z[k] = M @ z[k - 1] + c``) is handled per backend:
         for MIP/simulator the expression stays collapsed (no new variable), and
@@ -555,8 +555,8 @@ class Verifier(object):
         ADMM, where each slot would otherwise reference every leaf the previous
         one did. That growth is what makes such a method expensive to generate
         code from, so keeping each iterate as its own variable is what lets
-        :func:`~fomtools.codegen.extract_unrolled.extract_unrolled_ir` handle it. See
-        :class:`~fomtools.iteratetrajectory.IterateTrajectory` for details.
+        `extract_unrolled_ir` handle it. See
+        `IterateTrajectory` for details.
 
         Parameters
         ----------
@@ -596,7 +596,7 @@ class Verifier(object):
         Parameters
         ----------
         constr : Constraint
-            A :class:`Constraint` object to add to the VP.
+            A `Constraint` object to add to the VP.
 
         Returns
         -------
@@ -615,7 +615,7 @@ class Verifier(object):
         """
         Add valid linear cuts to the model and, if OBBT is enabled, to the OBBT LP.
 
-        Like :meth:`add_constraint` for a batch, except that OBBT runs only once on
+        Like `add_constraint` for a batch, except that OBBT runs only once on
         the union of the leaves the cuts touch, rather than once per cut.
 
         Parameters
@@ -646,7 +646,7 @@ class Verifier(object):
 
         Asserts ``expr1 >= 0``, ``expr2 >= 0`` and ``expr1[i] * expr2[i] == 0`` for
         all ``i`` (at most one side nonzero per coordinate). Pass the returned object
-        to :meth:`add_constraint`.
+        to `add_constraint`.
 
         Parameters
         ----------
@@ -665,7 +665,7 @@ class Verifier(object):
         Build a sum-of-squares atom ``\sum_i (a_i^\top x + b_i)^2`` for ``expr``.
 
         Compare the returned object against a nonnegative scalar to form a quadratic
-        constraint, then pass it to :meth:`add_constraint`::
+        constraint, then pass it to `add_constraint`::
 
             vp.add_constraint(vp.sum_squares(expr) <= r**2)   # ||A x + b||_2^2 <= r^2
             vp.add_constraint(vp.sum_squares(expr) >= r**2)   # nonconvex shell
@@ -785,7 +785,7 @@ class Verifier(object):
         r"""
         Project ``arg`` onto a convex set.
 
-        A friendly, math-named front door over :meth:`prox`: for a set $C$ with
+        A friendly, math-named front door over `prox`: for a set $C$ with
         indicator $I_C$, the Euclidean projection is exactly
         $\Pi_C(x) = \operatorname{prox}_{I_C}(x)$. This method simply calls
         ``self.prox(proj_set.indicator(), arg)``, reusing the entire prox lowering
@@ -796,7 +796,7 @@ class Verifier(object):
         ----------
         proj_set : Set or type[Set]
             The set to project onto, e.g. ``Box(l, u)`` or ``Polyhedron(A, b, dual_ub=...)``.
-            A parameterless :class:`~fomtools.sets.set.Set` subclass may be passed as a
+            A parameterless `Set` subclass may be passed as a
             bare class (e.g. ``NonNegative``), which is instantiated automatically.
         arg : LinearExpression
             The input expression to project.
@@ -809,8 +809,8 @@ class Verifier(object):
         Raises
         ------
         TypeError
-            If ``proj_set`` is not a :class:`~fomtools.sets.set.Set` (or subclass) —
-            penalty/loss functions are not projections, use :meth:`prox` for those; or
+            If ``proj_set`` is not a `Set` (or subclass) —
+            penalty/loss functions are not projections, use `prox` for those; or
             if a *parameterized* Set class is passed as the bare-class shorthand (the
             shorthand only works for parameterless Sets like ``NonNegative``).
 
@@ -854,12 +854,13 @@ class Verifier(object):
 
         Solves (in the verification model, via the KKT + complementarity system)
 
-        .. math::
-            x^\star = \arg\min_x \tfrac12 x^\top P x + q^\top x
-            \quad\text{s.t.}\quad A x = b,\; C x \le d,
+        $$
+        x^\star = \arg\min_x \tfrac12 x^\top P x + q^\top x
+        \quad\text{s.t.}\quad A x = b,\; C x \le d,
+        $$
 
         where ``P`` is symmetric PSD (dense or scipy.sparse) and ``q``, ``b``, ``d``
-        may be numeric or :class:`LinearExpression` parameters. Unlike ``run_step``,
+        may be numeric or `LinearExpression` parameters. Unlike ``run_step``,
         this takes the parametric inputs directly (a QP has up to three) rather than a
         single positional ``arg``; the ``LinearExpression`` inputs already carry their
         dependence on prior iterates.
@@ -867,7 +868,7 @@ class Verifier(object):
         Parameters
         ----------
         P, q, A, b, C, d, dual_ub, primal_bounds, nu_bounds, arg, relax_binary_vars
-            See :class:`fomtools.steps.QuadraticProgram`. ``dual_ub`` is required when
+            See `fomtools.steps.QuadraticProgram`. ``dual_ub`` is required when
             inequality constraints ``C`` are present.
 
         Returns
@@ -908,13 +909,14 @@ class Verifier(object):
         relax_binary_vars: bool = False,
     ) -> LinearExpression:
         r"""
-        Encode the solution of a linear program (:class:`QuadraticProgram` with
+        Encode the solution of a linear program (`QuadraticProgram` with
         ``P = 0``) as a step:
 
-        .. math::
-            x^\star = \arg\min_x q^\top x \quad\text{s.t.}\quad A x = b,\; C x \le d.
+        $$
+        x^\star = \arg\min_x q^\top x \quad\text{s.t.}\quad A x = b,\; C x \le d.
+        $$
 
-        See :meth:`quadratic_program`. ``q`` is required and its dimension sizes the LP;
+        See `quadratic_program`. ``q`` is required and its dimension sizes the LP;
         finite primal bounds must come from ``primal_bounds`` or OBBT (stationarity does
         not pin ``x`` when ``P = 0``).
         """
@@ -948,11 +950,12 @@ class Verifier(object):
         r"""
         Encode the solution of a standard-form linear program as a step:
 
-        .. math::
-            x^\star = \arg\min_x c^\top x \quad\text{s.t.}\quad A x = b,\; x \ge 0.
+        $$
+        x^\star = \arg\min_x c^\top x \quad\text{s.t.}\quad A x = b,\; x \ge 0.
+        $$
 
-        A :class:`~fomtools.steps.LinearProgram` with ``q = c``, equality ``(A, b)`` and
-        ``x \ge 0`` written as ``-I x \le 0``. See :meth:`linear_program`. ``dual_ub`` is
+        A `LinearProgram` with ``q = c``, equality ``(A, b)`` and
+        ``x \ge 0`` written as ``-I x \le 0``. See `linear_program`. ``dual_ub`` is
         required (the ``x \ge 0`` inequality is always present); finite primal bounds must
         come from ``primal_bounds`` or OBBT.
         """
@@ -1026,6 +1029,36 @@ class Verifier(object):
         return self._record_output(output)
 
     def fixed_point(self, n_dim, operator, lb=-np.inf, ub=np.inf):
+        """
+        Encode a fixed point of an operator as a new iterate.
+
+        Creates a new iterate ``z_star`` of dimension `n_dim`, applies
+        `operator` to it, and constrains ``z_star == operator(z_star)``.
+        Used to encode distance-to-optimality objectives, where `z_star`
+        represents an optimal solution of the parametric problem.
+
+        Parameters
+        ----------
+        n_dim: int
+            Dimension of the fixed-point iterate.
+
+        operator: Callable[[LinearExpression], LinearExpression]
+            The algorithm operator `T`, applied to the new iterate to
+            build the fixed-point constraint ``z_star == T(z_star)``.
+
+        lb: float, default -np.inf
+            Lower bound of the fixed-point iterate. Must hold for every
+            parameter in the declared parameter set.
+
+        ub: float, default np.inf
+            Upper bound of the fixed-point iterate. Must hold for every
+            parameter in the declared parameter set.
+
+        Returns
+        -------
+        LinearExpression
+            The fixed-point iterate ``z_star``.
+        """
         z_star = self.add_iterate(n_dim, lb=lb, ub=ub)
         s_star = operator(z_star)
         self.add_constraint(z_star == s_star)
@@ -1424,9 +1457,9 @@ class Verifier(object):
         emitted, drawing its own parameter values, so no extra arguments are
         needed to gate it.
 
-        Thin delegate to :func:`fomtools.codegen.generate_code`; see that function
+        Thin delegate to `fomtools.codegen.generate_code`; see that function
         for the remaining parameter semantics. To generate a rolled solver from a
-        single stationary iteration instead, use :meth:`codegen_rolled`.
+        single stationary iteration instead, use `codegen_rolled`.
 
         Returns
         -------
@@ -1468,24 +1501,24 @@ class Verifier(object):
     ):
         """Generate a rolled solver from one stationary iteration.
 
-        Thin delegate to :func:`fomtools.codegen.generate_code`. See that
+        Thin delegate to `fomtools.codegen.generate_code`. See that
         function for parameter semantics. ``next_state`` is the iterate
         ``LinearExpression`` produced after exactly one iteration, and the
         generated loop repeats it ``config.termination.max_iters`` times -- so
-        unlike :meth:`codegen`, the horizon is yours to choose rather than the
+        unlike `codegen`, the horizon is yours to choose rather than the
         one you recorded.
 
         Pass ``iterates`` (the successive recorded iterate expressions) and
         ``param_values`` to have the extracted iteration checked against the
         recorded tape before anything is emitted. Without them nothing verifies
         that the method is stationary, so a coefficient that varies with the
-        iteration index would be frozen at its recorded value. :meth:`codegen`
+        iteration index would be frozen at its recorded value. `codegen`
         needs no such argument, since it generates the recording itself.
 
         A method that *does* vary with the iteration index can go through
-        :func:`fomtools.codegen.generate_code` with ``schedules=``, which
+        `fomtools.codegen.generate_code` with ``schedules=``, which
         tabulates the declared coefficients but needs the recording as a build
-        function; or through :meth:`codegen`, which takes the finished tape.
+        function; or through `codegen`, which takes the finished tape.
 
         Returns
         -------

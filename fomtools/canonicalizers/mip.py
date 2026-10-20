@@ -29,7 +29,7 @@ class MIP(Canonicalizer):
     Attributes
     ----------
     solver: Solver
-        A ready-to-use instance of a subclass of :class:`Solver`
+        A ready-to-use instance of a subclass of `Solver`
         (e.g., ``gurobi.Gurobi()``).
     _objective_spec: tuple or None
         Stored objective specification for deferred application.
@@ -74,7 +74,7 @@ class MIP(Canonicalizer):
         ----------
         var: LinearExpression
             Linear expression object to add to the MIP instance. Later to
-            be used in objective function, constraints or parameter.
+            be used in an objective function, constraints, or parameters.
 
         Returns
         -------
@@ -86,7 +86,7 @@ class MIP(Canonicalizer):
 
     def add_constraint(self, constraint: Constraint) -> None:
         """
-        Add a constraint to the MIP instance.This method registers
+        Add a constraint to the MIP instance. This method registers
         a new constraint with the MIP problem and attaches it to the
         internal model.
 
@@ -128,7 +128,7 @@ class MIP(Canonicalizer):
         $$
 
         ``z = 1`` forces ``e2[i] = 0``; ``z = 0`` forces ``e1[i] = 0``. This mirrors the
-        ReLU big-M idiom in :meth:`_build_relu_constraints`.
+        ReLU big-M idiom in `_build_relu_constraints`.
 
         Parameters
         ----------
@@ -206,8 +206,8 @@ class MIP(Canonicalizer):
         ----------
         margin: float
             Relaxation margin for the bounds. If finite, the lower bound is
-            shifted to ``lb - C`` and the upper bound to ``ub + C``. If
-            ``np.inf``, no constraints are added
+            shifted to ``lb - margin`` and the upper bound to ``ub + margin``. If
+            ``np.inf``, no constraints are added.
 
         target_expr: LinearExpression
             The expression whose bounds are to be relaxed.
@@ -238,7 +238,7 @@ class MIP(Canonicalizer):
         ----------
         expression: LinearExpression
             A ``LinearExpression`` object whose underlying variables
-            bound are to be updated.
+            bounds are to be updated.
 
         lb: float or np.ndarray
             New lower bound(s).
@@ -369,7 +369,7 @@ class MIP(Canonicalizer):
 
                 constraints.extend([q >= _up + _un, q <= _up + _un + M * (1 - _gamma)])
 
-        # need 1 gamma across all vectors in the list
+        # Need one gamma across all vectors in the list.
         constraints.append(sum([sum(gamma) for gamma in all_gammas]) == 1)
 
         solver.constraints_to_solver(constraints)
@@ -764,7 +764,7 @@ class MIP(Canonicalizer):
         """
         Construct the linear equality constraint corresponding to the
         affine iteration step. The constraint is used to express the affine
-        update step in the verification problem
+        update step in the verification problem.
 
         Parameters
         ----------
@@ -792,7 +792,7 @@ class MIP(Canonicalizer):
             \mathbb{R} | w = \textbf{ReLU}(a^{T}y) \right\},
         $$
 
-        and expresses it as a set of Constraint objects. The convex hull
+        It then expresses it as a set of Constraint objects. The convex hull
         of the region is:
 
 
@@ -832,7 +832,7 @@ class MIP(Canonicalizer):
         - vector $u^{0} \in \mathbb{R}^{d}$ with entries $u_i^{0} = \overline{y}_i \text{ if }
         a_i \geq 0 \text{ and } \underline{y}_i$ otherwise,
         - Given $\textbf{I} \subseteq \textbf{J} = \left\{1, ..., n\right\}$, the lower bound is
-        defined as $l_I = \sum_{i \in I}a_il_i^{0} + \sum_{i \notin I}a_iu_i^{0}$
+        defined as $l_I = \sum_{i \in I} a_i l_i^{0} + \sum_{i \notin I} a_i u_i^{0}$
 
         Parameters
         ----------
@@ -914,7 +914,7 @@ class MIP(Canonicalizer):
             \mathcal{S}_{[b,c]}(a^\top y) \}.
         $$
 
-        and expresses it as a set of Constraint objects. The convex hull of the
+        It then expresses it as a set of Constraint objects. The convex hull of the
         region is:
 
         $$
@@ -962,8 +962,8 @@ class MIP(Canonicalizer):
         - vector $u^{0} \in \mathbb{R}^{d}$ with entries $u_i^{0} = \overline{y}_i \text{ if }
         a_i \geq 0 \text{ and } \underline{y}_i$ otherwise,
         - Given $\textbf{I} \subseteq \textbf{J} = \left\{1, ..., n\right\}$, the lower bound is
-        defined as $l_I = \sum_{i \in I}a_il_i^{0} + \sum_{i \notin I}a_iu_i^{0}$ and the
-        upper bounds $u_I = \sum_{i \in I}a_iu_i^{0} + \sum_{i \notin I}a_il_i^{0}$,
+        defined as $l_I = \sum_{i \in I} a_i l_i^{0} + \sum_{i \notin I} a_i u_i^{0}$ and the
+        upper bound is $u_I = \sum_{i \in I} a_i u_i^{0} + \sum_{i \notin I} a_i l_i^{0}$,
         - $\mathcal{I}^+ = \{ (I, o) \in 2^J \times J \mid \ell_I \ge b,\; \ell_{I \cup \{o\}}
         < b,\; w_I \neq 0 \},$
         - $\mathcal{I}^- = \{ (I, o) \in 2^J \times J \mid u_I \le c,\; u_{I \cup \{o\}} >
@@ -1087,7 +1087,7 @@ class MIP(Canonicalizer):
             \mid w = \mathcal{S}_{[b,c]}(a^\top y) \}.
         $$
 
-        and expresses it as a set of Constraint objects. The convex hull of the
+        It then expresses it as a set of Constraint objects. The convex hull of the
         region is:
 
         $$
@@ -1134,13 +1134,13 @@ class MIP(Canonicalizer):
         - vector $u^{0} \in \mathbb{R}^{d}$ with entries $u_i^{0} = \overline{y}_i \text{ if }
         a_i \geq 0 \text{ and } \underline{y}_i$ otherwise,
         - Given $\textbf{I} \subseteq \textbf{J} = \left\{1, ..., n\right\}$, the lower bound is
-        defined as $l_I = \sum_{i \in I}a_il_i^{0} + \sum_{i \notin I}a_iu_i^{0}$ and the
-        upper bounds $u_I = \sum_{i \in I}a_iu_i^{0} + \sum_{i \notin I}a_il_i^{0}$,
+        defined as $l_I = \sum_{i \in I} a_i l_i^{0} + \sum_{i \notin I} a_i u_i^{0}$ and the
+        upper bound is $u_I = \sum_{i \in I} a_i u_i^{0} + \sum_{i \notin I} a_i l_i^{0}$,
         - $\mathcal{I}^+ = \{ (I, o) \in 2^J \times J \mid \ell_I \ge \lambda,\; \ell_{I \cup \{o\}}
         < \lambda,\; w_I \neq 0 \},$
         -  $\mathcal{I}^- = \{ (I, o) \in 2^J \times J \mid u_I \le - \lambda,\; u_{I \cup \{o\}} >
         -\lambda,\; w_I \neq 0 \}.$
-        - and $w_I$ is the slicing of vector $w$ over $I$.
+        - $w_I$ is the slice of vector $w$ over $I$.
 
         Parameters
         ----------

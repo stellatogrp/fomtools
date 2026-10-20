@@ -109,7 +109,7 @@ the fastest correct implementation.
 
 
 def _kernel_rules_block(src: str, ops_src: str, verify: str, ops_editable: bool) -> str:
-    """The kernel rules (:mod:`fomtools.codegen.kernel_rules`), on every target."""
+    """The kernel rules (`fomtools.codegen.kernel_rules`), on every target."""
     own_data = (
         f""" In `{ops_src}`, each `fom_apply_<name>` (one
   definition) and the helpers it calls read only its own matrix's data; no other

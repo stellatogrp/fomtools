@@ -1,7 +1,7 @@
 """Shared matrix helpers for symmetry / PSD validation (dense or sparse).
 
-These back the ``P``/``Q`` validation in both :class:`fomtools.steps.QuadraticProgram`
-and :class:`fomtools.proxable_functions.Quadratic`. They live in a neutral module so
+These back the ``P``/``Q`` validation in both `fomtools.steps.QuadraticProgram`
+and `fomtools.proxable_functions.Quadratic`. They live in a neutral module so
 ``proxable_functions`` can reuse them without importing from ``steps`` (which would
 create an import edge in the wrong direction).
 """

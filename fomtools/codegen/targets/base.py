@@ -1,6 +1,6 @@
 """Target descriptor base class.
 
-A :class:`TargetDescriptor` knows how to lay out an emitted solver for one
+A `TargetDescriptor` knows how to lay out an emitted solver for one
 target (embedded C, large-scale CUDA, …): which deterministic files to write
 (ABI header, numeric data, verify harness, build files, Python wrapper) and how
 to statically check the agent-written solver source for the target's invariants
@@ -89,7 +89,7 @@ class TargetDescriptor(ABC):
         Run on each source the code optimization phase changed; ``baseline`` is
         its translated version. Default: none. Targets whose matrix-vector
         products are editable and checked against the package's matrices
-        override this (see :mod:`fomtools.codegen.kernel_rules`).
+        override this (see `fomtools.codegen.kernel_rules`).
         """
         return []
 
@@ -100,7 +100,7 @@ class TargetDescriptor(ABC):
     def translation_checks(self, source: str, ir) -> list[str]:
         """Violations of the kernel rules in the translated solver (empty = OK).
 
-        Default: none (see :meth:`kernel_checks`).
+        Default: none (see `kernel_checks`).
         """
         return []
 
@@ -108,19 +108,19 @@ class TargetDescriptor(ABC):
         """Let ``make verify`` apply the kernel rules while the agent works.
 
         Called when the code optimization phase starts, with the translated
-        sources as ``baselines`` (:meth:`kernel_checks`), and when translation
-        starts, with ``None`` (:meth:`translation_checks`). Default: nothing to
+        sources as ``baselines`` (`kernel_checks`), and when translation
+        starts, with ``None`` (`translation_checks`). Default: nothing to
         write.
         """
 
     def remove_kernel_check_config(self, out_dir) -> None:
-        """Undo :meth:`write_kernel_check_config` once the phase is over."""
+        """Undo `write_kernel_check_config` once the phase is over."""
 
     def static_checks(self, source: str, ir: FomIR | None = None) -> list[str]:
         """Return a list of invariant violations in ``source`` (empty = OK).
 
         Default: the contract every target shares (see
-        :func:`objective_violations`, which needs ``ir``). Embedded targets add
+        `objective_violations`, which needs ``ir``). Embedded targets add
         their own invariants.
         """
         return objective_violations(source, ir)

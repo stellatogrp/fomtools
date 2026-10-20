@@ -11,7 +11,7 @@ Flow:
    translated generated-C time + a profiling breakdown), then enter the code
    optimization phase: the agent iteratively profiles, optimizes, and
    re-verifies. We re-verify afterward as a hard correctness gate and re-measure.
-4. Assemble a :class:`~fomtools.codegen.harness.TimingReport` (speedups +
+4. Assemble a `TimingReport` (speedups +
    profiling) and attach it to the result.
 """
 
@@ -71,7 +71,7 @@ class CodegenResult:
 
         The code optimization phase never fails the run: if it does not yield a
         faster, still-correct solver, the verified translated solver is shipped
-        instead. Use :attr:`optimization_kept` to see whether an optimization
+        instead. Use `optimization_kept` to see whether an optimization
         was actually adopted.
         """
         return self.translate.success
@@ -89,7 +89,7 @@ def _static_issues(target, ir, optimized: dict[str, str], translated: dict[str, 
     the solver is held to these by its prompt and verify, as before, while a
     rewritten linear solve or matrix-vector product is new ground for the agent.
     And, on every rewritten source, the rules that keep its kernels tied to the
-    checked data (:meth:`~fomtools.codegen.targets.base.TargetDescriptor.kernel_checks`).
+    checked data (`kernel_checks`).
     """
     issues = []
     for rel, text in optimized.items():
@@ -221,13 +221,13 @@ def extract_fom_ir(
     """Extract an IR by whichever of the three paths the arguments select.
 
     The dispatch, and the stationarity gate that goes with the rolled path, live
-    here rather than inside :func:`generate_code` so that every caller reaching
+    here rather than inside `generate_code` so that every caller reaching
     for an IR gets the same one. The CLI used to reimplement this branch for its
     ``--scaffold-only`` mode and drifted: it skipped the gate, so previewing a
     method whose coefficients vary with ``k`` reported nothing while the full run
     on the same input failed.
 
-    See :func:`generate_code` for what each argument selects and means.
+    See `generate_code` for what each argument selects and means.
     """
     config = config or CodegenConfig()
 
@@ -309,30 +309,30 @@ def generate_code(
       per-iteration coefficients and step types, and anchored methods. It rolls
       the run back up when repeating one iteration is verified to reproduce it,
       so a stationary method costs nothing here. See
-      :func:`~fomtools.codegen.extract_unrolled.extract_unrolled_ir`.
+      `extract_unrolled_ir`.
     * ``next_state=`` generates a **rolled** solver from one stationary
       iteration, repeated ``config.termination.max_iters`` times.
     * a *build function* plus ``schedules=`` generates a rolled solver whose
       declared coefficients are tabulated and read at the loop counter. See
-      :func:`~fomtools.codegen.extract_scheduled.extract_scheduled_ir`.
+      `extract_scheduled_ir`.
 
     Parameters
     ----------
     verifier, next_state, state, params:
-        Forwarded to :func:`fomtools.codegen.extract.extract_ir`.
+        Forwarded to `fomtools.codegen.extract.extract_ir`.
 
         For a method with an iteration-varying coefficient, pass a *build
         function* as ``verifier`` and its ``schedules`` instead: the function
         records one iteration as a function of the schedule scalars and returns a
-        :class:`~fomtools.codegen.extract_scheduled.Recording`. See
-        :func:`~fomtools.codegen.extract_scheduled.extract_scheduled_ir`.
+        `Recording`. See
+        `extract_scheduled_ir`.
     out_dir:
         Directory to emit the solver into.
     config:
         Code-generation configuration.
     driver:
         The coding-agent driver. If ``None``, uses
-        :func:`fomtools.codegen.agent.get_default_driver`.
+        `fomtools.codegen.agent.get_default_driver`.
     name:
         FOM name used for file naming.
     code_optimization:
@@ -344,11 +344,11 @@ def generate_code(
     schedules:
         Iteration-varying scalars, mapping name to a callable of the 0-based
         iteration index, a sequence, or a
-        :class:`~fomtools.codegen.schedule.Schedule`. Selects the scheduled
+        `Schedule`. Selects the scheduled
         extraction path.
     iterates:
         The successive recorded iterate expressions, or an
-        :class:`~fomtools.iteratetrajectory.IterateTrajectory`.
+        `IterateTrajectory`.
 
         Passed *without* ``next_state`` this selects the unrolled path and is the
         run to generate. Passed *with* ``next_state`` it instead checks the rolled

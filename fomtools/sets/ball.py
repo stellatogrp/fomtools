@@ -8,10 +8,10 @@ class L1Ball(Set):
     r"""
     The $\ell_1$-ball $\{x : \lVert x \rVert_1 \le r\}$.
 
-    Backed by :class:`~fomtools.proxable_functions.ind_ball_l1.IndBallL1`, whose
+    Backed by `IndBallL1`, whose
     projection lifts auxiliary variables and solves a KKT system. ``dual_ub`` bounds
     the inequality multipliers for the MIP/SDP lowering. Sits directly under
-    :class:`~fomtools.sets.set.Set` (the lifting does not fit the plain ``Ax <= b`` mold).
+    `Set` (the lifting does not fit the plain ``Ax <= b`` mold).
 
     Parameters
     ----------
@@ -37,8 +37,8 @@ class LinfBall(Box):
     The $\ell_\infty$-ball $\{x : \lVert x \rVert_\infty \le r\}$, i.e. the box
     $[-r, r]$.
 
-    A :class:`~fomtools.sets.box.Box` specialization; backed by
-    :class:`~fomtools.proxable_functions.ind_ball_linf.IndBallLinf`, which projects
+    A `Box` specialization; backed by
+    `IndBallLinf`, which projects
     by clipping to $[-r, r]$.
 
     Parameters

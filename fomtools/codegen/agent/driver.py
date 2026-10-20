@@ -1,8 +1,8 @@
 """The (mockable) coding-agent interface.
 
 Code generation delegates the actual translation of the Intermediate Representation (IR) into
-target source to an :class:`AgentDriver`. The real driver shells out to the Claude Agent SDK; the
-:class:`~fomtools.codegen.agent.stub.StubAgentDriver` drops a known-good source so
+target source to an `AgentDriver`. The real driver shells out to the Claude Agent SDK; the
+`StubAgentDriver` drops a known-good source so
 the whole pipeline is testable without an LLM.
 """
 
@@ -78,7 +78,7 @@ class AgentResult:
         Only the agent's own output, concatenated across attempts, with no
         verify/build output and no harness commentary mixed in. Use this when
         reading anything the agent *said* — notably
-        :func:`~fomtools.codegen.postprocess.extract_agent_notes`, which would
+        `extract_agent_notes`, which would
         otherwise have to pick the agent's words out of compiler noise.
     turns_used:
         Number of attempts (or turns) consumed producing this result.
@@ -87,7 +87,7 @@ class AgentResult:
     truncated:
         Whether any attempt was cut short by its wall-clock budget. A truncated
         attempt can still leave correct code on disk, so this is independent of
-        :attr:`success`; it means the agent had no chance to finish, and in
+        `success`; it means the agent had no chance to finish, and in
         particular may never have written its summary.
     """
 
@@ -146,8 +146,8 @@ class AgentBackendError(RuntimeError):
 class AgentDriver(ABC):
     """Abstract coding-agent that generates a source file until verify passes.
 
-    Subclasses implement :meth:`run` to drive a particular backend (the real
-    Claude/Codex/Pi CLIs, or :class:`~fomtools.codegen.agent.stub.StubAgentDriver`
+    Subclasses implement `run` to drive a particular backend (the real
+    Claude/Codex/Pi CLIs, or `StubAgentDriver`
     for tests). The driver owns only ``task.solver_rel_path``; all other files
     are restored via ``task.restore_hook`` before each verify.
 
@@ -209,13 +209,13 @@ def run_verify_loop(
     truncated_probe:
         Optional callable the backend supplies to report whether its last
         attempt was cut short by a wall-clock budget. Its result is recorded on
-        :attr:`AgentResult.truncated`, so a caller can say so rather than
+        `AgentResult.truncated`, so a caller can say so rather than
         presenting a half-finished run as a complete one.
     budget_s:
         Wall-clock budget, in seconds, for the whole phase: every attempt shares
         it, and no new attempt starts once it is spent. It is published to the
         backend as ``task.extra["budget"]`` (a
-        :class:`~fomtools.codegen.agent.budget.TimeBudget`) so an attempt can
+        `TimeBudget`) so an attempt can
         enforce the time left. ``None`` leaves the phase unbounded.
 
     Returns

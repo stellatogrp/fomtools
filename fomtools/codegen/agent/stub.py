@@ -15,7 +15,7 @@ from fomtools.codegen.agent.driver import AgentDriver, AgentResult, AgentTask
 
 
 class StubAgentDriver(AgentDriver):
-    """A deterministic :class:`AgentDriver` that writes a fixed solver source.
+    """A deterministic `AgentDriver` that writes a fixed solver source.
 
     Instead of calling an LLM, it writes a pre-supplied ("golden") solver body
     into the workspace and runs the real verify command, letting the full
@@ -33,7 +33,7 @@ class StubAgentDriver(AgentDriver):
         solver_source: str | Path,
         extra_sources: dict[str, str | Callable[[str], str]] | None = None,
     ):
-        """Resolve and store the solver source to write on every :meth:`run`.
+        """Resolve and store the solver source to write on every `run`.
 
         Parameters
         ----------
@@ -68,7 +68,7 @@ class StubAgentDriver(AgentDriver):
     def run(self, task: AgentTask) -> AgentResult:
         """Write the fixed source into the workspace and run the verify command.
 
-        Implements the :class:`AgentDriver` interface. The stored source is
+        Implements the `AgentDriver` interface. The stored source is
         written to ``task.solver_rel_path``, ``task.restore_hook`` is invoked (if present) to
         restore the deterministic files before verifying; then ``task.verify_cmd`` is run in
         ``task.workdir`` and its exit code decides success.

@@ -5,13 +5,13 @@ after one iteration) plus a ``name``, which generates a rolled solver. These
 mirror the ISTA and Douglas-Rachford problems used throughout the test suite and
 use the ``simulator`` backend so no MIP/SDP solver is required.
 
-Two builders show the other generation paths. :func:`fista_example` returns
+Two builders show the other generation paths. `fista_example` returns
 ``iterates`` instead: a recorded *run*, generated as written, which is how a
 method whose coefficients change every iteration is handled without declaring
-anything. :func:`scheduled_example` returns a ``build`` function and its
+anything. `scheduled_example` returns a ``build`` function and its
 ``schedules``, which trades that generality for a compact solver at a long
 horizon — one block plus a table rather than one block per iteration. See
-:mod:`fomtools.codegen.extract_unrolled` and :mod:`fomtools.codegen.extract_scheduled`.
+`fomtools.codegen.extract_unrolled` and `fomtools.codegen.extract_scheduled`.
 
 Algorithm coefficients are written out here rather than imported: they belong to
 the method being demonstrated, not to the code generator.
@@ -97,7 +97,7 @@ def ista_example(*, n: int = 2, m: int = 4, seed: int = 0, K: int = 3) -> dict:
 def _lasso_instance(n: int, m: int, seed: int) -> dict:
     """Shared data for the accelerated lasso examples.
 
-    A milder threshold than :func:`ista_example` uses: at ``lambda = 1`` this
+    A milder threshold than `ista_example` uses: at ``lambda = 1`` this
     instance has the all-zero solution and converges in a single step, which
     would make acceleration indistinguishable from plain ISTA.
     """
@@ -127,7 +127,7 @@ def fista_example(*, n: int = 2, m: int = 4, seed: int = 0, K: int = 6) -> dict:
     its own coefficients. Nothing has to be declared and the momentum recurrence
     is ordinary Python, evaluated while recording.
 
-    Contrast :func:`scheduled_example`, which is the same method declared as a
+    Contrast `scheduled_example`, which is the same method declared as a
     schedule to get one block plus a table instead.
     """
     d = _lasso_instance(n, m, seed)
@@ -163,13 +163,13 @@ def scheduled_example(*, n: int = 2, m: int = 4, seed: int = 0) -> dict:
     Returns a ``build`` function rather than a finished verifier, which is what
     the scheduled path needs: the momentum coefficient stays a free variable so
     extraction can probe the recording at several of its values and recover how
-    each coefficient depends on it (see :mod:`fomtools.codegen.extract_scheduled`). The
+    each coefficient depends on it (see `fomtools.codegen.extract_scheduled`). The
     reward is one emitted block and a table of coefficients, whatever the horizon.
 
     The state carries **two** iterates. Written over a single iterate, the
     dependency cone of iteration ``k`` reaches back through every earlier step and
     extraction returns the unrolled prefix rather than a repeatable body -- which
-    is the right answer for :func:`fista_example` and the wrong one here.
+    is the right answer for `fista_example` and the wrong one here.
     Declaring ``(y^{k-1}, y^k)`` as the state closes the cone after one step.
     """
     d = _lasso_instance(n, m, seed)

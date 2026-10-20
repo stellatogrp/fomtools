@@ -1,19 +1,19 @@
 """Coding-agent drivers for code generation.
 
 Code generation is **agent-agnostic**: any prompt-in/files-out CLI agent is
-supported via a declarative :class:`~fomtools.codegen.agent.cli_specs.CliAgentSpec`
-driven by the generic :class:`~fomtools.codegen.agent.cli_driver.CliAgentDriver`.
+supported via a declarative `CliAgentSpec`
+driven by the generic `CliAgentDriver`.
 An example spec for ``cursor`` ships in ``agents.yaml``; users add their own
 agents with no code changes — at runtime via
-:func:`~fomtools.codegen.agent.cli_specs.register_agent` or declaratively via a YAML
-config (see :func:`~fomtools.codegen.agent.cli_specs.load_user_specs`). ``claude``,
+`register_agent` or declaratively via a YAML
+config (see `load_user_specs`). ``claude``,
 ``codex``, and ``pi`` (https://pi.dev) are served by dedicated drivers
-(:class:`~fomtools.codegen.agent.claude_sdk.ClaudeAgentDriver`,
-:class:`~fomtools.codegen.agent.codex_sdk.CodexAgentDriver`,
-:class:`~fomtools.codegen.agent.pidev_sdk.PiDevAgentDriver`) that prefer an
+(`ClaudeAgentDriver`,
+`CodexAgentDriver`,
+`PiDevAgentDriver`) that prefer an
 in-process SDK (Pi via its JSON-RPC subprocess) with a CLI fallback. Anything
 that is not a CLI can implement the
-:class:`~fomtools.codegen.agent.driver.AgentDriver` ABC directly.
+`AgentDriver` ABC directly.
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ def available_backends() -> list[str]:
 def make_agent_driver(backend: str | None = None, config=None) -> AgentDriver:
     """Construct a real coding-agent driver for the selected backend.
 
-    ``backend`` is any name from :func:`available_backends` (built-in
+    ``backend`` is any name from `available_backends` (built-in
     ``claude`` / ``codex`` / ``pi``, or a user-registered CLI agent). When
     ``None`` it is read from ``FOMTOOLS_CODEGEN_BACKEND`` and otherwise defaults
     to ``"claude"``. These backends are nondeterministic and need auth, so they
@@ -97,7 +97,7 @@ def get_default_driver(config=None, backend: str | None = None) -> AgentDriver:
     A real backend is used only when explicitly enabled via
     ``FOMTOOLS_CODEGEN_AGENT=1`` (they are nondeterministic and need auth).
     Without that, callers must pass an explicit driver (e.g. a
-    :class:`StubAgentDriver`). The backend (``claude`` by default, or any
+    `StubAgentDriver`). The backend (``claude`` by default, or any
     registered CLI agent) is selected via ``backend`` /
     ``FOMTOOLS_CODEGEN_BACKEND``.
     """

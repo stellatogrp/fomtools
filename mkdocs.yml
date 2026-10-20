@@ -5,12 +5,45 @@ repo_name: stellatogrp/fomtools
 edit_uri: edit/main/docs/
 nav:
   - Home: index.md
-  - Installation: installation.md
-  - API and modules: api.md
-  - Tutorials: tutorials.md
+  - Get started: get_started.md
+  - Quick start: quick_start.md
+  - User guide:
+      - user_guide/index.md
+      - Code generation guide: user_guide/codegen.md
+      - SDP relaxation (experimental): user_guide/sdp.md
+  - API and modules:
+      - api/index.md
+      - Verifier: api/verifier.md
+      - Linear expressions: api/linearexpression.md
+      - Constraints: api/constraint.md
+      - Step operators: api/steps.md
+      - Canonicalizers: api/canonicalizer.md
+      - Solvers: api/solvers.md
+      - Proxable functions: api/proxablefunctions.md
+      - Code generation: api/codegen.md
+  - Tutorials:
+      - tutorials/index.md
+      - Verification: tutorials/verification.md
+      - Code generation:
+          - tutorials/codegen.md
+          - Lasso: tutorials/codegen/lasso.md
+          - Optimal control: tutorials/codegen/control.md
+          - Network flow: tutorials/codegen/network.md
+          - Nonnegative least squares: tutorials/codegen/nnls.md
+          - Portfolio: tutorials/codegen/portfolio.md
+          - Speedup results: tutorials/codegen/speedup_results.md
+      - CVXPYgen integration: tutorials/cvxpygen.md
+
+# Marimo session caches, bytecode, and notebook/helper sources are not site pages.
+exclude_docs: |
+  __marimo__/
+  __pycache__/
+  tutorials/**/*.py
+
 theme:
   name: material
   features:
+    - navigation.indexes
     - content.action.edit
   palette:
     - media: "(prefers-color-scheme)"
@@ -40,19 +73,31 @@ plugins:
           options:
             docstring_style: numpy
             docstring_section_style: table
-            heading_level: 1
+            heading_level: 2
             show_root_heading: true
             show_root_full_path: false
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            line_length: 60
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
 
             merge_init_into_class: false
             docstring_options:
               ignore_init_summary: true
 
 markdown_extensions:
+  - toc:
+      permalink: true
+      toc_depth: 3
   - pymdownx.superfences
   - pymdownx.arithmatex:
       generic: true
       smart_dollar: true
+
+extra_css:
+  - stylesheets/extra.css
 
 extra_javascript:
   - javascripts/mathjax.js

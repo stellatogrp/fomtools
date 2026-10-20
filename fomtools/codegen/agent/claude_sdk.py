@@ -22,7 +22,7 @@ Authentication works in two modes:
 
 The common SDK-backend machinery (retry loop wiring, child environment, CLI
 auth-error handling, SDK→CLI fallback) lives in
-:class:`~fomtools.codegen.agent.sdk_base.SdkAgentDriver`; this module supplies
+`SdkAgentDriver`; this module supplies
 only the Claude-specific argv and in-process SDK invocation.
 """
 
@@ -39,7 +39,7 @@ from fomtools.codegen.agent.sdk_base import (
 class ClaudeAgentDriver(SdkAgentDriver):
     """Drive code generation with the Claude Agent SDK (or the ``claude`` CLI).
 
-    A concrete :class:`~fomtools.codegen.agent.sdk_base.SdkAgentDriver` that runs
+    A concrete `SdkAgentDriver` that runs
     a real Claude coding agent through the authoritative retry loop. It prefers
     the in-process Python SDK and falls back to the ``claude`` CLI in headless
     mode. Claude has no filesystem sandbox of its own, so ``bypass_sandbox`` is
@@ -74,7 +74,7 @@ class ClaudeAgentDriver(SdkAgentDriver):
         Returns
         -------
         list of str
-            The argument vector to pass to :func:`subprocess.run`.
+            The argument vector to pass to `subprocess.run`.
 
         Note
         -----
@@ -109,7 +109,7 @@ class ClaudeAgentDriver(SdkAgentDriver):
 
         When the phase has a wall-clock budget (``task.extra["budget"]``), its
         hooks check the time around every tool call; see
-        :mod:`fomtools.codegen.agent.budget`.
+        `fomtools.codegen.agent.budget`.
         """
         env = self._child_env()
         budget = task.extra.get("budget")

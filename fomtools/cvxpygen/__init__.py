@@ -23,12 +23,12 @@ The FOM behind ``fom=`` may be one of the built-ins (``"admm"``,
 ``"relaxed_admm"``, ``"pdhg"``) or a builder of your own, generated down any of
 the three code-generation paths — one stationary iteration repeated, a method
 whose varying coefficients are declared and tabulated, or a whole recorded run
-emitted as a single pass. See :mod:`fomtools.cvxpygen.builders` and the
+emitted as a single pass. See `fomtools.cvxpygen.builders` and the
 tutorial for how a builder declares which.
 
 Requires the optional dependencies ``cvxpy``, ``cvxpygen``, and ``osqp``
 (``pip install 'fomtools[cvxpygen]'``). All imports of cvxpygen are lazy so
-that importing :mod:`fomtools.cvxpygen` itself never fails.
+that importing `fomtools.cvxpygen` itself never fails.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def register() -> None:
 
 
 def generate_solver(*args, **kwargs):
-    """Generate a CVXPYgen + fomtools embedded solver. See :func:`fomtools.cvxpygen.api.generate_solver`."""
+    """Generate a CVXPYgen + fomtools embedded solver. See `fomtools.cvxpygen.api.generate_solver`."""
     _require_cvxpygen()
     from fomtools.cvxpygen.api import generate_solver as _generate_solver
 

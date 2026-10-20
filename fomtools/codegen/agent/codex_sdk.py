@@ -1,6 +1,6 @@
 """OpenAI Codex coding-agent backend.
 
-A real, nondeterministic :class:`~fomtools.codegen.agent.driver.AgentDriver`
+A real, nondeterministic `AgentDriver`
 that drives the OpenAI Codex agent through the authoritative verify/retry loop.
 It prefers the in-process ``openai_codex`` Python SDK and falls back to the
 ``codex exec`` CLI in headless mode; after each attempt the shared loop runs the
@@ -8,13 +8,13 @@ verify command itself to decide success, never the agent's self-report.
 
 Like every real backend it needs authentication (``OPENAI_API_KEY`` or a
 logged-in ``codex`` CLI) and so never runs in CI; the deterministic pipeline is
-exercised via :class:`~fomtools.codegen.agent.stub.StubAgentDriver`. When an API
+exercised via `StubAgentDriver`. When an API
 key is configured it is forwarded into the spawned process environment so it
 takes precedence over any on-disk ``codex`` login.
 
 The common SDK-backend machinery (retry loop wiring, child environment, CLI
 auth-error handling, SDK→CLI fallback) lives in
-:class:`~fomtools.codegen.agent.sdk_base.SdkAgentDriver`; this module supplies
+`SdkAgentDriver`; this module supplies
 only the Codex-specific argv and in-process SDK invocation.
 """
 
@@ -29,7 +29,7 @@ from fomtools.codegen.agent.sdk_base import _SYSTEM_PROMPT, SdkAgentDriver
 class CodexAgentDriver(SdkAgentDriver):
     """Drive code generation with the OpenAI Codex agent.
 
-    A concrete :class:`~fomtools.codegen.agent.sdk_base.SdkAgentDriver` that runs
+    A concrete `SdkAgentDriver` that runs
     a real Codex coding agent through the authoritative retry loop. It prefers
     the in-process ``openai_codex`` Python SDK and falls back to the ``codex
     exec`` CLI in headless mode. The Codex SDK/CLI loop internally, so the
@@ -69,7 +69,7 @@ class CodexAgentDriver(SdkAgentDriver):
         Returns
         -------
         list of str
-            The argument vector to pass to :func:`subprocess.run`.
+            The argument vector to pass to `subprocess.run`.
         """
         sandbox_flags = (
             ["--dangerously-bypass-approvals-and-sandbox"]

@@ -5,22 +5,43 @@ from fomtools.proxable_functions import ProxableFunction
 
 class NormL1(ProxableFunction):
     r"""
-    A proximal operator for a positively weighted $\ell_1$ norm.
+    Weighted $\ell_1$ norm.
 
-    This class represents the convex function
-
-    $$
-        f(x) = \lambda \|x\|_1
-             = \lambda \sum_i |x_i|,
-    $$
-
-    when ``lambd`` is a scalar, or more generally
+    Represents
 
     $$
         f(x) = \sum_i \lambda_i |x_i|,
     $$
 
-    when ``lambd`` is an array of non-negative weights.
+    which is $\lambda \|x\|_1$ when ``lambd`` is a scalar. Convex and piecewise
+    linear.
+
+    Parameters
+    ----------
+    lambd : float or np.ndarray, default 1.0
+        Non-negative weight: a scalar, or a 1-D array of per-coordinate weights.
+
+    Raises
+    ------
+    ValueError
+        If any weight is negative, or ``lambd`` has more than one dimension.
+
+    See Also
+    --------
+    ElasticNet : Adds a squared $\ell_2$ term.
+    NormInf : The $\ell_\infty$ norm.
+
+    Notes
+    -----
+    **Proximal operator.** Element-wise soft thresholding,
+
+    $$
+        \operatorname{prox}_{\gamma f}(v)_i
+        = \operatorname{sign}(v_i)\,\max(|v_i| - \gamma\lambda_i,\, 0).
+    $$
+
+    **Verification lowering.** ``prox_norml1`` posts a single ``SoftThreshold``
+    step with threshold $\gamma\lambda$.
     """
 
     def __init__(self, lambd: float | np.ndarray = 1.0):
@@ -33,7 +54,7 @@ class NormL1(ProxableFunction):
 
     def eval(self, x: np.ndarray) -> float:
         r"""
-        Evaluate the weighted $\ell_1$ norm $f(x)$.
+        Evaluate $f(x) = \sum_i \lambda_i |x_i|$.
 
         Parameters
         ----------
@@ -43,7 +64,12 @@ class NormL1(ProxableFunction):
         Returns
         -------
         float
-            The value $f(x) = \sum_i \lambda_i |x_i|$.
+            The function value $f(x)$.
+
+        Raises
+        ------
+        ValueError
+            If ``x`` is not 1-D, or its length does not match an array ``lambd``.
         """
         if x.ndim >= 2:
             raise ValueError("Input should be one-dimensional")
@@ -53,34 +79,33 @@ class NormL1(ProxableFunction):
 
     def prox(self, arg: np.ndarray, gamma: float | np.ndarray = 1.0) -> np.ndarray:
         r"""
-        Compute the proximal point of the $\ell_1$ norm at ``arg``.
+        Compute $\operatorname{prox}_{\gamma f}(\text{arg})$.
 
-        This method computes
+        Applies element-wise soft thresholding by $\gamma \lambda$. With an
+        array ``gamma``, this is the prox in the scaled metric
 
         $$
-            y = \operatorname{prox}_{\gamma f}(\text{arg})
-              = \arg\!\min_{u} \left\{ f(u)
-                + \frac{1}{2} \sum_i \frac{(u_i - \text{arg}_i)^2}{\gamma_i}
-                \right\},
+            \arg\!\min_{u} \left\{ f(u)
+            + \frac{1}{2} \sum_i \frac{(u_i - \text{arg}_i)^2}{\gamma_i} \right\}.
         $$
-
-        where $\gamma$ can be a scalar or a 1-D array broadcastable to
-        the shape of ``arg``. The closed form is element-wise soft
-        thresholding by $\gamma \lambda$.
 
         Parameters
         ----------
         arg : np.ndarray
-            Input point at which to apply the proximal operator.
-        gamma : float or array_like, default 1.0
-            Step size(s) $\gamma$. Can be a scalar or an array
-            broadcastable to the shape of ``arg``.
+            Input point.
+        gamma : float or np.ndarray, default 1.0
+            Step size $\gamma > 0$: a scalar, or an array broadcastable to the
+            shape of ``arg``.
 
         Returns
         -------
         np.ndarray
-            The proximal point
-            $y = \operatorname{prox}_{\gamma f}(\text{arg})$.
+            The proximal point $\operatorname{prox}_{\gamma f}(\text{arg})$.
+
+        Raises
+        ------
+        ValueError
+            If ``arg`` is not 1-D, or its shape does not match an array ``lambd``.
         """
         if arg.ndim >= 2:
             raise ValueError("Input should be one-dimensional")
@@ -91,10 +116,19 @@ class NormL1(ProxableFunction):
 
     def grad(self, x: np.ndarray) -> np.ndarray:
         r"""
-        Compute a subgradient of the weighted $\ell_1$ norm at ``x``.
+        Compute a subgradient of $f$ at ``x``.
 
-        Returns the sign of ``x`` element-wise; at ``x_i = 0`` returns
-        ``0`` (an element of the subdifferential).
+        Per coordinate,
+
+        $$
+            g_i = \begin{cases}
+                1   & x_i > 0 \\
+                0   & x_i = 0 \\
+                -1  & x_i < 0,
+            \end{cases}
+        $$
+
+        where $0$ is the canonical choice at the kink $x_i = 0$.
 
         Parameters
         ----------

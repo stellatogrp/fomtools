@@ -1,4 +1,4 @@
-"""Serialize a :class:`~fomtools.codegen.ir.FomIR` to disk and back.
+"""Serialize a `FomIR` to disk and back.
 
 The IR is split into a human-readable ``spec.json`` (structure) plus a binary
 ``data.npz`` (all numeric arrays). The LLM coding agent reads ``spec.json`` (and
@@ -165,7 +165,7 @@ def save(ir: FomIR, directory: str | Path) -> tuple[Path, Path]:
 
 
 def load(directory: str | Path) -> FomIR:
-    """Reconstruct a :class:`FomIR` from ``spec.json`` + ``data.npz``."""
+    """Reconstruct a `FomIR` from ``spec.json`` + ``data.npz``."""
     directory = Path(directory)
     spec = json.loads((directory / "spec.json").read_text())
     npz = np.load(directory / "data.npz")

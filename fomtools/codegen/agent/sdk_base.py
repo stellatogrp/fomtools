@@ -41,7 +41,7 @@ _SYSTEM_PROMPT = (
 class SdkAgentDriver(AgentDriver):
     """Base for the real, SDK-backed coding-agent drivers.
 
-    A concrete :class:`~fomtools.codegen.agent.driver.AgentDriver` that runs a
+    A concrete `AgentDriver` that runs a
     real coding agent through the authoritative retry loop. It prefers an
     in-process Python SDK and falls back to the vendor's CLI in headless mode.
     After each attempt the shared loop runs the verify command itself to decide
@@ -59,8 +59,8 @@ class SdkAgentDriver(AgentDriver):
     subdirectory of a project repository; otherwise a misconfigured
     ``--add-dir`` could expose the surrounding repository to the agent.
 
-    Subclasses set the class attributes :attr:`api_key_env`, :attr:`cli_name`,
-    and :attr:`label`, and implement :meth:`_build_argv` and :meth:`_invoke_sdk`.
+    Subclasses set the class attributes `api_key_env`, `cli_name`,
+    and `label`, and implement `_build_argv` and `_invoke_sdk`.
 
     Methods
     -------
@@ -142,12 +142,12 @@ class SdkAgentDriver(AgentDriver):
             Ignored by backends without a sandbox concept.
         api_key : str, optional
             Explicit API key. When ``None`` it falls back to the
-            :attr:`api_key_env` environment variable; when neither is set the
+            `api_key_env` environment variable; when neither is set the
             backend uses the on-disk vendor login.
         cli_timeout : int, optional
             Wall-clock budget in seconds for one CLI attempt, after which the
             agent process is terminated. Used only when ``config`` carries no
-            budget of its own; see :meth:`_timeout_for_phase`.
+            budget of its own; see `_timeout_for_phase`.
         """
         self.config = config
         self.model = model
@@ -180,7 +180,7 @@ class SdkAgentDriver(AgentDriver):
 
         Returns ``None`` when no key is configured so the backend keeps its
         default behavior (the on-disk vendor login). Otherwise returns the full
-        parent environment with :attr:`api_key_env` injected, so PATH and the
+        parent environment with `api_key_env` injected, so PATH and the
         rest of the environment are preserved while the key forces API-key auth.
 
         Returns
@@ -196,7 +196,7 @@ class SdkAgentDriver(AgentDriver):
     def run(self, task: AgentTask) -> AgentResult:
         """Generate/refine the solver until the verify command passes.
 
-        Delegates to :func:`~fomtools.codegen.agent.driver.run_verify_loop`,
+        Delegates to `run_verify_loop`,
         supplying a closure that invokes the agent for one attempt. The loop runs
         the verify command itself to decide success and re-prompts with the
         failure output until it passes or the attempt budget is spent.
@@ -233,7 +233,7 @@ class SdkAgentDriver(AgentDriver):
         """Run one agent attempt, preferring the SDK and falling back to the CLI.
 
         Tries the in-process Python SDK first (unless ``prefer_cli`` is set); on
-        :class:`ImportError` it shells out to the vendor CLI instead, scoping it
+        `ImportError` it shells out to the vendor CLI instead, scoping it
         to the task's resolved absolute workdir. Success is decided later by the
         caller's verify command, not here.
 
@@ -270,7 +270,7 @@ class SdkAgentDriver(AgentDriver):
         """Run one attempt by shelling out to the vendor CLI in headless mode.
 
         Executes ``argv`` in ``workdir`` with the child environment from
-        :meth:`_child_env` (the API key injected when configured, otherwise the
+        `_child_env` (the API key injected when configured, otherwise the
         inherited login environment), capturing output. The CLI loops internally
         in headless mode until the task is done. Success is left to the caller's
         verify command; this method only returns the captured text or fails fast
@@ -279,7 +279,7 @@ class SdkAgentDriver(AgentDriver):
         Parameters
         ----------
         argv : list of str
-            The full CLI argument vector, as built by :meth:`_build_argv`.
+            The full CLI argument vector, as built by `_build_argv`.
         workdir : str
             Absolute working directory to run the CLI in.
 
@@ -354,7 +354,7 @@ class SdkAgentDriver(AgentDriver):
         Returns
         -------
         list of str
-            The argument vector to pass to :func:`subprocess.run`.
+            The argument vector to pass to `subprocess.run`.
         """
 
     @abstractmethod
