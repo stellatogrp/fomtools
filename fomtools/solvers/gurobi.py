@@ -10,15 +10,21 @@ from fomtools.solvers.mip_solver import MIPSolver
 
 log = logging.getLogger(__name__)
 
-_QUIET_ENV = None
+_ENV = None
 
 
-def _quiet_env() -> gp.Env:
-    """A shared Gurobi environment started with ``OutputFlag=0``."""
-    global _QUIET_ENV
-    if _QUIET_ENV is None:
-        _QUIET_ENV = gp.Env(params={"OutputFlag": 0})
-    return _QUIET_ENV
+def _env() -> gp.Env:
+    """
+    The Gurobi environment shared by every FOMTools model.
+
+    It starts with ``OutputFlag=0``, which skips the license banner, and each model
+    sets its own ``OutputFlag``. One environment holds one license session (for
+    example on WLS), however many silenced and verbose models are built.
+    """
+    global _ENV
+    if _ENV is None:
+        _ENV = gp.Env(params={"OutputFlag": 0})
+    return _ENV
 
 
 class GurobiSolver(MIPSolver):
@@ -53,10 +59,9 @@ class GurobiSolver(MIPSolver):
         user = solver_params or {}
         # Gurobi parameter names are case-insensitive.
         verbosity = {k: v for k, v in user.items() if k.lower() == self.VERBOSITY_KEY.lower()}
-        # A silenced model is built in a silenced environment, which also skips the
-        # license banner Gurobi prints when it starts the default environment.
-        quiet = bool(verbosity) and not list(verbosity.values())[-1]
-        self.model = gp.Model(env=_quiet_env()) if quiet else gp.Model()
+        self.model = gp.Model(env=_env())
+        # Models inherit the environment's OutputFlag=0; Gurobi's default is to log.
+        verbosity = verbosity or {self.VERBOSITY_KEY: 1}
         # Apply the user's verbosity first, so a silenced model does not log the defaults.
         super().__init__({**verbosity, **self.DEFAULT_PARAMS, **user})
 

@@ -448,3 +448,21 @@ def test_obbt_translates_the_main_verbosity_key():
 def test_gurobi_outputflag_is_case_insensitive(capfd):
     vp, _ = _solve_pgd(solver="gurobi", verbose=True, params={"outputflag": 0})
     assert capfd.readouterr().out == ""
+
+
+@requires_gurobi
+def test_gurobi_models_share_one_environment(monkeypatch):
+    # One environment holds one license session (WLS caps concurrent sessions).
+    import fomtools.solvers.gurobi as grb
+
+    envs = []
+    model = grb.gp.Model
+
+    def record(*args, **kwargs):
+        envs.append(kwargs.get("env"))
+        return model(*args, **kwargs)
+
+    monkeypatch.setattr(grb.gp, "Model", record)
+    _solve_pgd(solver="gurobi")
+    _solve_pgd(solver="gurobi", verbose=True)
+    assert envs and all(env is grb._env() for env in envs)
