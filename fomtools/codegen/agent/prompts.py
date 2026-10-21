@@ -12,6 +12,8 @@ _SUMMARY_BEGIN = "FOMTOOLS-SUMMARY-BEGIN"
 _SUMMARY_END = "FOMTOOLS-SUMMARY-END"
 SUMMARY_BEGIN = _SUMMARY_BEGIN
 SUMMARY_END = _SUMMARY_END
+#: Heading of the summary section where the agent lists what the rules blocked.
+BLOCKED_HEADING = "Blocked by rules:"
 
 
 def _objective_block(ir: FomIR, objective_src: str) -> str:
@@ -299,7 +301,13 @@ Between the markers, give:
 - the initial vs. final whole-solve `mean_us` and the overall speedup factor;
 - the profiling breakdown of the FINAL solver (region, time, %), hottest first;
 - a short list of the optimizations you applied and why. For each one, name the
-  structure you exploited, so a reader can tell what made it valid here.
+  structure you exploited, so a reader can tell what made it valid here;
+- a section headed exactly `{BLOCKED_HEADING}` listing every optimization you
+  considered but did not make because a rule forbade it (the kernel rules, the
+  files you may edit, or the target constraints), one per line as
+  `- <the idea> | <the rule that blocked it> | <expected gain, or unknown>`,
+  or the single line `- none`. Be specific: these reports decide which rules
+  are revisited.
 
 The markers are how your summary is lifted into the generated `OPTIMIZATIONS.md`
 report, so emit them literally, and only once.

@@ -340,6 +340,13 @@ round the pipeline re-verifies the rewrite (including the kernel rules) and
 benchmarks it head to head against that solver. A round that fails, is not
 faster, or gains less than `agent_optimize_min_gain` ends the phase; a failing or
 slower one is reverted first. `OPTIMIZATIONS.md` lists the rounds.
+
+Each round's summary also lists, under `Blocked by rules:`, the optimizations
+the agent considered but did not make because a rule forbade them, with the rule
+and an expected gain. They appear as a table in `OPTIMIZATIONS.md` and as
+`rule_friction` on the result. Collected across problems, they show which rules
+cost speed, and so which ones are worth replacing by an exact check that admits
+the optimization.
 `fomtools.codegen.generate.run_code_optimization` runs the phase on any directory
 that holds a verified translated solver, for example a copy, when you want to
 keep the translated solver too.

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import time
 import warnings
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from fomtools.codegen.agent.driver import AgentDriver, AgentResult, AgentTask
@@ -40,6 +40,7 @@ from fomtools.codegen.kernel_rules import functions, reachable, strip_c_comments
 from fomtools.codegen.oracle import check_stationary
 from fomtools.codegen.postprocess import (
     extract_agent_notes,
+    extract_rule_friction,
     parse_ops_checks,
     unified_solver_diff,
     write_optimization_report,
@@ -65,6 +66,8 @@ class CodegenResult:
     #: dict per matrix: ``name, shape, nnz, rewritten, mode, probes, max_err``), or
     #: ``None`` when the products were not editable or not optimized.
     kernel_checks: list[dict] | None = None
+    #: Optimizations the agent reports a rule blocked (see `CodeOptimizationResult`).
+    rule_friction: list[dict] = field(default_factory=list)
 
     @property
     def success(self) -> bool:
@@ -451,6 +454,7 @@ def generate_code(
     optimization_diff = None
     optimizations_md = None
     kernel_checks = None
+    rule_friction: list[dict] = []
     if code_optimization and translate.success:
         opt = run_code_optimization(
             ir,
@@ -466,6 +470,7 @@ def generate_code(
         optimization_diff = opt.diff
         optimizations_md = opt.optimizations_md
         kernel_checks = opt.kernel_checks
+        rule_friction = opt.rule_friction
     # Always persist the raw agent output, code optimization phase or not.
     _write_agent_transcripts(out_dir, translate, optimize)
 
@@ -489,6 +494,7 @@ def generate_code(
         optimizations_md=optimizations_md,
         production_path=production_path,
         kernel_checks=kernel_checks,
+        rule_friction=rule_friction,
     )
 
 
@@ -538,6 +544,9 @@ class CodeOptimizationResult:
     rewrite_collected: bool
     kernel_checks: list[dict] | None
     optimizations_md: Path | None
+    #: What the agent says a rule blocked, one dict per item (``round, idea,
+    #: rule, expected_gain``), from every round's summary.
+    rule_friction: list[dict] = field(default_factory=list)
 
 
 #: Why a round ended the phase.
@@ -778,6 +787,10 @@ def run_code_optimization(
     else:
         agent_notes = "\n\n".join(f"### Round {i}\n\n{n.strip()}" for i, n in notes_by_round)
 
+    rule_friction = [
+        dict(round=i, **item) for i, n in notes_by_round for item in extract_rule_friction(n)
+    ]
+
     optimizations_md = None
     if write_report:
         caveats = []
@@ -815,6 +828,7 @@ def run_code_optimization(
             rule_violations=static_issues,
             rewrite_collected=collected_any,
             rounds=[r.as_dict() for r in rounds],
+            rule_friction=rule_friction,
         )
 
     return CodeOptimizationResult(
@@ -829,4 +843,5 @@ def run_code_optimization(
         rewrite_collected=collected_any,
         kernel_checks=kernel_checks,
         optimizations_md=optimizations_md,
+        rule_friction=rule_friction,
     )

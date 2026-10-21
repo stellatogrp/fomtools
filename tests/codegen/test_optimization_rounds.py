@@ -6,6 +6,7 @@ marker, so the round logic is tested without timing noise: keep a faster round,
 stop on too small a gain, revert a failing or slower round, stop at the last one.
 """
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ import pytest
 from fomtools.codegen import StubAgentDriver, generate_code
 from fomtools.codegen import generate as gen
 from fomtools.codegen.agent.driver import AgentDriver
+from fomtools.codegen.agent.prompts import BLOCKED_HEADING, SUMMARY_BEGIN, SUMMARY_END
+from fomtools.codegen.postprocess import extract_rule_friction
 from tests.codegen.conftest import build_ista
 
 GOLDEN = Path(__file__).parent / "golden" / "ista" / "embedded_c" / "fom_solver.c"
@@ -158,3 +161,65 @@ def test_run_code_optimization_on_a_copy(tmp_path, monkeypatch, requires_compile
     assert opt.rounds[-1].stop_reason == gen.STOP_NO_CHANGE
     assert "/* r1 */" not in (emitted / "src" / "fom_solver.c").read_text()
     assert opt.optimizations_md and opt.optimizations_md.exists()
+
+
+class ReportingDriver(ScriptedDriver):
+    """A scripted driver whose rounds each end with a summary naming what a rule
+    blocked."""
+
+    def run(self, task):
+        result = super().run(task)
+        if task.phase == "translation":
+            return result
+        k = len(self.prompts)
+        summary = (
+            f"{SUMMARY_BEGIN}\nRound {k} notes.\n\n{BLOCKED_HEADING}\n"
+            f"- inline the identity copy {k} | selection rule | ~5%\n"
+            f"- merge stages\n\nDone.\n{SUMMARY_END}\n"
+        )
+        return replace(result, agent_log=(result.agent_log or "") + summary)
+
+
+def test_extract_rule_friction():
+    notes = (
+        "Speedup 2x.\n\n**Blocked by rules:**\n"
+        "- unroll with literals | no new floating-point constants | 2x\n"
+        "- skip a | b\n\nTried and dropped: nothing."
+    )
+    assert extract_rule_friction(notes) == [
+        dict(
+            idea="unroll with literals", rule="no new floating-point constants", expected_gain="2x"
+        ),
+        dict(idea="skip a", rule="b", expected_gain=""),
+    ]
+    assert extract_rule_friction(f"x\n{BLOCKED_HEADING}\n- none\n") == []
+    assert extract_rule_friction("no section at all") == []
+
+
+@pytest.mark.requires_compiler
+def test_rule_friction_is_collected_per_round_and_reported(
+    tmp_path, monkeypatch, requires_compiler
+):
+    _fake_timing(monkeypatch, {"translated": 100.0, "r1": 50.0, "r2": 25.0})
+    case = build_ista(max_iters=50)
+    driver = ReportingDriver(["r1", "r2"])
+    result = generate_code(
+        case["verifier"],
+        case["next_state"],
+        tmp_path,
+        config=case["config"].model_copy(update=dict(agent_optimize_rounds=2)),
+        driver=driver,
+        name="ista",
+        code_optimization=True,
+        profile=True,
+    )
+    assert BLOCKED_HEADING in driver.prompts[0]
+    assert [(f["round"], f["idea"]) for f in result.rule_friction] == [
+        (1, "inline the identity copy 1"),
+        (1, "merge stages"),
+        (2, "inline the identity copy 2"),
+        (2, "merge stages"),
+    ]
+    report = (tmp_path / "OPTIMIZATIONS.md").read_text()
+    assert "## Blocked by rules" in report
+    assert "| 2 | inline the identity copy 2 | selection rule | ~5% |" in report
