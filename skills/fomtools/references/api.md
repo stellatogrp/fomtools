@@ -33,8 +33,8 @@ Verifier(
 ### Core Methods
 
 #### `iterate(ndim, lb, ub) -> LinearExpression`
-(`add_iterate` is an alias.) Create an iterate variable with dimension `ndim` and bounds `[lb, ub]`.
-Bounds can be scalars (broadcast) or arrays.
+Create an iterate variable with dimension `ndim` and bounds `[lb, ub]`.
+Bounds can be scalars (broadcast) or arrays. `add_iterate` is a deprecated alias.
 
 #### `parameter(ndim, lb, ub) -> LinearExpression`
 Create a parameter variable with dimension `ndim` and bounds `[lb, ub]`.
@@ -60,12 +60,12 @@ Create a sum-of-squares expression for use in constraints.
 
 ### Step Operators
 
-Accessed via `vp.step.<name>(arg, **kwargs)` or directly as `vp.<name>(...)`:
+Called as `vp.<name>(arg, ...)` (also available as `vp.step.<name>`); options after `arg` are keyword-only:
 
-- `vp.step.relu(arg, proj_ranges=None)` -- ReLU / projection onto non-negative orthant
-- `vp.step.soft_threshold(arg, lambd=t)` -- soft thresholding
-- `vp.step.satlin(arg, l=l, u=u)` -- box projection
-- `vp.step.implicit_linear(arg, output_mat=M, weight=None, bias=None)` -- implicit affine solve `M w = weight @ arg + bias`
+- `vp.relu(arg, proj_ranges=None)` -- ReLU / projection onto non-negative orthant
+- `vp.soft_threshold(arg, lambd=t)` -- soft thresholding
+- `vp.satlin(arg, l=l, u=u)` -- box projection
+- `vp.implicit_linear(arg, output_mat=M, weight=None, bias=None)` -- implicit affine solve `M w = weight @ arg + bias`
 
 All step operators return a `LinearExpression`.
 
@@ -103,8 +103,9 @@ vp.standard_form_linear_program(c, A=None, b=None,
 ### Objectives and solving
 
 ```python
-vp.set_objective_norm(expr, ord=np.inf)  # infinity norm; 1 for one-norm, 2 for squared two-norm
-vp.maximize(ft.norm(expr, np.inf))       # equivalent; also accepts ft.sum_squares(expr)
+vp.maximize(ft.norm(expr, np.inf))       # or ft.norm(expr, 1); a list of expressions is stacked
+vp.maximize(ft.sum_squares(expr))        # squared two-norm; MIQP, needs solver="gurobi" for MIP
+vp.set_objective_norm(expr, ord=np.inf)  # lower-level equivalent; ord=2 is the squared two-norm
 vp.set_zero_objective()
 vp.fixed_point(n_dim, operator, lb, ub)  # new iterate z_star == operator(z_star)
 result = vp.solve(convex_hull_cuts=False, cut_rounds=1, tighten_objective_bounds=None,
@@ -115,8 +116,8 @@ vp.set_start_samples({param: samples})   # MIP start from sampled worst case
 MIP returns a finite best upper bound even at a time limit when available, and
 raises `RuntimeError` otherwise. The solved copy retains the native status and
 incumbent separately. SDP returns a dual objective only after an accurate optimal
-termination. Simulator returns sampled residual arrays. See `docs/index.md` for
-numerical limitations and result inspection.
+termination. Simulator returns sampled residual arrays. See "Returned bounds and numerical
+checks" in `docs/user_guide/index.md` for numerical limitations and result inspection.
 
 ### Post-processing
 
@@ -128,8 +129,12 @@ incumbents, squared norms, or a bound only for the last step.
 ### Solution Values
 
 ```python
-vp.get_solution_value(iterate) -> np.ndarray
+expr.value -> np.ndarray   # any expression at the MIP incumbent (vp.get_solution_value(expr) also works)
 ```
+
+Raises `RuntimeError` without an incumbent or for steps added after the last solve,
+`ValueError` for expressions mixing Verifiers, and `NotImplementedError` for SDP and
+the simulator.
 
 ### Code Generation
 
