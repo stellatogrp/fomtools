@@ -25,5 +25,6 @@ Rules:
 - Remove references to features that were removed
 - Keep the same file structure and organization style
 
-After updating, commit the changes with message:
-"chore: sync fomtools skill with docs"
+After updating, commit the changes with message
+"chore: sync fomtools skill with docs" and run `git push`. If the skill is
+already in sync, change nothing and do not commit.

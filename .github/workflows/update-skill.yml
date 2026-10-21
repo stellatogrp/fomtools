@@ -20,6 +20,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          # The PR branch itself (not the detached merge ref), so the sync commit can be pushed.
+          ref: ${{ github.head_ref }}
           fetch-depth: 1
 
       - name: Run Claude Code to update skill
@@ -27,17 +29,8 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt_file: skills/update-prompt.md
-
-          allowed_tools: |
-            Bash(git status)
-            Bash(git diff:*)
-            Bash(git log:*)
-            Bash(git add:*)
-            Bash(git commit:*)
-            Bash(find:*)
-            Bash(grep:*)
-            Bash(wc:*)
-            Read
-            Edit
-            Write
+          # v1 inputs: `prompt` and `claude_args` (the v0 `prompt_file` and `allowed_tools`
+          # are ignored, and without a prompt the action skips silently).
+          prompt: 'Follow the instructions in skills/update-prompt.md.'
+          claude_args: >-
+            --allowedTools "Bash(git status),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(find:*),Bash(grep:*),Bash(wc:*),Read,Edit,Write"
