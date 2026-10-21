@@ -85,6 +85,14 @@ def test_add_aliases_are_deprecated(old, new, args):
         (lambda vp, x: vp.set_infinity_norm_objective(x), "vp.maximize"),
         (lambda vp, x: vp.set_one_norm_objective(x), "vp.maximize"),
         (lambda vp, x: vp.set_two_norm_objective(x), "vp.maximize"),
+        (lambda vp, x: vp.set_zero_objective(), "vp.maximize(0)"),
+        (lambda vp, x: vp.add_param_stack([x, x]), "ft.stack"),
+        (lambda vp, x: vp.sum_squares(x), "ft.sum_squares"),
+        (lambda vp, x: vp.complementarity(x, x), "ft.complementarity"),
+        (
+            lambda vp, x: vp.fixed_point(n_dim=2, operator=vp.relu, lb=-1, ub=1),
+            "fixed_point(ndim=...)",
+        ),
     ],
 )
 def test_old_spellings_are_deprecated(call, new):
@@ -285,6 +293,40 @@ def test_norm_is_not_a_constraint():
     x = ft.Verifier().parameter(2)
     with pytest.raises(TypeError, match="not a constraint"):
         ft.norm(x, 1) <= 1
+
+
+def test_maximize_zero_is_a_feasibility_problem():
+    vp = ft.Verifier()
+    _, z, z_prev = _pgd(vp)
+    vp.maximize(ft.norm(z - z_prev, np.inf))
+    vp.maximize(0)
+    assert vp.objective is None and vp._residual is None
+    assert vp.solve() == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("bad", [1, False, None])
+def test_maximize_rejects_nonzero_constants(bad):
+    vp = ft.Verifier()
+    with pytest.raises(TypeError, match="or 0"):
+        vp.maximize(bad)
+
+
+def test_fixed_point_takes_ndim():
+    vp = ft.Verifier()
+    x = vp.parameter(2, lb=-1, ub=1)
+    z_pos = vp.fixed_point(2, lambda z: vp.relu(0.5 * z + x), lb=-5, ub=5)
+    z_kw = vp.fixed_point(ndim=2, operator=lambda z: vp.relu(0.5 * z + x), lb=-5, ub=5)
+    assert z_pos.ndim == z_kw.ndim == 2
+    with pytest.raises(TypeError, match="ndim and operator"):
+        vp.fixed_point(operator=vp.relu)
+
+
+def test_ft_atoms_are_exported():
+    vp = ft.Verifier()
+    a, b = vp.parameter(2, lb=0, ub=1), vp.parameter(2, lb=0, ub=1)
+    assert ft.stack([a, b]).ndim == 4
+    assert type(ft.complementarity(a, b)).__name__ == "ComplementarityConstraint"
+    assert type(ft.sum_squares(a)).__name__ == "SumSquares"
 
 
 def test_maximize_rejects_other_objectives():

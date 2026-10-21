@@ -26,7 +26,7 @@ def test_box_constrained_ls_fixed_point(vp_param_1):
 
     # Fixed point: x* = Sat_{[l,u]}(x* - t * A^T(A x* - x))
     x_star = vp_param_1.fixed_point(
-        n_dim=n,
+        ndim=n,
         operator=lambda x: vp_param_1.satlin(x - t * A.T @ (A @ x - b_param), l=l, u=u),
         lb=l,
         ub=u,

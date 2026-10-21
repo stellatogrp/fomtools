@@ -228,8 +228,8 @@ class ComplementarityConstraint(Constraint):
     not reducible to a single ``lhs op 0`` expression, so it stores both expressions
     verbatim (it does **not** invoke ``Constraint.__init__``). It is non-convex and is
     lowered to a backend-specific encoding (big-M + binaries in the MIP canonicalizer).
-    Instances are typically created via `complementarity` or
-    ``Verifier.complementarity`` rather than by the constructor directly.
+    Instances are typically created via ``ft.complementarity`` rather than by the
+    constructor directly.
 
     Attributes
     ----------
@@ -373,8 +373,7 @@ class SumSquares:
 
     This object is not a `LinearExpression` (it is quadratic). Its only purpose
     is to build a `QuadraticConstraint` via a comparison operator, e.g.
-    ``sum_squares(expr) <= r**2``. Created via `sum_squares` or
-    ``Verifier.sum_squares``.
+    ``ft.sum_squares(expr) <= r**2``. Created via ``ft.sum_squares``.
 
     Attributes
     ----------
@@ -408,9 +407,9 @@ def sum_squares(expr: "LinearExpression") -> SumSquares:
     Compare the returned object against a nonnegative scalar to form a
     `QuadraticConstraint`::
 
-        vp.add_constraint(sum_squares(expr) <= r**2)   # ||A x + b||_2^2 <= r^2
-        vp.add_constraint(sum_squares(expr) >= r**2)   # nonconvex shell
-        vp.add_constraint(sum_squares(expr) == r**2)   # nonconvex sphere
+        vp.add_constraint(ft.sum_squares(expr) <= r**2)   # ||A x + b||_2^2 <= r^2
+        vp.add_constraint(ft.sum_squares(expr) >= r**2)   # nonconvex shell
+        vp.add_constraint(ft.sum_squares(expr) == r**2)   # nonconvex sphere
 
     Parameters
     ----------

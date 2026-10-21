@@ -189,7 +189,7 @@ def test_sdp_disjoint_guard():
     v = _make_verifier("sdp")
     x = v.iterate(2, lb=0.0, ub=1.0)
     with pytest.raises(NotImplementedError, match="sharing variables"):
-        v.add_constraint(v.complementarity(x, x))
+        v.add_constraint(ft.complementarity(x, x))
 
 
 def test_complementarity_composite_slack_bound():

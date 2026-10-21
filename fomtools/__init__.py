@@ -7,7 +7,7 @@ except PackageNotFoundError:
 
 from fomtools.utils.dict_utils import merge_dict, prune_dict
 from fomtools.linearexpression import LinearExpression, solve_linexpr, stack
-from fomtools.constraint import norm, sum_squares
+from fomtools.constraint import complementarity, norm, sum_squares
 from fomtools.verifier import Verifier
 from fomtools.iteratetrajectory import IterateTrajectory
 from fomtools.steps.step import Step

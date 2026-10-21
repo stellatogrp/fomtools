@@ -35,8 +35,8 @@ def test_optimal_control_stacked_box_without_metadata_uses_each_sample():
     u_min = vp.parameter(ndim=1, lb=-0.5, ub=-0.5)
     u_max = vp.parameter(ndim=1, lb=1.5, ub=1.5)
 
-    lower = vp.add_param_stack([x, u_min])
-    upper = vp.add_param_stack([x, u_max])
+    lower = ft.stack([x, u_min])
+    upper = ft.stack([x, u_max])
 
     v = vp.parameter(ndim=2, samples=v_samples)
     projected = vp.prox(IndBox(l=lower, u=upper), v)
@@ -71,8 +71,8 @@ def test_optimal_control_stacked_box_ignores_global_sample_metadata():
     x = vp.parameter(ndim=1, lb=-1.0, ub=2.0, samples=x_samples)
     u_min = vp.parameter(ndim=1, lb=-0.5, ub=-0.5)
     u_max = vp.parameter(ndim=1, lb=1.5, ub=1.5)
-    lower = vp.add_param_stack([x, u_min])
-    upper = vp.add_param_stack([x, u_max])
+    lower = ft.stack([x, u_min])
+    upper = ft.stack([x, u_max])
 
     v = vp.parameter(ndim=2, samples=v_samples)
     projected = vp.prox(IndBox(l=lower, u=upper), v)

@@ -1,7 +1,7 @@
 """
 Tests for the ``sum_squares`` quadratic constraint atom.
 
-``vp.sum_squares(expr) <op> r**2`` (for ``<op>`` in ``<=`` / ``>=`` / ``==``) builds a
+``ft.sum_squares(expr) <op> r**2`` (for ``<op>`` in ``<=`` / ``>=`` / ``==``) builds a
 :class:`QuadraticConstraint` encoding ``sum_i (a_i^T x + b_i)^2 <op> r^2``:
 
 - **SDP**: linear in the lifted matrix (``tr(C X) <op> r^2`` with ``C = [b;A]^T[b;A]``),
@@ -38,7 +38,7 @@ def _ss(expr, sense, bound):
 def test_sum_squares_returns_atom():
     vp = Verifier(method="sdp", solver="clarabel")
     x = vp.iterate(3, lb=-2, ub=2)
-    assert isinstance(vp.sum_squares(x), SumSquares)
+    assert isinstance(ft.sum_squares(x), SumSquares)
     assert isinstance(sum_squares(x), SumSquares)  # free function matches the method
 
 

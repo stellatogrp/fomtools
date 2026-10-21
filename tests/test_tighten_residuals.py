@@ -96,7 +96,7 @@ def test_other_objectives_clear_the_pending_residual():
     vp = ft.Verifier()
     _, iterates = _fista(vp, K=1, solve=False)
     vp.maximize(ft.norm(iterates[1] - iterates[0], np.inf))
-    vp.set_zero_objective()
+    vp.maximize(0)
     vp.solve()
     assert not vp._residual_chain
 

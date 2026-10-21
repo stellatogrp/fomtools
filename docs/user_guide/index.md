@@ -49,7 +49,11 @@ never introduce new variables into the verification problem. Interval arithmetic
 elementwise bounds on each expression through affine operations. Arbitrary polyhedral
 constraints can also be imposed on any expression through the `==`, `<=`, and `>=`
 operators, as above, which is useful for encoding structure in the parameter set such as a
-probability simplex.
+probability simplex. `add_constraint` takes effect immediately: optimization-based bound
+tightening (OBBT) shrinks the boxes of the variables it involves, and every step built
+afterwards encodes its big-M constants from those boxes. Constrain parameters and initial
+iterates before building the algorithm steps. The worst case is the same either way, but the
+formulation is tighter.
 
 ## Choosing a backend
 
@@ -144,7 +148,7 @@ metrics can go beyond the standard fixed point residual $\|s^{k+1} - s^k\|_\inft
 residuals, residuals involving the problem parameters, and distances to a reference
 expression. The package supports four objectives: the $\ell_1$ norm `ft.norm(expr, 1)`, the
 $\ell_\infty$ norm `ft.norm(expr, np.inf)`, the squared $\ell_2$ norm `ft.sum_squares(expr)`, and a
-zero objective for feasibility checks (`set_zero_objective`). The objective is set with
+zero objective for feasibility checks (`vp.maximize(0)`). The objective is set with
 `vp.maximize(...)`. The two-norm objective is always squared. With the MIP backend it makes
 the problem a mixed-integer QP, which needs `solver="gurobi"`.
 `ft.norm` also accepts a list of expressions, which the package stacks into a single
@@ -181,7 +185,7 @@ zk = z0
 for _ in range(K):
     zk = demo.soft_threshold(zk - eta * D.T @ (D @ zk - x_demo), lambd=lambd * eta)
 z_star = demo.fixed_point(
-    n_dim=n,
+    ndim=n,
     operator=lambda z: demo.soft_threshold(z - eta * D.T @ (D @ z - x_demo), lambd=lambd * eta),
     lb=-100,
     ub=100,

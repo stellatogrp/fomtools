@@ -173,7 +173,7 @@ $$
 
 ```python
 s_star = vp.fixed_point(
-    n_dim=n,
+    ndim=n,
     operator=lambda s: vp.soft_threshold(s - eta * D.T @ (D @ s - x), lambd=lambd * eta),
     lb=-100,
     ub=100,

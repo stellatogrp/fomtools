@@ -42,8 +42,8 @@ Create a parameter variable with dimension `ndim` and bounds `[lb, ub]`.
 Parameters represent uncertain problem data. With `method="simulator"`, pass
 `samples` of shape `(num_samples, ndim)`. `add_param` is a deprecated alias.
 
-#### `add_param_stack(param_list) -> LinearExpression`
-Stack a list of `LinearExpression` parameters into one.
+#### `ft.stack(exprs) -> LinearExpression`
+Stack a list of expressions (e.g. parameters) into one. `vp.add_param_stack` is deprecated.
 
 #### `iterate_trajectory(length, collapse_expr="auto")`
 Create a list of `length` slots for iterates. `collapse_expr="auto"` detects
@@ -51,13 +51,16 @@ accumulating methods (like Douglas-Rachford) where expression support grows
 and collapses them to keep linear growth.
 
 #### `add_constraint(constr)`
-Add a `Constraint` to the verification problem.
+Add a `Constraint` to the verification problem. It takes effect immediately: OBBT
+tightens the variables involved, so constrain parameters and initial iterates before
+building the steps.
 
-#### `complementarity(expr_a, expr_b)`
-Add a complementarity constraint: `expr_a >= 0, expr_b >= 0, expr_a * expr_b == 0`.
+#### `ft.complementarity(expr_a, expr_b)`
+Build a complementarity constraint (pass it to `add_constraint`): `expr_a >= 0, expr_b >= 0, expr_a * expr_b == 0`.
 
-#### `sum_squares(expr) -> SumSquares`
-Create a sum-of-squares expression for use in constraints.
+#### `ft.sum_squares(expr) -> SumSquares`
+The squared two-norm, for constraints (`ft.sum_squares(e) <= r**2`) or as the objective of
+`vp.maximize`.
 
 ### Step Operators
 
@@ -106,8 +109,8 @@ vp.standard_form_linear_program(c, A=None, b=None,
 ```python
 vp.maximize(ft.norm(expr, np.inf))       # or ft.norm(expr, 1); a list of expressions is stacked
 vp.maximize(ft.sum_squares(expr))        # squared two-norm; MIQP, needs solver="gurobi" for MIP
-vp.set_zero_objective()
-vp.fixed_point(n_dim, operator, lb, ub)  # new iterate z_star == operator(z_star)
+vp.maximize(0)
+vp.fixed_point(ndim, operator, lb, ub)   # new iterate z_star == operator(z_star)
 result = vp.solve(convex_hull_cuts=False, cut_rounds=1, tighten_objective_bounds=None,
                   warm_start=True, verbose=None)  # native solver options also accepted
 vp.set_start_samples({param: samples})   # MIP start from sampled worst case

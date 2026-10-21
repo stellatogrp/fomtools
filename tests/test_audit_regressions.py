@@ -108,7 +108,7 @@ def test_infeasible_model_has_no_scalar_or_solution(solver):
     v = Verifier(solver=solver, obbt_solver=None, params=mip_params(solver))
     x = v.iterate(1, lb=0, ub=1)
     v.add_constraint(x >= 2)
-    v.set_zero_objective()
+    v.maximize(0)
     with pytest.raises(RuntimeError):
         v.solve()
     with pytest.raises(RuntimeError, match="incumbent"):
@@ -215,7 +215,7 @@ def test_expression_values_preserve_constants(solver):
     x = v.iterate(2, lb=np.array([1.0, -2.0]), ub=np.array([1.0, -2.0]))
     A = np.array([[1.0, 2.0], [3.0, -1.0]])
     expr = A @ x + np.array([4.0, -7.0])
-    v.set_zero_objective()
+    v.maximize(0)
     v.solve()
     np.testing.assert_allclose(expr.value, [1.0, -2.0])
     np.testing.assert_allclose(LinearExpression({}, np.array([2.0, 3.0])).value, [2.0, 3.0])

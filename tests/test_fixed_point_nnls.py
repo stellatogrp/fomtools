@@ -43,7 +43,7 @@ def test_nnls_convergence(vp_param_1):
 
     # Get fixed point z* using Verifier's fixed_point method
     z_star = vp_param_1.fixed_point(
-        n_dim=n,
+        ndim=n,
         operator=lambda z: vp_param_1.relu(z - eta * A.T @ (A @ z - x_param)),
         lb=0,
         ub=100,

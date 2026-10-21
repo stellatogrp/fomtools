@@ -175,7 +175,7 @@ def test_verifier_records_the_objective():
         assert exprs == (x,) and norm_label(recorded) == label
     v.maximize(ft.sum_squares([x, 2 * x]))
     assert len(v.objective[0]) == 2
-    v.set_zero_objective()
+    v.maximize(0)
     assert v.objective is None
 
 

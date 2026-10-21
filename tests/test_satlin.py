@@ -100,8 +100,8 @@ def test_satlin_param(vp_param_2):
     l_rest = vp_param_2.parameter(n - 1, lb=np.array([-1.2, -0.35]), ub=np.array([-1.1, 0]))
     u_rest = vp_param_2.parameter(n - 1, lb=np.array([0, 0.1]), ub=np.array([0.1, 0.2]))
 
-    l_param = vp_param_2.add_param_stack([top_param, l_rest])
-    u_param = vp_param_2.add_param_stack([top_param, u_rest])
+    l_param = ft.stack([top_param, l_rest])
+    u_param = ft.stack([top_param, u_rest])
 
     t = 0.1
     K = 5
@@ -192,8 +192,8 @@ def test_satlin_param_sdp_mip(vp_param_2, vp_sdp):
     top_s = vp_s.parameter(1, lb=0.5, ub=0.6)
     l_rest_s = vp_s.parameter(n - 1, lb=np.array([-1.2, -0.35]), ub=np.array([-1.1, 0]))
     u_rest_s = vp_s.parameter(n - 1, lb=np.array([0, 0.1]), ub=np.array([0.1, 0.2]))
-    l_s = vp_s.add_param_stack([top_s, l_rest_s])
-    u_s = vp_s.add_param_stack([top_s, u_rest_s])
+    l_s = ft.stack([top_s, l_rest_s])
+    u_s = ft.stack([top_s, u_rest_s])
 
     z_s = [vp_s.iterate(n, lb=0, ub=0)]
     for k in range(K):
@@ -211,8 +211,8 @@ def test_satlin_param_sdp_mip(vp_param_2, vp_sdp):
     top_m = vp_m.parameter(1, lb=0.5, ub=0.6)
     l_rest_m = vp_m.parameter(n - 1, lb=np.array([-1.2, -0.35]), ub=np.array([-1.1, 0]))
     u_rest_m = vp_m.parameter(n - 1, lb=np.array([0, 0.1]), ub=np.array([0.1, 0.2]))
-    l_m = vp_m.add_param_stack([top_m, l_rest_m])
-    u_m = vp_m.add_param_stack([top_m, u_rest_m])
+    l_m = ft.stack([top_m, l_rest_m])
+    u_m = ft.stack([top_m, u_rest_m])
 
     z_m = [vp_m.iterate(n, lb=0, ub=0)]
     for k in range(K):

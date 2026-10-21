@@ -591,27 +591,8 @@ class Verifier(object):
         return self.parameter(*args, **kwargs)
 
     def add_param_stack(self, param_list: List[LinearExpression]) -> LinearExpression:
-        """
-        Stack multiple parameters into a single composite LinearExpression.
-
-        Equivalent to `fomtools.stack`; preserved for API consistency
-        with ``parameter`` / ``iterate``. Does not create a new leaf or
-        any solver-side equality constraints — the result is a view sharing
-        storage with the input parameters via sparse block-selection matrices.
-
-        The constituent parameters must already be registered (via ``parameter``).
-
-        Parameters
-        ----------
-        param_list: list[LinearExpression]
-            List of `LinearExpression` parameters to stack.
-
-        Returns
-        -------
-        LinearExpression
-            A composite expression of dimension ``sum(p.ndim for p in param_list)``
-            whose decomposition references the leaves of the input parameters.
-        """
+        """Deprecated: use ``ft.stack(param_list)``."""
+        _deprecated("add_param_stack", "ft.stack")
         return stack(param_list)
 
     def iterate_trajectory(self, length: int, collapse_expr="auto"):
@@ -715,50 +696,13 @@ class Verifier(object):
     def complementarity(
         self, expr1: LinearExpression, expr2: LinearExpression
     ) -> ComplementarityConstraint:
-        """
-        Build an elementwise complementarity constraint between two expressions.
-
-        Asserts ``expr1 >= 0``, ``expr2 >= 0`` and ``expr1[i] * expr2[i] == 0`` for
-        all ``i`` (at most one side nonzero per coordinate). Pass the returned object
-        to `add_constraint`.
-
-        Parameters
-        ----------
-        expr1, expr2 : LinearExpression
-            The two expressions to place in complementarity. Must have equal ``ndim``.
-
-        Returns
-        -------
-        ComplementarityConstraint
-            The constraint object.
-        """
+        """Deprecated: use ``ft.complementarity(expr1, expr2)``."""
+        _deprecated("vp.complementarity", "ft.complementarity")
         return complementarity(expr1, expr2)
 
     def sum_squares(self, expr: LinearExpression) -> SumSquares:
-        r"""
-        Build a sum-of-squares atom ``\sum_i (a_i^\top x + b_i)^2`` for ``expr``.
-
-        Compare the returned object against a nonnegative scalar to form a quadratic
-        constraint, then pass it to `add_constraint`::
-
-            vp.add_constraint(vp.sum_squares(expr) <= r**2)   # ||A x + b||_2^2 <= r^2
-            vp.add_constraint(vp.sum_squares(expr) >= r**2)   # nonconvex shell
-            vp.add_constraint(vp.sum_squares(expr) == r**2)   # nonconvex sphere
-
-        The ``<=`` sense is convex; ``>=`` / ``==`` are nonconvex but still representable
-        on the SDP backend (linear in the lifted matrix) and on Gurobi (``NonConvex=2``).
-        Quadratic constraints are unsupported on HiGHS and raise at ``add_constraint``.
-
-        Parameters
-        ----------
-        expr : LinearExpression
-            The expression whose squared two-norm is taken.
-
-        Returns
-        -------
-        SumSquares
-            The atom; compare it with ``<=`` / ``>=`` / ``==`` to obtain a constraint.
-        """
+        """Deprecated: use ``ft.sum_squares(expr)``."""
+        _deprecated("vp.sum_squares", "ft.sum_squares")
         return sum_squares(expr)
 
     def _tighten_constraint_bounds(self, constr: Constraint) -> None:
@@ -1128,19 +1072,19 @@ class Verifier(object):
             arg, Affine, relax_binary_vars, output_mat=output_mat, weight=weight, bias=bias
         )
 
-    def fixed_point(self, n_dim, operator, lb=-np.inf, ub=np.inf):
+    def fixed_point(self, ndim=None, operator=None, lb=-np.inf, ub=np.inf, *, n_dim=None):
         """
         Encode a fixed point of an operator as a new iterate.
 
-        Creates a new iterate ``z_star`` of dimension `n_dim`, applies
+        Creates a new iterate ``z_star`` of dimension `ndim`, applies
         `operator` to it, and constrains ``z_star == operator(z_star)``.
         Used to encode distance-to-optimality objectives, where `z_star`
         represents an optimal solution of the parametric problem.
 
         Parameters
         ----------
-        n_dim: int
-            Dimension of the fixed-point iterate.
+        ndim: int
+            Dimension of the fixed-point iterate. (``n_dim`` is a deprecated alias.)
 
         operator: Callable[[LinearExpression], LinearExpression]
             The algorithm operator `T`, applied to the new iterate to
@@ -1159,7 +1103,12 @@ class Verifier(object):
         LinearExpression
             The fixed-point iterate ``z_star``.
         """
-        z_star = self.iterate(n_dim, lb=lb, ub=ub)
+        if n_dim is not None:
+            _deprecated("fixed_point(n_dim=...)", "fixed_point(ndim=...)")
+            ndim = n_dim
+        if ndim is None or operator is None:
+            raise TypeError("fixed_point needs ndim and operator.")
+        z_star = self.iterate(ndim, lb=lb, ub=ub)
         s_star = operator(z_star)
         self.add_constraint(z_star == s_star)
 
@@ -1221,16 +1170,16 @@ class Verifier(object):
             / (2 * target_expr.ndim)
         )
 
-    def set_zero_objective(self):
-        """
-        Set the optimization objective to zero.
-
-        This method replaces the current objective with a constant
-        zero objective, turning it into a feasibility problem.
-        """
+    def _set_zero_objective(self) -> None:
+        """Feasibility problem: a constant zero objective."""
         self.objective = None
         self._residual = None
         self.canonicalizer.set_zero_objective()
+
+    def set_zero_objective(self):
+        """Deprecated: use ``vp.maximize(0)``."""
+        _deprecated("set_zero_objective", "vp.maximize(0)")
+        self._set_zero_objective()
 
     def _set_norm_objective(
         self, expr_list: Sequence[LinearExpression] | LinearExpression, ord: int | float
@@ -1280,14 +1229,15 @@ class Verifier(object):
             raise ValueError(f"Unsupported norm order: {ord}. Use 1, 2, np.inf, or 'inf'.")
         self._set_norm_objective(expr, ord)
 
-    def maximize(self, objective: Norm | SumSquares) -> None:
+    def maximize(self, objective: Norm | SumSquares | int) -> None:
         """
         Set the objective to maximize, the worst case that ``solve`` bounds.
 
         Parameters
         ----------
-        objective : Norm or SumSquares
-            ``ft.norm(expr, 1)``, ``ft.norm(expr, np.inf)``, or
+        objective : Norm, SumSquares, or 0
+            ``ft.norm(expr, 1)``, ``ft.norm(expr, np.inf)``, ``0`` for a
+            feasibility problem, or
             ``ft.sum_squares(expr)`` for the squared two-norm. With
             ``method="mip"``, the squared two-norm is an MIQP and needs
             ``solver="gurobi"``; ``solve`` then returns a bound on the squared norm.
@@ -1302,9 +1252,15 @@ class Verifier(object):
                 self._residual = objective.exprs[0]._difference
         elif isinstance(objective, SumSquares):
             self._set_norm_objective(objective.expr, 2)
+        elif (
+            isinstance(objective, (int, float))
+            and not isinstance(objective, bool)
+            and objective == 0
+        ):
+            self._set_zero_objective()
         else:
             raise TypeError(
-                "maximize takes ft.norm(expr, p) or ft.sum_squares(expr), "
+                "maximize takes ft.norm(expr, p), ft.sum_squares(expr), or 0, "
                 f"got {type(objective).__name__}."
             )
 

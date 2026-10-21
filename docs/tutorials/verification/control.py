@@ -298,7 +298,7 @@ def _(
 
         def project(vp, v_prev):
             w_control = vp.satlin(v_prev[n_s:], l=u_stack_min, u=u_stack_max)
-            return vp.add_param_stack([x_param, w_control])
+            return ft.stack([x_param, w_control])
 
         lhs_mat = build_lhs(P).toarray()
         for _ in range(K):
@@ -403,8 +403,8 @@ def _(
         # l(x) <= M@z <= u(x): pin the state block to x, clip the input block.
         l_param = vp.parameter((T-1)*n_u, lb=u_stack_min, ub=u_stack_min)
         u_param = vp.parameter((T-1)*n_u, lb=u_stack_max, ub=u_stack_max)
-        l_x = vp.add_param_stack([x_param, l_param])
-        u_x = vp.add_param_stack([x_param, u_param])
+        l_x = ft.stack([x_param, l_param])
+        u_x = ft.stack([x_param, u_param])
         indbox = IndBox(l=l_x, u=u_x)
 
         def project(vp, v_prev):

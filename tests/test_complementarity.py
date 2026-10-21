@@ -25,10 +25,10 @@ def test_complementarity_constructor_dim_mismatch(vp):
     y = vp.iterate(2, lb=0, ub=10)
 
     with pytest.raises(ValueError):
-        vp.complementarity(x, y)
+        ft.complementarity(x, y)
 
     z = vp.iterate(3, lb=0, ub=10)
-    comp = vp.complementarity(x, z)
+    comp = ft.complementarity(x, z)
     assert isinstance(comp, ComplementarityConstraint)
     assert comp.is_linear is False
     assert comp.ndim == 3
@@ -46,7 +46,7 @@ def test_complementarity_enforced_in_solution(vp):
     a = vp.iterate(n, lb=0, ub=10)
     b = vp.iterate(n, lb=0, ub=10)
 
-    vp.add_constraint(vp.complementarity(a, b))
+    vp.add_constraint(ft.complementarity(a, b))
     vp.maximize(ft.norm([a + b], np.inf))
     result = vp.solve()
 
@@ -72,7 +72,7 @@ def test_complementarity_blocks_both_positive(vp):
     a = vp.iterate(n, lb=0, ub=5)
     b = vp.iterate(n, lb=0, ub=5)
 
-    vp.add_constraint(vp.complementarity(a, b))
+    vp.add_constraint(ft.complementarity(a, b))
     vp.add_constraint(a >= 1)
     vp.add_constraint(b >= 1)
     vp.maximize(ft.norm([a + b], np.inf))
@@ -98,7 +98,7 @@ def test_complementarity_infinite_bound_raises():
     b = vp.iterate(2, lb=0, ub=5)
 
     with pytest.raises(ValueError, match="finite upper bounds"):
-        vp.add_constraint(vp.complementarity(a, b))
+        vp.add_constraint(ft.complementarity(a, b))
 
 
 def test_router_skips_obbt_for_complementarity(vp):
@@ -114,7 +114,7 @@ def test_router_skips_obbt_for_complementarity(vp):
     b = vp.iterate(n, lb=0, ub=10)
 
     # Should not raise (would AttributeError if routed into _tighten_constraint_bounds).
-    vp.add_constraint(vp.complementarity(a, b))
+    vp.add_constraint(ft.complementarity(a, b))
     vp.maximize(ft.norm([a + b], np.inf))
     result = vp.solve()
 
@@ -162,14 +162,14 @@ def test_complementarity_sdp_valid_bound_vs_mip(vp_sdp):
     vm = Verifier(method="mip", solver="gurobi", obbt_solver=None, params={"OutputFlag": 0})
     am = vm.iterate(n, lb=0, ub=2)
     bm = vm.iterate(n, lb=0, ub=2)
-    vm.add_constraint(vm.complementarity(am, bm))
+    vm.add_constraint(ft.complementarity(am, bm))
     vm.maximize(ft.norm([am + bm], np.inf))
     mip_inf = vm.solve()
 
     vs = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
     a = vs.iterate(n, lb=0, ub=2)
     b = vs.iterate(n, lb=0, ub=2)
-    vs.add_constraint(vs.complementarity(a, b))
+    vs.add_constraint(ft.complementarity(a, b))
     vs.maximize(ft.sum_squares(a + b))
     sdp_two = np.sqrt(vs.solve())
 
@@ -186,4 +186,4 @@ def test_complementarity_sdp_disjoint_guard(vp_sdp):
     """
     x = vp_sdp.iterate(2, lb=0, ub=1)
     with pytest.raises(NotImplementedError, match="sharing variables"):
-        vp_sdp.add_constraint(vp_sdp.complementarity(x, x))
+        vp_sdp.add_constraint(ft.complementarity(x, x))
