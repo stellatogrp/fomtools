@@ -108,8 +108,28 @@ the fastest correct implementation.
 """
 
 
+def _exact_literals_note(exact: tuple[str, ...]) -> str:
+    """The exception to the literal rule: routines checked on every unit vector."""
+    if not exact:
+        return ""
+    names = ", ".join(f"`{fn}`" for fn in exact)
+    return f"""
+  Exception: {names} are checked on every unit vector, which recovers the matrix
+  each applies exactly, so inside these routines (and helpers only they call) you
+  may write coefficients as literals: unroll the product over its fixed sparsity
+  with the values inlined, drop zero and unit coefficients, and keep constant
+  tables in `static const` arrays inside the routine. The values must be exactly
+  the matrix's: verify compares each entry with the package's data to a
+  tolerance far below anything a perturbed coefficient could hide in."""
+
+
 def _kernel_rules_block(
-    src: str, ops_src: str, verify: str, ops_editable: bool, fused: bool = False
+    src: str,
+    ops_src: str,
+    verify: str,
+    ops_editable: bool,
+    fused: bool = False,
+    exact: tuple[str, ...] = (),
 ) -> str:
     """The kernel rules (`fomtools.codegen.kernel_rules`), on every target."""
     if ops_editable and fused:
@@ -138,7 +158,7 @@ rewrite that breaks any of them is discarded when it is collected:
 - {files} must not add floating-point constants other than `0.0`,
   `0.5`, `1.0` and `2.0`, whether written as decimal or hex float literals or as
   integers cast to a floating type (literals the translated file already
-  had{same_routine} are fine).
+  had{same_routine} are fine).{_exact_literals_note(exact)}
 - `fom_setup` and `fom_update_params` must not add calls to `fom_apply_*`{" or `fom_fused_*`" if fused else ""}: apply
   matrices in the iteration, never probe them to rebuild a matrix."""
 
@@ -224,7 +244,8 @@ exactly right. This is the one exception to never writing a product in `{src}`."
 Edit ONLY `{src}`: the Makefile, build flags, headers, numeric data,
 `{linsolve_src}`, and `{ops_src}` are fixed and restored automatically before
 every check, so changes to them are discarded (don't waste turns editing them)."""
-    scope += _kernel_rules_block(src, ops_src, verify, ops_src in editable, bool(fused))
+    exact = tuple(target.exact_routines(ir)) if ops_src in editable else ()
+    scope += _kernel_rules_block(src, ops_src, verify, ops_src in editable, bool(fused), exact)
     objective_src = target.objective_source_path()
     objective_block = _objective_block(ir, objective_src)
     if objective_block:

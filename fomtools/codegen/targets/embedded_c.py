@@ -2031,8 +2031,28 @@ class EmbeddedCTarget(TargetDescriptor):
         if kind is None:
             return []
         return kernel_rules.check(
-            kind, source, _matvec_matrix_names(ir), baseline, self._fused_members(ir)
+            kind,
+            source,
+            _matvec_matrix_names(ir),
+            baseline,
+            self._fused_members(ir),
+            self._exact_routines(ir),
         )
+
+    def _exact_routines(self, ir: FomIR) -> list[str]:
+        """The ``fom_ops.c`` routines ``make verify`` probes on every unit vector
+        (an exact check), which may therefore hold coefficients as literals."""
+        exact = [
+            f"fom_apply_{name}"
+            for name in self._checked_ops(ir)
+            if self._ops_basis_probes(ir.matrices[name])
+        ]
+        exact += [
+            f"fom_fused_{block.name}"
+            for block in self._fused(ir)
+            if self._fused_basis_probes(ir, block)
+        ]
+        return exact
 
     def _fused_members(self, ir: FomIR) -> dict[str, list[str]]:
         """Each ``fom_fused_<block>`` this target emits, with its member matrices."""
@@ -2040,6 +2060,9 @@ class EmbeddedCTarget(TargetDescriptor):
 
     def fused_routines(self, ir: FomIR) -> dict[str, list[str]]:
         return self._fused_members(ir)
+
+    def exact_routines(self, ir: FomIR) -> list[str]:
+        return self._exact_routines(ir) if self._ops_editable() else []
 
     def selection_matrices(self, ir: FomIR) -> dict[str, str]:
         return {
@@ -2082,6 +2105,7 @@ class EmbeddedCTarget(TargetDescriptor):
         config = {
             "matvec": _matvec_matrix_names(ir),
             "fused": self._fused_members(ir),
+            "exact": self._exact_routines(ir),
             "files": files,
         }
         (Path(out_dir) / _KERNEL_CHECK_CONFIG).write_text(json.dumps(config, indent=1))

@@ -28,7 +28,7 @@ from fomtools.codegen.emit import scaffold
 from fomtools.codegen.generate import extract_fom_ir, generate_code
 from fomtools.codegen.ir import MatrixData, selection_description, selection_indices
 from fomtools.codegen.targets import get_target
-from fomtools.codegen.targets.embedded_c import _fused_blocks
+from fomtools.codegen.targets.embedded_c import EmbeddedCTarget, _fused_blocks
 from fomtools.codegen.targets.large_scale_cuda import CudaTarget
 from tests.codegen.conftest import build_scheduled
 
@@ -251,7 +251,28 @@ def test_ops_may_not_read_the_schedule(case, ir, generated_ops, read):
     assert any("fom_ops.c reads the schedule" in v for v in violations), violations
 
 
-def test_a_fused_routine_may_not_add_coefficients(case, ir, generated_ops):
+def test_an_exactly_probed_routine_may_hold_coefficients_as_literals(case, ir, generated_ops):
+    # Every unit vector is probed, which recovers the routine's matrices exactly,
+    # so a literal coefficient there is checked like one read from fom_data.c.
+    assert "fom_fused_t0" in get_target(case["config"]).exact_routines(ir)
+    with_literal = _edit_fused(generated_ops, "t0", "out[0] += 0.20096742 * state[2] * 0.0;")
+    assert _rules(case, ir, OPS, with_literal, generated_ops) == []
+
+
+def test_a_wrong_literal_coefficient_fails_verify(tmp_path, ir, case, requires_compiler):
+    out = _scaffold(tmp_path, ir, case)
+    ops = out / OPS
+    ops.write_text(_edit_fused(ops.read_text(), "t0", "out[0] += 1e-7 * state[1];"))
+    proc = _verify(out)
+    assert "fom_fused_t0 entry (0, 1) of state is off by" in proc.stdout, proc.stdout
+
+
+def test_a_routine_over_the_probe_budget_may_not_add_coefficients(
+    case, ir, generated_ops, monkeypatch
+):
+    # Random probes alone do not recover the matrix, so the literal rule stands.
+    monkeypatch.setattr(EmbeddedCTarget, "_OPS_PROBE_BUDGET", 0)
+    assert get_target(case["config"]).exact_routines(ir) == []
     bad = _edit_fused(generated_ops, "t0", "out[0] += 0.20096742 * state[2];")
     violations = _rules(case, ir, OPS, bad, generated_ops)
     assert any(

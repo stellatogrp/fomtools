@@ -459,7 +459,12 @@ every coefficient there. A rewrite that breaks one is discarded:
   nothing in `fom_ops.c` may read the schedule;
 - the solver and `fom_ops.c` may not add floating-point constants other than
   `0`, `0.5`, `1` and `2`: decimal or hexadecimal float literals, or integer
-  literals cast to a floating type (coefficients come from `fom_data.c`);
+  literals cast to a floating type (coefficients come from `fom_data.c`). The
+  exception is a `fom_apply_<name>` or `fom_fused_<block>` that `make verify`
+  probes on every unit vector: those probes recover its matrix exactly, so it may
+  hold its coefficients as literals (an unrolled product over the fixed sparsity,
+  with the values inlined). A routine over the probe budget, checked on random
+  vectors only, and the solver keep the rule;
 - `fom_setup` and `fom_update_params`, and any function of the solver they
   reach, may not add uses of `fom_apply_*` or `fom_fused_*`, which is how a matrix would be
   rebuilt by probing it. This also rules out hoisting a product that depends

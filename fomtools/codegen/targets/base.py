@@ -88,6 +88,11 @@ class TargetDescriptor(ABC):
         member matrices. Default: none."""
         return {}
 
+    def exact_routines(self, ir) -> list[str]:
+        """Editable ops routines checked on every unit vector, which may hold their
+        coefficients as literals. Default: none."""
+        return []
+
     def selection_matrices(self, ir) -> dict[str, str]:
         """0/1 selection matrices a solver may apply itself, with a description
         of each (see `fomtools.codegen.ir.selection_indices`). Default: none."""

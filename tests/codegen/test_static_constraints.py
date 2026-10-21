@@ -112,7 +112,9 @@ def test_structural_literals_and_integers_allowed(target, mpc_ir):
     assert target.kernel_checks("src/fom_ops.c", source, mpc_ir) == []
 
 
-def test_hex_floats_and_integer_casts_are_flagged(target, mpc_ir):
+def test_hex_floats_and_integer_casts_are_flagged(target, mpc_ir, monkeypatch):
+    # Over the probe budget, so the literal rule applies to every routine.
+    monkeypatch.setattr(EmbeddedCTarget, "_OPS_PROBE_BUDGET", 0)
     source = _ops(mpc_ir, {"t0_state": "out[0] += 0x1.8p0 * x[0] + (fom_float)3 * x[1];"})
     violations = target.kernel_checks("src/fom_ops.c", source, mpc_ir)
     assert any("'0x1.8p0'" in v for v in violations)
@@ -153,7 +155,9 @@ def test_a_missing_or_unbalanced_routine_is_a_violation(target, mpc_ir):
     assert any("could not find a definition of fom_apply_t0_state" in v for v in violations)
 
 
-def test_ops_literal_exemption_is_per_routine(target, mpc_ir):
+def test_ops_literal_exemption_is_per_routine(target, mpc_ir, monkeypatch):
+    # Over the probe budget, so the literal rule applies to every routine.
+    monkeypatch.setattr(EmbeddedCTarget, "_OPS_PROBE_BUDGET", 0)
     # 0.3 sits in another function of the translated file: it exempts that
     # function, not fom_apply_t0_state.
     baseline = _ops(mpc_ir) + "\nstatic fom_float step(void) { return 0.3; }"

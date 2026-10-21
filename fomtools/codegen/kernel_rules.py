@@ -11,7 +11,12 @@ rules keep the coefficients there, where it can see them:
   integer literal used in arithmetic (``3 * x[j]``) or a constant computed from
   allowed ones (``1.0 + 1.0 + 1.0``) gets past it. The numerical checks are the
   defence there: the exact unit-vector probes of each ``fom_apply_<name>``, and
-  the sampled end-to-end comparison for the solver.
+  the sampled end-to-end comparison for the solver. The rule is lifted for the
+  ``fom_ops.c`` routines named ``exact`` in the config: those ``make verify``
+  probes on every unit vector, which recovers the matrix they apply exactly, so
+  a coefficient written into them is checked as exactly as one read from
+  ``fom_data.c``. Routines over the probe budget (random probes only) and the
+  solver keep it.
 * **Products through the checked routines.** A rewritten solver may not read the
   ``FOM_MAT_<name>`` data of a matrix it multiplies by (it calls
   ``fom_apply_<name>`` instead), and may not newly call ``fom_apply_*`` from
@@ -278,9 +283,15 @@ def _routine_regions(code: str, routines) -> tuple[dict[str, set[str]], dict, st
     return regions, bodies, outside, violations
 
 
-def _check_ops(code: str, base: str, matvec_names, fused=None) -> list[str]:
+def _check_ops(code: str, base: str, matvec_names, fused=None, exact=()) -> list[str]:
     """``fom_ops.c``: each routine (with the helpers it reaches) on its own data,
-    literals per routine, no schedule reads, and no entry points but the routines."""
+    literals per routine, no schedule reads, and no entry points but the routines.
+
+    Routines in ``exact`` are probed on every unit vector, which recovers the
+    matrix they apply column by column, so a coefficient written into them as a
+    literal is checked as exactly as one read from ``fom_data.c``: their literal
+    rule is lifted. A helper they share with a routine outside ``exact`` is still
+    held to it, through that routine's region."""
     routines = _routines(matvec_names, fused)
     regions, bodies, outside, violations = _routine_regions(code, routines)
     base_regions, base_bodies, base_outside, _ = _routine_regions(base, routines)
@@ -294,7 +305,10 @@ def _check_ops(code: str, base: str, matvec_names, fused=None) -> list[str]:
     for fn, region in regions.items():
         text = " ".join(b for g in sorted(region) for b in bodies[g])
         base_text = " ".join(b for g in base_regions.get(fn, ()) for b in base_bodies[g])
-        violations += [f"{fn}: {v}" for v in _new_literals(text, set(float_literals(base_text)))]
+        if fn not in exact:
+            violations += [
+                f"{fn}: {v}" for v in _new_literals(text, set(float_literals(base_text)))
+            ]
         own = routines[fn]
         for other in matvec_names:
             if other not in own and _mat_data(other).search(text):
@@ -329,7 +343,12 @@ def _solver_data_reads(code: str, matvec_names) -> list[str]:
 
 
 def check(
-    kind: str, source: str, matvec_names, baseline: str | None = None, fused=None
+    kind: str,
+    source: str,
+    matvec_names,
+    baseline: str | None = None,
+    fused=None,
+    exact=(),
 ) -> list[str]:
     """Rule violations in a rewritten ``kind`` (``"solver"`` or ``"ops"``) source.
 
@@ -337,12 +356,14 @@ def check(
     contains is exempt. Kind ``"translation"`` is the translated solver itself:
     it has no baseline, so only the rule without one applies (it reads no
     matrix data, so every product goes through a checked ``fom_apply_<name>``).
-    ``fused`` maps each ``fom_fused_<block>`` to its member matrices.
+    ``fused`` maps each ``fom_fused_<block>`` to its member matrices, and
+    ``exact`` names the ``fom_ops.c`` routines probed on every unit vector, which
+    may hold their coefficients as literals.
     """
     code = strip_c_comments_and_strings(source)
     base = strip_c_comments_and_strings(baseline) if baseline is not None else ""
     if kind == "ops":
-        return _check_ops(code, base, matvec_names, fused)
+        return _check_ops(code, base, matvec_names, fused, set(exact))
     if kind == "translation":
         return _solver_data_reads(code, matvec_names)
     violations = _new_literals(code, set(float_literals(base)))
@@ -369,7 +390,12 @@ def main(config_path: str) -> int:
     for entry in config["files"]:
         source = (root / entry["path"]).read_text()
         for v in check(
-            entry["kind"], source, config["matvec"], entry.get("baseline"), config.get("fused")
+            entry["kind"],
+            source,
+            config["matvec"],
+            entry.get("baseline"),
+            config.get("fused"),
+            config.get("exact", ()),
         ):
             print(f"VERIFY FAILED: kernel rule: {entry['path']}: {v}")
             failed = True

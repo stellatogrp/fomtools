@@ -248,7 +248,8 @@ def test_the_cuda_solver_is_held_to_the_kernel_rules(tmp_path, mpc, monkeypatch)
 
 
 def test_a_hardcoded_coefficient_in_ops_is_rejected(tmp_path, mpc, requires_compiler):
-    # Numerically right (adds 0.37 * 0), but a literal coefficient is untraceable.
+    # Numerically right (adds 0.37 * 0), but a literal outside every exactly
+    # probed routine is untraceable.
     def with_literal(text: str) -> str:
         return MARK + "\n" + text + "\nfom_float fom_unused_scale(void) { return 0.37 * 0; }\n"
 
