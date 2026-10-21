@@ -100,7 +100,7 @@ Douglas-Rachford / ADMM carry state through expressions, not step outputs:
 
 ```python
 z = vp.iterate_trajectory(K + 1)  # handles expression collapse automatically
-z[0] = vp.add_iterate(n, lb=z0, ub=z0)
+z[0] = vp.iterate(n, lb=z0, ub=z0)
 for k in range(1, K + 1):
     u = vp.step.implicit_linear(z[k-1] - q, output_mat=kkt)
     ut = vp.step.relu(2*u - z[k-1], proj_ranges=(n, dim))
@@ -126,9 +126,9 @@ def momentum(k):
 
 def build(gamma):
     vp = Verifier(method="simulator", obbt_solver=None)
-    b_param = vp.add_param(m, lb=b-1, ub=b+1)
-    y_prev = vp.add_iterate(n, lb=2, ub=2)
-    y_curr = vp.add_iterate(n, lb=2, ub=2)
+    b_param = vp.parameter(m, lb=b-1, ub=b+1)
+    y_prev = vp.iterate(n, lb=2, ub=2)
+    y_curr = vp.iterate(n, lb=2, ub=2)
     extrap = y_curr + gamma * (y_curr - y_prev)
     y_next = vp.step.soft_threshold(At @ extrap + Bt @ b_param, lambd=t)
     return Recording(vp, next_state=[y_curr, y_next], state=[y_prev, y_curr])
@@ -162,7 +162,7 @@ reciprocals). Override with `CodegenConfig(solve_method="LDLT"/"LU"/"CG")`.
 
 - `AgentDriver`: interface for the LLM coding agent.
 - `StubAgentDriver`: drops a known-good golden solver for CI testing (no LLM needed).
-- Real agents: Claude, Codex, Pi, or custom CLI agents from `~/.config/fomtools/agents.yaml`.
+- Real agents: Claude, Codex, Pi, or custom CLI agents from `~/.config/fomtools/agents.yaml` (or `$FOMTOOLS_CODEGEN_AGENTS`).
 - Enable real agent: `FOMTOOLS_CODEGEN_AGENT=1`
 - Select backend: `FOMTOOLS_CODEGEN_BACKEND=claude`
 
@@ -184,6 +184,7 @@ fomtools-codegen --example boxqp     --out out/boxqp --scaffold-only
 fomtools-codegen --example cgqp      --out out/cgqp  --scaffold-only
 fomtools-codegen --example pdhg_lp   --out out/pdhg  --scaffold-only
 fomtools-codegen --example fista     --out out/fista  --scaffold-only
+fomtools-codegen --example indef_kkt --out out/kkt    --scaffold-only
 fomtools-codegen --example scheduled --out out/sched  --scaffold-only
 
 # Custom FOM from a module:
@@ -192,6 +193,8 @@ fomtools-codegen --module mymodule.py --out out/custom --driver agent
 # Options:
 #   --scaffold-only    Emit everything except the solver body
 #   --no-roll          Keep a recorded run unrolled
+#   --driver stub      No model; pair with --golden <solver source>
+#   --agent NAME       Select the agent backend
 ```
 
 ### Custom module format

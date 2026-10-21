@@ -12,7 +12,7 @@ Verifier(
     theory_func=None,
     method="mip",          # "mip", "sdp", or "simulator"
     solver="highs",       # "gurobi", "highs", "clarabel", "cuclarabel"
-    obbt_solver="highs",  # solver for bound tightening; None to disable
+    obbt_solver="auto",   # "auto" follows solver if Gurobi/HiGHS, else off; None disables
     params=None,           # solver-specific parameters dict
     # SDP-only cut flags (no effect for method != "sdp"):
     rlt_cuts=False,
@@ -25,18 +25,21 @@ Verifier(
     full_psd_cone=False,
     cross_cut=False,
     subgrad_mono_cut=False,
+    obbt_params=None,      # solver parameters for OBBT (default: inherit verbosity)
+    verbose=False,         # print solver logs
 )
 ```
 
 ### Core Methods
 
-#### `add_iterate(ndim, lb, ub) -> LinearExpression`
-Create an iterate variable with dimension `ndim` and bounds `[lb, ub]`.
+#### `iterate(ndim, lb, ub) -> LinearExpression`
+(`add_iterate` is an alias.) Create an iterate variable with dimension `ndim` and bounds `[lb, ub]`.
 Bounds can be scalars (broadcast) or arrays.
 
-#### `add_param(ndim, lb, ub) -> LinearExpression`
+#### `parameter(ndim, lb, ub) -> LinearExpression`
 Create a parameter variable with dimension `ndim` and bounds `[lb, ub]`.
-Parameters represent uncertain problem data.
+Parameters represent uncertain problem data. With `method="simulator"`, pass
+`samples` of shape `(num_samples, ndim)`. `add_param` is a deprecated alias.
 
 #### `add_param_stack(param_list) -> LinearExpression`
 Stack a list of `LinearExpression` parameters into one.
@@ -57,12 +60,12 @@ Create a sum-of-squares expression for use in constraints.
 
 ### Step Operators
 
-Accessed via `vp.step.<name>(arg, **kwargs)`:
+Accessed via `vp.step.<name>(arg, **kwargs)` or directly as `vp.<name>(...)`:
 
-- `vp.step.relu(arg)` -- ReLU / projection onto non-negative orthant
+- `vp.step.relu(arg, proj_ranges=None)` -- ReLU / projection onto non-negative orthant
 - `vp.step.soft_threshold(arg, lambd=t)` -- soft thresholding
 - `vp.step.satlin(arg, l=l, u=u)` -- box projection
-- `vp.step.implicit_linear(arg, output_mat=M)` -- implicit linear solve
+- `vp.step.implicit_linear(arg, output_mat=M, weight=None, bias=None)` -- implicit affine solve `M w = weight @ arg + bias`
 
 All step operators return a `LinearExpression`.
 
@@ -101,8 +104,12 @@ vp.standard_form_linear_program(c, A=None, b=None,
 
 ```python
 vp.set_objective_norm(expr, ord=np.inf)  # infinity norm; 1 for one-norm, 2 for squared two-norm
+vp.maximize(ft.norm(expr, np.inf))       # equivalent; also accepts ft.sum_squares(expr)
 vp.set_zero_objective()
-result = vp.solve(convex_hull_cuts=True)  # MIP hull cuts; native solver options also accepted
+vp.fixed_point(n_dim, operator, lb, ub)  # new iterate z_star == operator(z_star)
+result = vp.solve(convex_hull_cuts=False, cut_rounds=1, tighten_objective_bounds=None,
+                  warm_start=True, verbose=None)  # native solver options also accepted
+vp.set_start_samples({param: samples})   # MIP start from sampled worst case
 ```
 
 MIP returns a finite best upper bound even at a time limit when available, and

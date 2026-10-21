@@ -23,8 +23,24 @@ FOMTools is a Python toolbox for **performance analysis of first-order optimizat
 ## Quick Start
 
 Follow the executable example in `docs/index.md`, which is tested directly.
-Use `Verifier()` for the default HiGHS backend, `ndim=` for variables,
-`set_objective_norm(expr, ord=np.inf)`, and `solve(convex_hull_cuts=True)`.
+
+```python
+import numpy as np
+import fomtools as ft
+
+vp = ft.Verifier()                      # HiGHS by default
+q = vp.parameter(n, lb=-1, ub=1)        # problem parameter
+z = vp.iterate(n, lb=0, ub=0)           # z^0 = 0
+for k in range(K):
+    z_prev, z = z, vp.relu(z - eta * (P @ z + q))
+vp.maximize(ft.norm(z - z_prev, np.inf))
+bound = vp.solve()                      # q.value is the worst case
+```
+
+Use `vp.iterate`/`vp.parameter` (`add_iterate` is an alias, `add_param` is
+deprecated), `set_objective_norm(expr, ord=np.inf)` or `maximize(ft.norm(...))`,
+and `solve(convex_hull_cuts=True)` for MIP hull cuts. Pass `verbose=True` to
+`Verifier` or `solve` for solver logs.
 MIP returns a finite best upper bound and raises when none is available.
 SDP accepts only accurate optimal termination. Numerical tolerances still apply.
 Use `post_process` only with certified bounds for all successive infinity-norm
@@ -44,7 +60,7 @@ The verification pipeline follows: **Step -> StepDecomposer -> Canonicalizer -> 
 
 ### Step Operators
 
-Access via `vp.step.<name>(arg, ...)`:
+Access via `vp.step.<name>(arg, ...)` or directly as `vp.<name>(arg, ...)`:
 
 | Step | Method | Description |
 |------|--------|-------------|
@@ -69,9 +85,9 @@ FOMTools generates OSQP-style embedded C solvers from verified FOMs. An LLM codi
 
 ```python
 vp = Verifier(method="simulator", obbt_solver=None)
-b_param = vp.add_param(m, lb=b - 1.0, ub=b + 1.0)
+b_param = vp.parameter(m, lb=b - 1.0, ub=b + 1.0)
 z = vp.iterate_trajectory(K + 1)
-z[0] = vp.add_iterate(n, lb=2, ub=2)
+z[0] = vp.iterate(n, lb=2, ub=2)
 for k in range(1, K + 1):
     z[k] = vp.step.soft_threshold(At @ z[k - 1] + Bt @ b_param, lambd=t)
 
