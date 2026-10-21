@@ -75,13 +75,21 @@ void fom_update_params(FomWorkspace *work, const FomParams *params) { (void)para
 
 
 def _ops(ir, bodies=None) -> str:
-    """A fom_ops.c defining every fom_apply_<name>, with ``bodies[name]`` where given."""
-    from fomtools.codegen.targets.embedded_c import _matvec_matrix_names
+    """A fom_ops.c defining every fom_apply_<name> and fom_fused_<block>, with
+    ``bodies[name]`` (``bodies["fused_<block>"]``) where given."""
+    from fomtools.codegen.targets.embedded_c import _fused_blocks, _matvec_matrix_names
 
     bodies = bodies or {}
     return "\n".join(
-        f"void fom_apply_{n}(const fom_float *x, fom_float *out) {{ {bodies.get(n, '')} }}"
-        for n in _matvec_matrix_names(ir)
+        [
+            f"void fom_apply_{n}(const fom_float *x, fom_float *out) {{ {bodies.get(n, '')} }}"
+            for n in _matvec_matrix_names(ir)
+        ]
+        + [
+            f"void fom_fused_{b.name}(const fom_float *x, fom_float *out) "
+            f"{{ {bodies.get('fused_' + b.name, '')} }}"
+            for b in _fused_blocks(ir)
+        ]
     )
 
 
@@ -296,7 +304,7 @@ def test_ops_helpers_must_be_static(target, mpc_ir):
     violations = target.kernel_checks("src/fom_ops.c", source, mpc_ir)
     assert violations == [
         "kern is not static; every function of fom_ops.c but the fom_apply_<name> "
-        "routines must be, so it is reached only through them"
+        "and fom_fused_<block> routines must be, so it is reached only through them"
     ]
 
 

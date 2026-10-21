@@ -206,7 +206,10 @@ def _kernel_check_lines(
         "against the package's reference over the same `fom_data.c` matrix. *basis* "
         "probes every unit vector, which recovers the routine's matrix column by "
         "column (an exact check), plus random vectors; *random* uses random vectors "
-        "only (the matrix is over the probe budget).",
+        "only (the matrix is over the probe budget). A `fused_<block>` row is a "
+        "`fom_fused_<block>`, checked against the sum of its members: *basis* there "
+        "probes every unit vector of each source with every schedule value at 0 and "
+        "with each alone at 1, which recovers every member exactly.",
         "",
     ]
     if kernel_checks:

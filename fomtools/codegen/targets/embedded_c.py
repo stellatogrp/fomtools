@@ -19,14 +19,20 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
 import scipy.sparse as spa
 
 from fomtools.codegen import kernel_rules, spec
-from fomtools.codegen.ir import ActivationKind, FomIR, csr_arrays
+from fomtools.codegen.ir import (
+    ActivationKind,
+    FomIR,
+    csr_arrays,
+    selection_description,
+    selection_indices,
+)
 from fomtools.codegen.kernel_rules import strip_c_comments_and_strings
 from fomtools.codegen.objective import objective_c_params, objective_c_source
 from fomtools.codegen.oracle import ReferenceOracle
@@ -158,6 +164,87 @@ def _matvec_matrix_names(ir: FomIR) -> list[str]:
     return names
 
 
+@dataclass(frozen=True)
+class FusedBlock:
+    """One output block's products, applied by a single ``fom_fused_<name>``.
+
+    The terms of one linear op whose source changes every iteration (the state
+    and the temporaries; parameter terms stay separate so the solver can hoist
+    them out of the loop), as ``out += sum_k scale_k * (M_k @ src_k)``. A rewrite
+    of the fused routine may exploit relations between its members (one a
+    rearrangement of another, a shared block) that no single ``fom_apply_*``
+    can, and ``make verify`` recovers every member from it exactly.
+    """
+
+    name: str  # the body step's name, or "su" for the state update
+    terms: tuple  # the member Terms, in linear-op order
+    rows: int
+
+    @property
+    def sources(self) -> tuple[str, ...]:
+        """Distinct IR sources (``state``, ``tmp:<name>``), in term order."""
+        return tuple(dict.fromkeys(t.source for t in self.terms))
+
+    @property
+    def scales(self) -> tuple[str, ...]:
+        """Distinct schedules scaling a member, in term order."""
+        return tuple(dict.fromkeys(t.scale for t in self.terms if t.scale is not None))
+
+    @property
+    def members(self) -> list[str]:
+        return [t.matrix for t in self.terms]
+
+
+def _fused_src(source: str) -> str:
+    """The C parameter name of a fused routine's input vector."""
+    return "state" if source == "state" else "t_" + source.split(":", 1)[1]
+
+
+def _fused_scale(sched: str) -> str:
+    """The C parameter name of a fused routine's schedule value."""
+    return f"sc_{sched}"
+
+
+def _fused_signature(ir: FomIR, block: FusedBlock, fname: str) -> str:
+    args = [f"const fom_float *{_fused_src(s)}" for s in block.sources]
+    args += [f"fom_float {_fused_scale(c)}" for c in block.scales]
+    return f"void {fname}({', '.join(args + ['fom_float *out'])})"
+
+
+def _fused_formula(block: FusedBlock) -> str:
+    parts = []
+    for t in block.terms:
+        prod = f"{t.matrix} @ {_fused_src(t.source)}"
+        parts.append(f"{_fused_scale(t.scale)} * ({prod})" if t.scale else prod)
+    return "out += " + " + ".join(parts)
+
+
+def _source_dim(ir: FomIR, block: FusedBlock, source: str) -> int:
+    md = ir.matrices[next(t.matrix for t in block.terms if t.source == source)]
+    return md.shape[1] if len(md.shape) > 1 else 1
+
+
+def _fused_blocks(ir: FomIR) -> list[FusedBlock]:
+    """The output blocks with two or more products by per-iteration sources."""
+    ops = [(s.name, s.linear_op) for s in ir.body] + [("su", ir.state_update)]
+    blocks = []
+    for name, lin in ops:
+        terms = tuple(t for _, t in _live_terms(ir, lin) if not t.source.startswith("param:"))
+        if len(terms) >= 2:
+            blocks.append(FusedBlock(name=name, terms=terms, rows=lin.out_dim))
+    return blocks
+
+
+def _selections(ir: FomIR) -> dict[str, np.ndarray]:
+    """Matvec matrices that are 0/1 selections, with each row's source index."""
+    out = {}
+    for name in _matvec_matrix_names(ir):
+        src = selection_indices(ir.matrices[name])
+        if src is not None:
+            out[name] = src
+    return out
+
+
 def _is_csr(md) -> bool:
     """Emit a matrix as sparse CSR when it is large and structurally sparse."""
     shape = md.shape
@@ -195,6 +282,11 @@ class EmbeddedCTarget(TargetDescriptor):
     #: serial); large-scale CPU targets switch it on. The triangular solves of the
     #: direct factorizations are inherently sequential and are never annotated.
     parallel = False
+
+    #: Emit a ``fom_fused_<block>`` per output block (`FusedBlock`) and the
+    #: selection index data (``FOM_SEL_<name>_SRC``) for the code optimization
+    #: phase. Off on CUDA, whose products live on the device in its own sources.
+    fused_kernels = True
 
     def _omp_for(self, clause: str = "", indent: str = "    ") -> list[str]:
         """Lines for an optional ``#pragma omp parallel for``.
@@ -439,6 +531,17 @@ class EmbeddedCTarget(TargetDescriptor):
             lines.append(_c_extern(f"FOM_MAT_{name}"))
             lines.append("")
 
+        selections = self._selection_data(ir)
+        if selections:
+            lines.append("/* 0/1 selection matrices: (M @ x)[i] = x[FOM_SEL_<name>_SRC[i]], or 0")
+            lines.append(
+                "   where the index is -1. A solver may apply these itself (see SPEC.md). */"
+            )
+        for name, src in selections.items():
+            lines.append(f"#define FOM_SEL_{name}_ROWS {src.size}")
+            lines.append(_c_extern(f"FOM_SEL_{name}_SRC", "fom_int"))
+            lines.append("")
+
         # Activation scalars (soft-threshold lambda; scalar saturated-linear
         # bounds). Vector clip bounds are emitted above as FOM_MAT_* arrays.
         for step in ir.body:
@@ -482,6 +585,9 @@ class EmbeddedCTarget(TargetDescriptor):
                 continue
             lines.append(_c_array(f"FOM_MAT_{name}", md.dense(), storage="const"))
             lines.append("")
+        for name, src in self._selection_data(ir).items():
+            lines.append(_c_int_array(f"FOM_SEL_{name}_SRC", src, storage="const"))
+            lines.append("")
         return "\n".join(lines)
 
     # -- matrix-vector products (sparse CSR where structured) --------------
@@ -507,6 +613,17 @@ class EmbeddedCTarget(TargetDescriptor):
                 f"void fom_apply_{name}(const fom_float *x, fom_float *out);  "
                 f"/* {kind} {md.shape[0]}x{md.shape[1] if len(md.shape) > 1 else 1} */"
             )
+        blocks = self._fused(ir)
+        if blocks:
+            lines += [
+                "",
+                "/* Fused products: every per-iteration product of one output block in a",
+                "   single routine (parameter terms are left out, so they can be hoisted).",
+                "   Same accumulate convention; each is checked against its members. */",
+            ]
+        for block in blocks:
+            lines.append(f"/* {_fused_formula(block)} */")
+            lines.append(_fused_signature(ir, block, f"fom_fused_{block.name}") + ";")
         lines += self._objective_declaration(ir)
         lines += ["", "#ifdef __cplusplus", "}", "#endif", "", "#endif /* FOM_OPS_H */", ""]
         return "\n".join(lines)
@@ -542,7 +659,62 @@ class EmbeddedCTarget(TargetDescriptor):
         lines = ['#include "fom_ops.h"', '#include "fom_data.h"', ""]
         for name in _matvec_matrix_names(ir):
             lines += self._apply_routine(name, ir.matrices[name], f"fom_apply_{name}")
+        for block in self._fused(ir):
+            lines += self._fused_routine(ir, block)
         return "\n".join(lines)
+
+    def _fused(self, ir: FomIR) -> list[FusedBlock]:
+        """The fused routines this target emits and checks: only where the
+        per-matrix routines are checked (`_checked_ops`), whose references the
+        fused check composes."""
+        return _fused_blocks(ir) if self.fused_kernels and self._checked_ops(ir) else []
+
+    def _selection_data(self, ir: FomIR) -> dict[str, np.ndarray]:
+        """Selections whose index data ``fom_data.c`` carries (`_selections`)."""
+        return _selections(ir) if self.fused_kernels else {}
+
+    def _fused_routine(self, ir: FomIR, block: FusedBlock) -> list[str]:
+        """The generated ``fom_fused_<block>``: each member's row product, in
+        linear-op order, added in one pass over the output rows (in the same
+        order as the reference, so the two agree to the bit)."""
+        body, need_p, need_j = [], False, False
+        for t in block.terms:
+            md = ir.matrices[t.matrix]
+            src = _fused_src(t.source)
+            mat = f"FOM_MAT_{t.matrix}"
+            body.append("        s = 0.0;")
+            if _is_csr(md):
+                need_p = True
+                body.append(
+                    f"        for (p = {mat}_ROWPTR[i]; p < {mat}_ROWPTR[i + 1]; ++p) "
+                    f"s += {mat}_VALS[p] * {src}[{mat}_COLIDX[p]];"
+                )
+            else:
+                need_j = True
+                cols = md.shape[1] if len(md.shape) > 1 else 1
+                body.append(
+                    f"        for (j = 0; j < {cols}; ++j) s += {mat}[i * {cols} + j] * {src}[j];"
+                )
+            body.append(
+                f"        out[i] += {_fused_scale(t.scale)} * s;"
+                if t.scale
+                else "        out[i] += s;"
+            )
+        private = [v for v, need in (("p", need_p), ("j", need_j)) if need]
+        lines = [
+            _fused_signature(ir, block, f"fom_fused_{block.name}") + " {",
+            f"    fom_int {', '.join(['i'] + private)};",
+        ]
+        lines += self._omp_for(f"private({', '.join(private)})")
+        lines += [
+            f"    for (i = 0; i < {block.rows}; ++i) {{",
+            "        fom_float s;",
+            *body,
+            "    }",
+            "}",
+            "",
+        ]
+        return lines
 
     def _apply_routine(self, name: str, md, fname: str) -> list[str]:
         """``void <fname>(x, out)``: ``out += M @ x``, reading ``M`` from ``fom_data.c``
@@ -631,6 +803,10 @@ class EmbeddedCTarget(TargetDescriptor):
             f"void fom_ref_apply_{name}(const fom_float *x, fom_float *out);"
             for name in self._checked_ops(ir)
         ]
+        lines += [
+            _fused_signature(ir, block, f"fom_ref_fused_{block.name}") + ";"
+            for block in self._fused(ir)
+        ]
         lines += ["", "#endif /* FOM_OPS_REF_H */", ""]
         return "\n".join(lines)
 
@@ -638,6 +814,21 @@ class EmbeddedCTarget(TargetDescriptor):
         lines = ['#include "ops_ref.h"', '#include "fom_data.h"', ""]
         for name in self._checked_ops(ir):
             lines += self._apply_routine(name, ir.matrices[name], f"fom_ref_apply_{name}")
+        for block in self._fused(ir):
+            # Composed from the members' references, one product at a time.
+            lines += [
+                _fused_signature(ir, block, f"fom_ref_fused_{block.name}") + " {",
+                f"    static fom_float tmp[{block.rows}];",
+                "    fom_int i;",
+            ]
+            for t in block.terms:
+                scale = f"{_fused_scale(t.scale)} * " if t.scale else ""
+                lines += [
+                    f"    for (i = 0; i < {block.rows}; ++i) tmp[i] = 0.0;",
+                    f"    fom_ref_apply_{t.matrix}({_fused_src(t.source)}, tmp);",
+                    f"    for (i = 0; i < {block.rows}; ++i) out[i] += {scale}tmp[i];",
+                ]
+            lines += ["}", ""]
         return "\n".join(lines)
 
     def _ops_basis_probes(self, md) -> bool:
@@ -1131,6 +1322,140 @@ class EmbeddedCTarget(TargetDescriptor):
             ]
         return lines
 
+    def _fused_basis_probes(self, ir: FomIR, block: FusedBlock) -> bool:
+        """Probe every unit vector of every source, at every scale setting, when
+        that fits the same work budget as the per-matrix check."""
+        work = 0
+        for t in block.terms:
+            md = ir.matrices[t.matrix]
+            rows, cols = md.shape[0], md.shape[1] if len(md.shape) > 1 else 1
+            work += cols * ((md.nnz() if _is_csr(md) else rows * cols) + rows)
+        return work * (1 + len(block.scales)) <= self._OPS_PROBE_BUDGET
+
+    def _fused_check_data(self, ir: FomIR) -> list[str]:
+        """Random sources and schedule values for the fused check, O(cols) each."""
+        lines = []
+        rng = np.random.default_rng(self.config.seed + 3)
+        k = self._OPS_CHECK_RANDOM
+        for block in self._fused(ir):
+            up = block.name.upper()
+            for si, source in enumerate(block.sources):
+                n = _source_dim(ir, block, source)
+                probes = rng.standard_normal((k, n))
+                lines.append(_c_array_2d(f"FOM_VERIFY_FUSED_{up}_X{si}", probes, f"[{k}][{n}]"))
+            if block.scales:
+                scales = rng.uniform(-2.0, 2.0, (k, len(block.scales)))
+                lines.append(
+                    _c_array_2d(f"FOM_VERIFY_FUSED_{up}_SC", scales, f"[{k}][{len(block.scales)}]")
+                )
+            lines.append("")
+        return lines
+
+    def _fused_check_main(self, ir: FomIR) -> list[str]:
+        """Check each ``fom_fused_<block>`` against the sum of its members' references.
+
+        Unit-vector probes of one source at a time (the others zero), first with
+        every schedule value at 0 and then with each alone at 1: at each setting
+        the routine is linear in the probed source, so these recover, entry by
+        entry, the unscaled members and each scaled member of every source. The
+        random probes (random sources and schedule values) follow; they catch a
+        routine that is not linear in its inputs or branches on a schedule value.
+        Same starting ``out`` and tolerance as the per-matrix check.
+        """
+        lines = []
+        k = self._OPS_CHECK_RANDOM
+        for block in self._fused(ir):
+            up = block.name.upper()
+            fn = f"fom_fused_{block.name}"
+            srcs = [_fused_src(s) for s in block.sources]
+            dims = [_source_dim(ir, block, s) for s in block.sources]
+            ns = len(block.scales)
+            basis = self._fused_basis_probes(ir, block)
+            settings = ["all schedule values 0"] + [f"{_fused_scale(c)} = 1" for c in block.scales]
+            call_args = ", ".join(f"x{si}" for si in range(len(srcs)))
+            call_args += "".join(f", sc[{c}]" for c in range(ns))
+            rows = block.rows
+
+            def check(fail: list[str]) -> list[str]:
+                return [
+                    f"            for (i = 0; i < {rows}; ++i) got[i] = ref[i] = (fom_float)(i % 7 - 3);",
+                    f"            {fn}({call_args}, got);",
+                    f"            fom_ref_fused_{block.name}({call_args}, ref);",
+                    "            err = 0.0; scale = 1.0; bad = 0;",
+                    f"            for (i = 0; i < {rows}; ++i) {{",
+                    "                fom_float d = got[i] - ref[i];",
+                    "                fom_float a = ref[i] - (fom_float)(i % 7 - 3);",
+                    "                if (d < 0) d = -d;",
+                    "                if (a < 0) a = -a;",
+                    "                if (!(d <= err)) { err = d; bad = i; }  /* NaN-safe */",
+                    "                if (1.0 + a > scale) scale = 1.0 + a;",
+                    "            }",
+                    "            if (!(err <= worst_op)) worst_op = err;",
+                    "            if (!(err <= tol * scale)) {",
+                    *fail,
+                    "                return 1;",
+                    "            }",
+                ]
+
+            def zero_sources() -> list[str]:
+                return [
+                    f"            for (c = 0; c < {n}; ++c) x{si}[c] = 0.0;"
+                    for si, n in enumerate(dims)
+                ]
+
+            lines += [
+                "    {",
+                f"        /* {fn}: direct check against its members, {_fused_formula(block)}. */",
+                *[f"        static fom_float x{si}[{n}];" for si, n in enumerate(dims)],
+                f"        static fom_float got[{rows}], ref[{rows}];",
+                f"        fom_float sc[{max(ns, 1)}];",
+                "        static const char *setting[] = {"
+                + ", ".join(f'"{t}"' for t in settings)
+                + "};",
+                "        fom_float worst_op = 0.0, err, scale;",
+                "        int r, i, c, j, bad, probes = 0;",
+                "        (void)setting; (void)j; (void)sc;",
+            ]
+            if basis:
+                for si, (src, n) in enumerate(zip(srcs, dims)):
+                    lines += [
+                        f"        for (j = 0; j < {n}; ++j) {{",
+                        f"          for (r = 0; r <= {ns}; ++r) {{",
+                        *zero_sources(),
+                        f"            x{si}[j] = 1.0;",
+                        *[f"            sc[{c}] = (fom_float)(r == {c + 1});" for c in range(ns)],
+                        "            ++probes;",
+                        *check(
+                            [
+                                f'                printf("VERIFY FAILED: {fn} entry (%d, %d) of '
+                                f'{src} is off by %.3e from its matrices (%s)\\n",',
+                                "                       bad, j, (double)err, setting[r]);",
+                            ]
+                        ),
+                        "          }",
+                        "        }",
+                    ]
+            lines += [
+                f"        for (r = 0; r < {k}; ++r) {{",
+                *[
+                    f"            for (c = 0; c < {n}; ++c) x{si}[c] = FOM_VERIFY_FUSED_{up}_X{si}[r][c];"
+                    for si, n in enumerate(dims)
+                ],
+                *[f"            sc[{c}] = FOM_VERIFY_FUSED_{up}_SC[r][{c}];" for c in range(ns)],
+                "            ++probes;",
+                *check(
+                    [
+                        f'                printf("VERIFY FAILED: {fn} differs from its matrices '
+                        'by %.3e in row %d on random probe %d\\n", (double)err, bad, r);',
+                    ]
+                ),
+                "        }",
+                f'        printf("OPSCHECK name=fused_{block.name} mode={"basis" if basis else "random"} '
+                'probes=%d max_err=%.3e\\n", probes, (double)worst_op);',
+                "    }",
+            ]
+        return lines
+
     def _verify_data(self, ir: FomIR) -> str:
         samples = self._sample_params(ir)
         n = len(samples)
@@ -1163,6 +1488,7 @@ class EmbeddedCTarget(TargetDescriptor):
         lines += self._verify_objective_data(ir, samples)
         lines.append("")
         lines += self._ops_check_data(ir)
+        lines += self._fused_check_data(ir)
         lines += self._linsolve_check_data(ir)
         lines += ["#endif /* FOM_VERIFY_DATA_H */", ""]
         return "\n".join(lines)
@@ -1346,6 +1672,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 *(["    int stop_failures = 0;", "    fom_int stop_status;"] if objective else []),
                 "",
                 *self._ops_check_main(ir),
+                *self._fused_check_main(ir),
                 *self._linsolve_check_main(ir),
                 "",
                 "    fom_set_default_settings(&settings);",
@@ -1698,7 +2025,34 @@ class EmbeddedCTarget(TargetDescriptor):
         kind = self._kernel_rule_kinds().get(rel)
         if kind is None:
             return []
-        return kernel_rules.check(kind, source, _matvec_matrix_names(ir), baseline)
+        return kernel_rules.check(
+            kind, source, _matvec_matrix_names(ir), baseline, self._fused_members(ir)
+        )
+
+    def _fused_members(self, ir: FomIR) -> dict[str, list[str]]:
+        """Each ``fom_fused_<block>`` this target emits, with its member matrices."""
+        return {block.name: block.members for block in self._fused(ir)}
+
+    def fused_routines(self, ir: FomIR) -> dict[str, list[str]]:
+        return self._fused_members(ir)
+
+    def selection_matrices(self, ir: FomIR) -> dict[str, str]:
+        return {
+            name: selection_description(src, ir.matrices[name].shape[1])
+            for name, src in self._selection_data(ir).items()
+        }
+
+    def ops_check_info(self, ir: FomIR, name: str) -> tuple[str, tuple, int]:
+        """``(routine, shape, nnz)`` of the routine behind an ``OPSCHECK`` name:
+        a matrix, or ``fused_<block>`` (its output rows by the summed member
+        columns, and the members' total nonzeros)."""
+        if name.startswith("fused_"):
+            block = next(b for b in self._fused(ir) if b.name == name[len("fused_") :])
+            cols = sum(_source_dim(ir, block, s) for s in block.sources)
+            nnz = sum(ir.matrices[m].nnz() for m in block.members)
+            return f"fom_fused_{block.name}", (block.rows, cols), nnz
+        md = ir.matrices[name]
+        return f"fom_apply_{name}", tuple(md.shape), md.nnz()
 
     def _kernel_rule_kinds(self) -> dict[str, str]:
         kinds = {self.solver_source_path(): "solver"}
@@ -1720,7 +2074,11 @@ class EmbeddedCTarget(TargetDescriptor):
                 {"path": rel, "kind": kind, "baseline": baselines.get(rel)}
                 for rel, kind in kinds.items()
             ]
-        config = {"matvec": _matvec_matrix_names(ir), "files": files}
+        config = {
+            "matvec": _matvec_matrix_names(ir),
+            "fused": self._fused_members(ir),
+            "files": files,
+        }
         (Path(out_dir) / _KERNEL_CHECK_CONFIG).write_text(json.dumps(config, indent=1))
 
     def remove_kernel_check_config(self, out_dir) -> None:

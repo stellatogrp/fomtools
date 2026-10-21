@@ -104,7 +104,8 @@ def _static_issues(target, ir, optimized: dict[str, str], translated: dict[str, 
 
 
 def _routine_rewritten(name: str, translated: str, final: str) -> bool:
-    """Whether ``fom_apply_<name>`` computes differently between two ``fom_ops.c``
+    """Whether ``fom_apply_<name>`` (``fom_fused_<block>`` for a ``name`` of
+    ``fused_<block>``) computes differently between two ``fom_ops.c``
     sources (ignoring comments and whitespace): its body, a function it reaches,
     or the file scope (macros, static data) changed. A routine that cannot be
     found in either is not the generated one, so it counts as rewritten."""
@@ -116,7 +117,7 @@ def _routine_rewritten(name: str, translated: str, final: str) -> bool:
         )
 
     (before, before_scope), (after, after_scope) = parse(translated), parse(final)
-    fn = f"fom_apply_{name}"
+    fn = f"fom_fused_{name[6:]}" if name.startswith("fused_") else f"fom_apply_{name}"
     if fn not in before or fn not in after or before_scope != after_scope:
         return True
     return any(before.get(g) != after.get(g) for g in reachable(after, [fn]))
@@ -134,9 +135,9 @@ def _kernel_checks(target, ir, out_dir, final, translated, verify_output) -> lis
         checks = {c["name"]: c for c in parse_ops_checks(build_and_verify(out_dir, target).output)}
     rows = []
     for check in checks.values():
-        md = ir.matrices[check["name"]]
+        _, shape, nnz = target.ops_check_info(ir, check["name"])
         rewritten = _routine_rewritten(check["name"], translated[ops], final[ops])
-        rows.append({**check, "shape": tuple(md.shape), "nnz": md.nnz(), "rewritten": rewritten})
+        rows.append({**check, "shape": shape, "nnz": nnz, "rewritten": rewritten})
     return rows
 
 

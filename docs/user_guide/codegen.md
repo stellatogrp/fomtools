@@ -389,7 +389,7 @@ data cannot change:
 |---|---|---|
 | `src/fom_solver.c` (the iteration) | rewritten by the agent | end to end, against the Python reference on sampled parameters |
 | `src/fom_linsolve.c` (linear solves) | rewritten by the agent | each `fom_lin_solve_<name>` against the reference solve of its factorization, on random right-hand sides |
-| `src/fom_ops.c` (matrix-vector products) | rewritten by the agent | each `fom_apply_<name>` exactly against its matrix (below) |
+| `src/fom_ops.c` (matrix-vector products) | rewritten by the agent | each `fom_apply_<name>` exactly against its matrix, each `fom_fused_<block>` exactly against its members (below) |
 | `src/fom_data.c`, `src/fom_objective.c`, `include/`, `test/`, `Makefile` | package only | — |
 
 A matrix-vector routine is a linear map, so it can be checked for **every**
@@ -408,6 +408,39 @@ starting value, so each entry is held to `tol_verify` relative to itself:
 The check stores no matrix-sized data: the expected values are computed in C from
 `fom_data.c`, and the only stored data are the random probe vectors.
 
+**Fused products.** Some speedups come from relations *between* matrices, which
+no single `fom_apply_<name>` can see. In an accelerated method the slope of the
+momentum term is often a signed rearrangement of the base block
+(`D = [-A1, A1]` for `A = [0, A1]`), so `A x + gamma D x` is one smaller product,
+`A1 (x1 + gamma (x1 - x0))`. So `fom_ops.c` also holds one
+`fom_fused_<block>(sources..., schedule values..., out)` per output block with two
+or more products by the state or a temporary. It adds them all,
+`out += sum_k s_k * (M_k @ src_k)`. Parameter terms stay out, so the solver can
+still compute them once per solve. A fused routine may read the data of its
+members, and only theirs. `make verify` checks it against the sum of its members'
+references:
+
+- on every unit vector of each source (the other sources zero), first with every
+  schedule value at 0 and then with each alone at 1. At each setting the routine
+  is linear in the probed source, so this recovers every member exactly, entry by
+  entry;
+- on two random choices of all sources and schedule values, which catches a
+  routine that is right only at 0 and 1, or not linear in its inputs.
+
+`fom_ops.c` may not read the schedule tables or accessors (`fom_sched_*`,
+`FOM_SCHED_*`). A routine gets its schedule values as arguments, so it cannot
+special-case the values the solver will pass it; with the no-new-literals rule,
+it has nothing to compare them against.
+
+**Selections.** A matrix with at most one nonzero per row, every nonzero exactly
+1, is a copy: an identity, a shift, or a gather. `SPEC.md` lists these, and
+`fom_data.h` carries each index map as `FOM_SEL_<name>_SRC` (-1 for an empty
+row). The solver may apply them itself (or write a result straight to its
+destination) instead of calling `fom_apply_<name>`. Such a copy is checked end to
+end only; a wrong index moves whole entries of the state, which the sampled
+comparison sees. CUDA has neither fused routines nor selection maps: its products
+run on the device from `fom_ops.cu`'s own arrays.
+
 Only code inside `fom_apply_<name>` goes through this check, so these rules keep
 every coefficient there. A rewrite that breaks one is discarded:
 
@@ -418,12 +451,14 @@ every coefficient there. A rewrite that breaks one is discarded:
   `fom_ops.c`, a routine is `fom_apply_<name>` with every helper it calls (on
   CUDA, its `__global__` kernel); it may read only its own matrix's data, no
   other code (a macro, static data, an unreached function) may read matrix data,
-  and every function but the `fom_apply_<name>` entry points must be `static`;
+  and every function but the `fom_apply_<name>` and `fom_fused_<block>` entry
+  points must be `static`. A fused routine may read its members' data, and
+  nothing in `fom_ops.c` may read the schedule;
 - the solver and `fom_ops.c` may not add floating-point constants other than
   `0`, `0.5`, `1` and `2`: decimal or hexadecimal float literals, or integer
   literals cast to a floating type (coefficients come from `fom_data.c`);
 - `fom_setup` and `fom_update_params`, and any function of the solver they
-  reach, may not add uses of `fom_apply_*`, which is how a matrix would be
+  reach, may not add uses of `fom_apply_*` or `fom_fused_*`, which is how a matrix would be
   rebuilt by probing it. This also rules out hoisting a product that depends
   only on the parameters out of the iteration and into `fom_update_params`: a
   syntactic rule cannot tell a parameter vector from a unit vector, and the

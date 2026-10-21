@@ -155,6 +155,10 @@ _DEVICE_CONST = "__device__ static const"
 class CudaTarget(EmbeddedCTarget):
     name = "large_scale_cuda"
 
+    #: No fused routines or selection data: the products run on the device from
+    #: ``fom_ops.cu``'s own arrays, which these are not written for.
+    fused_kernels = False
+
     @property
     def csr_in_data(self) -> bool:
         """Sparse matvec data lives in device memory (``fom_ops_data.cuh``). A host

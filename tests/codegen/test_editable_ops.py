@@ -24,7 +24,11 @@ from fomtools.codegen.examples import mpc_osqp_example
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.generate import generate_code
 from fomtools.codegen.targets import get_target
-from fomtools.codegen.targets.embedded_c import EmbeddedCTarget, _matvec_matrix_names
+from fomtools.codegen.targets.embedded_c import (
+    EmbeddedCTarget,
+    _fused_blocks,
+    _matvec_matrix_names,
+)
 
 GOLDEN = Path(__file__).parent / "golden" / "mpc" / "embedded_c" / "fom_solver.c"
 OPS = "src/fom_ops.c"
@@ -394,7 +398,7 @@ def test_report_tables_each_routine_and_marks_the_rewritten_one(tmp_path, mpc, r
     result = _generate(tmp_path, mpc, _rewrite_one_routine("su_state"))
     assert result.optimization_kept, result.optimize.log
     rows = {c["name"]: c for c in result.kernel_checks}
-    assert list(rows) == _matvec_matrix_names(ir)
+    assert list(rows) == _matvec_matrix_names(ir) + [f"fused_{b.name}" for b in _fused_blocks(ir)]
     assert rows["su_state"]["rewritten"] and not rows["t0_state"]["rewritten"]
     md = ir.matrices["su_state"]
     assert rows["su_state"]["shape"] == tuple(md.shape)
@@ -426,9 +430,16 @@ def test_parse_ops_checks_round_trips_real_verify_output(tmp_path, mpc, requires
     proc = _verify(tmp_path)
     assert proc.returncode == 0, proc.stdout
     checks = parse_ops_checks(proc.stdout)
-    assert [c["name"] for c in checks] == _matvec_matrix_names(ir)
-    for c in checks:
+    blocks = _fused_blocks(ir)
+    assert [c["name"] for c in checks] == _matvec_matrix_names(ir) + [
+        f"fused_{b.name}" for b in blocks
+    ]
+    for c in checks[: -len(blocks)]:
         cols = ir.matrices[c["name"]].shape[1]
+        assert c["mode"] == "basis" and c["probes"] == cols + 2 and c["max_err"] == 0.0
+    for c, b in zip(checks[-len(blocks) :], blocks):
+        # every source's unit vectors (no schedule here) plus the random probes
+        cols = sum(ir.matrices[m].shape[1] for m in dict.fromkeys(b.members))
         assert c["mode"] == "basis" and c["probes"] == cols + 2 and c["max_err"] == 0.0
 
 

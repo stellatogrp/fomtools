@@ -83,6 +83,16 @@ class TargetDescriptor(ABC):
         """
         return ""
 
+    def fused_routines(self, ir) -> dict[str, list[str]]:
+        """``fom_fused_<block>`` routines in the editable ops source, with their
+        member matrices. Default: none."""
+        return {}
+
+    def selection_matrices(self, ir) -> dict[str, str]:
+        """0/1 selection matrices a solver may apply itself, with a description
+        of each (see `fomtools.codegen.ir.selection_indices`). Default: none."""
+        return {}
+
     def kernel_checks(self, rel: str, source: str, ir, baseline: str | None = None) -> list[str]:
         """Violations of the rules that keep rewritten kernels checkable (empty = OK).
 
