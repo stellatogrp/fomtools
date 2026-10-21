@@ -1,4 +1,4 @@
-# FOMTools
+# ![FOMTools](assets/logo/logo.svg#only-light){ .fomtools-logo } ![FOMTools](assets/logo/logo-dark.svg#only-dark){ .fomtools-logo }
 
 FOMTools is a Python package that provides tools to verify the performance
 of first-order iterative methods applied on parametric quadratic optimization.

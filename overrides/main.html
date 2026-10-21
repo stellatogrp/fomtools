@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{#- PNG fallbacks for browsers without SVG favicons; the SVG is repeated last so browsers that
+    support it keep preferring it over the PNGs. -#}
+{% block extrahead %}
+  <link rel="icon" type="image/png" sizes="48x48" href="{{ 'assets/logo/favicon-48.png' | url }}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ 'assets/logo/favicon-32.png' | url }}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{{ 'assets/logo/favicon-16.png' | url }}">
+  <link rel="icon" type="image/svg+xml" href="{{ config.theme.favicon | url }}">
+  <link rel="apple-touch-icon" href="{{ 'assets/logo/icon-512.png' | url }}">
+{% endblock %}
