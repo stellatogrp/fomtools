@@ -1305,7 +1305,7 @@ class EmbeddedCTarget(TargetDescriptor):
                 "                if (1.0 + a > scale) scale = 1.0 + a;",
                 "            }",
                 "            if (!(err <= worst_op)) worst_op = err;",
-                "            if (!(err <= tol * scale)) {",
+                "            if (!(err <= ops_tol * scale)) {",
                 f"                if (r < {nb})",
                 f'                    printf("VERIFY FAILED: fom_apply_{name} entry (%d, %d) is "',
                 '                           "off by %.3e from its matrix\\n", bad, r, (double)err);',
@@ -1391,7 +1391,7 @@ class EmbeddedCTarget(TargetDescriptor):
                     "                if (1.0 + a > scale) scale = 1.0 + a;",
                     "            }",
                     "            if (!(err <= worst_op)) worst_op = err;",
-                    "            if (!(err <= tol * scale)) {",
+                    "            if (!(err <= ops_tol * scale)) {",
                     *fail,
                     "                return 1;",
                     "            }",
@@ -1667,6 +1667,11 @@ class EmbeddedCTarget(TargetDescriptor):
                 "    FomParams params;",
                 "    int s, j;",
                 f"    fom_float tol = (fom_float){tol};",
+                *(
+                    [f"    fom_float ops_tol = (fom_float){_fmt_float(self.config.tol_kernel)};"]
+                    if self._checked_ops(ir)
+                    else []
+                ),
                 "    fom_float worst = 0.0;",
                 "    int failures = 0;",
                 *(["    int stop_failures = 0;", "    fom_int stop_status;"] if objective else []),

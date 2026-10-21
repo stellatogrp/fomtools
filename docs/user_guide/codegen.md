@@ -397,7 +397,10 @@ input, not just sampled ones. `make verify` runs each `fom_apply_<name>` next to
 package-written reference (`test/ops_ref.c`) that reads the same `fom_data.c`
 arrays, starting both from the same nonzero `out` (so the routine must still
 accumulate, `out += M @ x`). The tolerance scales with `M @ x`, not with that
-starting value, so each entry is held to `tol_verify` relative to itself:
+starting value, so each entry is held to `tol_kernel` relative to itself. A rewrite
+may only reorder arithmetic, so `tol_kernel` (1e-10 in double precision) is far
+tighter than the end-to-end `tol_verify`, and a slightly perturbed coefficient fails
+here even where the sampled solves would absorb it:
 
 - on **every unit vector** when the matrix is small enough
   (`cols × (nnz + rows) ≤ 1e8`): this recovers the routine's matrix column by
