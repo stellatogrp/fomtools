@@ -8,12 +8,18 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _run_first_block(relpath):
-    page = ROOT / relpath
-    code = re.search(r"```python3?\n(.*?)```", page.read_text(), re.S).group(1)
-    scope = {}
-    exec(compile(code, str(page), "exec"), scope)
+def _blocks(relpath):
+    return re.findall(r"```python3?\n(.*?)```", (ROOT / relpath).read_text(), re.S)
+
+
+def _run(relpath, blocks, scope=None):
+    scope = {} if scope is None else scope
+    exec(compile("\n".join(blocks), str(ROOT / relpath), "exec"), scope)
     return scope
+
+
+def _run_first_block(relpath):
+    return _run(relpath, _blocks(relpath)[:1])
 
 
 def test_intro(capfd):
@@ -24,8 +30,10 @@ def test_intro(capfd):
     assert len(out.splitlines()) == 2
     q = scope["q"].value
     assert q.shape == (scope["n"],) and np.all(np.abs(q) <= 1 + 1e-9)
-    z, z_prev = scope["z"], scope["z_prev"]
-    assert np.max(np.abs((z - z_prev).value)) >= 0
+    # The printed bound is attained by the incumbent, up to the MIP gap.
+    bound = float(out.splitlines()[0].split(":")[1])
+    residual = np.max(np.abs((scope["z"] - scope["z_prev"]).value))
+    assert abs(residual - bound) <= 1e-4 * max(1.0, bound)
 
 
 def test_quick_start(capfd):
@@ -41,3 +49,20 @@ def test_readme():
     assert len(scope["results"]) == scope["K"]
     assert len(scope["s"]) == scope["K"] + 1
     assert np.isfinite(scope["results"]).all()
+
+
+def test_quick_start_fixed_point():
+    blocks = _blocks("docs/quick_start.md")
+    fixed_point = [b for b in blocks if "fixed_point" in b or "s - s_star" in b]
+    assert len(fixed_point) == 2
+    scope = _run("docs/quick_start.md", blocks[:1] + fixed_point)
+    # A time limit keeps the test fast; the best bound is still a valid finite bound.
+    assert np.isfinite(scope["vp"].solve(time_limit=5.0))
+
+
+def test_user_guide_blocks():
+    scope = _run_first_block("docs/quick_start.md")
+    # Every block except code generation, which needs a coding agent.
+    blocks = [b for b in _blocks("docs/user_guide/index.md") if ".codegen(" not in b]
+    scope = _run("docs/user_guide/index.md", blocks, scope)
+    assert np.isfinite(scope["demo"].solve(time_limit=5.0))

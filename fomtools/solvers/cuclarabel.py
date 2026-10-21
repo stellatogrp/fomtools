@@ -136,7 +136,7 @@ class CuClarabelSolver(ClarabelSolver):
         # The 'MethodError' will vanish because the Extension now provides the GPU signature.
         # settings = Clarabel.Settings(direct_solve_method = :cudss, verbose = true)
         jl.seval("""
-            settings = Clarabel.Settings(direct_solve_method = :cudss, verbose = true)
+            settings = Clarabel.Settings(direct_solve_method = :cudss, verbose = false)
             solver   = Clarabel.Solver(settings)
             Clarabel.setup!(solver, P, q, A, b, cones)
             global sol = Clarabel.solve!(solver)

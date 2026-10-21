@@ -51,11 +51,13 @@ class GurobiSolver(MIPSolver):
             Gurobi parameters; they override ``DEFAULT_PARAMS``.
         """
         user = solver_params or {}
+        # Gurobi parameter names are case-insensitive.
+        verbosity = {k: v for k, v in user.items() if k.lower() == self.VERBOSITY_KEY.lower()}
         # A silenced model is built in a silenced environment, which also skips the
         # license banner Gurobi prints when it starts the default environment.
-        self.model = gp.Model(env=_quiet_env()) if not user.get("OutputFlag", 1) else gp.Model()
+        quiet = bool(verbosity) and not list(verbosity.values())[-1]
+        self.model = gp.Model(env=_quiet_env()) if quiet else gp.Model()
         # Apply the user's verbosity first, so a silenced model does not log the defaults.
-        verbosity = {k: user[k] for k in (self.VERBOSITY_KEY,) if k in user}
         super().__init__({**verbosity, **self.DEFAULT_PARAMS, **user})
 
     def __getitem__(self, item):

@@ -447,6 +447,15 @@ class Norm:
     def __repr__(self):
         return f"<Norm, p={self.p}, dim={sum(e.ndim for e in self.exprs)}>"
 
+    def _not_a_constraint(self, other):
+        raise TypeError(
+            "ft.norm is an objective for Verifier.maximize, not a constraint. "
+            "Constrain the expression itself (expr <= u, expr >= l) or use "
+            "ft.sum_squares(expr) <= r**2."
+        )
+
+    __le__ = __ge__ = __lt__ = __gt__ = _not_a_constraint
+
 
 def norm(expr, p) -> Norm:
     r"""
@@ -473,7 +482,8 @@ def norm(expr, p) -> Norm:
     """
     if p == 2:
         raise ValueError(
-            "The two-norm objective is squared: maximize ft.sum_squares(expr) instead."
+            "The two-norm objective is squared: maximize ft.sum_squares(expr) instead "
+            "(with method='mip' it is an MIQP and needs solver='gurobi')."
         )
     if p == "inf":
         p = np.inf

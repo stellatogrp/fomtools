@@ -28,7 +28,7 @@ support addition, scalar multiplication, and left multiplication by numpy arrays
 sparse matrices, so the package tracks arbitrary affine combinations symbolically.
 
 ```python
-# reuse the imports and dimensions from the workflow above
+# reuse the imports and data (D, eta, lambd, m, n, K) from the Quick start
 demo = ft.Verifier(method="mip")
 x_demo = demo.parameter(m, lb=0, ub=1)
 z0 = demo.iterate(n, lb=0, ub=0)
@@ -70,17 +70,17 @@ directly. The SDP backend represents the latter two through equivalent ReLU deco
 
 ```python
 # MIP: exact worst case analysis (HiGHS by default; solver="gurobi" for Gurobi)
-demo = ft.Verifier(method="mip")
+vp_mip = ft.Verifier(method="mip")
 ```
 
 ```python
 # SDP (experimental): upper bound from a semidefinite relaxation
-demo = ft.Verifier(method="sdp", solver="clarabel", obbt_solver=None)
+vp_sdp = ft.Verifier(method="sdp", solver="clarabel", obbt_solver=None)
 ```
 
 ```python
 # Simulator: empirical analysis at larger scale
-demo = ft.Verifier(method="simulator", solver="numpy")
+vp_sim = ft.Verifier(method="simulator", solver="numpy")
 ```
 
 The SDP backend is experimental; its options, such as cuts that tighten the relaxation,
@@ -145,7 +145,9 @@ residuals, residuals involving the problem parameters, and distances to a refere
 expression. The package supports four objectives: the $\ell_1$ norm `ft.norm(expr, 1)`, the
 $\ell_\infty$ norm `ft.norm(expr, np.inf)`, the squared $\ell_2$ norm `ft.sum_squares(expr)`, and a
 zero objective for feasibility checks (`set_zero_objective`). The objective is set with
-`vp.maximize(...)`; `set_objective_norm(expr, ord)` is the equivalent lower-level call.
+`vp.maximize(...)`; `set_objective_norm(expr, ord)` is the equivalent lower-level call,
+where `ord=2` is also the squared norm. With the MIP backend the squared $\ell_2$ norm makes the
+problem a mixed-integer QP, which needs `solver="gurobi"`.
 `ft.norm` also accepts a list of expressions, which the package stacks into a single
 vector before applying the norm, useful for composite metrics such as the OSQP convergence
 check, which monitors both the primal and the dual residual.
@@ -185,7 +187,7 @@ z_star = demo.fixed_point(
     lb=-100,
     ub=100,
 )
-demo.maximize(ft.sum_squares(zk - z_star))
+demo.maximize(ft.norm(zk - z_star, np.inf))
 ```
 
 Internally, `fixed_point` creates a new iterate $z^\star$ with the given bounds, applies the
@@ -244,8 +246,10 @@ termination criteria, and the emitted project layout in full.
 `solve()` returns a finite MIP best bound, including after a time limit when one
 is available. It raises `RuntimeError` for unusable termination states or missing
 bounds. An incumbent is a feasible example that attains a lower bound on the worst case.
-`expr.value` evaluates an expression at the incumbent and raises `RuntimeError` when the
-solver found none.
+With the MIP backend, `expr.value` evaluates an expression at the incumbent. It raises
+`RuntimeError` when the solver found none, or when the expression uses steps added after the
+last solve. The SDP and simulator backends have no incumbent, and `expr.value` raises
+`NotImplementedError` there.
 
 SDP solves ([experimental](sdp.md)) require an accurate optimal termination and return the dual objective.
 Inaccurate, infeasible, unbounded, and early terminations raise `RuntimeError`.

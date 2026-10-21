@@ -57,7 +57,7 @@ class IterateTrajectory:
     ----------
     verifier : Verifier
         The owning verifier. Assignments that keep a separate leaf are routed
-        through ``verifier.step.implicit_linear`` and the ``'auto'`` policy
+        through ``verifier.implicit_linear`` and the ``'auto'`` policy
         reads ``verifier.method``.
     length : int
         Number of slots (e.g. ``K + 1`` for ``K`` steps). Must be ``>= 1``.
@@ -138,7 +138,7 @@ class IterateTrajectory:
         if not isinstance(value, LinearExpression):
             raise TypeError(
                 "IterateTrajectory slots must hold a LinearExpression, got "
-                f"{type(value).__name__}. Build the iterate with verifier.step.* "
+                f"{type(value).__name__}. Build the iterate with a step such as verifier.relu "
                 "or verifier.iterate before assigning."
             )
 

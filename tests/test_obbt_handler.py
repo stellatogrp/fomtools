@@ -566,7 +566,8 @@ def test_obbt_params_override():
 
 def test_obbt_params_from_highs_key():
     assert Verifier._obbt_params_from({"output_flag": True}, "highs") == {"output_flag": True}
-    # Without the OBBT backend's own key, the OBBT solver follows ``verbose``.
-    assert Verifier._obbt_params_from({"OutputFlag": 1}, "highs") == {"output_flag": False}
+    # The other backend's verbosity key is translated; without any, ``verbose`` applies.
+    assert Verifier._obbt_params_from({"OutputFlag": 1}, "highs") == {"output_flag": True}
+    assert Verifier._obbt_params_from({"TimeLimit": 5}, "highs") == {"output_flag": False}
     assert Verifier._obbt_params_from(None, "gurobi") == {"OutputFlag": False}
     assert Verifier._obbt_params_from(None, "highs", verbose=True) == {"output_flag": True}

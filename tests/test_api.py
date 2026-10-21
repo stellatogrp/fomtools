@@ -5,6 +5,9 @@ top-level step methods, ``ft.norm`` with ``maximize``, ``LinearExpression.value`
 and the ``verbose`` flag, which silences every solver by default.
 """
 
+import copy
+import pickle
+
 import numpy as np
 import pytest
 
@@ -63,11 +66,20 @@ def test_parameter_samples_for_the_simulator():
 )
 def test_add_aliases_are_deprecated(old, new, args):
     vp = ft.Verifier()
-    with pytest.warns(DeprecationWarning, match=f"use Verifier.{new}"):
+    with pytest.warns(DeprecationWarning, match=f"use Verifier.{new}") as record:
         var = getattr(vp, old)(*args)
+    # The warning points at the caller, not at fomtools.
+    assert record[0].filename == __file__
     assert var.is_leaf and var.ndim == 2
     np.testing.assert_array_equal(var.lb, [args[1]] * 2)
     np.testing.assert_array_equal(var.ub, [args[2]] * 2)
+
+
+def test_add_param_alias_forwards_keyword_arguments():
+    vp = ft.Verifier(method="simulator")
+    with pytest.warns(DeprecationWarning):
+        vp.add_param(ndim=2, samples=np.zeros((4, 2)))
+    assert not vp._unsampled_params
 
 
 # --- step methods ---------------------------------------------------------------------
@@ -117,6 +129,24 @@ def test_relu_forwards_relax_binary_vars():
     x = vp.parameter(2, lb=-1, ub=1)
     vp.relu(x, relax_binary_vars=True)
     assert vp.steps[-1].relax_binary_vars
+
+
+@pytest.mark.parametrize(
+    "name, second", [("relu", True), ("satlin", np.zeros(2)), ("soft_threshold", 0.1)]
+)
+def test_step_options_are_keyword_only(name, second):
+    # ``vp.step.relu(x, True)`` means relax_binary_vars; a silent rebinding would differ.
+    vp = ft.Verifier()
+    x = vp.parameter(2, lb=-1, ub=1)
+    with pytest.raises(TypeError, match="positional"):
+        getattr(vp, name)(x, second)
+
+
+def test_implicit_linear_options_are_keyword_only():
+    vp = ft.Verifier()
+    x = vp.parameter(2, lb=-1, ub=1)
+    with pytest.raises(TypeError, match="positional"):
+        vp.implicit_linear(x, np.eye(2))
 
 
 # --- norm / maximize ------------------------------------------------------------------
@@ -176,6 +206,44 @@ def test_maximize_sum_squares_matches_two_norm_objective():
     np.testing.assert_allclose(results[0], results[1])
 
 
+@requires_gurobi
+def test_maximize_sum_squares_on_mip_matches_two_norm_objective():
+    values, objectives = [], []
+    for use_maximize in (True, False):
+        vp = ft.Verifier(solver="gurobi")
+        x = vp.parameter(2, lb=-1, ub=1)
+        y = vp.parameter(1, lb=-3, ub=2)
+        if use_maximize:
+            vp.maximize(ft.sum_squares(ft.stack([x, y])))
+        else:
+            vp.set_two_norm_objective(ft.stack([x, y]))
+        values.append(vp.solve())
+        objectives.append(vp.objective[1])
+    assert abs(values[0] - 11.0) <= TEST_EPS and abs(values[1] - 11.0) <= TEST_EPS
+    assert objectives == [2, 2]
+
+
+def test_maximize_sets_the_objective_codegen_reads():
+    vp_new, vp_old = ft.Verifier(), ft.Verifier()
+    for vp in (vp_new, vp_old):
+        _, z, z_prev = _pgd(vp)
+        if vp is vp_new:
+            vp.maximize(ft.norm(z - z_prev, np.inf))
+        else:
+            vp.set_objective_norm(z - z_prev, np.inf)
+    (new_exprs, new_ord), (old_exprs, old_ord) = vp_new.objective, vp_old.objective
+    assert new_ord == old_ord == np.inf and len(new_exprs) == len(old_exprs) == 1
+    np.testing.assert_allclose(
+        new_exprs[0].bound_propagation()[1], old_exprs[0].bound_propagation()[1]
+    )
+
+
+def test_norm_is_not_a_constraint():
+    x = ft.Verifier().parameter(2)
+    with pytest.raises(TypeError, match="not a constraint"):
+        ft.norm(x, 1) <= 1
+
+
 def test_maximize_rejects_other_objectives():
     vp = ft.Verifier()
     x = vp.parameter(2)
@@ -207,12 +275,41 @@ def test_value_errors():
         LinearExpression.from_int(2).value
     vp = ft.Verifier()
     x = vp.parameter(2, lb=-1, ub=1)
-    with pytest.raises(RuntimeError, match="incumbent"):
+    with pytest.raises(RuntimeError, match=r"incumbent.*solve\(\)"):
         x.value
     sim = ft.Verifier(method="simulator")
     y = sim.parameter(2, samples=np.zeros((3, 2)))
     with pytest.raises(NotImplementedError, match="simulator"):
         y.value
+
+
+def test_value_after_adding_a_step_asks_for_a_new_solve():
+    vp = ft.Verifier()
+    q, z, z_prev = _pgd(vp)
+    vp.maximize(ft.norm(z - z_prev, np.inf))
+    vp.solve()
+    w = vp.relu(z - q)
+    with pytest.raises(RuntimeError, match=r"after the last solve; call solve\(\) again"):
+        w.value
+    vp.solve()
+    assert w.value.shape == (3,)
+
+
+def test_value_rejects_mixed_verifiers():
+    qa = ft.Verifier().parameter(2, lb=0, ub=0)
+    qb = ft.Verifier().parameter(2, lb=0, ub=0)
+    with pytest.raises(ValueError, match="different Verifier"):
+        (qa + qb).value
+
+
+def test_expressions_deepcopy_and_pickle_without_the_verifier():
+    vp = ft.Verifier()
+    q, z, z_prev = _pgd(vp)
+    for clone in (copy.deepcopy(z - q), pickle.loads(pickle.dumps(z - q))):
+        assert clone.ndim == 3
+        assert all(leaf._verifier is None for leaf in clone.decomposition_dict)
+    # The originals keep their Verifier.
+    assert q._verifier is vp
 
 
 # --- verbose --------------------------------------------------------------------------
@@ -255,6 +352,33 @@ def test_solve_verbose_logs_only_that_solve(capfd):
     assert capfd.readouterr().out == ""
 
 
+def test_solve_verbose_false_silences_a_verbose_verifier(capfd):
+    vp = ft.Verifier(verbose=True)
+    _, z, z_prev = _pgd(vp)
+    vp.maximize(ft.norm(z - z_prev, np.inf))
+    capfd.readouterr()
+    vp.solve(verbose=False)
+    assert capfd.readouterr().out == ""
+
+
+def test_solve_verbose_false_silences_a_verbose_sdp(capfd):
+    vp = ft.Verifier(method="sdp", solver="clarabel", obbt_solver=None, verbose=True)
+    x = vp.parameter(2, lb=-1, ub=1)
+    vp.maximize(ft.sum_squares(vp.relu(x)))
+    vp.solve(verbose=False)
+    assert capfd.readouterr().out == ""
+    vp.solve()
+    assert "Clarabel" in capfd.readouterr().out
+
+
+def test_explicit_obbt_params_stay_silent(capfd):
+    vp, _ = _solve_pgd(obbt_params={"time_limit": 10.0})
+    assert vp.obbt_handler.solver_params == {"output_flag": False, "time_limit": 10.0}
+    assert capfd.readouterr().out == ""
+    vp = ft.Verifier(obbt_params={"output_flag": True})
+    assert vp.obbt_handler.solver_params == {"output_flag": True}
+
+
 def test_obbt_solver_follows_verbose():
     vp = ft.Verifier(verbose=True)
     assert vp.obbt_handler.solver_params == {"output_flag": True}
@@ -293,3 +417,34 @@ def test_gurobi_verbose_prints_the_log(capfd):
     vp, _ = _solve_pgd(solver="gurobi", verbose=True)
     assert vp.canonicalizer.solver.model.Params.OutputFlag == 1
     assert "Gurobi" in capfd.readouterr().out
+
+
+@requires_gurobi
+def test_gurobi_solve_verbose_logs_only_that_solve(capfd):
+    vp = ft.Verifier(solver="gurobi")
+    _, z, z_prev = _pgd(vp)
+    vp.maximize(ft.norm(z - z_prev, np.inf))
+    capfd.readouterr()
+    vp.solve(verbose=True)
+    assert "Gurobi" in capfd.readouterr().out
+    vp.solve()
+    assert capfd.readouterr().out == ""
+
+
+@requires_gurobi
+@pytest.mark.parametrize("solver, obbt_solver", [("gurobi", "highs"), ("highs", "gurobi")])
+def test_mixed_main_and_obbt_backends_are_silent(capfd, solver, obbt_solver):
+    _solve_pgd(solver=solver, obbt_solver=obbt_solver)
+    assert capfd.readouterr().out == ""
+
+
+@requires_gurobi
+def test_obbt_translates_the_main_verbosity_key():
+    vp = ft.Verifier(solver="highs", obbt_solver="gurobi", params={"output_flag": True})
+    assert vp.obbt_handler.solver_params == {"OutputFlag": True}
+
+
+@requires_gurobi
+def test_gurobi_outputflag_is_case_insensitive(capfd):
+    vp, _ = _solve_pgd(solver="gurobi", verbose=True, params={"outputflag": 0})
+    assert capfd.readouterr().out == ""

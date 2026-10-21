@@ -49,8 +49,6 @@ SDP_SOLVER = "clarabel"
 MIP_SOLVER = "gurobi"
 MIP_TIME_LIMIT = 60.0
 GUROBI_PARAMS = {
-    "OutputFlag": 0,
-    "LogToConsole": 0,
     "TimeLimit": MIP_TIME_LIMIT,
     "MIPGap": 1e-6,
 }

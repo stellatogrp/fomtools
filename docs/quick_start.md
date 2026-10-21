@@ -146,14 +146,14 @@ results.append(vp.solve())
 
 `s - s_prev` is the symbolic residual $s^{k+1} - s^k$, and `ft.norm(..., np.inf)` its
 $\ell_\infty$ norm. Use `ft.norm(..., 1)` for the $\ell_1$ norm, or `ft.sum_squares(...)` for the
-squared $\ell_2$ norm. `vp.solve()` creates and solves the backend-specific optimization problem
+squared $\ell_2$ norm, which makes the MIP quadratic and needs `solver="gurobi"`. `vp.solve()` creates and solves the backend-specific optimization problem
 and returns the worst-case value. After a MIP solve, `x.value` is the worst-case parameter.
 
 Solving at every iteration gives the worst-case residual as a function of $k$, and each solve
 warm-starts the next one. If you only need the bound at $K$, set the objective and solve once
 after the loop.
 
-For a distance-to-solution metric $\|s^{k+1} - s^\star\|_2^2$, use the fixed point
+For a distance-to-solution metric $\|s^{k+1} - s^\star\|_\infty$, use the fixed point
 of FISTA. At a fixed point, the momentum term vanishes, so it is encoded by the following
 proximal-gradient map
 $$
@@ -172,7 +172,7 @@ s_star = vp.fixed_point(
 Then use it in the objective:
 
 ```python
-vp.maximize(ft.sum_squares(s - s_star))
+vp.maximize(ft.norm(s - s_star, np.inf))
 ```
 
 This creates a new iterate $s^\star$ constrained to satisfy $s^\star = T(s^\star, x)$.

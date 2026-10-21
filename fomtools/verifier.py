@@ -1,6 +1,7 @@
 import logging
 import time
 import warnings
+from contextlib import contextmanager
 from typing import List, Sequence
 
 import numpy as np
@@ -22,7 +23,7 @@ from fomtools.linearexpression import LinearExpression, stack
 from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.sets import Set
-from fomtools.solvers.factory import is_mip_solver, solver_class
+from fomtools.solvers.factory import is_mip_solver, solver_class, verbosity_flag
 from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
 from fomtools.stepdecomposers.simulator_step_decomposer import SimulatorStepDecomposer
 from fomtools.steps import (
@@ -129,8 +130,9 @@ class Verifier(object):
             ``cross_cut``; on soft-thresholding it is a distinct coupling. No effect
             for ``method != "sdp"``.
         obbt_params : dict, optional
-            Parameters passed verbatim to the OBBT solver. When ``None``, the
-            OBBT solver inherits only the verbosity key from ``params``.
+            Parameters passed verbatim to the OBBT solver. The OBBT solver also
+            inherits the verbosity setting of ``params`` (translated between
+            backends) or ``verbose``, unless ``obbt_params`` sets its own.
         verbose : bool, default False
             Print the solver logs, for the main solves and for the OBBT LPs.
         """
@@ -147,8 +149,11 @@ class Verifier(object):
         # generated solver on the verified metric (TerminationKind.OBJECTIVE).
         self.objective: tuple[tuple[LinearExpression, ...], int | float] | None = None
 
-        # An explicit verbosity key in ``params`` overrides ``verbose``.
-        params = {**self._verbosity_option(method, solver, verbose), **(params or {})} or None
+        # An explicit verbosity key in ``params`` (any case, as in Gurobi) overrides ``verbose``.
+        option = self._verbosity_option(method, solver, verbose)
+        if any(k.lower() == key.lower() for k in params or {} for key in option):
+            option = {}
+        params = {**option, **(params or {})} or None
         self._solver_name = solver
         self.canonicalizer = self._get_canonicalizer(
             method,
@@ -167,8 +172,10 @@ class Verifier(object):
         )
         if obbt_solver == "auto":
             obbt_solver = solver if is_mip_solver(solver) else None
-        if obbt_solver and obbt_params is None:
-            obbt_params = self._obbt_params_from(params, obbt_solver, verbose)
+        if obbt_solver:
+            # Explicit ``obbt_params`` keys win over the inherited verbosity.
+            inherited = self._obbt_params_from(params, obbt_solver, verbose) or {}
+            obbt_params = {**inherited, **(obbt_params or {})} or None
         self.obbt_handler = (
             OBBTHandler(solver=obbt_solver, solver_params=obbt_params) if obbt_solver else None
         )
@@ -321,15 +328,20 @@ class Verifier(object):
                 raise ValueError(f"Method must be 'mip', 'sdp' or 'simulator', got {method}")
 
     @staticmethod
-    def _verbosity_option(method: str, solver: str, verbose: bool) -> dict:
-        """The native solver option that turns the log on or off, if the backend has one."""
+    def _verbosity_option(method: str, solver: str, verbose: bool, explicit: bool = False) -> dict:
+        """
+        The native solver option that turns the log on or off, if the backend has one.
+
+        Clarabel and CVXPY are silent by default, so for the constructor (``explicit``
+        False) their option is only added to turn the log on; a solve-time ``verbose``
+        always sets it. CuClarabel takes no options.
+        """
         if method.lower() == "mip":
             cls = solver_class(solver)
             if cls is not None and cls.VERBOSITY_KEY is not None:
                 return {cls.VERBOSITY_KEY: verbose}
-        # Clarabel and CVXPY are silent by default; CuClarabel takes no options.
-        elif method.lower() == "sdp" and verbose and solver.lower() != "cuclarabel":
-            return {"verbose": True}
+        elif method.lower() == "sdp" and (verbose or explicit) and solver.lower() != "cuclarabel":
+            return {"verbose": verbose}
         return {}
 
     @staticmethod
@@ -346,7 +358,12 @@ class Verifier(object):
         cls = solver_class(obbt_solver)
         if cls is None:
             return None
-        return cls.verbosity_params(params) or {cls.VERBOSITY_KEY: verbose}
+        own = cls.verbosity_params(params)
+        if own:
+            return own
+        # Translate the other MIP backend's verbosity key.
+        flag = verbosity_flag(params)
+        return {cls.VERBOSITY_KEY: verbose if flag is None else flag}
 
     @staticmethod
     def _get_step_decomposer(method: str):
@@ -1029,7 +1046,7 @@ class Verifier(object):
         -------
         >>> verifier = Verifier()
         >>> expr = verifier.parameter(2)
-        >>> x = verifier.relu(arg=expr, relax_binary_vars=True)
+        >>> x = verifier.step.relu(expr, relax_binary_vars=True)  # same as verifier.relu
 
         """
         return self._step_proxy
@@ -1070,7 +1087,7 @@ class Verifier(object):
 
         return self._record_output(output)
 
-    def relu(self, arg, proj_ranges=None, relax_binary_vars=False) -> LinearExpression:
+    def relu(self, arg, *, proj_ranges=None, relax_binary_vars=False) -> LinearExpression:
         r"""
         Projection onto the nonnegative orthant, $\Pi_{\mathbf{R}^n_+}(\text{arg})$.
 
@@ -1078,7 +1095,7 @@ class Verifier(object):
         """
         return self.run_step(arg, Relu, relax_binary_vars, proj_ranges=proj_ranges)
 
-    def satlin(self, arg, l, u, relax_binary_vars=False) -> LinearExpression:
+    def satlin(self, arg, *, l, u, relax_binary_vars=False) -> LinearExpression:
         r"""
         Projection onto the box $[l, u]$, $\Pi_{[l,u]}(\text{arg})$.
 
@@ -1086,7 +1103,7 @@ class Verifier(object):
         """
         return self.run_step(arg, SaturatedLinear, relax_binary_vars, l=l, u=u)
 
-    def soft_threshold(self, arg, lambd, relax_binary_vars=False) -> LinearExpression:
+    def soft_threshold(self, arg, *, lambd, relax_binary_vars=False) -> LinearExpression:
         r"""
         Soft-thresholding $\mathbf{soft}_\lambda(\text{arg})$, the prox of $\lambda\|\cdot\|_1$.
 
@@ -1095,7 +1112,7 @@ class Verifier(object):
         return self.run_step(arg, SoftThreshold, relax_binary_vars, lambd=lambd)
 
     def implicit_linear(
-        self, arg, output_mat=None, weight=None, bias=None, relax_binary_vars=False
+        self, arg, *, output_mat=None, weight=None, bias=None, relax_binary_vars=False
     ) -> LinearExpression:
         """
         Implicit affine step ``output_mat @ w = weight @ arg + bias``.
@@ -1312,7 +1329,9 @@ class Verifier(object):
         ----------
         objective : Norm or SumSquares
             ``ft.norm(expr, 1)``, ``ft.norm(expr, np.inf)``, or
-            ``ft.sum_squares(expr)`` for the squared two-norm.
+            ``ft.sum_squares(expr)`` for the squared two-norm. With
+            ``method="mip"``, the squared two-norm is an MIQP and needs
+            ``solver="gurobi"``; ``solve`` then returns a bound on the squared norm.
 
         Examples
         --------
@@ -1374,9 +1393,9 @@ class Verifier(object):
             Solvers without MIP starts ignore them. Statistics are stored on
             ``canonicalizer.warm_start_stats``.
         verbose : bool or None, default None
-            Print the log of this solve. ``None`` keeps the ``verbose`` setting of
-            the constructor. The OBBT LPs, which run while the steps are added,
-            follow the constructor setting only.
+            Print the log of this solve, including the cut separation and OBBT LPs
+            it runs. ``None`` keeps the ``verbose`` setting of the constructor. The
+            OBBT LPs that run while the steps are added follow the constructor.
         **kwargs
             Keyword arguments forwarded to the canonicalizer's
             ``solve_model``. Any keyword is passed **verbatim** to the active
@@ -1398,8 +1417,21 @@ class Verifier(object):
             Simulator: an array of sampled residuals, with summary statistics
             available through ``vp["max"]`` and related keys.
         """
+        if verbose is not None and self.method == "mip":
+            # Cut separation and objective-bound OBBT also run in this solve.
+            with self._mip_verbosity(verbose):
+                return self.solve(
+                    convex_hull_cuts=convex_hull_cuts,
+                    cut_rounds=cut_rounds,
+                    tighten_objective_bounds=tighten_objective_bounds,
+                    warm_start=warm_start,
+                    **{**self._verbosity_option(self.method, self._solver_name, verbose), **kwargs},
+                )
         if verbose is not None:
-            kwargs = {**self._verbosity_option(self.method, self._solver_name, verbose), **kwargs}
+            kwargs = {
+                **self._verbosity_option(self.method, self._solver_name, verbose, explicit=True),
+                **kwargs,
+            }
         # ``cut_stats`` has one entry per round that added cuts; ``separation_stats``
         # one per round that ran, including a final round that found nothing.
         self.cut_stats = []
@@ -1446,6 +1478,22 @@ class Verifier(object):
                 "(equal finite bounds fix a constant and need no samples)."
             )
         return self.canonicalizer.solve_model(**kwargs)
+
+    @contextmanager
+    def _mip_verbosity(self, verbose: bool):
+        """Set the log of the main and OBBT MIP solvers to ``verbose``, then restore it."""
+        owners = [self.canonicalizer] + ([self.obbt_handler] if self.use_obbt_handler else [])
+        for owner in owners:
+            owner.solver.set_param(owner.solver.VERBOSITY_KEY, verbose)
+        try:
+            yield
+        finally:
+            for owner in owners:
+                key = owner.solver.VERBOSITY_KEY
+                flags = [
+                    v for k, v in (owner.solver_params or {}).items() if k.lower() == key.lower()
+                ]
+                owner.solver.set_param(key, bool(flags[-1]) if flags else False)
 
     def set_start_samples(self, samples: dict) -> None:
         """

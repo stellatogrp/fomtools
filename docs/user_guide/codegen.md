@@ -190,6 +190,7 @@ objective itself, the one set with `maximize`, in the norm it was set
 with (`ft.sum_squares` is the squared two-norm, as in verification):
 
 ```python
+H = np.diag(np.linspace(1.0, 2.0, n))  # e.g. a diagonal scaling of the residual
 vp.maximize(ft.norm(H @ (z[K] - z[K - 1]), np.inf))
 
 config = CodegenConfig(

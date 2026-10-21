@@ -162,6 +162,13 @@ class LinearExpression:
         cls.counter += 1
         return obj
 
+    def __getstate__(self):
+        # The Verifier back-reference is not part of the expression: copies and
+        # pickles would otherwise drag in the whole Verifier and its solver models.
+        state = self.__dict__.copy()
+        state.pop("_verifier", None)
+        return state
+
     def __str__(self):
         return f"Var{self.counter}"
 
@@ -706,18 +713,26 @@ class LinearExpression:
         Raises
         ------
         RuntimeError
-            If the expression is not registered with a ``Verifier`` or no
-            incumbent is available.
+            If the expression is not registered with a ``Verifier``, no incumbent
+            is available, or the expression has leaves added after the last solve.
+        ValueError
+            If the expression mixes leaves of different ``Verifier`` instances.
+        NotImplementedError
+            With ``method="sdp"`` or ``method="simulator"``, which have no incumbent.
         """
         if not self.decomposition_dict:
             return self.const.copy()
-        verifier = next(
-            (leaf._verifier for leaf in self.decomposition_dict if leaf._verifier is not None),
-            None,
-        )
-        if verifier is None:
+        # Leaves the canonicalizer creates internally (e.g. binaries) have no Verifier.
+        verifiers = {
+            id(leaf._verifier): leaf._verifier
+            for leaf in self.decomposition_dict
+            if leaf._verifier is not None
+        }
+        if not verifiers:
             raise RuntimeError("The expression is not registered with a Verifier.")
-        return verifier.get_solution_value(self)
+        if len(verifiers) > 1:
+            raise ValueError("The expression mixes variables of different Verifier instances.")
+        return next(iter(verifiers.values())).get_solution_value(self)
 
 
 def stack(exprs: list[LinearExpression]) -> LinearExpression:

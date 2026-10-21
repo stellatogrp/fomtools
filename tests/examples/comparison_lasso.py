@@ -45,11 +45,10 @@ eta = 1.0 / L
 K = 5
 s0 = np.zeros(n)
 
-solver_params = {"LogToConsole": 0}
 MATCH_MIP_AT_K1 = True
 
 # ── MIP — squared 2-norm of fixed-point residual (MIQP, Gurobi only) ──────────
-vp_mip = ft.Verifier(method="mip", solver="gurobi", obbt_solver="gurobi", params=solver_params)
+vp_mip = ft.Verifier(method="mip", solver="gurobi", obbt_solver="gurobi")
 
 x_mip = vp_mip.parameter(p, lb=x_lb, ub=x_ub)
 s_mip = [s0]
@@ -123,7 +122,7 @@ for k in range(1, K + 1):
 # ── Simulator — squared 2-norm of fixed-point residual, num_star samples ──────
 vp_sim = ft.Verifier(method="simulator")
 
-x_sim = vp_sim.parameter(ndim=p, lb=x_lb, ub=x_ub, samples=x_samples.T)
+x_sim = vp_sim.parameter(ndim=p, samples=x_samples.T)
 s_sim = [s0]  # fixed initial point
 
 for k in range(1, K + 1):
