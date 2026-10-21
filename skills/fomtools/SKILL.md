@@ -49,7 +49,9 @@ squared two-norm (an MIQP with `method="mip"`, so it needs `solver="gurobi"`;
 `Verifier` or `solve` for solver logs.
 MIP returns a finite best upper bound and raises when none is available.
 SDP accepts only accurate optimal termination. Numerical tolerances still apply.
-Use `post_process` only with certified bounds for all successive infinity-norm
+With `method="mip"`, each solve of `ft.norm(a - b, np.inf)` automatically tightens `a`
+from the chained certified residual bounds (`tighten_residuals=True`, the default), so
+solving at every iteration makes later solves easier. Use `post_process` only with certified bounds for all successive infinity-norm
 residuals from reference to target; a final-step bound alone is insufficient.
 
 ## Architecture Overview

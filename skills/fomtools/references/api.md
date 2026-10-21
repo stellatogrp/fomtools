@@ -27,6 +27,7 @@ Verifier(
     subgrad_mono_cut=False,
     obbt_params=None,      # solver parameters for OBBT (default: inherit verbosity)
     verbose=False,         # print solver logs
+    tighten_residuals=True,  # MIP only: chain certified norm(a - b, inf) bounds, tighten a
 )
 ```
 
@@ -119,6 +120,12 @@ termination. Simulator returns sampled residual arrays. See "Returned bounds and
 checks" in `docs/user_guide/index.md` for numerical limitations and result inspection.
 
 ### Post-processing
+
+With `method="mip"`, every solve of `vp.maximize(ft.norm(a - b, np.inf))` automatically
+chains its certified bound with the earlier ones (triangle inequality) and tightens `a`
+before the next step is added (`tighten_residuals=True`, the default; pass
+`tighten_residuals=False` to `Verifier` to disable). The worst case is unchanged; later
+MIPs get smaller big-M constants. The manual `post_process` below is for caller-supplied bounds.
 
 `vp.post_process(target_expr, ref_expr, residuals)` uses the triangle inequality.
 Supply upper bounds on every successive infinity-norm difference along the path
