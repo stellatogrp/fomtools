@@ -137,15 +137,16 @@ code and the decomposition into steps stays hidden.
 
 ## Objectives
 
-API reference: [`set_objective_norm`](../api/verifier.md#fomtools.Verifier.set_objective_norm).
+API reference: [`maximize`](../api/verifier.md#fomtools.Verifier.maximize).
 
 The verification problem maximizes a norm of an arbitrary expression, so custom performance
 metrics can go beyond the standard fixed point residual $\|s^{k+1} - s^k\|_\infty$, including scaled
 residuals, residuals involving the problem parameters, and distances to a reference
-expression. The package supports four objectives: the $\ell_1$ norm, the squared $\ell_2$ norm, the
-$\ell_\infty$ norm, and a zero objective for feasibility checks. The objective is set with
-`set_objective_norm(expr, ord)`, where `expr` is an expression and `ord` selects the norm.
-The objective also accepts a list of expressions, which the package stacks into a single
+expression. The package supports four objectives: the $\ell_1$ norm `ft.norm(expr, 1)`, the
+$\ell_\infty$ norm `ft.norm(expr, np.inf)`, the squared $\ell_2$ norm `ft.sum_squares(expr)`, and a
+zero objective for feasibility checks (`set_zero_objective`). The objective is set with
+`vp.maximize(...)`; `set_objective_norm(expr, ord)` is the equivalent lower-level call.
+`ft.norm` also accepts a list of expressions, which the package stacks into a single
 vector before applying the norm, useful for composite metrics such as the OSQP convergence
 check, which monitors both the primal and the dual residual.
 
@@ -156,7 +157,7 @@ q = -D.T @ x_demo
 zk = demo.iterate(n, lb=-1, ub=1)
 wk = demo.iterate(n, lb=-1, ub=1)
 yk = demo.iterate(n, lb=-1, ub=1)
-demo.set_objective_norm([M @ zk - wk, P @ zk + q + M.T @ yk], np.inf)
+demo.maximize(ft.norm([M @ zk - wk, P @ zk + q + M.T @ yk], np.inf))
 ```
 
 The list interface stacks both residual vectors and maximizes the $\ell_\infty$ norm of the result. The
@@ -177,15 +178,14 @@ Python function, together with bounds on $z^\star$.
 # fixed point for ista
 zk = z0
 for _ in range(K):
-    zk = demo.soft_threshold(
-        zk - eta * D.T @ (D @ zk - x_demo), lambd=lambd * eta)
+    zk = demo.soft_threshold(zk - eta * D.T @ (D @ zk - x_demo), lambd=lambd * eta)
 z_star = demo.fixed_point(
     n_dim=n,
-    operator=lambda z: demo.soft_threshold(
-        z - eta * D.T @ (D @ z - x_demo), lambd=lambd * eta),
-    lb=-100, ub=100,
+    operator=lambda z: demo.soft_threshold(z - eta * D.T @ (D @ z - x_demo), lambd=lambd * eta),
+    lb=-100,
+    ub=100,
 )
-demo.set_objective_norm(zk - z_star, 2)
+demo.maximize(ft.sum_squares(zk - z_star))
 ```
 
 Internally, `fixed_point` creates a new iterate $z^\star$ with the given bounds, applies the
@@ -202,7 +202,7 @@ API reference: [Code generation](../api/codegen.md).
 The same specification that drives verification also drives code generation, so a method
 that has been verified needs no restructuring to be compiled: the program generated from is
 the program verified. The user records the algorithm exactly as above, keeps the iterate
-sequence, and passes it to
+sequence in a list, and passes it to
 [`codegen`](../api/verifier.md#fomtools.Verifier.codegen), which extracts an
 intermediate representation of the run, hands the resulting specification to an LLM coding
 agent, and iterates the generated code against a Python reference oracle until it is
@@ -214,8 +214,17 @@ Set `FOMTOOLS_CODEGEN_AGENT=1` or pass an explicit `driver=`. See the
 [code generation guide](codegen.md#generating-the-solver).
 
 ```python
-# the same trajectory that was verified, now compiled
-result = vp.codegen("out/fista", iterates=s, name="fista")
+# the FISTA iteration from the quick start, keeping every iterate
+gen = ft.Verifier()
+x_gen = gen.parameter(m, lb=0, ub=1)
+s_hist = [gen.iterate(n, lb=0, ub=0)]
+w, t = s_hist[0], 1.0
+for k in range(K):
+    s_hist.append(gen.soft_threshold(w - eta * D.T @ (D @ w - x_gen), lambd=lambd * eta))
+    t_next = 0.5 * (1 + np.sqrt(1 + 4 * t**2))
+    w, t = s_hist[-1] + (t - 1) / t_next * (s_hist[-1] - s_hist[-2]), t_next
+
+result = gen.codegen("out/fista", iterates=s_hist, name="fista")
 assert result.success
 ```
 

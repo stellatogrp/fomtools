@@ -30,7 +30,7 @@ def _():
     from docs.tutorials.helper_functions.control import admm_step, solve_admm_numpy
     from docs.tutorials.helper_functions.codegen_benchmarks import run_codegen_benchmark
     from fomtools.codegen import CodegenConfig, TerminationSpec
-    from fomtools.verifier import Verifier
+    import fomtools as ft
 
     timing_file = start / "_recorded_timings.json"
 
@@ -39,7 +39,7 @@ def _():
     return (
         CodegenConfig,
         TerminationSpec,
-        Verifier,
+        ft,
         admm_step,
         examples_dir,
         mo,
@@ -160,8 +160,8 @@ def _(
     K,
     M,
     TerminationSpec,
-    Verifier,
     admm_step,
+    ft,
     lhs,
     lower,
     n_total,
@@ -172,11 +172,10 @@ def _(
     v0,
     z0,
 ):
-    verifier = Verifier(
+    verifier = ft.Verifier(
         method="mip",
         solver="highs",
         obbt_solver=None,
-        params={"output_flag": False},
     )
 
     z = verifier.iterate(n_total, lb=z0, ub=z0)

@@ -6,8 +6,6 @@ app = marimo.App(width="medium")
 
 @app.cell(hide_code=True)
 def _():
-    import contextlib
-    import io
     import sys
     from pathlib import Path
 
@@ -35,23 +33,6 @@ def _():
     np.set_printoptions(precision=5)
     np.set_printoptions(suppress=True)
 
-    solver_params = {
-        "OutputFlag": 0,
-        "LogToConsole": 0,
-    }
-
-    # Gurobi prints a license banner through sys.stdout the first time its
-    # default environment starts, before any OutputFlag can apply. Start the
-    # environment here, in this hidden cell, with stdout swallowed so the
-    # banner never lands in a visible cell.
-    try:
-        import gurobipy as _gp
-    except ImportError:
-        pass
-    else:
-        with contextlib.redirect_stdout(io.StringIO()):
-            _gp.Model()
-
     return (
         admm_step,
         csr_matrix,
@@ -59,7 +40,6 @@ def _():
         mo,
         np,
         plt,
-        solver_params,
     )
 
 
@@ -165,7 +145,7 @@ def _(mo):
     mo.md(r"""
     ## Simulator class
 
-    We first simulate ADMM from randomly sampled initial dual iterates $v^0 \in [0,1]^{n+1}$. The samples are drawn once below and reused by every simulation cell. Running `_VP.solve()` returns a residual history for each sampled initialization.
+    We first simulate ADMM from randomly sampled initial dual iterates $v^0 \in [0,1]^{n+1}$. The samples are drawn once below and reused by every simulation cell. Running `_vp.solve()` returns a residual history for each sampled initialization.
     """)
     return
 
@@ -188,7 +168,11 @@ def _(mo):
 
 @app.cell
 def _(A_mat, admm_step, l_val, lhs_mat, mu, n, np, rho, sigma, u_val, x0_val):
-    from fomtools.verifier import Verifier
+    import fomtools as ft
+
+    def maximize_residual(vp, residual, ord):
+        """Maximize ``||residual||_ord``, squared for ``ord=2`` (``ft.sum_squares``)."""
+        vp.maximize(ft.sum_squares(residual) if ord == 2 else ft.norm(residual, ord))
 
     def admm_simulation(v0_samples, K, ord=np.inf):
         """Simulate ADMM on sampled dual iterates.
@@ -201,7 +185,7 @@ def _(A_mat, admm_step, l_val, lhs_mat, mu, n, np, rho, sigma, u_val, x0_val):
         ``(n_samples, K)``. Summary statistics (``mean``, ``min``, ``max``, ...)
         are available on the returned instance ``vp`` via ``vp[...]``.
         """
-        vp = Verifier(method="simulator", obbt_solver=None)
+        vp = ft.Verifier(method="simulator", obbt_solver=None)
         x = x0_val
         v = vp.parameter(n + 1, samples=v0_samples)
 
@@ -210,24 +194,24 @@ def _(A_mat, admm_step, l_val, lhs_mat, mu, n, np, rho, sigma, u_val, x0_val):
             x, v, residual = admm_step(
                 vp, A_mat, l_val, u_val, mu, rho, sigma, x, v, lhs_mat_dense
             )
-            vp.set_objective_norm(residual, ord)
+            maximize_residual(vp, residual, ord)
 
         residuals = vp.solve()
         return vp, residuals
 
-    return Verifier, admm_simulation
+    return admm_simulation, ft, maximize_residual
 
 
 @app.cell
 def _(K, admm_simulation, np, v0_samples):
-    _VP, _residuals = admm_simulation(v0_samples, K, ord=np.inf)
+    _vp, _residuals = admm_simulation(v0_samples, K, ord=np.inf)
 
     print(
         f"Summary statistics (at K={K}):\n"
-        f"mean: {_VP['mean']:.6e}\n"
-        f"min: {_VP['min']:.6e}\n"
-        f"max: {_VP['max']:.6e}\n"
-        f"median: {_VP['median']:.6e}\n"
+        f"mean: {_vp['mean']:.6e}\n"
+        f"min: {_vp['min']:.6e}\n"
+        f"max: {_vp['max']:.6e}\n"
+        f"median: {_vp['median']:.6e}\n"
     )
 
     simulation_residuals_admm = np.mean(_residuals, axis=0)
@@ -253,10 +237,11 @@ def _(mo):
 @app.cell
 def _(
     A_mat,
-    Verifier,
     admm_step,
+    ft,
     l_val,
     lhs_mat,
+    maximize_residual,
     mu,
     n,
     np,
@@ -267,9 +252,7 @@ def _(
     v0_ub,
     x0_val,
 ):
-    def admm_verification(
-        K, method, ord=np.inf, obbt_params={"output_flag": False}, **verifier_kwargs
-    ):
+    def admm_verification(K, method, ord=np.inf, **verifier_kwargs):
         """Solve the portfolio ADMM verification problem for one backend.
 
         Builds a ``Verifier`` in ``method`` mode, registers the initial dual
@@ -281,12 +264,8 @@ def _(
 
         ``ord`` defaults to ``inf``, which keeps the MIP a MILP. A 2-norm
         objective is squared, so its value is square-rooted on return.
-
-        ``obbt_params`` defaults to silencing the HiGHS OBBT solver: ``Verifier``
-        forwards only the OBBT backend's own verbosity key from ``params``, so
-        Gurobi's ``OutputFlag`` does not reach it.
         """
-        vp = Verifier(method=method, obbt_params=obbt_params, **verifier_kwargs)
+        vp = ft.Verifier(method=method, **verifier_kwargs)
         x = vp.iterate_trajectory(K + 1, collapse_expr="auto")
         v = vp.iterate_trajectory(K + 1, collapse_expr="auto")
         x[0] = vp.iterate(n, lb=x0_val, ub=x0_val)
@@ -297,7 +276,7 @@ def _(
             x, v, residual = admm_step(
                 vp, A_mat, l_val, u_val, mu, rho, sigma, x, v, lhs_mat, k=k
             )
-            vp.set_objective_norm(residual, ord)
+            maximize_residual(vp, residual, ord)
             val = vp.solve()
             residuals.append(np.sqrt(val) if ord == 2 else val)
         return vp, residuals
@@ -316,9 +295,9 @@ def _(mo):
 
 
 @app.cell
-def _(K, admm_verification, np, solver_params):
+def _(K, admm_verification, np):
     _, all_residuals = admm_verification(
-        K, "mip", ord=np.inf, solver="gurobi", obbt_solver="highs", params=solver_params,
+        K, "mip", ord=np.inf, solver="gurobi", obbt_solver="highs",
     )
     return (all_residuals,)
 

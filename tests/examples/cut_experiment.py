@@ -13,7 +13,7 @@ under four cut configurations layered on a fixed light base:
   base + subgrad      = + subgrad_mono_cut   (<s^i/tau_i - s^j/tau_j, z^i> >= 0, eq 4)
   base + both
 
-Both backends use the squared two-norm objective (``set_objective_norm(expr, 2)``),
+Both backends use the squared two-norm objective (``vp.maximize(ft.sum_squares(expr))``),
 so they are directly comparable: the MIP value is exact and lower-bounds the SDP
 relaxation, and ``gap = sdp - mip`` measures looseness. A cut "helps" when it
 reduces that gap. We deliberately do NOT use ``full_psd_cone`` (slow, dense) — the
@@ -43,7 +43,7 @@ import time
 
 import numpy as np
 
-from fomtools.verifier import Verifier
+import fomtools as ft
 
 SDP_SOLVER = "clarabel"
 MIP_SOLVER = "gurobi"
@@ -157,7 +157,7 @@ def _cut_cone_counts(vp):
 
 def solve_sdp(build, K, build_args, cut_kwargs):
     """Build + solve one SDP config; return (value, wall_seconds, n_cones, n_cuts)."""
-    vp = Verifier(
+    vp = ft.Verifier(
         method="sdp",
         solver=SDP_SOLVER,
         obbt_solver=None,
@@ -165,7 +165,7 @@ def solve_sdp(build, K, build_args, cut_kwargs):
         **cut_kwargs,
     )
     expr = build(vp, K, *build_args)
-    vp.set_objective_norm(expr, 2)
+    vp.maximize(ft.sum_squares(expr))
     t0 = time.perf_counter()
     val = vp.solve()
     secs = time.perf_counter() - t0
@@ -176,14 +176,14 @@ def solve_sdp(build, K, build_args, cut_kwargs):
 def solve_mip_exact(build, K, build_args):
     """Build + solve the exact MIP (squared two-norm). Return (value|None, secs)."""
     try:
-        vp = Verifier(
+        vp = ft.Verifier(
             method="mip",
             solver=MIP_SOLVER,
             obbt_solver=None,
             params=dict(GUROBI_PARAMS),
         )
         expr = build(vp, K, *build_args)
-        vp.set_objective_norm(expr, 2)
+        vp.maximize(ft.sum_squares(expr))
         t0 = time.perf_counter()
         val = float(vp.solve())
         return val, time.perf_counter() - t0

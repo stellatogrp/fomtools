@@ -30,7 +30,7 @@ for why), but any list works:
 
 ```python
 import numpy as np
-from fomtools.verifier import Verifier
+import fomtools as ft
 
 n, m = 2, 4
 rng = np.random.default_rng(0)
@@ -41,7 +41,7 @@ At = np.eye(n) - t * A.T @ A
 Bt = t * A.T
 K = 200
 
-vp = Verifier(method="simulator", obbt_solver=None)
+vp = ft.Verifier(method="simulator", obbt_solver=None)
 b_param = vp.parameter(m, lb=b - 1.0, ub=b + 1.0)
 
 z = vp.iterate_trajectory(K + 1)
@@ -116,7 +116,7 @@ Douglas–Rachford and ADMM carry their iterate through an expression rather tha
 step output:
 
 ```python
-dr = Verifier(method="simulator", obbt_solver=None)
+dr = ft.Verifier(method="simulator", obbt_solver=None)
 q_dr = dr.parameter(n, lb=-1, ub=1)
 kkt = np.eye(n) + A.T @ A
 z_dr = dr.iterate_trajectory(K + 1)
@@ -186,11 +186,11 @@ relative to a pass over the state.
 `TerminationKind.INF_NORM_CHANGE` stops on `||x_k - x_{k-1}||_inf` over the whole
 state, which is not the quantity you verified when your objective reads a scaled
 or partial iterate, or is a KKT residual. `TerminationKind.OBJECTIVE` stops on the
-objective itself, the one set with `set_objective_norm`, in the norm it was set
-with (`ord=2` is the squared two-norm, as in verification):
+objective itself, the one set with `maximize`, in the norm it was set
+with (`ft.sum_squares` is the squared two-norm, as in verification):
 
 ```python
-vp.set_objective_norm(H @ (z[K] - z[K - 1]), ord=np.inf)
+vp.maximize(ft.norm(H @ (z[K] - z[K - 1]), np.inf))
 
 config = CodegenConfig(
     termination=TerminationSpec(kind=TerminationKind.OBJECTIVE, max_iters=K, tol=1e-6),
@@ -489,7 +489,7 @@ Generating the recorded run keeps that property, so **nothing special is needed*
 Write the coefficient in Python, where the rest of your algorithm already lives:
 
 ```python
-vp = Verifier(method="simulator", obbt_solver=None)
+vp = ft.Verifier(method="simulator", obbt_solver=None)
 b_param = vp.parameter(m, lb=b - 1.0, ub=b + 1.0)
 y0 = vp.iterate(n, lb=2, ub=2)
 
@@ -521,7 +521,7 @@ iterates the method needs:
 ```python
 import numpy as np
 from fomtools.codegen import CodegenConfig, Recording, TerminationSpec, generate_code
-from fomtools.verifier import Verifier
+import fomtools as ft
 
 def momentum(k):
     """FISTA's γ in the 0-based index of the emitted loop.
@@ -537,7 +537,7 @@ def momentum(k):
     return gamma
 
 def build(gamma):
-    vp = Verifier(method="simulator", obbt_solver=None)
+    vp = ft.Verifier(method="simulator", obbt_solver=None)
     b_param = vp.parameter(m, lb=b - 1.0, ub=b + 1.0)
     y_prev = vp.iterate(n, lb=2, ub=2)
     y_curr = vp.iterate(n, lb=2, ub=2)

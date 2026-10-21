@@ -35,7 +35,7 @@ def _():
     )
     from docs.tutorials.helper_functions.codegen_benchmarks import run_codegen_benchmark
     from fomtools.codegen import CodegenConfig, TerminationSpec
-    from fomtools.verifier import Verifier
+    import fomtools as ft
 
     timing_file = start / "_recorded_timings.json"
 
@@ -44,7 +44,7 @@ def _():
     return (
         CodegenConfig,
         TerminationSpec,
-        Verifier,
+        ft,
         examples_dir,
         linprog,
         make_network_data,
@@ -144,10 +144,10 @@ def _(
     CodegenConfig,
     K,
     TerminationSpec,
-    Verifier,
     edge_capacity,
     edge_cost,
     eta,
+    ft,
     n_demand,
     n_edges,
     n_supply,
@@ -159,11 +159,10 @@ def _(
     x_ub,
     z0,
 ):
-    verifier = Verifier(
+    verifier = ft.Verifier(
         method="mip",
         solver="highs",
         obbt_solver=None,
-        params={"output_flag": False},
     )
 
     x_param = verifier.parameter(n_demand, lb=x_lb, ub=x_ub)

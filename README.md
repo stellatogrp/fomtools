@@ -47,8 +47,8 @@ import numpy as np
 import fomtools as ft
 
 # Problem data
-m, n, lambd, K = 10, 15, 0.1, 10
-D = np.random.normal(size=(m, n))
+m, n, lambd, K = 5, 8, 0.1, 5
+D = np.random.default_rng(0).normal(size=(m, n))
 eta = 1 / np.linalg.norm(D, 2) ** 2
 
 vp = ft.Verifier()  # MIP verification with HiGHS; use solver="gurobi" for Gurobi
@@ -66,7 +66,7 @@ for k in range(K):
     w = s[k + 1] + (beta_old - 1) / beta * (s[k + 1] - s[k])
 
     # Worst-case residual after k + 1 iterations
-    vp.set_objective_norm(s[k + 1] - s[k], np.inf)
+    vp.maximize(ft.norm(s[k + 1] - s[k], np.inf))
     results.append(vp.solve())
 ```
 
@@ -77,7 +77,7 @@ Steps can also be written with proximal operators and projections, e.g.,
 ## Beyond worst-case verification
 
 **Simulation.** Write the same loop with `ft.Verifier(method="simulator")`, and give
-parameters sample arrays of shape `(N, d)` (or let them be sampled from their bounds). The
+parameters sample arrays of shape `(N, d)`, as in `vp.parameter(d, samples=X)`. The
 simulator runs all samples as batched operations, on a GPU through CuPy when one is
 available. It then reports summary statistics and a KL-inverse bound on the probability that
 the residual exceeds a tolerance `epsilon`:

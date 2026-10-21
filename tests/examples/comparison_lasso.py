@@ -22,7 +22,7 @@ from PEPit import PEP
 from PEPit.functions import ConvexFunction, SmoothConvexFunction
 from PEPit.primitive_steps import proximal_step
 
-from fomtools.verifier import Verifier
+import fomtools as ft
 
 # ── Problem setup (same as sparse_coding.py tutorial) ─────────────────────────
 np.random.seed(0)
@@ -45,11 +45,11 @@ eta = 1.0 / L
 K = 5
 s0 = np.zeros(n)
 
-solver_params = {"OutputFlag": 0, "LogToConsole": 0}
+solver_params = {"LogToConsole": 0}
 MATCH_MIP_AT_K1 = True
 
 # ── MIP — squared 2-norm of fixed-point residual (MIQP, Gurobi only) ──────────
-vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver="gurobi", params=solver_params)
+vp_mip = ft.Verifier(method="mip", solver="gurobi", obbt_solver="gurobi", params=solver_params)
 
 x_mip = vp_mip.parameter(p, lb=x_lb, ub=x_ub)
 s_mip = [s0]
@@ -62,14 +62,14 @@ for k in range(1, K + 1):
             s_mip[k - 1] - eta * D.T @ (D @ s_mip[k - 1] - x_mip), lambd=lambd * eta
         )
     )
-    vp_mip.set_objective_norm([s_mip[k] - s_mip[k - 1]], ord=2)
+    vp_mip.maximize(ft.sum_squares(s_mip[k] - s_mip[k - 1]))
     mip_residuals.append(vp_mip.solve())
     print(f"MIP  k={k}: {mip_residuals[-1]:.6f}")
     if k == 5:
-        x_worst_k5 = vp_mip.get_solution_value(x_mip)
+        x_worst_k5 = x_mip.value
 
 # ── SDP — squared 2-norm of fixed-point residual ──────────────────────────────
-vp_sdp = Verifier(method="sdp", solver="clarabel", obbt_solver="highs")
+vp_sdp = ft.Verifier(method="sdp", solver="clarabel", obbt_solver="highs")
 
 x_sdp = vp_sdp.parameter(p, lb=x_lb, ub=x_ub)
 s_sdp = [s0]
@@ -81,7 +81,7 @@ for k in range(1, K + 1):
             s_sdp[k - 1] - eta * D.T @ (D @ s_sdp[k - 1] - x_sdp), lambd=lambd * eta
         )
     )
-    vp_sdp.set_objective_norm([s_sdp[k] - s_sdp[k - 1]], ord=2)
+    vp_sdp.maximize(ft.sum_squares(s_sdp[k] - s_sdp[k - 1]))
     sdp_residuals.append(vp_sdp.solve())
     print(f"SDP  k={k}: {sdp_residuals[-1]:.6f}")
 
@@ -121,7 +121,7 @@ for k in range(1, K + 1):
     print(f"PEPit k={k}: {pepit_residuals[-1]:.6f}  (R={R:.4f})")
 
 # ── Simulator — squared 2-norm of fixed-point residual, num_star samples ──────
-vp_sim = Verifier(method="simulator")
+vp_sim = ft.Verifier(method="simulator")
 
 x_sim = vp_sim.parameter(ndim=p, lb=x_lb, ub=x_ub, samples=x_samples.T)
 s_sim = [s0]  # fixed initial point
@@ -132,7 +132,7 @@ for k in range(1, K + 1):
             s_sim[k - 1] - eta * D.T @ (D @ s_sim[k - 1] - x_sim), lambd=lambd * eta
         )
     )
-    vp_sim.set_objective_norm([s_sim[k] - s_sim[k - 1]], ord=2)
+    vp_sim.maximize(ft.sum_squares(s_sim[k] - s_sim[k - 1]))
 
 sim_results = vp_sim.solve()
 sim_residuals = sim_results.max(axis=0).tolist()

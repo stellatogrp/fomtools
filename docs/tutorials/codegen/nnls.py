@@ -27,7 +27,7 @@ def _():
     examples_dir = repo_root / "examples"
 
     from fomtools.codegen import CodegenConfig, TerminationSpec
-    from fomtools.verifier import Verifier
+    import fomtools as ft
     from docs.tutorials.helper_functions.codegen_benchmarks import run_codegen_benchmark
     from docs.tutorials.helper_functions.nnls import (
         make_nnls_matrix,
@@ -42,7 +42,7 @@ def _():
     return (
         CodegenConfig,
         TerminationSpec,
-        Verifier,
+        ft,
         examples_dir,
         make_nnls_matrix,
         mo,
@@ -92,8 +92,8 @@ def _(
     CodegenConfig,
     K,
     TerminationSpec,
-    Verifier,
     eta,
+    ft,
     m,
     n,
     pgd_step,
@@ -101,11 +101,10 @@ def _(
     x_ub,
     z0,
 ):
-    verifier = Verifier(
+    verifier = ft.Verifier(
         method="mip",
         solver="highs",
         obbt_solver=None,
-        params={"output_flag": False},
     )
 
     x_param = verifier.parameter(m, lb=x_lb, ub=x_ub)
