@@ -72,6 +72,7 @@ class Verifier(object):
         subgrad_mono_cut=False,
         obbt_params=None,
         verbose=False,
+        tighten_residuals=True,
     ):
         """
         Initialize a Verifier instance.
@@ -141,6 +142,12 @@ class Verifier(object):
             backends) or ``verbose``, unless ``obbt_params`` sets its own.
         verbose : bool, default False
             Print the solver logs, for the main solves and for the OBBT LPs.
+        tighten_residuals : bool, default True
+            MIP only. After each solve whose objective is ``ft.norm(a - b, np.inf)``,
+            chain the certified bound with the earlier ones, ``||a - z^0||_inf <= sum
+            of the bounds from z^0 to a``, and tighten ``a`` with it (the triangle
+            inequality behind `post_process`). Later steps then start from tighter
+            boxes. The worst case is unchanged; only the MIPs get easier.
         """
         self.theory_func = theory_func
         self.method = method.lower()
@@ -154,6 +161,12 @@ class Verifier(object):
         # for none / the zero objective. Code generation reads it to stop the
         # generated solver on the verified metric (TerminationKind.OBJECTIVE).
         self.objective: tuple[tuple[LinearExpression, ...], int | float] | None = None
+        # Successive-residual bounds for ``tighten_residuals``: ``(a, b)`` of the current
+        # objective ``||a - b||_inf``, and, per expression counter, ``(root, radius)``
+        # with a certified ``||expr - root||_inf <= radius``.
+        self.tighten_residuals = tighten_residuals and self.method == "mip"
+        self._residual = None
+        self._residual_chain = {}
 
         # An explicit verbosity key in ``params`` (any case, as in Gurobi) overrides ``verbose``.
         option = self._verbosity_option(method, solver, verbose)
@@ -1216,12 +1229,14 @@ class Verifier(object):
         zero objective, turning it into a feasibility problem.
         """
         self.objective = None
+        self._residual = None
         self.canonicalizer.set_zero_objective()
 
     def _set_norm_objective(
         self, expr_list: Sequence[LinearExpression] | LinearExpression, ord: int | float
     ) -> None:
         """Maximize ``||expr_list||_ord`` (``ord=2`` is the squared two-norm)."""
+        self._residual = None
         try:
             len(expr_list)
         except TypeError:
@@ -1283,6 +1298,8 @@ class Verifier(object):
         """
         if isinstance(objective, Norm):
             self._set_norm_objective(list(objective.exprs), objective.p)
+            if objective.p == np.inf and len(objective.exprs) == 1:
+                self._residual = objective.exprs[0]._difference
         elif isinstance(objective, SumSquares):
             self._set_norm_objective(objective.expr, 2)
         else:
@@ -1411,7 +1428,9 @@ class Verifier(object):
             else:
                 self.objective_bound_stats = self.canonicalizer.tighten_objective_bounds()
         if self.method == "mip":
-            return self.canonicalizer.solve_model(warm_start=warm_start, **kwargs)
+            bound = self.canonicalizer.solve_model(warm_start=warm_start, **kwargs)
+            self._chain_residual(bound)
+            return bound
         if self.method == "simulator" and self._unsampled_params:
             dims = ", ".join(str(var.ndim) for var in self._unsampled_params)
             raise ValueError(
@@ -1422,6 +1441,26 @@ class Verifier(object):
                 "(equal finite bounds fix a constant and need no samples)."
             )
         return self.canonicalizer.solve_model(**kwargs)
+
+    def _chain_residual(self, bound: float) -> None:
+        """
+        Tighten ``a`` after a solve certified ``||a - b||_inf <= bound``.
+
+        With ``||b - root||_inf <= r_b`` from earlier solves, the triangle inequality
+        gives ``||a - root||_inf <= r_b + bound``. The bound holds over the current
+        family; constraints added later only shrink it, so it stays valid.
+        """
+        if not self.tighten_residuals or self._residual is None:
+            return
+        a, b = self._residual
+        root, radius_b = self._residual_chain.get(b.counter, (b, 0.0))
+        # Pad outward a little for solver tolerances.
+        radius = (radius_b + bound) * (1 + 1e-9) + 1e-9
+        known = self._residual_chain.get(a.counter)
+        if known is not None and (known[0] is not root or known[1] <= radius):
+            return
+        self._residual_chain[a.counter] = (root, radius)
+        self._apply_reference_bound(a, root, radius)
 
     @contextmanager
     def _mip_verbosity(self, verbose: bool):

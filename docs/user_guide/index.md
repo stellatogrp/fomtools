@@ -263,7 +263,10 @@ For algorithms with several state blocks or intermediate operations, set an
 explicit objective at each iteration. Statistical risk bounds require independent
 evaluation samples from the specified distribution and a fixed tolerance.
 
-`Verifier.post_process`, which tightens later iterates from earlier residual bounds, is
+With the MIP backend, every solve of `vp.maximize(ft.norm(a - b, np.inf))` chains its bound with
+the earlier ones and tightens `a` (`tighten_residuals=True`, the default). This uses only
+certified MIP bounds, and constraints added later only shrink the family, so the bounds stay
+valid. The manual `Verifier.post_process`, which does the same for a caller-supplied list, is
 valid only when its list contains upper bounds on **every**
 successive infinity-norm difference from the reference to the target over the same
 family. Do not pass a final-step bound alone, an incumbent, or a sample maximum.

@@ -149,8 +149,19 @@ $\ell_\infty$ norm. Use `ft.norm(..., 1)` for the $\ell_1$ norm, or `ft.sum_squa
 squared $\ell_2$ norm, which makes the MIP quadratic and needs `solver="gurobi"`. `vp.solve()` creates and solves the backend-specific optimization problem
 and returns the worst-case value. After a MIP solve, `x.value` is the worst-case parameter.
 
-Solving at every iteration gives the worst-case residual as a function of $k$, and each solve
-warm-starts the next one. If you only need the bound at $K$, set the objective and solve once
+Solving at every iteration gives the worst-case residual as a function of $k$, and it makes the
+later solves easier. Each solve warm-starts the next one. After the solve at iteration $k$,
+FOMTools also chains the certified bounds $r_j$ on $\|s^j - s^{j-1}\|_\infty$ through the
+triangle inequality,
+
+$$
+\|s^k - s^0\|_\infty \leq \sum_{j=1}^k r_j,
+$$
+
+and tightens the bounds of $s^k$ with it before the next step is added. The worst case is
+unchanged, but the mixed-integer problems at larger $k$ get smaller big-M constants. This happens
+whenever the objective is `ft.norm(a - b, np.inf)`; pass `tighten_residuals=False` to
+`ft.Verifier` to turn it off. If you only need the bound at $K$, set the objective and solve once
 after the loop.
 
 For a distance-to-solution metric $\|s^{k+1} - s^\star\|_\infty$, use the fixed point

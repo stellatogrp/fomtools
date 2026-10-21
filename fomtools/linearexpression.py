@@ -53,6 +53,9 @@ class LinearExpression:
     __array_priority__ = 1000
     # The Verifier a leaf is registered with; set by ``Verifier._register_var``.
     _verifier = None
+    # ``(a, b)`` when this expression was built as ``a - b``; lets the Verifier
+    # recognize a successive-residual objective (see ``Verifier.maximize``).
+    _difference = None
 
     def __init__(self, decomposition_dict: dict, const: np.ndarray = None, is_binary: bool = False):
         """
@@ -442,7 +445,10 @@ class LinearExpression:
             `np.ndarray`, or `list`.
 
         """
-        return self + (-other)
+        result = self + (-other)
+        if isinstance(other, LinearExpression):
+            result._difference = (self, other)
+        return result
 
     def __rsub__(self, other: Self) -> Self:
         """

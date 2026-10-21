@@ -218,7 +218,7 @@ def record_cuts(monkeypatch):
     return records
 
 
-def _pgd_chain(kind, K, *, const, obbt=None, seed=3, n=3):
+def _pgd_chain(kind, K, *, const, obbt=None, seed=3, n=3, tighten_residuals=True):
     """Projected gradient on a box/orthant QP with a parametric linear term."""
     rng = np.random.default_rng(seed)
     M = rng.normal(size=(n, n))
@@ -226,7 +226,13 @@ def _pgd_chain(kind, K, *, const, obbt=None, seed=3, n=3):
     t = 0.5 / np.linalg.norm(P, 2)
     l, u = -0.3 * np.ones(n), 0.4 * np.ones(n)
     lambd = 0.05
-    vp = Verifier(method="mip", solver="gurobi", obbt_solver=obbt, params=MIP_EXACT)
+    vp = Verifier(
+        method="mip",
+        solver="gurobi",
+        obbt_solver=obbt,
+        params=MIP_EXACT,
+        tighten_residuals=tighten_residuals,
+    )
     q = vp.parameter(n, lb=-np.ones(n), ub=np.ones(n))
     z = [vp.iterate(n, lb=np.zeros(n), ub=np.zeros(n))]
     for _ in range(K):
@@ -302,7 +308,8 @@ def _num_constrs(vp):
 
 def test_cuts_persist_across_K():
     K = 3
-    vp, _, z, _ = _pgd_chain("satlin", K, const=0.0)
+    # Residual tightening adds its own rows; count only the cuts here.
+    vp, _, z, _ = _pgd_chain("satlin", K, const=0.0, tighten_residuals=False)
     total_cuts = 0
     for k in range(1, K + 1):
         vp.maximize(ft.norm(z[k] - z[k - 1], np.inf))
@@ -332,7 +339,7 @@ def test_cut_rounds():
 
 def test_cuts_reach_obbt_with_one_pass_per_round(monkeypatch):
     K = 3
-    vp, _, z, _ = _pgd_chain("satlin", K, const=0.0, obbt="gurobi")
+    vp, _, z, _ = _pgd_chain("satlin", K, const=0.0, obbt="gurobi", tighten_residuals=False)
     passes = []
     original = vp._tighten_leaf_bounds
 
