@@ -69,6 +69,8 @@ def _build_config(args) -> CodegenConfig:
                 ("agent_timeout_s", args.translate_timeout),
                 ("agent_optimize_timeout_s", args.optimize_timeout),
                 ("agent_optimize_max_turns", args.optimize_max_turns),
+                ("agent_optimize_rounds", args.optimize_rounds),
+                ("agent_optimize_min_gain", args.optimize_min_gain),
             )
             if value is not None  # unset: the CodegenConfig default
         },
@@ -161,13 +163,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--optimize-timeout",
         type=int,
         metavar="SECONDS",
-        help="wall-clock budget of the code optimization phase (default: 7200)",
+        help="wall-clock budget of one code optimization round (default: 7200)",
     )
     p.add_argument(
         "--optimize-max-turns",
         type=int,
         metavar="N",
-        help="turn budget of the code optimization phase (default: 200)",
+        help="turn budget of one code optimization round (default: 200)",
+    )
+    p.add_argument(
+        "--optimize-rounds",
+        type=int,
+        metavar="N",
+        help="maximum number of code optimization rounds (default: 5)",
+    )
+    p.add_argument(
+        "--optimize-min-gain",
+        type=float,
+        metavar="FRACTION",
+        help="stop when a round gains less than this, relative (default: 0.02)",
     )
     p.add_argument("--scaffold-only", action="store_true", help="emit files but skip the agent")
     p.add_argument(

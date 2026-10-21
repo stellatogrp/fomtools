@@ -234,8 +234,13 @@ class CodegenConfig(BaseModel):
         Turn budget for one coding-agent attempt at the code optimization
         phase. Default 200.
     agent_optimize_timeout_s : int
-        Wall-clock budget, in seconds, for the code optimization phase.
-        Default 7200.
+        Wall-clock budget, in seconds, for one round of the code optimization
+        phase. Default 7200.
+    agent_optimize_rounds : int
+        Maximum number of code optimization rounds. Default 5.
+    agent_optimize_min_gain : float
+        A round that makes the solver less than this much faster (relative)
+        ends the phase. Default 0.02.
     cg_auto_min_dim : int
         Dimension threshold for the ``AUTO`` → CG upgrade on the large-scale
         CUDA backend (see `SolveMethod`). Raise it to keep more systems
@@ -288,8 +293,8 @@ class CodegenConfig(BaseModel):
         ge=1,
         default=7200,
         description=(
-            "Wall-clock budget, in seconds, for the code optimization phase, "
-            "enforced as for agent_timeout_s. Larger than the translation budget "
+            "Wall-clock budget, in seconds, for one round of the code optimization "
+            "phase (each round gets its own), enforced as for agent_timeout_s. Larger than the translation budget "
             "because the phase is open-ended: profile, rewrite, re-verify, "
             "benchmark, repeat, and each round of a GPU kernel rewrite (nvcc "
             "build, verify, benchmark) is slow. Two hours by default: a CUDA CG "
@@ -297,6 +302,27 @@ class CodegenConfig(BaseModel):
             "still leaves whatever it had written on disk, which the pipeline "
             "re-verifies and benchmarks. The gates that run after the agent "
             "(verify, benchmark, profile) take seconds and are outside the budget."
+        ),
+    )
+    agent_optimize_rounds: int = Field(
+        ge=1,
+        default=5,
+        description=(
+            "Maximum number of code optimization rounds. Each round is a fresh agent "
+            "run on the fastest verified solver so far, told its current time and "
+            "profile; the pipeline re-verifies and benchmarks it head to head "
+            "against that solver, and keeps it only if it is faster. The phase "
+            "ends early when a round fails its gates, is not faster, or gains less "
+            "than agent_optimize_min_gain. One round is the single-pass behavior."
+        ),
+    )
+    agent_optimize_min_gain: float = Field(
+        ge=0.0,
+        default=0.02,
+        description=(
+            "Relative speedup below which a kept round ends the code optimization "
+            "phase: a round taking the solver from t to t' continues only if "
+            "(t - t') / t >= agent_optimize_min_gain."
         ),
     )
     cg_auto_min_dim: int = Field(

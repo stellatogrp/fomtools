@@ -244,3 +244,46 @@ Between the markers, give:
 The markers are how your summary is lifted into the generated `OPTIMIZATIONS.md`
 report, so emit them literally, and only once.
 """
+
+
+def code_optimization_continuation(
+    round_index: int,
+    rounds: int,
+    current_us: float | None,
+    translated_us: float | None,
+    last_gain: float | None,
+    profile: list | None = None,
+) -> str:
+    """The block appended to `code_optimization_instructions` for a later round.
+
+    Each round is a fresh agent run on the solver the previous rounds left (the
+    best one so far, re-verified and benchmarked by the pipeline), so the agent
+    has to be told where it stands: which round this is, the current and the
+    translated whole-solve times, and what the last round gained.
+    """
+    lines = [
+        "",
+        f"This is optimization round {round_index} of at most {rounds}. The editable "
+        "sources already hold the fastest verified solver from the earlier rounds; "
+        "start from it, not from the translation.",
+    ]
+    if current_us is not None:
+        line = f"It currently takes {current_us:.3f} us per solve (`make bench` mean_us)"
+        if translated_us is not None and current_us > 0:
+            line += (
+                f", against {translated_us:.3f} us for the translated solver "
+                f"({translated_us / current_us:.2f}x so far)"
+            )
+        lines.append(line + ".")
+    if last_gain is not None:
+        lines.append(f"The previous round made it {100 * last_gain:.1f}% faster.")
+    if profile:
+        lines.append("Its current profile (`make profile`), hottest first:")
+        lines += [f"  {r.name:<24} {r.total_us:12.1f} us  {r.pct:6.2f}%" for r in profile]
+    lines += [
+        "Look for further speedups, including structure the earlier rounds did not "
+        "exploit. If you find nothing that helps, leave the sources unchanged and say "
+        "so in your summary; the pipeline stops when a round gains too little.",
+        "",
+    ]
+    return "\n".join(lines)

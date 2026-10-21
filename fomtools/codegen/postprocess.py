@@ -242,6 +242,30 @@ def _kernel_check_lines(
     return lines + [""]
 
 
+def _round_lines(rounds: list[dict]) -> list[str]:
+    """The report's per-round table of the code optimization phase."""
+
+    def us(value) -> str:
+        return f"{value:.3f}" if value is not None else "-"
+
+    lines = [
+        "## Rounds",
+        "",
+        "| round | before (us) | after (us) | gain | kept | agent (s) | outcome |",
+        "|---:|---:|---:|---:|:---:|---:|---|",
+    ]
+    for r in rounds:
+        gain = f"{100 * r['gain']:.1f}%" if r.get("gain") is not None else "-"
+        outcome = r.get("stop_reason") or "continued"
+        if r.get("truncated"):
+            outcome += " (agent stopped at its budget)"
+        lines.append(
+            f"| {r['index']} | {us(r.get('us_before'))} | {us(r.get('us_after'))} | {gain} "
+            f"| {'yes' if r.get('kept') else 'no'} | {r.get('agent_wall_s', 0):.0f} | {outcome} |"
+        )
+    return lines + [""]
+
+
 def write_optimization_report(
     out_dir: str | Path,
     timing_summary: str,
@@ -252,6 +276,7 @@ def write_optimization_report(
     kernel_checks: list[dict] | None = None,
     rule_violations: list[str] | None = None,
     rewrite_collected: bool = True,
+    rounds: list[dict] | None = None,
 ) -> Path:
     """Write ``OPTIMIZATIONS.md`` recording timing, agent notes, and the diff.
 
@@ -266,7 +291,9 @@ def write_optimization_report(
     ``rule_violations`` found when the rewrite was collected; ``None`` (a target
     whose products are not editable) leaves the section out.
     ``rewrite_collected`` is False when the phase returned no changed, verified
-    rewrite, so the rules never ran on one.
+    rewrite, so the rules never ran on one. ``rounds`` (one dict per round, see
+    `fomtools.codegen.generate.OptimizationRound`) adds a per-round table when
+    the phase ran more than one.
     """
     out_dir = Path(out_dir)
     lines = ["# Optimization report", ""]
@@ -278,6 +305,8 @@ def write_optimization_report(
         else "not kept (reverted to the translated solver)"
     )
     lines += [f"Optimization outcome: **{status}**.", ""]
+    if rounds and len(rounds) > 1:
+        lines += _round_lines(rounds)
     if caveats:
         lines += ["## Caveats", ""]
         lines += [f"- {c}" for c in caveats]

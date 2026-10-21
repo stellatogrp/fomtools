@@ -169,7 +169,7 @@ reciprocals). Override with `CodegenConfig(solve_method="LDLT"/"LU"/"CG")`.
 ### Agent Phases
 
 - **Translation phase**: translate IR to C -> verify against oracle (gate 1)
-- **Code optimization phase** (optional, `code_optimization=True, profile=True`): profile -> optimize hottest region -> re-verify -> repeat until gains level off. The optimized solver ships only if it passes the same check (gate 2) and is not slower; otherwise the translated solver is restored.
+- **Code optimization phase** (optional, `code_optimization=True, profile=True`): profile -> optimize hottest region -> re-verify -> repeat until gains level off, in up to `agent_optimize_rounds` (5) rounds, each a fresh agent run on the best solver so far. Each round's rewrite is kept only if it passes the same check (gate 2) and is faster head to head; a round that fails, is slower, or gains less than `agent_optimize_min_gain` (2%) ends the phase, reverting to the best solver so far. `run_code_optimization` runs the phase on a copy of a translated solver.
 
 ## CLI Reference
 

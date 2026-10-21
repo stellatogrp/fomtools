@@ -329,8 +329,20 @@ Each agent phase runs under a budget, set per run on `CodegenConfig`:
 | setting | default | bounds |
 |---|---|---|
 | `agent_timeout_s` | 600 s (10 min) | wall-clock time of the translation phase |
-| `agent_optimize_timeout_s` | 7200 s (2 h) | wall-clock time of the code optimization phase |
-| `agent_optimize_max_turns` | 200 | agent turns of the code optimization phase |
+| `agent_optimize_timeout_s` | 7200 s (2 h) | wall-clock time of one code optimization round |
+| `agent_optimize_max_turns` | 200 | agent turns of one code optimization round |
+| `agent_optimize_rounds` | 5 | maximum number of code optimization rounds |
+| `agent_optimize_min_gain` | 0.02 | a round gaining less than this (relative) ends the phase |
+
+The code optimization phase runs in rounds. Each round is a fresh agent run on
+the fastest verified solver so far, told its current time and profile. After each
+round the pipeline re-verifies the rewrite (including the kernel rules) and
+benchmarks it head to head against that solver. A round that fails, is not
+faster, or gains less than `agent_optimize_min_gain` ends the phase; a failing or
+slower one is reverted first. `OPTIMIZATIONS.md` lists the rounds.
+`fomtools.codegen.generate.run_code_optimization` runs the phase on any directory
+that holds a verified translated solver, for example a copy, when you want to
+keep the translated solver too.
 
 Translation is a bounded task and rarely needs more than a few minutes. The code
 optimization phase is open-ended, and on a GPU every round (an `nvcc` build,
@@ -342,9 +354,9 @@ config = CodegenConfig(agent_optimize_timeout_s=4 * 3600, agent_optimize_max_tur
 result = generate_code(..., config=config, code_optimization=True)
 ```
 
-or, on the command line, `--translate-timeout`, `--optimize-timeout` (seconds)
-and `--optimize-max-turns`. The budgets apply to whichever agent driver runs, a
-driver you build yourself included: one built without a config takes the run's.
+or, on the command line, `--translate-timeout`, `--optimize-timeout` (seconds),
+`--optimize-max-turns`, `--optimize-rounds` and `--optimize-min-gain`. The
+budgets apply to whichever agent driver runs, a driver you build yourself included: one built without a config takes the run's.
 When a budget runs out the agent is stopped, whatever it wrote is re-verified and
 benchmarked as usual, and the report says so (in that case the agent may not have
 written its own summary). For reference, a CUDA CG solve stopped at 30 minutes
@@ -640,8 +652,8 @@ both side by side is the quickest way to see what declaring a coefficient buys.
 `--scaffold-only` emits everything except the solver body (useful to inspect the
 spec and data before invoking the agent). `--no-roll` keeps a recorded run
 unrolled even when it could be rolled back up. `--translate-timeout`,
-`--optimize-timeout` (seconds) and `--optimize-max-turns` set the agent's
-budgets for this run ([above](#time-and-turn-budgets)). `--tol` alone stops on the
+`--optimize-timeout` (seconds), `--optimize-max-turns`, `--optimize-rounds` and
+`--optimize-min-gain` set the agent's budgets for this run ([above](#time-and-turn-budgets)). `--tol` alone stops on the
 infinity-norm change; with `--objective` it stops on the verification objective
 the module set on its recording, and `--check-termination N` sets the interval.
 
