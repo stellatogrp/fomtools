@@ -38,6 +38,12 @@ from fomtools.steps import (
 
 log = logging.getLogger(__name__)
 
+
+def _deprecated(old: str, new: str) -> None:
+    """Warn that ``old`` is deprecated, pointing at the user's call two frames up."""
+    warnings.warn(f"{old} is deprecated; use {new}.", DeprecationWarning, stacklevel=3)
+
+
 STEP_CLASSES = {
     "implicit_linear": Affine,
     "relu": Relu,
@@ -499,9 +505,7 @@ class Verifier(object):
 
     def add_iterate(self, *args, **kwargs) -> LinearExpression:
         """Deprecated alias of `iterate`."""
-        warnings.warn(
-            "add_iterate is deprecated; use Verifier.iterate.", DeprecationWarning, stacklevel=2
-        )
+        _deprecated("add_iterate", "Verifier.iterate")
         return self.iterate(*args, **kwargs)
 
     def _add_aux_iterate(self, ndim, lb=-np.inf, ub=np.inf, **kwargs):
@@ -570,9 +574,7 @@ class Verifier(object):
 
     def add_param(self, *args, **kwargs) -> LinearExpression:
         """Deprecated alias of `parameter`."""
-        warnings.warn(
-            "add_param is deprecated; use Verifier.parameter.", DeprecationWarning, stacklevel=2
-        )
+        _deprecated("add_param", "Verifier.parameter")
         return self.parameter(*args, **kwargs)
 
     def add_param_stack(self, param_list: List[LinearExpression]) -> LinearExpression:
@@ -1035,19 +1037,9 @@ class Verifier(object):
     @property
     def step(self) -> "_StepProxy":
         """
-        Interface for constructing and executing steps.
+        Deprecated: call the step directly, e.g. ``verifier.relu(expr)``.
 
-        This property exposes an interface for building
-        steps on the ``Verifier``. Attribute access on ``step``
-        (e.g. ``verifier.step.relu``) resolves to a callable
-        that runs the corresponding step.
-
-        Examples
-        -------
-        >>> verifier = Verifier()
-        >>> expr = verifier.parameter(2)
-        >>> x = verifier.step.relu(expr, relax_binary_vars=True)  # same as verifier.relu
-
+        ``verifier.step.<name>(arg, **kwargs)`` runs the step of that name and warns.
         """
         return self._step_proxy
 
@@ -1091,7 +1083,7 @@ class Verifier(object):
         r"""
         Projection onto the nonnegative orthant, $\Pi_{\mathbf{R}^n_+}(\text{arg})$.
 
-        Same as ``verifier.step.relu``; see `Relu` for the parameters.
+        See `Relu` for the parameters.
         """
         return self.run_step(arg, Relu, relax_binary_vars, proj_ranges=proj_ranges)
 
@@ -1099,7 +1091,7 @@ class Verifier(object):
         r"""
         Projection onto the box $[l, u]$, $\Pi_{[l,u]}(\text{arg})$.
 
-        Same as ``verifier.step.satlin``; see `SaturatedLinear` for the parameters.
+        See `SaturatedLinear` for the parameters.
         """
         return self.run_step(arg, SaturatedLinear, relax_binary_vars, l=l, u=u)
 
@@ -1107,7 +1099,7 @@ class Verifier(object):
         r"""
         Soft-thresholding $\mathbf{soft}_\lambda(\text{arg})$, the prox of $\lambda\|\cdot\|_1$.
 
-        Same as ``verifier.step.soft_threshold``; see `SoftThreshold` for the parameters.
+        See `SoftThreshold` for the parameters.
         """
         return self.run_step(arg, SoftThreshold, relax_binary_vars, lambd=lambd)
 
@@ -1117,7 +1109,7 @@ class Verifier(object):
         """
         Implicit affine step ``output_mat @ w = weight @ arg + bias``.
 
-        Same as ``verifier.step.implicit_linear``; see `Affine` for the parameters.
+        See `Affine` for the parameters.
         """
         return self.run_step(
             arg, Affine, relax_binary_vars, output_mat=output_mat, weight=weight, bias=bias
@@ -1226,100 +1218,52 @@ class Verifier(object):
         self.objective = None
         self.canonicalizer.set_zero_objective()
 
-    def set_infinity_norm_objective(self, expr_list: Sequence[LinearExpression] | LinearExpression):
-        """
-        Create an infinity-norm objective over the set of ``LinearExpression``
-        objects.
-
-        Parameters
-        ----------
-        expr_list: Sequence[LinearExpression] | LinearExpression
-            A single LinearExpression or a list of LinearExpression objects for
-            which the infinity-norm objective will be constructed.
-
-        """
-        try:
-            len(expr_list)
-        except TypeError:
-            expr_list = [expr_list]
-
-        lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
-        self.canonicalizer.set_infinity_norm_objective(expr_list, list(lb), list(ub))
-        self.objective = (tuple(expr_list), np.inf)
-
-    def set_two_norm_objective(self, expr_list: Sequence[LinearExpression] | LinearExpression):
-        """
-        Create a 2-norm objective over the set of ``LinearExpression``
-        objects.
-
-        Parameters
-        ----------
-        expr_list: Sequence[LinearExpression] | LinearExpression
-            A single LinearExpression or a list of LinearExpression objects for
-            which the 2-norm objective will be constructed.
-
-        """
-        try:
-            len(expr_list)
-        except TypeError:
-            expr_list = [expr_list]
-
-        lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
-        self.canonicalizer.set_two_norm_objective(expr_list, list(lb), list(ub))
-        self.objective = (tuple(expr_list), 2)
-
-    def set_one_norm_objective(
-        self, expr_list: Sequence[LinearExpression] | LinearExpression
+    def _set_norm_objective(
+        self, expr_list: Sequence[LinearExpression] | LinearExpression, ord: int | float
     ) -> None:
-        """
-        Create a 1-norm objective over the set of ``LinearExpression`` objects.
-
-        Parameters
-        ----------
-        expr_list : Sequence[LinearExpression] | LinearExpression
-            A single LinearExpression or a list of LinearExpression objects for
-            which the 1-norm objective will be constructed.
-        """
+        """Maximize ``||expr_list||_ord`` (``ord=2`` is the squared two-norm)."""
         try:
             len(expr_list)
         except TypeError:
             expr_list = [expr_list]
+        if ord == 1:
+            self.canonicalizer.set_one_norm_objective(expr_list)
+        else:
+            lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
+            setter = (
+                self.canonicalizer.set_two_norm_objective
+                if ord == 2
+                else self.canonicalizer.set_infinity_norm_objective
+            )
+            setter(expr_list, list(lb), list(ub))
+        self.objective = (tuple(expr_list), ord)
 
-        self.canonicalizer.set_one_norm_objective(expr_list)
-        self.objective = (tuple(expr_list), 1)
+    def set_infinity_norm_objective(self, expr_list):
+        """Deprecated: use ``vp.maximize(ft.norm(expr, np.inf))``."""
+        _deprecated("set_infinity_norm_objective", "vp.maximize(ft.norm(expr, np.inf))")
+        self._set_norm_objective(expr_list, np.inf)
 
-    def set_objective_norm(
-        self,
-        expr: Sequence[LinearExpression] | LinearExpression,
-        ord: int | float | str,
-    ) -> None:
+    def set_two_norm_objective(self, expr_list):
+        """Deprecated: use ``vp.maximize(ft.sum_squares(expr))``."""
+        _deprecated("set_two_norm_objective", "vp.maximize(ft.sum_squares(expr))")
+        self._set_norm_objective(expr_list, 2)
+
+    def set_one_norm_objective(self, expr_list):
+        """Deprecated: use ``vp.maximize(ft.norm(expr, 1))``."""
+        _deprecated("set_one_norm_objective", "vp.maximize(ft.norm(expr, 1))")
+        self._set_norm_objective(expr_list, 1)
+
+    def set_objective_norm(self, expr, ord) -> None:
         """
-        Set the optimization objective to maximize a norm of the expression(s).
-
-        Parameters
-        ----------
-        expr : LinearExpression or Sequence[LinearExpression]
-            Expression(s) whose norm will be maximized.
-        ord : {1, 2, np.inf, 'inf'}
-            The norm order:
-            - 1: One-norm (sum of absolute values)
-            - 2: Two-norm (Euclidean norm squared)
-            - np.inf or 'inf': Infinity-norm (maximum absolute value)
-
-        Raises
-        ------
-        ValueError
-            If ord is not one of the supported values.
+        Deprecated: use ``vp.maximize(ft.norm(expr, ord))``, or
+        ``vp.maximize(ft.sum_squares(expr))`` for ``ord=2`` (the squared two-norm).
         """
-        match ord:
-            case 1:
-                self.set_one_norm_objective(expr)
-            case 2:
-                self.set_two_norm_objective(expr)
-            case _ if ord == np.inf or ord == "inf":
-                self.set_infinity_norm_objective(expr)
-            case _:
-                raise ValueError(f"Unsupported norm order: {ord}. Use 1, 2, np.inf, or 'inf'.")
+        _deprecated("set_objective_norm", "vp.maximize(ft.norm(expr, ord)) or ft.sum_squares")
+        if ord == "inf":
+            ord = np.inf
+        if ord not in (1, 2, np.inf):
+            raise ValueError(f"Unsupported norm order: {ord}. Use 1, 2, np.inf, or 'inf'.")
+        self._set_norm_objective(expr, ord)
 
     def maximize(self, objective: Norm | SumSquares) -> None:
         """
@@ -1338,9 +1282,9 @@ class Verifier(object):
         >>> vp.maximize(ft.norm(z - z_prev, np.inf))
         """
         if isinstance(objective, Norm):
-            self.set_objective_norm(list(objective.exprs), objective.p)
+            self._set_norm_objective(list(objective.exprs), objective.p)
         elif isinstance(objective, SumSquares):
-            self.set_two_norm_objective(objective.expr)
+            self._set_norm_objective(objective.expr, 2)
         else:
             raise TypeError(
                 "maximize takes ft.norm(expr, p) or ft.sum_squares(expr), "
@@ -1699,33 +1643,18 @@ class Verifier(object):
             param_values=param_values,
         )
 
-    def get_solution_value(self, iterate: LinearExpression) -> np.ndarray:
-        """
-        Get the solution value for the given iterate.
-
-        For each leaf expression in the decomposition of the
-        given ``LinearExpression`` object, this method retrieves
-        corresponding solution value and computes the dot product
-        between the coefficient matrix and the vector of variable values
-        associated with that leaf.
-
-        Parameters
-        ----------
-        iterate: LinearExpression
-            A ``LinearExpression`` object to retrieve solution value for.
-
-        Returns
-        -------
-        np.ndarray[float]
-            A 1-D array of shape ``(iterate.ndim,)`` containing the
-            evaluated values of the iterate at the current model
-            solution.
-        """
+    def _solution_value(self, expr: LinearExpression) -> np.ndarray:
+        """Value of ``expr`` at the incumbent of the last solve (see `LinearExpression.value`)."""
         if not hasattr(self.canonicalizer, "get_solution_value"):
             raise NotImplementedError(
                 f"Solution values are not available with method={self.method!r}."
             )
-        return self.canonicalizer.get_solution_value(iterate)
+        return self.canonicalizer.get_solution_value(expr)
+
+    def get_solution_value(self, iterate: LinearExpression) -> np.ndarray:
+        """Deprecated: use ``expr.value``."""
+        _deprecated("get_solution_value", "expr.value")
+        return self._solution_value(iterate)
 
 
 class _StepProxy:
@@ -1778,6 +1707,7 @@ class _StepProxy:
 
         def wrapper(arg, relax_binary_vars=False, **kwargs):
             """Execute the specified thresholding or activation step."""
+            _deprecated(f"vp.step.{name}", f"vp.{name}")
             return self._verifier.run_step(arg, step_cls, relax_binary_vars, **kwargs)
 
         return wrapper

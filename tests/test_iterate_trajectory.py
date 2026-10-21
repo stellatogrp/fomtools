@@ -11,6 +11,7 @@ idiom.
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools import IterateTrajectory, Verifier
 from fomtools.linearexpression import LinearExpression
 from tests.conftest import TEST_EPS, mip_params
@@ -251,7 +252,7 @@ def test_the_latch_does_not_change_a_mip_bound():
             u = v.implicit_linear(z[k - 1] - q, output_mat=kkt)
             ut = v.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
             z[k] = z[k - 1] + ut - u
-        v.set_objective_norm([z[K] - z[K - 1]], np.inf)
+        v.maximize(ft.norm([z[K] - z[K - 1]], np.inf))
         return v.solve()
 
     assert abs(solve("auto") - solve(True)) <= TEST_EPS
@@ -273,7 +274,7 @@ def _build_softthresh_ista(solver, collapse_expr, K=2, seed=0):
     z[0] = v.iterate(n, lb=-0.5, ub=0.5)
     for k in range(1, K + 1):
         z[k] = v.soft_threshold(z[k - 1] - t * A.T @ (A @ z[k - 1] - x), lambd=lambd * t)
-    v.set_objective_norm(z[K] - z[K - 1], 2)
+    v.maximize(ft.sum_squares(z[K] - z[K - 1]))
     return v
 
 
@@ -301,7 +302,7 @@ def _build_relu_nnls(solver, collapse_expr, K=2, seed=0):
     z[0] = v.iterate(n, lb=5, ub=5.1)
     for k in range(1, K + 1):
         z[k] = v.relu(z[k - 1] - t * A.T @ (A @ z[k - 1] - x))
-    v.set_objective_norm(z[K] - z[K - 1], 2)
+    v.maximize(ft.sum_squares(z[K] - z[K - 1]))
     return v
 
 
@@ -336,7 +337,7 @@ def test_cross_backend_mip_le_sdp(vp_sdp):
         zm[0] = vm.iterate(n, lb=5, ub=5.1)
         for k in range(1, K + 1):
             zm[k] = vm.relu(zm[k - 1] - t * A.T @ (A @ zm[k - 1] - xm))
-        vm.set_objective_norm([zm[K] - zm[K - 1]], np.inf)
+        vm.maximize(ft.norm([zm[K] - zm[K - 1]], np.inf))
         mip_inf_norm = vm.solve()
 
         assert mip_inf_norm <= np.sqrt(sdp_two_norm_sq) + TEST_EPS
@@ -377,7 +378,7 @@ def test_legacy_idiom_parity_mip(vp_param_1):
         res = []
         for k in range(1, K + 1):
             z[k] = v.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x))
-            v.set_objective_norm([z[k] - z[k - 1]], np.inf)
+            v.maximize(ft.norm([z[k] - z[k - 1]], np.inf))
             res.append(v.solve())
         return res
 
@@ -392,7 +393,7 @@ def test_legacy_idiom_parity_mip(vp_param_1):
     res_list = []
     for k in range(1, K + 1):
         zl[k] = v_list.relu(zl[k - 1] - eta * A.T @ (A @ zl[k - 1] - xl))
-        v_list.set_objective_norm([zl[k] - zl[k - 1]], np.inf)
+        v_list.maximize(ft.norm([zl[k] - zl[k - 1]], np.inf))
         res_list.append(v_list.solve())
 
     res_traj = run(lambda v, length: v.iterate_trajectory(length))

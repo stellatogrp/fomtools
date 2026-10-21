@@ -54,6 +54,7 @@ def test_cli_stub_verify(tmp_path, requires_compiler):
 
 RECORDED_RUN_MODULE = """
 import numpy as np
+import fomtools as ft
 from fomtools.verifier import Verifier
 
 STEPS = 12
@@ -100,7 +101,7 @@ def test_objective_termination_from_the_cli(tmp_path):
     path.write_text(
         RECORDED_RUN_MODULE.replace(
             '    return {"verifier": v,',
-            '    v.set_objective_norm(z[STEPS] - z[STEPS - 1], np.inf)\n    return {"verifier": v,',
+            '    v.maximize(ft.norm(z[STEPS] - z[STEPS - 1], np.inf))\n    return {"verifier": v,',
         )
     )
     out = tmp_path / "out"

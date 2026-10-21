@@ -24,7 +24,7 @@ The public surface:
   stationary; the second gates every unrolled extraction.
 * `CodegenConfig` — what to generate (embedded/large-scale, backend,
   termination, dtype). ``TerminationKind.OBJECTIVE`` stops the generated solver
-  on the verification objective set with ``Verifier.set_objective_norm``; see
+  on the verification objective set with ``Verifier.maximize``; see
   `fomtools.codegen.objective` for how it is mapped onto the loop and
   `ObjectiveExtractionError` for what cannot be.
 * `generate_code` — the end-to-end entry point.

@@ -3,6 +3,7 @@ import pytest
 import scipy.sparse as spa
 
 import fomtools as fom
+import fomtools as ft
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.verifier import Verifier
 from tests.conftest import SOLVERS, TEST_EPS, mip_params
@@ -216,7 +217,7 @@ def test_stack_through_relu_mip(solver):
             sel_nu = spa.csc_matrix((np.ones(2), (np.arange(2, 4), np.arange(2))), shape=(4, 2))
             y = sel_x @ x + sel_nu @ nu
         z = v.relu(arg=y)
-        v.set_infinity_norm_objective([z])
+        v.maximize(ft.norm([z], np.inf))
         return v.solve()
 
     r_stack = build(True)
@@ -249,7 +250,7 @@ def test_stack_through_relu_sdp(vp, vp_sdp):
     x = v_sdp.iterate(2, lb=x_lb, ub=x_ub)
     nu = v_sdp.iterate(2, lb=nu_lb, ub=nu_ub)
     z_sdp = v_sdp.relu(arg=stack([x, nu]))
-    v_sdp.set_objective_norm(z_sdp, 2)
+    v_sdp.maximize(ft.sum_squares(z_sdp))
     sdp_two_norm_sq = v_sdp.solve()
 
     v_mip = Verifier(
@@ -260,7 +261,7 @@ def test_stack_through_relu_sdp(vp, vp_sdp):
     x_m = v_mip.iterate(2, lb=x_lb, ub=x_ub)
     nu_m = v_mip.iterate(2, lb=nu_lb, ub=nu_ub)
     z_mip = v_mip.relu(arg=stack([x_m, nu_m]))
-    v_mip.set_objective_norm(z_mip, np.inf)
+    v_mip.maximize(ft.norm(z_mip, np.inf))
     mip_inf_norm = v_mip.solve()
 
     sdp_two_norm = np.sqrt(sdp_two_norm_sq)
@@ -294,7 +295,7 @@ def test_stack_through_affine(solver):
             sel_nu = spa.csc_matrix((np.ones(2), (np.arange(2, 4), np.arange(2))), shape=(4, 2))
             y = sel_x @ x + sel_nu @ nu
             w = v.implicit_linear(arg=M @ y, output_mat=np.eye(3))
-        v.set_infinity_norm_objective([w])
+        v.maximize(ft.norm([w], np.inf))
         return v.solve()
 
     r_stack = build(True)
@@ -326,7 +327,7 @@ def test_stack_inherits_leaf_constraint(solver):
             sel_nu = spa.csc_matrix((np.ones(2), (np.arange(2, 4), np.arange(2))), shape=(4, 2))
             y = sel_x @ x + sel_nu @ nu
         z = v.relu(arg=y)
-        v.set_infinity_norm_objective([z])
+        v.maximize(ft.norm([z], np.inf))
         return v.solve()
 
     r_stack = build(True)

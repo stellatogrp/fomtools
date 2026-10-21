@@ -11,6 +11,7 @@ two-norm MIP on small instances that were loose before.
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
 
@@ -69,7 +70,7 @@ def _sdp(build, K, **flags):
         subgrad_mono_cut=True,
         **flags,
     )
-    vp.set_objective_norm(build(vp, K), 2)
+    vp.maximize(ft.sum_squares(build(vp, K)))
     return vp
 
 
@@ -130,7 +131,7 @@ def _mip(build, K):
         obbt_solver=None,
         params={**_GUROBI, "NonConvex": 2, "MIPGap": 1e-6},
     )
-    vp.set_objective_norm(build(vp, K), 2)
+    vp.maximize(ft.sum_squares(build(vp, K)))
     vp.solve()
     return float(vp.canonicalizer._solved_copy["ObjBound"])
 

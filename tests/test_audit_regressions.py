@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import scipy.sparse as spa
 
+import fomtools as ft
 from fomtools import LinearExpression, Verifier
 from fomtools.proxable_functions import ElasticNet, IndAffine, NormL1
 from fomtools.solvers.highs import HiGHSSolver
@@ -95,7 +96,7 @@ def test_highs_status_bound(
 def test_solve_returns_bound_not_incumbent(monkeypatch, solver):
     v = Verifier(solver=solver, obbt_solver=None, params=mip_params(solver))
     x = v.iterate(1, lb=-1, ub=2)
-    v.set_objective_norm(x, np.inf)
+    v.maximize(ft.norm(x, np.inf))
     cls = type(v.canonicalizer.solver)
     monkeypatch.setattr(cls, "get_best_bound", lambda self: 3.0)
     assert v.solve() == 3.0
@@ -111,7 +112,7 @@ def test_infeasible_model_has_no_scalar_or_solution(solver):
     with pytest.raises(RuntimeError):
         v.solve()
     with pytest.raises(RuntimeError, match="incumbent"):
-        v.get_solution_value(x + 1)
+        (x + 1).value
 
 
 @pytest.mark.parametrize(
@@ -126,7 +127,7 @@ def test_infeasible_model_has_no_scalar_or_solution(solver):
 def test_native_sdp_rejects_unaccepted_solution(monkeypatch, status):
     v = Verifier(method="sdp", solver="clarabel", obbt_solver=None)
     x = v.iterate(1, lb=-1, ub=1)
-    v.set_objective_norm(x, 2)
+    v.maximize(ft.sum_squares(x))
     monkeypatch.setattr(
         clarabel,
         "DefaultSolver",
@@ -147,7 +148,7 @@ def test_cvxpy_sdp_rejects_unaccepted_solution(monkeypatch, status):
     monkeypatch.setattr(cp.Problem, "solve", solve)
     v = Verifier(method="sdp", solver="cvxpy", obbt_solver=None)
     x = v.iterate(1, lb=-1, ub=1)
-    v.set_objective_norm(x, 2)
+    v.maximize(ft.sum_squares(x))
     with pytest.raises(RuntimeError, match="terminated"):
         v.solve()
 
@@ -155,7 +156,7 @@ def test_cvxpy_sdp_rejects_unaccepted_solution(monkeypatch, status):
 def test_native_sdp_almost_solved_warns(monkeypatch):
     v = Verifier(method="sdp", solver="clarabel", obbt_solver=None)
     x = v.iterate(1, lb=-1, ub=1)
-    v.set_objective_norm(x, 2)
+    v.maximize(ft.sum_squares(x))
     monkeypatch.setattr(
         clarabel,
         "DefaultSolver",
@@ -174,7 +175,7 @@ def test_sdp_iteration_limit_is_rejected(solver):
     v = Verifier(method="sdp", solver=solver, obbt_solver=None)
     x = v.iterate(2, lb=-1, ub=1)
     z = v.relu(x + 0.1)
-    v.set_objective_norm(z - x, 2)
+    v.maximize(ft.sum_squares(z - x))
     with pytest.raises(RuntimeError):
         v.solve(max_iter=0)
 
@@ -190,7 +191,7 @@ def test_non_singleton_theory_and_postprocess_bounds(solver):
     np.testing.assert_allclose(target.lb, [0.5, 1.5])
     np.testing.assert_allclose(target.ub, [3.5, 5.5])
     assert v.theory_bound(1, target, ref) == 0.0
-    v.set_objective_norm(target, np.inf)
+    v.maximize(ft.norm(target, np.inf))
     assert v.solve() == pytest.approx(5.5)
     # The OBBT model receives the same bounds as the Python leaf and main model.
     lb, ub = v.obbt_handler.obbt(target, np.full(2, -10.0), np.full(2, 10.0))
@@ -201,7 +202,7 @@ def test_non_singleton_theory_and_postprocess_bounds(solver):
     np.testing.assert_allclose(later.lb, [-0.5, 0.5])
     np.testing.assert_allclose(later.ub, [4.5, 6.5])
     assert v.post_process(later, ref, [np.inf]) == 0.0
-    v.set_objective_norm(later, np.inf)
+    v.maximize(ft.norm(later, np.inf))
     assert v.solve() == pytest.approx(6.5)
     for invalid in ([-1.0], [np.nan], [], [[1.0]]):
         with pytest.raises(ValueError):
@@ -216,10 +217,8 @@ def test_expression_values_preserve_constants(solver):
     expr = A @ x + np.array([4.0, -7.0])
     v.set_zero_objective()
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(expr), [1.0, -2.0])
-    np.testing.assert_allclose(
-        v.get_solution_value(LinearExpression({}, np.array([2.0, 3.0]))), [2.0, 3.0]
-    )
+    np.testing.assert_allclose(expr.value, [1.0, -2.0])
+    np.testing.assert_allclose(LinearExpression({}, np.array([2.0, 3.0])).value, [2.0, 3.0])
 
 
 def test_vector_multiplication_and_bad_shapes_are_rejected():
@@ -272,7 +271,7 @@ def test_prox_subclass_inherits_lowering():
     v = Verifier(method="simulator", obbt_solver=None)
     p = v.parameter(2, samples=np.array([[1.0, -2.0]]))
     out = v.prox(WeightedL1(lambd=0.5), p)
-    v.set_objective_norm(out, np.inf)
+    v.maximize(ft.norm(out, np.inf))
     np.testing.assert_allclose(v.solve(), [[1.5]])
 
 

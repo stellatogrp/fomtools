@@ -16,6 +16,7 @@ polyhedral projection, inequality QP/LP) are covered in
 import numpy as np
 import scipy.sparse as spa
 
+import fomtools as ft
 from fomtools.proxable_functions import IndAffine, LeastSquares, Quadratic
 from fomtools.verifier import Verifier
 
@@ -39,7 +40,7 @@ def test_quadratic_prox_simulator():
     v = vp.parameter(ndim=n, samples=v_samples)
     x = vp.prox(Quadratic(Q=Q, q=q), v, gamma=gamma)
     xref = vp.parameter(ndim=n, samples=x_ref)
-    vp.set_infinity_norm_objective(x - xref)
+    vp.maximize(ft.norm(x - xref, np.inf))
 
     residuals = vp.solve()
     assert residuals[:, -1].max() < TOL
@@ -69,7 +70,7 @@ def test_quadratic_prox_sparse_Q_simulator():
     v = vp.parameter(ndim=n, samples=v_samples)
     x = vp.prox(prox, v, gamma=gamma)
     xref = vp.parameter(ndim=n, samples=x_ref)
-    vp.set_infinity_norm_objective(x - xref)
+    vp.maximize(ft.norm(x - xref, np.inf))
 
     residuals = vp.solve()
     assert residuals[:, -1].max() < TOL
@@ -93,7 +94,7 @@ def test_leastsquares_prox_simulator():
     v = vp.parameter(ndim=n, samples=v_samples)
     x = vp.prox(LeastSquares(A=A, b=b), v, gamma=gamma)
     xref = vp.parameter(ndim=n, samples=x_ref)
-    vp.set_infinity_norm_objective(x - xref)
+    vp.maximize(ft.norm(x - xref, np.inf))
 
     residuals = vp.solve()
     assert residuals[:, -1].max() < TOL
@@ -116,7 +117,7 @@ def test_indaffine_prox_simulator():
     v = vp.parameter(ndim=n, samples=v_samples)
     x = vp.prox(IndAffine(A=A, b=b), v)
     xref = vp.parameter(ndim=n, samples=x_ref)
-    vp.set_infinity_norm_objective(x - xref)
+    vp.maximize(ft.norm(x - xref, np.inf))
 
     residuals = vp.solve()
     # Feasibility is the defining property: A x_ref == b for every sample.
@@ -143,7 +144,7 @@ def test_equality_qp_simulator():
     q_param = vp.parameter(ndim=n, samples=q_samples)
     x = vp.quadratic_program(P=P, q=q_param, A=A, b=b)
     xref = vp.parameter(ndim=n, samples=x_ref)
-    vp.set_infinity_norm_objective(x - xref)
+    vp.maximize(ft.norm(x - xref, np.inf))
 
     residuals = vp.solve()
     assert residuals[:, -1].max() < TOL
@@ -163,7 +164,7 @@ def test_unconstrained_qp_simulator():
     q_param = vp.parameter(ndim=n, samples=q_samples)
     x = vp.quadratic_program(P=P, q=q_param)
     xref = vp.parameter(ndim=n, samples=x_ref)
-    vp.set_infinity_norm_objective(x - xref)
+    vp.maximize(ft.norm(x - xref, np.inf))
 
     residuals = vp.solve()
     assert residuals[:, -1].max() < TOL

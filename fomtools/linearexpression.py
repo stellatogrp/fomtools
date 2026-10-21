@@ -732,7 +732,7 @@ class LinearExpression:
             raise RuntimeError("The expression is not registered with a Verifier.")
         if len(verifiers) > 1:
             raise ValueError("The expression mixes variables of different Verifier instances.")
-        return next(iter(verifiers.values())).get_solution_value(self)
+        return next(iter(verifiers.values()))._solution_value(self)
 
 
 def stack(exprs: list[LinearExpression]) -> LinearExpression:

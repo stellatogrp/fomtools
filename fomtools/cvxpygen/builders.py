@@ -63,6 +63,7 @@ import scipy.sparse as spa
 
 from fomtools.codegen.extract_scheduled import Recording
 from fomtools.codegen.oracle import sample_param_values
+from fomtools.constraint import norm
 from fomtools.cvxpygen.qpdata import QPData
 from fomtools.linearexpression import LinearExpression, stack
 from fomtools.verifier import Verifier
@@ -312,7 +313,7 @@ def set_residual_objective(v: Verifier, qp: QPData, exprs: dict, x, y) -> None:
     if qp.P.nnz:
         dual = spa.csr_matrix(qp.P) @ x + dual
     parts.append(spa.diags(1.0 / (c * D)) @ dual)
-    v.set_objective_norm(parts, np.inf)
+    v.maximize(norm(parts, np.inf))
 
 
 def _admm_constants(qp: QPData, rho: float, sigma: float, rho_eq_scale: float) -> tuple:

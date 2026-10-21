@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.sparse as spa
 
+import fomtools as ft
 from tests.cvxpy import douglas_rachford as douglas_rachford_cvxpy
 
 np.set_printoptions(precision=5)  # Print few decimal places
@@ -62,15 +63,15 @@ def test_dr(vp):
         utilde[k] = vp.relu(2 * u[k] - z[k - 1], proj_ranges=(n, n + m))
         z[k] = z[k - 1] + utilde[k] - u[k]
 
-        vp.set_objective_norm(z[k] - z[k - 1], np.inf)
+        vp.maximize(ft.norm(z[k] - z[k - 1], np.inf))
         res = vp.solve()
         all_res.append(res)
 
-    print(f"opt q_param at last K: {vp.get_solution_value(q_param)}")
+    print(f"opt q_param at last K: {q_param.value}")
     print(f"vp_gurobi resids: {all_res}")
 
     zk = z0_init
-    q = vp.get_solution_value(q_param)
+    q = q_param.value
     PGD_resids = []
 
     for k in range(K):

@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 import scipy.sparse as spa
 
+import fomtools as ft
 from fomtools.canonicalizers.sdp import SDP
 from fomtools.steps import Affine
 from fomtools.utils.math_utils import repair_crossed_bounds
@@ -79,7 +80,7 @@ BUILDERS = {
 
 def _mip_optimum(v, iterates):
     """Maximize the inf-norm of the last step residual and solve (MILP)."""
-    v.set_objective_norm(iterates[-1] - iterates[-2], np.inf)
+    v.maximize(ft.norm(iterates[-1] - iterates[-2], np.inf))
     return v.solve()
 
 
@@ -136,8 +137,8 @@ def test_obbt_preserves_mip_optimum_with_convex_hull_cuts(solver, op):
     v_no, it_no = build(obbt=None, solver=solver)
     v_ob, it_ob = build(obbt=solver, solver=solver)
 
-    v_no.set_objective_norm(it_no[-1] - it_no[-2], np.inf)
-    v_ob.set_objective_norm(it_ob[-1] - it_ob[-2], np.inf)
+    v_no.maximize(ft.norm(it_no[-1] - it_no[-2], np.inf))
+    v_ob.maximize(ft.norm(it_ob[-1] - it_ob[-2], np.inf))
     opt_no = v_no.solve(convex_hull_cuts=True)
     opt_ob = v_ob.solve(convex_hull_cuts=True)
     assert abs(opt_ob - opt_no) <= 1e-4
@@ -153,8 +154,8 @@ def test_obbt_decreases_or_equal_sdp_optimum(sdp_solver):
     v_no, it_no = build_lasso_ista(obbt=None, solver=sdp_solver, method="sdp", K=2)
     v_ob, it_ob = build_lasso_ista(obbt="highs", solver=sdp_solver, method="sdp", K=2)
 
-    v_no.set_objective_norm(it_no[-1] - it_no[-2], 2)
-    v_ob.set_objective_norm(it_ob[-1] - it_ob[-2], 2)
+    v_no.maximize(ft.sum_squares(it_no[-1] - it_no[-2]))
+    v_ob.maximize(ft.sum_squares(it_ob[-1] - it_ob[-2]))
     opt_no = v_no.solve()
     opt_ob = v_ob.solve()
 
@@ -518,12 +519,12 @@ def test_obbt_tightens_sdp_with_relu_cuts(sdp_solver):
     # so it always runs on native Clarabel.
     for obbt, solver in [(None, "clarabel"), ("highs", sdp_solver)]:
         v, it = build_relu_linsolve_chain(obbt, solver, method="sdp", **inst, **cuts)
-        v.set_objective_norm(it[-1] - it[-2], 2)
+        v.maximize(ft.sum_squares(it[-1] - it[-2]))
         opts.append(v.solve())
     opt_no, opt_ob = opts
 
     v_mip, it_mip = build_relu_linsolve_chain("gurobi", "gurobi", **inst)
-    v_mip.set_objective_norm(it_mip[-1] - it_mip[-2], 2)
+    v_mip.maximize(ft.sum_squares(it_mip[-1] - it_mip[-2]))
     opt_mip = v_mip.solve()
 
     assert opt_ob < opt_no - 1.0

@@ -12,6 +12,7 @@ import gurobipy as gp
 import numpy as np
 import pytest
 
+import fomtools as ft
 from tests.test_convex_hull_cuts import _pgd_chain
 from tests.test_obbt_handler import build_relu_chain, build_satlin_chain
 
@@ -27,7 +28,7 @@ def test_tightened_bounds_contain_residuals(kind):
     vp, q, z, simulate = _pgd_chain(kind, K, const=0.1, obbt="gurobi")
     Z = simulate(np.random.default_rng(0).uniform(-1, 1, size=(20000, len(q.lb))))
     for k in range(1, K + 1):
-        vp.set_objective_norm(z[k] - z[k - 1], np.inf)
+        vp.maximize(ft.norm(z[k] - z[k - 1], np.inf))
         lb0, ub0 = _objective_bounds(vp)
         vp.solve(tighten_objective_bounds=True)
         lb, ub = _objective_bounds(vp)
@@ -46,8 +47,8 @@ def test_optimum_unchanged(kind, cuts):
     vp_ref, _, z_ref, _ = _pgd_chain(kind, K, const=0.1, obbt="gurobi")
     vp_new, _, z_new, _ = _pgd_chain(kind, K, const=0.1, obbt="gurobi")
     for k in range(1, K + 1):
-        vp_ref.set_objective_norm(z_ref[k] - z_ref[k - 1], np.inf)
-        vp_new.set_objective_norm(z_new[k] - z_new[k - 1], np.inf)
+        vp_ref.maximize(ft.norm(z_ref[k] - z_ref[k - 1], np.inf))
+        vp_new.maximize(ft.norm(z_new[k] - z_new[k - 1], np.inf))
         expected = vp_ref.solve(tighten_objective_bounds=False)
         got = vp_new.solve(tighten_objective_bounds=True, convex_hull_cuts=cuts)
         assert got == pytest.approx(expected, abs=1e-6)
@@ -58,8 +59,8 @@ def test_optimum_unchanged(kind, cuts):
 def test_optimum_unchanged_chain_builders(solver, build):
     v_ref, it_ref = build(obbt=solver, solver=solver)
     v_new, it_new = build(obbt=solver, solver=solver)
-    v_ref.set_objective_norm(it_ref[-1] - it_ref[-2], np.inf)
-    v_new.set_objective_norm(it_new[-1] - it_new[-2], np.inf)
+    v_ref.maximize(ft.norm(it_ref[-1] - it_ref[-2], np.inf))
+    v_new.maximize(ft.norm(it_new[-1] - it_new[-2], np.inf))
     assert v_new.solve(tighten_objective_bounds=True) == pytest.approx(
         v_ref.solve(tighten_objective_bounds=False), abs=1e-5
     )
@@ -80,7 +81,7 @@ def test_relaxation_tighter():
     K = 4
     vp, _, z, _ = _pgd_chain("satlin", K, const=0.0, obbt="gurobi")
     for k in range(1, K + 1):
-        vp.set_objective_norm(z[k] - z[k - 1], np.inf)
+        vp.maximize(ft.norm(z[k] - z[k - 1], np.inf))
         before = _root_lp(vp)
         stats = vp.canonicalizer.tighten_objective_bounds()
         assert _root_lp(vp) <= before + 1e-9
@@ -89,7 +90,7 @@ def test_relaxation_tighter():
 
 def test_padding_and_clipping():
     vp, _, z, _ = _pgd_chain("relu", 2, const=0.1, obbt="gurobi")
-    vp.set_objective_norm(z[2] - z[1], np.inf)
+    vp.maximize(ft.norm(z[2] - z[1], np.inf))
     _, expr_list, lb0, ub0 = vp.canonicalizer._objective_spec
     raw_lb, raw_ub = vp.obbt_handler.obbt(expr_list[0], lb0[0], ub0[0])
     vp.canonicalizer.tighten_objective_bounds(pad=1e-4)
@@ -102,8 +103,8 @@ def test_padding_and_clipping():
 def test_noop_without_obbt():
     vp_ref, _, z_ref, _ = _pgd_chain("satlin", 2, const=0.0, obbt=None)
     vp_new, _, z_new, _ = _pgd_chain("satlin", 2, const=0.0, obbt=None)
-    vp_ref.set_objective_norm(z_ref[2] - z_ref[1], np.inf)
-    vp_new.set_objective_norm(z_new[2] - z_new[1], np.inf)
+    vp_ref.maximize(ft.norm(z_ref[2] - z_ref[1], np.inf))
+    vp_new.maximize(ft.norm(z_new[2] - z_new[1], np.inf))
     spec_before = _objective_bounds(vp_new)
     with pytest.warns(UserWarning, match="tighten_objective_bounds"):
         got = vp_new.solve(tighten_objective_bounds=True)
@@ -115,12 +116,12 @@ def test_noop_without_obbt():
 
 def test_default_tightens_with_obbt_and_is_silent_without():
     vp, _, z, _ = _pgd_chain("satlin", 2, const=0.0, obbt="gurobi")
-    vp.set_objective_norm(z[2] - z[1], np.inf)
+    vp.maximize(ft.norm(z[2] - z[1], np.inf))
     vp.solve()
     assert vp.objective_bound_stats is not None
 
     vp, _, z, _ = _pgd_chain("satlin", 2, const=0.0, obbt=None)
-    vp.set_objective_norm(z[2] - z[1], np.inf)
+    vp.maximize(ft.norm(z[2] - z[1], np.inf))
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         vp.solve()
@@ -129,7 +130,7 @@ def test_default_tightens_with_obbt_and_is_silent_without():
 
 def test_noop_for_two_norm():
     vp, _, z, _ = _pgd_chain("relu", 2, const=0.0, obbt="gurobi")
-    vp.set_objective_norm(z[2] - z[1], 2)
+    vp.maximize(ft.sum_squares(z[2] - z[1]))
     spec = vp.canonicalizer._objective_spec
     with warnings.catch_warnings():
         warnings.simplefilter("error")
@@ -156,7 +157,7 @@ def _priorities(vp):
 
 def test_objective_binaries_get_branch_priority():
     vp, _, z, _ = _pgd_chain("satlin", 3, const=0.0, obbt="gurobi")
-    vp.set_objective_norm(z[3] - z[2], np.inf)
+    vp.maximize(ft.norm(z[3] - z[2], np.inf))
     vp.solve()
     obj, step = _priorities(vp)
     assert obj and all(p == vp.canonicalizer.objective_branch_priority for p in obj)
@@ -168,7 +169,7 @@ def test_branch_priority_can_be_disabled(monkeypatch):
 
     monkeypatch.setattr(MIP, "objective_branch_priority", 0)
     vp, _, z, _ = _pgd_chain("satlin", 3, const=0.0, obbt="gurobi")
-    vp.set_objective_norm(z[3] - z[2], np.inf)
+    vp.maximize(ft.norm(z[3] - z[2], np.inf))
     vp.solve()
     obj, step = _priorities(vp)
     assert all(p == 0 for p in obj + step)
@@ -191,14 +192,14 @@ def test_mipfocus_default_and_override():
     )
     # The default carries into the solve copy.
     vp, _, z, _ = _pgd_chain("relu", 2, const=0.0, obbt="gurobi")
-    vp.set_objective_norm(z[2] - z[1], np.inf)
+    vp.maximize(ft.norm(z[2] - z[1], np.inf))
     vp.solve()
     assert vp.canonicalizer._solved_copy.model.Params.MIPFocus == 2
 
 
 def test_highs_ignores_branch_priority():
     v_ref, it_ref = build_relu_chain(obbt="highs", solver="highs")
-    v_ref.set_objective_norm(it_ref[-1] - it_ref[-2], np.inf)
+    v_ref.maximize(ft.norm(it_ref[-1] - it_ref[-2], np.inf))
     v_gur, it_gur = build_relu_chain(obbt="gurobi", solver="gurobi")
-    v_gur.set_objective_norm(it_gur[-1] - it_gur[-2], np.inf)
+    v_gur.maximize(ft.norm(it_gur[-1] - it_gur[-2], np.inf))
     assert v_ref.solve() == pytest.approx(v_gur.solve(), abs=1e-5)

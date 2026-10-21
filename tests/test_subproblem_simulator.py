@@ -12,6 +12,7 @@ inf-norm objective as an oracle: the recorded residual per sample is
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.canonicalizers.simulator import (
     condat_tv_1d,
     project_l1_ball_batch,
@@ -34,7 +35,7 @@ TOL_SOLVER = 1e-4  # cvxpy-referenced cases
 def _residual_max(vp, x, x_ref, n):
     """Wire an inf-norm oracle on (x - x_ref) and return the max final residual."""
     xref = vp.parameter(ndim=n, samples=x_ref)
-    vp.set_infinity_norm_objective(x - xref)
+    vp.maximize(ft.norm(x - xref, np.inf))
     residuals = vp.solve()
     return residuals[:, -1].max()
 

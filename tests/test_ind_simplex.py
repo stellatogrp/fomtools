@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import IndSimplex
 from fomtools.verifier import Verifier
@@ -81,9 +82,9 @@ def test_mip_projection_matches_numeric(x0, a):
     v = _make_verifier("mip", obbt="gurobi")
     x = v.parameter(len(x0), lb=x0, ub=x0)  # fixed arg
     u = v.prox(IndSimplex(a), x)
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), IndSimplex(a).prox(x0), atol=PROX_ATOL)
+    np.testing.assert_allclose(u.value, IndSimplex(a).prox(x0), atol=PROX_ATOL)
 
 
 def test_param_a():
@@ -94,9 +95,9 @@ def test_param_a():
     x = v.parameter(3, lb=x0, ub=x0)
     a_param = v.parameter(1, lb=np.array([a0]), ub=np.array([a0]))
     u = v.prox(IndSimplex(a_param), x)
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), IndSimplex(a0).prox(x0), atol=PROX_ATOL)
+    np.testing.assert_allclose(u.value, IndSimplex(a0).prox(x0), atol=PROX_ATOL)
 
 
 @pytest.mark.parametrize(
@@ -107,7 +108,7 @@ def test_sdp_tight_at_fixed_point(x0, a):
     v = _make_verifier("sdp")
     x = v.parameter(len(x0), lb=x0, ub=x0)
     u = v.prox(IndSimplex(a), x)
-    v.set_objective_norm(u, 2)
+    v.maximize(ft.sum_squares(u))
     obj = v.solve()
     proj = IndSimplex(a).prox(x0)
     np.testing.assert_allclose(obj, float(proj @ proj), atol=1e-3)
@@ -121,13 +122,13 @@ def test_sdp_bound_vs_mip_over_box():
     vm = _make_verifier("mip", obbt="gurobi")
     xm = vm.parameter(3, lb=arg_lb, ub=arg_ub)
     um = vm.prox(IndSimplex(a), xm)
-    vm.set_objective_norm([um], np.inf)
+    vm.maximize(ft.norm([um], np.inf))
     mip_inf = vm.solve()
 
     vs = _make_verifier("sdp")
     xs = vs.parameter(3, lb=arg_lb, ub=arg_ub)
     us = vs.prox(IndSimplex(a), xs)
-    vs.set_objective_norm(us, 2)
+    vs.maximize(ft.sum_squares(us))
     sdp_two = np.sqrt(vs.solve())
 
     assert np.isfinite(mip_inf)

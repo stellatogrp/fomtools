@@ -7,6 +7,7 @@ and the ``verbose`` flag, which silences every solver by default.
 
 import copy
 import pickle
+import re
 
 import numpy as np
 import pytest
@@ -75,6 +76,42 @@ def test_add_aliases_are_deprecated(old, new, args):
     np.testing.assert_array_equal(var.ub, [args[2]] * 2)
 
 
+@pytest.mark.parametrize(
+    "call, new",
+    [
+        (lambda vp, x: vp.step.relu(x), "vp.relu"),
+        (lambda vp, x: vp.step.soft_threshold(x, lambd=0.1), "vp.soft_threshold"),
+        (lambda vp, x: vp.set_objective_norm(x, np.inf), "vp.maximize"),
+        (lambda vp, x: vp.set_infinity_norm_objective(x), "vp.maximize"),
+        (lambda vp, x: vp.set_one_norm_objective(x), "vp.maximize"),
+        (lambda vp, x: vp.set_two_norm_objective(x), "vp.maximize"),
+    ],
+)
+def test_old_spellings_are_deprecated(call, new):
+    vp = ft.Verifier()
+    x = vp.parameter(2, lb=-1, ub=1)
+    with pytest.warns(DeprecationWarning, match=f"use {re.escape(new)}") as record:
+        call(vp, x)
+    assert record[0].filename == __file__
+
+
+def test_get_solution_value_is_deprecated():
+    vp = ft.Verifier()
+    x = vp.parameter(2, lb=-1, ub=1)
+    vp.maximize(ft.norm(x, np.inf))
+    vp.solve()
+    with pytest.warns(DeprecationWarning, match=r"use expr\.value") as record:
+        value = vp.get_solution_value(x)
+    assert record[0].filename == __file__
+    np.testing.assert_allclose(value, x.value)
+
+
+def test_set_objective_norm_still_validates_the_order():
+    x = ft.Verifier().parameter(2)
+    with pytest.deprecated_call(), pytest.raises(ValueError, match="Unsupported norm order"):
+        x._verifier.set_objective_norm(x, 3)
+
+
 def test_add_param_alias_forwards_keyword_arguments():
     vp = ft.Verifier(method="simulator")
     with pytest.warns(DeprecationWarning):
@@ -104,7 +141,8 @@ STEPS = {
 def test_step_methods_match_the_step_proxy(name):
     kwargs, ref = STEPS[name]
     top, out = _step_value(lambda vp, x: getattr(vp, name)(x - 0.5, **kwargs))
-    proxy, _ = _step_value(lambda vp, x: getattr(vp.step, name)(x - 0.5, **kwargs))
+    with pytest.deprecated_call():
+        proxy, _ = _step_value(lambda vp, x: getattr(vp.step, name)(x - 0.5, **kwargs))
     assert abs(top - proxy) <= TEST_EPS
     # The worst case over x in [-2, 2]^3 is attained at a vertex.
     assert abs(top - np.max(np.abs(ref(np.array([-2.5, 1.5]))))) <= TEST_EPS
@@ -118,7 +156,8 @@ def test_implicit_linear_matches_the_step_proxy():
         return step(x[:2], output_mat=M)
 
     top, _ = _step_value(lambda vp, x: build(vp, x, False))
-    proxy, _ = _step_value(lambda vp, x: build(vp, x, True))
+    with pytest.deprecated_call():
+        proxy, _ = _step_value(lambda vp, x: build(vp, x, True))
     assert abs(top - proxy) <= TEST_EPS
     # w = M^{-1} x, so w_1 = x_1 / 2 and w_2 = x_2 - x_1 / 2; the worst case is 3.
     assert abs(top - 3.0) <= TEST_EPS
@@ -174,7 +213,8 @@ def test_maximize_matches_set_objective_norm(p):
     _, z, z_prev = _pgd(vp_new)
     vp_new.maximize(ft.norm(z - z_prev, p))
     _, z, z_prev = _pgd(vp_old)
-    vp_old.set_objective_norm(z - z_prev, p)
+    with pytest.deprecated_call():
+        vp_old.set_objective_norm(z - z_prev, p)
     assert abs(vp_new.solve() - vp_old.solve()) <= TEST_EPS
     assert vp_new.objective[1] == p and len(vp_new.objective[0]) == 1
 
@@ -200,7 +240,8 @@ def test_maximize_sum_squares_matches_two_norm_objective():
         if use_maximize:
             vp.maximize(ft.sum_squares(z))
         else:
-            vp.set_two_norm_objective(z)
+            with pytest.deprecated_call():
+                vp.set_two_norm_objective(z)
         results.append(np.asarray(vp.solve()))
         assert vp.objective[1] == 2
     np.testing.assert_allclose(results[0], results[1])
@@ -216,7 +257,8 @@ def test_maximize_sum_squares_on_mip_matches_two_norm_objective():
         if use_maximize:
             vp.maximize(ft.sum_squares(ft.stack([x, y])))
         else:
-            vp.set_two_norm_objective(ft.stack([x, y]))
+            with pytest.deprecated_call():
+                vp.set_two_norm_objective(ft.stack([x, y]))
         values.append(vp.solve())
         objectives.append(vp.objective[1])
     assert abs(values[0] - 11.0) <= TEST_EPS and abs(values[1] - 11.0) <= TEST_EPS
@@ -230,7 +272,8 @@ def test_maximize_sets_the_objective_codegen_reads():
         if vp is vp_new:
             vp.maximize(ft.norm(z - z_prev, np.inf))
         else:
-            vp.set_objective_norm(z - z_prev, np.inf)
+            with pytest.deprecated_call():
+                vp.set_objective_norm(z - z_prev, np.inf)
     (new_exprs, new_ord), (old_exprs, old_ord) = vp_new.objective, vp_old.objective
     assert new_ord == old_ord == np.inf and len(new_exprs) == len(old_exprs) == 1
     np.testing.assert_allclose(
@@ -259,7 +302,8 @@ def test_value_matches_get_solution_value():
     q, z, z_prev = _pgd(vp)
     vp.maximize(ft.norm(z - z_prev, np.inf))
     bound = vp.solve()
-    np.testing.assert_allclose(q.value, vp.get_solution_value(q))
+    with pytest.deprecated_call():
+        np.testing.assert_allclose(q.value, vp.get_solution_value(q))
     np.testing.assert_allclose((z - z_prev).value, z.value - z_prev.value)
     # The incumbent attains the worst case up to the MIP gap.
     assert abs(np.max(np.abs((z - z_prev).value)) - bound) <= 1e-4 * max(1.0, bound)

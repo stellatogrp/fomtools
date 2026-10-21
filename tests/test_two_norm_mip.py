@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
 
@@ -11,7 +12,7 @@ def test_two_norm_mip_simple_gurobi():
     vp = Verifier(method="mip", solver="gurobi", obbt_solver=None)
 
     x = vp.iterate(n, lb=-1, ub=1)
-    vp.set_objective_norm(x, 2)
+    vp.maximize(ft.sum_squares(x))
     result = vp.solve()
 
     # Maximum ||x||_2^2 when x in [-1, 1]^2 is 2 (at corners)
@@ -24,7 +25,7 @@ def test_two_norm_mip_highs_raises():
     vp = Verifier(method="mip", solver="highs", obbt_solver=None)
 
     x = vp.iterate(n, lb=-1, ub=1)
-    vp.set_objective_norm(x, 2)
+    vp.maximize(ft.sum_squares(x))
 
     with pytest.raises(ValueError, match="does not support MIQP"):
         vp.solve()
@@ -36,7 +37,7 @@ def test_two_norm_mip_asymmetric_bounds():
     vp = Verifier(method="mip", solver="gurobi", obbt_solver=None)
 
     x = vp.iterate(n, lb=np.array([0, -2]), ub=np.array([1, 1]))
-    vp.set_objective_norm(x, 2)
+    vp.maximize(ft.sum_squares(x))
     result = vp.solve()
 
     # Maximum ||x||_2^2 with x in [0,1] x [-2,1] is at (1, -2): 1 + 4 = 5
@@ -50,7 +51,7 @@ def test_two_norm_mip_after_relu():
 
     x = vp.iterate(n, lb=-1, ub=1)
     y = vp.relu(x)
-    vp.set_objective_norm(y, 2)
+    vp.maximize(ft.sum_squares(y))
     result = vp.solve()
 
     # relu(x) for x in [-1,1] gives [0,1], max ||y||_2^2 at y=(1,1) is 2
@@ -67,7 +68,7 @@ def test_two_norm_mip_expression_difference():
 
     x = vp.iterate(n, lb=0, ub=0.5)
     y = vp.relu(A @ x)
-    vp.set_objective_norm(y - x, 2)
+    vp.maximize(ft.sum_squares(y - x))
     result = vp.solve()
 
     assert result >= 0
@@ -82,13 +83,13 @@ def test_two_norm_mip_vs_sdp():
     # MIP with Gurobi
     vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver=None)
     x_mip = vp_mip.iterate(n, lb=-1, ub=1)
-    vp_mip.set_objective_norm(x_mip, 2)
+    vp_mip.maximize(ft.sum_squares(x_mip))
     result_mip = vp_mip.solve()
 
     # SDP
     vp_sdp = Verifier(method="sdp", solver="clarabel", obbt_solver=None)
     x_sdp = vp_sdp.iterate(n, lb=-1, ub=1)
-    vp_sdp.set_objective_norm(x_sdp, 2)
+    vp_sdp.maximize(ft.sum_squares(x_sdp))
     result_sdp = vp_sdp.solve()
 
     # For simple bounded variables, MIP and SDP should give same result
@@ -104,14 +105,14 @@ def test_two_norm_mip_vs_sdp_after_relu():
     vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver=None)
     x_mip = vp_mip.iterate(n, lb=-1, ub=1)
     y_mip = vp_mip.relu(x_mip)
-    vp_mip.set_objective_norm(y_mip - x_mip, 2)
+    vp_mip.maximize(ft.sum_squares(y_mip - x_mip))
     result_mip = vp_mip.solve()
 
     # SDP
     vp_sdp = Verifier(method="sdp", solver="clarabel", obbt_solver=None)
     x_sdp = vp_sdp.iterate(n, lb=-1, ub=1)
     y_sdp = vp_sdp.relu(x_sdp)
-    vp_sdp.set_objective_norm(y_sdp - x_sdp, 2)
+    vp_sdp.maximize(ft.sum_squares(y_sdp - x_sdp))
     result_sdp = vp_sdp.solve()
 
     # MIP should be exact, SDP is relaxation
@@ -127,7 +128,7 @@ def test_two_norm_mip_with_constraint():
     x = vp.iterate(n, lb=-1, ub=1)
     # Constrain sum(x) <= 0
     vp.add_constraint(np.ones((1, n)) @ x <= 0)
-    vp.set_objective_norm(x, 2)
+    vp.maximize(ft.sum_squares(x))
     result = vp.solve()
 
     # Maximum ||x||_2^2 with sum(x) <= 0 and x in [-1,1]^2
@@ -141,12 +142,12 @@ def test_two_norm_mip_multiple_solves():
 
     vp1 = Verifier(method="mip", solver="gurobi", obbt_solver=None)
     x1 = vp1.iterate(n, lb=-1, ub=1)
-    vp1.set_objective_norm(x1, 2)
+    vp1.maximize(ft.sum_squares(x1))
     result1 = vp1.solve()
 
     vp2 = Verifier(method="mip", solver="gurobi", obbt_solver=None)
     x2 = vp2.iterate(n, lb=-0.5, ub=0.5)
-    vp2.set_objective_norm(x2, 2)
+    vp2.maximize(ft.sum_squares(x2))
     result2 = vp2.solve()
 
     # Result with tighter bounds should be smaller
@@ -160,7 +161,7 @@ def test_two_norm_mip_linear_transform():
 
     vp = Verifier(method="mip", solver="gurobi", obbt_solver=None)
     x = vp.iterate(n, lb=-1, ub=1)
-    vp.set_objective_norm(A @ x, 2)
+    vp.maximize(ft.sum_squares(A @ x))
     result = vp.solve()
 
     # ||A @ x||_2^2 = ||[2x_1, x_2]||^2 = 4*x_1^2 + x_2^2

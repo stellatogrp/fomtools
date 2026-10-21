@@ -1,5 +1,6 @@
 import numpy as np
 
+import fomtools as ft
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
 
@@ -54,7 +55,7 @@ def test_ista_sdp_mip_comparison(vp, vp_sdp):
         for k in range(K):
             z_sdp.append(vp_sdp_local.soft_threshold(At @ z_sdp[k] + Bt @ b_sdp, lambd=lambda_t))
 
-        vp_sdp_local.set_objective_norm(z_sdp[K] - z_sdp[K - 1], 2)
+        vp_sdp_local.maximize(ft.sum_squares(z_sdp[K] - z_sdp[K - 1]))
         sdp_two_norm_sq = vp_sdp_local.solve()
 
         # MIP with infinity-norm objective
@@ -70,7 +71,7 @@ def test_ista_sdp_mip_comparison(vp, vp_sdp):
         for k in range(K):
             z_mip.append(vp_mip.soft_threshold(At @ z_mip[k] + Bt @ b_mip, lambd=lambda_t))
 
-        vp_mip.set_objective_norm([z_mip[K] - z_mip[K - 1]], np.inf)
+        vp_mip.maximize(ft.norm([z_mip[K] - z_mip[K - 1]], np.inf))
         mip_inf_norm = vp_mip.solve()
 
         sdp_two_norm = np.sqrt(sdp_two_norm_sq)
@@ -131,7 +132,7 @@ def test_ista_sdp_softthresh_vs_relus(vp_sdp):
     z1_manual = relu_pos_output - relu_neg_output
 
     # Set objective on z1 - z0
-    vp_manual.set_objective_norm(z1_manual - z0_manual, 2)
+    vp_manual.maximize(ft.sum_squares(z1_manual - z0_manual))
     result_manual = vp_manual.solve()
 
     # --- Automatic decomposition using step.soft_threshold ---
@@ -147,7 +148,7 @@ def test_ista_sdp_softthresh_vs_relus(vp_sdp):
     # Use automatic soft threshold decomposition
     z1_auto = vp_auto.soft_threshold(At @ z0_auto + Bt @ b_auto, lambd=lambda_t)
 
-    vp_auto.set_objective_norm(z1_auto - z0_auto, 2)
+    vp_auto.maximize(ft.sum_squares(z1_auto - z0_auto))
     result_auto = vp_auto.solve()
 
     print(f"Manual decomposition result: {result_manual}")

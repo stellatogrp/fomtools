@@ -1,5 +1,6 @@
 import numpy as np
 
+import fomtools as ft
 from tests.conftest import TEST_EPS
 from tests.cvxpy import verifier as verifier_cvxpy
 
@@ -63,7 +64,7 @@ def test_verifier(vp):
         x[k] = vp.relu(x[k - 1] - t * (c_param - A.T @ y[k - 1]))
         y[k] = y[k - 1] - t * (A @ (2 * x[k] - x[k - 1]) - b_param)
 
-        vp.set_objective_norm([x[k] - x[k - 1], y[k] - y[k - 1]], np.inf)
+        vp.maximize(ft.norm([x[k] - x[k - 1], y[k] - y[k - 1]], np.inf))
         res = vp.solve()
         all_res.append(res)
 
@@ -71,13 +72,13 @@ def test_verifier(vp):
     print(f"DR resids: {DR_resids[:K]}")
 
     print(f"b_c: {b}")
-    print(vp.get_solution_value(b_param))
-    b_test = vp.get_solution_value(b_param)
+    print(b_param.value)
+    b_test = b_param.value
 
-    xK = vp.get_solution_value(x[K])
-    xKminus1 = vp.get_solution_value(x[K - 1])
-    yK = vp.get_solution_value(y[K])
-    yKminus1 = vp.get_solution_value(y[K - 1])
+    xK = x[K].value
+    xKminus1 = x[K - 1].value
+    yK = y[K].value
+    yKminus1 = y[K - 1].value
 
     test_resid = np.max(np.abs(np.hstack([xK - xKminus1, yK - yKminus1])))
     print(test_resid)

@@ -1,5 +1,6 @@
 import numpy as np
 
+import fomtools as ft
 from tests.conftest import TEST_EPS
 from tests.cvxpy import fixed_point as fixed_point_cvxpy
 
@@ -37,11 +38,11 @@ def test_box_constrained_ls_fixed_point(vp_param_1):
 
     for k in range(1, K + 1):
         x[k] = vp_param_1.satlin(x[k - 1] - t * A.T @ (A @ x[k - 1] - b_param), l=l, u=u)
-        vp_param_1.set_objective_norm([x[k] - x_star], np.inf)
+        vp_param_1.maximize(ft.norm([x[k] - x_star], np.inf))
         _ = vp_param_1.solve()
 
-    x_star_val = vp_param_1.get_solution_value(x_star)
-    b_wc = vp_param_1.get_solution_value(b_param)
+    x_star_val = x_star.value
+    b_wc = b_param.value
 
     x_opt_val = fixed_point_cvxpy(n, A, b_wc, l, u)
 

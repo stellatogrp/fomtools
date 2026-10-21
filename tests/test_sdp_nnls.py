@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
 
@@ -19,7 +20,7 @@ def test_nnls_sdp(vp_sdp):
     z1 = vp_sdp.relu(z0 - t * A.T @ (A @ z0 - x))
     z2 = vp_sdp.relu(z1 - t * A.T @ (A @ z1 - x))
 
-    vp_sdp.set_objective_norm(z2 - z1, 2)
+    vp_sdp.maximize(ft.sum_squares(z2 - z1))
 
     result = vp_sdp.solve()
     assert result > TEST_EPS
@@ -40,7 +41,7 @@ def test_sdp_direct_solver_calls():
     z1 = vp.relu(z0 - t * A.T @ (A @ z0 - x))
     z2 = vp.relu(z1 - t * A.T @ (A @ z1 - x))
 
-    vp.set_objective_norm(z2 - z1, 2)
+    vp.maximize(ft.sum_squares(z2 - z1))
 
     # Verify direct solver calls still work
     cvxpy_result = vp.canonicalizer.solve_via_cvxpy()
@@ -63,7 +64,7 @@ def test_sdp_infinity_norm_supported(vp_sdp):
     x = vp_sdp.parameter(2, lb=0, ub=1)
 
     # Should not raise - infinity-norm is now implemented
-    vp_sdp.set_objective_norm([x], np.inf)
+    vp_sdp.maximize(ft.norm([x], np.inf))
     result = vp_sdp.solve()
 
     # SDP provides an upper bound, should be >= 1 (the max abs bound)

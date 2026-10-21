@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 import scipy.sparse as spa
 
+import fomtools as ft
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import (
     ElasticNet,
@@ -1789,14 +1790,14 @@ def test_quadratic_sparse_Q_matches_dense_all_backends(method):
         arg = v.parameter(ndim=n, samples=arg_value[None, :])
         u = v.prox(Quadratic(Q=spa.diags(diag), q=q), arg, gamma=gamma)
         ref = v.parameter(ndim=n, samples=expected[None, :])
-        v.set_infinity_norm_objective(u - ref)
+        v.maximize(ft.norm(u - ref, np.inf))
         assert v.solve()[:, -1].max() < 1e-5
         return
 
     if method == "sdp":
         arg = v.parameter(n, lb=arg_value, ub=arg_value)
         u = v.prox(Quadratic(Q=spa.diags(diag), q=q), arg, gamma=gamma)
-        v.set_objective_norm(u, 2)
+        v.maximize(ft.sum_squares(u))
         np.testing.assert_allclose(v.solve(), float(expected @ expected), atol=1e-4)
         return
 

@@ -23,6 +23,7 @@ ReLU and satlin get smoke checks.
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.steps import Relu, SaturatedLinear, SoftThreshold
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
@@ -46,8 +47,8 @@ def _assert_softthreshold_steps_on_graph(vp, atol=TEST_EPS):
     checked = 0
     for step in vp.steps:
         if isinstance(step, SoftThreshold):
-            arg = np.atleast_1d(vp.get_solution_value(step.arg))
-            out = np.atleast_1d(vp.get_solution_value(step.output))
+            arg = np.atleast_1d(step.arg.value)
+            out = np.atleast_1d(step.output.value)
             true = _st(arg, step.lambd)
             assert np.allclose(out, true, atol=atol), (
                 f"off-graph soft-threshold output: arg={arg}, out={out}, "
@@ -102,15 +103,15 @@ def _build_ista(seed, K, box=1.5, lam_scale=2.0, obbt_solver=None, n=2, m=3):
     bp = vp.parameter(m, lb=b - 0.5, ub=b + 0.5)
     for k in range(K):
         z.append(vp.soft_threshold(At @ z[k] + Bt @ bp, lambd=lam))
-    vp.set_objective_norm(z[K] - z[K - 1], 2)
+    vp.maximize(ft.sum_squares(z[K] - z[K - 1]))
     return vp, z, bp, At, Bt, lam, K
 
 
 def _ista_forward_objective(vp, z, bp, At, Bt, lam, K):
     """Forward-simulate the TRUE soft-threshold trajectory from the solved
     worst-case (z0, b) and return the resulting squared-two-norm objective."""
-    z0 = vp.get_solution_value(z[0])
-    b_star = vp.get_solution_value(bp)
+    z0 = z[0].value
+    b_star = bp.value
     zt = [z0]
     for _ in range(K):
         zt.append(_st(At @ zt[-1] + Bt @ b_star, lam))
@@ -205,10 +206,10 @@ def test_softthreshold_single_step_branches_exact():
             x = vp.iterate(1, lb=lb, ub=ub)
             y = vp.soft_threshold(x, lambd=lam)
             # Linear objective (max +/- y) to probe both directions of the graph.
-            vp.set_objective_norm(sense * y, 1)
+            vp.maximize(ft.norm(sense * y, 1))
             vp.solve()
-            arg = np.atleast_1d(vp.get_solution_value(x))
-            out = np.atleast_1d(vp.get_solution_value(y))
+            arg = np.atleast_1d(x.value)
+            out = np.atleast_1d(y.value)
             assert np.allclose(out, _st(arg, lam), atol=TEST_EPS), (
                 f"box=({lb},{ub}) sense={sense}: arg={arg} out={out} true={_st(arg, lam)}"
             )
@@ -230,12 +231,12 @@ def test_relu_solution_on_graph_smoke():
     z = [vp.iterate(n, lb=-2.0, ub=2.0)]
     for k in range(2):
         z.append(vp.relu(z[k] - t * A.T @ (A @ z[k] - x)))
-    vp.set_objective_norm(z[2] - z[1], 2)
+    vp.maximize(ft.sum_squares(z[2] - z[1]))
     vp.solve()
     for step in vp.steps:
         if isinstance(step, Relu):
-            arg = np.atleast_1d(vp.get_solution_value(step.arg))
-            out = np.atleast_1d(vp.get_solution_value(step.output))
+            arg = np.atleast_1d(step.arg.value)
+            out = np.atleast_1d(step.output.value)
             assert np.allclose(out, np.maximum(0.0, arg), atol=TEST_EPS)
 
 
@@ -253,12 +254,12 @@ def test_satlin_solution_on_graph_smoke():
     z = [vp.iterate(n, lb=-1.0, ub=1.0)]
     for k in range(2):
         z.append(vp.satlin(z[k] - t * (P @ z[k] + q_param), l=lo, u=hi))
-    vp.set_objective_norm(z[2] - z[1], 2)
+    vp.maximize(ft.sum_squares(z[2] - z[1]))
     vp.solve()
     for step in vp.steps:
         if isinstance(step, SaturatedLinear):
-            arg = np.atleast_1d(vp.get_solution_value(step.arg))
-            out = np.atleast_1d(vp.get_solution_value(step.output))
+            arg = np.atleast_1d(step.arg.value)
+            out = np.atleast_1d(step.output.value)
             assert np.allclose(out, np.clip(arg, lo, hi), atol=TEST_EPS)
 
 
@@ -291,13 +292,13 @@ def _build_boxpgd(seed, K, obbt_solver=None):
     z = [vp.iterate(n, lb=-1.5, ub=1.5)]  # straddles [lo, hi] faces
     for k in range(K):
         z.append(vp.satlin(z[k] - t * (P @ z[k] + q_param), l=lo, u=hi))
-    vp.set_objective_norm(z[K] - z[K - 1], 2)
+    vp.maximize(ft.sum_squares(z[K] - z[K - 1]))
     return vp, z, q_param, P, q, lo, hi, t, K
 
 
 def _boxpgd_forward_objective(vp, z, q_param, P, q, lo, hi, t, K):
-    q_star = vp.get_solution_value(q_param)
-    zt = [vp.get_solution_value(z[0])]
+    q_star = q_param.value
+    zt = [z[0].value]
     for _ in range(K):
         zt.append(np.clip(zt[-1] - t * (P @ zt[-1] + q_star), lo, hi))
     return float(np.sum((zt[K] - zt[K - 1]) ** 2))
@@ -316,8 +317,8 @@ def test_satlin_solution_on_graph_mixed(seed, K, obbt_solver):
     assert bound >= objval - TEST_EPS
     for step in vp.steps:
         if isinstance(step, SaturatedLinear):
-            arg = np.atleast_1d(vp.get_solution_value(step.arg))
-            out = np.atleast_1d(vp.get_solution_value(step.output))
+            arg = np.atleast_1d(step.arg.value)
+            out = np.atleast_1d(step.output.value)
             assert np.allclose(out, np.clip(arg, lo, hi), atol=TEST_EPS), (
                 f"off-graph satlin: arg={arg}, out={out}, clip={np.clip(arg, lo, hi)}"
             )

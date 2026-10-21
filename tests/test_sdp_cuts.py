@@ -13,6 +13,7 @@ import warnings
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.verifier import Verifier
 from tests.conftest import SDP_SOLVERS, TEST_EPS
 
@@ -56,7 +57,7 @@ def _build_nnls_sdp(
     for k in range(K):
         z.append(vp.relu(z[k] - t * A.T @ (A @ z[k] - x)))
 
-    vp.set_objective_norm(z[K] - z[K - 1], 2)
+    vp.maximize(ft.sum_squares(z[K] - z[K - 1]))
     return vp, vp.solve()
 
 
@@ -257,7 +258,7 @@ def test_rlt_cuts_preserve_mip_lower_bound(sdp_solver):
     z_mip = [vp_mip.iterate(n, lb=5, ub=5.1)]
     for k in range(1):
         z_mip.append(vp_mip.relu(z_mip[k] - t * A.T @ (A @ z_mip[k] - x_mip)))
-    vp_mip.set_objective_norm([z_mip[1] - z_mip[0]], np.inf)
+    vp_mip.maximize(ft.norm([z_mip[1] - z_mip[0]], np.inf))
     mip_inf_norm = vp_mip.solve()
 
     sdp_two_norm = np.sqrt(sdp_two_norm_sq)
@@ -333,7 +334,7 @@ def test_rlt_cuts_invalidated_by_update_bounds():
         x = vp.parameter(m, lb=0, ub=0.1)
         z0 = vp.iterate(n, lb=lb, ub=ub)
         z1 = vp.relu(z0 - t * A.T @ (A @ z0 - x))
-        vp.set_objective_norm(z1 - z0, 2)
+        vp.maximize(ft.sum_squares(z1 - z0))
         return vp.solve()
 
     loose = _solve_with_z0_bounds(5.0, 5.1)
@@ -361,7 +362,7 @@ def _build_mixed_relu_problem(triangle_cuts=False, rlt_cuts=False, relu_envelope
     )
     z0 = vp.iterate(1, lb=-1.0, ub=1.0)
     z1 = vp.relu(z0)
-    vp.set_objective_norm(z1 - z0, 2)
+    vp.maximize(ft.sum_squares(z1 - z0))
     return vp, vp.solve()
 
 
@@ -376,7 +377,7 @@ def test_triangle_cuts_skipped_when_no_mixed_rows():
     # All-positive input range → relu is identity → step.lb[0] = 1 > 0.
     z0 = vp.iterate(2, lb=1.0, ub=2.0)
     _z1 = vp.relu(z0)
-    vp.set_objective_norm(_z1 - z0, 2)
+    vp.maximize(ft.sum_squares(_z1 - z0))
     vp.solve()
     canon = _solved_canon(vp)
     # No triangle cuts since no row is mixed.
@@ -402,7 +403,7 @@ def test_triangle_cut_count_2d():
     )
     z0 = vp.iterate(2, lb=-1.0, ub=1.0)  # both dims mixed
     z1 = vp.relu(z0)
-    vp.set_objective_norm(z1 - z0, 2)
+    vp.maximize(ft.sum_squares(z1 - z0))
     vp.solve()
     canon = _solved_canon(vp)
     # 2 mixed rows × 2 cols → 4 cuts.
@@ -428,7 +429,7 @@ def test_triangle_cuts_preserve_mip_lower_bound():
     x = vp_mip.parameter(m, lb=0, ub=0.1)
     z = [vp_mip.iterate(n, lb=5, ub=5.1)]
     z.append(vp_mip.relu(z[0] - t * A.T @ (A @ z[0] - x)))
-    vp_mip.set_objective_norm([z[1] - z[0]], np.inf)
+    vp_mip.maximize(ft.norm([z[1] - z[0]], np.inf))
     mip_inf_norm = vp_mip.solve()
     assert mip_inf_norm <= np.sqrt(sdp_two_norm_sq) + TEST_EPS
 
@@ -590,7 +591,7 @@ def _build_ista_sdp(
     z = [vp.iterate(n, lb=1, ub=1.1)]
     for k in range(K):
         z.append(vp.soft_threshold(At @ z[k] + Bt @ b_param, lambd=lambda_t))
-    vp.set_objective_norm(z[K] - z[K - 1], 2)
+    vp.maximize(ft.sum_squares(z[K] - z[K - 1]))
     return vp, vp.solve()
 
 
@@ -631,7 +632,7 @@ def _build_boxpgd_sdp(
     for k in range(K):
         grad_step = z[k] - t * (P @ z[k] + q_param)
         z.append(vp.satlin(grad_step, l=l, u=u))
-    vp.set_objective_norm(z[K] - z[K - 1], 2)
+    vp.maximize(ft.sum_squares(z[K] - z[K - 1]))
     return vp, vp.solve()
 
 
@@ -645,7 +646,7 @@ def _mip_inf_norm_nnls(K):
     z = [vp.iterate(n, lb=5, ub=5.1)]
     for k in range(K):
         z.append(vp.relu(z[k] - t * A.T @ (A @ z[k] - x)))
-    vp.set_objective_norm([z[K] - z[K - 1]], np.inf)
+    vp.maximize(ft.norm([z[K] - z[K - 1]], np.inf))
     return vp.solve()
 
 
@@ -666,7 +667,7 @@ def _mip_inf_norm_ista(K):
     z = [vp.iterate(n, lb=1, ub=1.1)]
     for k in range(K):
         z.append(vp.soft_threshold(At @ z[k] + Bt @ b_param, lambd=lambda_t))
-    vp.set_objective_norm([z[K] - z[K - 1]], np.inf)
+    vp.maximize(ft.norm([z[K] - z[K - 1]], np.inf))
     return vp.solve()
 
 
@@ -684,7 +685,7 @@ def _mip_inf_norm_boxpgd(K):
     for k in range(K):
         grad_step = z[k] - t * (P @ z[k] + q_param)
         z.append(vp.satlin(grad_step, l=l, u=u))
-    vp.set_objective_norm([z[K] - z[K - 1]], np.inf)
+    vp.maximize(ft.norm([z[K] - z[K - 1]], np.inf))
     return vp.solve()
 
 
@@ -780,7 +781,7 @@ def test_envelope_cuts_passthrough_no_chord():
     vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, relu_envelope_cuts=True)
     z0 = vp.iterate(2, lb=1.0, ub=2.0)  # both rows passthrough (lb >= 0)
     z1 = vp.relu(z0)
-    vp.set_objective_norm(z1 - z0, 2)
+    vp.maximize(ft.sum_squares(z1 - z0))
     vp.solve()
     canon = _solved_canon(vp)
     # 2 projected rows -> 2 lower-envelope cuts, 0 chords.
@@ -955,7 +956,7 @@ def test_full_psd_does_not_corrupt_original_cones():
     x = vp.parameter(m, lb=0, ub=0.1)
     z = [vp.iterate(n, lb=5, ub=5.1)]
     z.append(vp.relu(z[0] - t * A.T @ (A @ z[0] - x)))
-    vp.set_objective_norm(z[1] - z[0], 2)
+    vp.maximize(ft.sum_squares(z[1] - z[0]))
 
     before = [set(s) for s in vp.canonicalizer.psd_cone_indices]
     vp.solve()
@@ -1062,7 +1063,7 @@ def _two_independent_relus(rlt_cuts=False, rlt_all_pairs=False):
     z1 = vp.relu(z0)
     w0 = vp.iterate(1, lb=-1.0, ub=1.0)
     _w1 = vp.relu(w0)  # registers a second, disjoint ReLU cone
-    vp.set_objective_norm(z1 - z0, 2)
+    vp.maximize(ft.sum_squares(z1 - z0))
     vp.solve()
     return _solved_canon(vp)
 
@@ -1082,7 +1083,7 @@ def test_rlt_all_pairs_subsumed_when_single_cone():
         )
         z0 = vp.iterate(2, lb=-1.0, ub=1.0)
         z1 = vp.relu(z0)
-        vp.set_objective_norm(z1 - z0, 2)
+        vp.maximize(ft.sum_squares(z1 - z0))
         vp.solve()
         return [set(s) for s in _solved_canon(vp).psd_cone_indices]
 
@@ -1138,7 +1139,7 @@ def test_rlt_all_pairs_does_not_corrupt_original_cones():
     z1 = vp.relu(z0)
     w0 = vp.iterate(1, lb=-1.0, ub=1.0)
     _w1 = vp.relu(w0)  # second, disjoint ReLU cone → cross-pairs need new minors
-    vp.set_objective_norm(z1 - z0, 2)
+    vp.maximize(ft.sum_squares(z1 - z0))
 
     before = [set(s) for s in vp.canonicalizer.psd_cone_indices]
     vp.solve()
@@ -1330,7 +1331,7 @@ def test_cross_cut_count_single_2d_relu():
     vp = Verifier(method="sdp", solver="clarabel", obbt_solver=None, cross_cut=True)
     z = vp.iterate(2, lb=-1.0, ub=1.0)
     z1 = vp.relu(z)
-    vp.set_objective_norm(z1 - z, 2)
+    vp.maximize(ft.sum_squares(z1 - z))
     vp.solve()
     canon = _solved_canon(vp)
     assert len(canon._cut_ineq_matrices) == 2
@@ -1575,7 +1576,7 @@ def test_subgrad_cut_mixed_steps_sdp_matches_true_value():
     vj = vp.iterate(1, lb=0.9, ub=1.1)
     zi = vp.relu(vi)
     zj = vp.soft_threshold(vj, lambd=0.5)
-    vp.set_objective_norm(zi + zj, 2)
+    vp.maximize(ft.sum_squares(zi + zj))
     val = vp.solve()
     assert np.isfinite(val)
     assert val >= 2.56 - TEST_EPS
@@ -1737,7 +1738,7 @@ def _pep_sdp_value(build, **cut_kwargs):
         **cut_kwargs,
     )
     expr = build(vp)
-    vp.set_objective_norm(expr, 2)
+    vp.maximize(ft.sum_squares(expr))
     return vp.solve()
 
 
@@ -1758,7 +1759,7 @@ def test_pep_cuts_close_gap_to_mip(problem, min_cross, min_subgrad, min_both, co
     build = _pep_mixed_builder(problem)
 
     vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver=None, params=dict(_PEP_GUROBI))
-    vp_mip.set_objective_norm(build(vp_mip), 2)
+    vp_mip.maximize(ft.sum_squares(build(vp_mip)))
     mip = vp_mip.solve()
 
     base = _pep_sdp_value(build)
@@ -1802,7 +1803,7 @@ def test_softthreshold_hull_closes_ista_gap():
     build = _pep_mixed_builder("ista")
 
     vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver=None, params=dict(_PEP_GUROBI))
-    vp_mip.set_objective_norm(build(vp_mip), 2)
+    vp_mip.maximize(ft.sum_squares(build(vp_mip)))
     mip = vp_mip.solve()
 
     base = _pep_sdp_value(build)
@@ -1896,7 +1897,7 @@ def test_box_cuts_registered_and_emitted():
             ineq_square_cuts=False,
             **flags,
         )
-        vp.set_objective_norm(_build_boxpgd_mixed(vp, 2, P, q, lo, hi, t), 2)
+        vp.maximize(ft.sum_squares(_build_boxpgd_mixed(vp, 2, P, q, lo, hi, t)))
         assert len(vp.canonicalizer._box_prox_steps) == 2  # two satlin steps registered
         vp.solve()
         return len(_solved_canon(vp)._cut_ineq_matrices)
@@ -1919,7 +1920,7 @@ def test_box_cuts_valid_on_true_trajectory(seed):
     vp = Verifier(
         method="sdp", solver="clarabel", obbt_solver=None, cross_cut=True, subgrad_mono_cut=True
     )
-    vp.set_objective_norm(_build_boxpgd_mixed(vp, 3, P, q, lo, hi, t), 2)
+    vp.maximize(ft.sum_squares(_build_boxpgd_mixed(vp, 3, P, q, lo, hi, t)))
     vp.solve()
     canon = _solved_canon(vp)
     rng = np.random.default_rng(123)
@@ -1939,7 +1940,7 @@ def test_box_mono_cuts_same_box_only():
         x = vp.iterate(1, lb=-2.0, ub=2.0)
         for lo, hi in boxes:
             x = vp.satlin(x, l=np.array([lo]), u=np.array([hi]))
-        vp.set_objective_norm(x, 2)
+        vp.maximize(ft.sum_squares(x))
         vp.solve()
         canon = _solved_canon(vp)
         canon._cut_ineq_matrices = []
@@ -1963,7 +1964,7 @@ def test_box_cuts_close_gap_to_mip():
     vp_mip = Verifier(
         method="mip", solver="gurobi", obbt_solver=None, params=dict(GUROBI_SILENT_BOX)
     )
-    vp_mip.set_objective_norm(_build_boxpgd_mixed(vp_mip, K, P, q, lo, hi, t), 2)
+    vp_mip.maximize(ft.sum_squares(_build_boxpgd_mixed(vp_mip, K, P, q, lo, hi, t)))
     mip = vp_mip.solve()
 
     def sdp(**kw):
@@ -1975,7 +1976,7 @@ def test_box_cuts_close_gap_to_mip():
             relu_envelope_cuts=True,
             **kw,
         )
-        vp.set_objective_norm(_build_boxpgd_mixed(vp, K, P, q, lo, hi, t), 2)
+        vp.maximize(ft.sum_squares(_build_boxpgd_mixed(vp, K, P, q, lo, hi, t)))
         return vp.solve()
 
     base = sdp()

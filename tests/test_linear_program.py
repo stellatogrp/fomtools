@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.steps import LinearProgram, StandardFormLinearProgram
 from fomtools.verifier import Verifier
 from tests.conftest import PROX_ATOL
@@ -49,9 +50,9 @@ def test_mip_box_lp_matches_reference():
     ref = LinearProgram(q=q, C=C, d=d, dual_ub=10.0).solve()
     v = _make_verifier("mip", obbt="gurobi")
     u = v.linear_program(q=q, C=C, d=d, dual_ub=10.0, primal_bounds=(-np.ones(2), np.ones(2)))
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), ref, atol=PROX_ATOL)
+    np.testing.assert_allclose(u.value, ref, atol=PROX_ATOL)
 
 
 def test_mip_lp_with_equality():
@@ -72,9 +73,9 @@ def test_mip_lp_with_equality():
         primal_bounds=(-np.ones(2), np.ones(2)),
         nu_bounds=(np.array([-50.0]), np.array([50.0])),
     )
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), ref, atol=PROX_ATOL)
+    np.testing.assert_allclose(u.value, ref, atol=PROX_ATOL)
 
 
 def test_without_dual_ub_raises():
@@ -132,9 +133,9 @@ def test_standardform_mip_matches_reference():
         primal_bounds=_SF_PRIMAL,
         nu_bounds=(np.array([-50.0]), np.array([50.0])),
     )
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), ref, atol=PROX_ATOL)
+    np.testing.assert_allclose(u.value, ref, atol=PROX_ATOL)
 
 
 def test_standardform_without_dual_ub_raises():

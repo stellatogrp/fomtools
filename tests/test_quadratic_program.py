@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 import scipy.sparse as spa
 
+import fomtools as ft
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import IndPolyhedral
 from fomtools.steps import QuadraticProgram
@@ -115,9 +116,9 @@ def test_mip_matches_reference(case):
     ref = QuadraticProgram(**kw).solve()
     v = _make_verifier("mip", obbt="gurobi")
     u = v.quadratic_program(**kw)
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), ref, atol=PROX_ATOL)
+    np.testing.assert_allclose(u.value, ref, atol=PROX_ATOL)
 
 
 @pytest.mark.parametrize("P", [np.eye(2), spa.eye(2)], ids=["dense", "sparse"])
@@ -128,9 +129,9 @@ def test_mip_dense_and_sparse_P_agree(P):
     v = _make_verifier("mip", obbt="gurobi")
     xp = v.parameter(2, lb=x0, ub=x0)
     u = v.quadratic_program(P=P, q=-xp, C=C, d=d, dual_ub=10.0)
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), np.array([1.0, -1.0]), atol=PROX_ATOL)
+    np.testing.assert_allclose(u.value, np.array([1.0, -1.0]), atol=PROX_ATOL)
 
 
 def test_mip_parametric_q_b():
@@ -149,10 +150,10 @@ def test_mip_parametric_q_b():
         primal_bounds=(-5 * np.ones(2), 5 * np.ones(2)),
         nu_bounds=(np.array([-50.0]), np.array([50.0])),
     )
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
     ref = QuadraticProgram(P=np.eye(2), q=-x0, A=A, b=b0).solve()
-    np.testing.assert_allclose(v.get_solution_value(u), ref, atol=PROX_ATOL)
+    np.testing.assert_allclose(u.value, ref, atol=PROX_ATOL)
 
 
 def test_mip_reproduces_indpolyhedral_projection():
@@ -163,11 +164,9 @@ def test_mip_reproduces_indpolyhedral_projection():
     v = _make_verifier("mip", obbt="gurobi")
     xp = v.parameter(2, lb=x0, ub=x0)
     u = v.quadratic_program(P=np.eye(2), q=-xp, C=Apoly, d=bpoly, dual_ub=20.0)
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
-    np.testing.assert_allclose(
-        v.get_solution_value(u), IndPolyhedral(Apoly, bpoly).prox(x0), atol=PROX_ATOL
-    )
+    np.testing.assert_allclose(u.value, IndPolyhedral(Apoly, bpoly).prox(x0), atol=PROX_ATOL)
 
 
 # --- error / deferral paths -------------------------------------------------
@@ -225,7 +224,7 @@ def test_sdp_projection_bound_tight_at_fixed_point(C, d, x0, dual_ub):
     v = _make_verifier("sdp")
     xp = v.parameter(len(x0), lb=x0, ub=x0)
     u = v.quadratic_program(P=np.eye(len(x0)), q=-xp, C=C, d=d, dual_ub=dual_ub)
-    v.set_objective_norm(u, 2)
+    v.maximize(ft.sum_squares(u))
     obj = v.solve()
     proj = QuadraticProgram(P=np.eye(len(x0)), q=-x0, C=C, d=d, dual_ub=dual_ub).solve()
     np.testing.assert_allclose(obj, float(proj @ proj), atol=1e-3)
@@ -239,13 +238,13 @@ def test_sdp_bound_dominates_mip_over_box():
     vm = _make_verifier("mip", obbt="gurobi")
     xm = vm.parameter(2, lb=arg_lb, ub=arg_ub)
     um = vm.quadratic_program(P=np.eye(2), q=-xm, C=C, d=d, dual_ub=10.0)
-    vm.set_objective_norm([um], np.inf)
+    vm.maximize(ft.norm([um], np.inf))
     mip_inf = vm.solve()
 
     vs = _make_verifier("sdp")
     xs = vs.parameter(2, lb=arg_lb, ub=arg_ub)
     us = vs.quadratic_program(P=np.eye(2), q=-xs, C=C, d=d, dual_ub=10.0)
-    vs.set_objective_norm(us, 2)
+    vs.maximize(ft.sum_squares(us))
     sdp_two = np.sqrt(vs.solve())
 
     assert np.isfinite(mip_inf)

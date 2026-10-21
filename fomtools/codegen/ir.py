@@ -290,7 +290,7 @@ class ObjectiveSpec:
         does not matter.
     norm:
         One of `OBJECTIVE_NORMS`. ``"2"`` is the sum of squares, matching
-        `set_objective_norm`.
+        `Verifier.maximize`.
     """
 
     blocks: tuple[ObjectiveBlock, ...]
@@ -413,7 +413,7 @@ class FomIR:
         if self.termination.uses_objective and self.objective is None:
             raise ValueError(
                 "termination kind 'objective' needs the verification objective in the IR; "
-                "set it on the verifier with set_objective_norm() before extracting."
+                "set it on the verifier with maximize() before extracting."
             )
 
     @property

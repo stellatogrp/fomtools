@@ -9,6 +9,7 @@ evaluated separately for each sample.
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.proxable_functions import IndBox
 from fomtools.verifier import Verifier
 
@@ -47,7 +48,7 @@ def test_optimal_control_stacked_box_without_metadata_uses_each_sample():
         ]
     )
     expected = vp.parameter(ndim=2, samples=expected_samples)
-    vp.set_objective_norm(projected - expected, ord=np.inf)
+    vp.maximize(ft.norm(projected - expected, np.inf))
 
     residuals = vp.solve()
 
@@ -83,7 +84,7 @@ def test_optimal_control_stacked_box_ignores_global_sample_metadata():
         ]
     )
     expected = vp.parameter(ndim=2, samples=expected_samples)
-    vp.set_objective_norm(projected - expected, ord=np.inf)
+    vp.maximize(ft.norm(projected - expected, np.inf))
 
     residuals = vp.solve()
 
@@ -118,7 +119,7 @@ def test_network_flow_projection_uses_sampled_capacities():
     projected = vp.prox(IndBox(l=0.0, u=capacity), flow)
 
     expected = vp.parameter(ndim=2, samples=capacity_samples)
-    vp.set_objective_norm(projected - expected, ord=np.inf)
+    vp.maximize(ft.norm(projected - expected, np.inf))
 
     residuals = vp.solve()
 
@@ -174,7 +175,7 @@ def test_parameter_dependent_satlin_evaluates_both_bounds_per_sample():
     projected = vp.satlin(arg, l=lower, u=upper)
 
     expected = vp.parameter(ndim=2, samples=expected_samples)
-    vp.set_objective_norm(projected - expected, ord=np.inf)
+    vp.maximize(ft.norm(projected - expected, np.inf))
 
     residuals = vp.solve()
 

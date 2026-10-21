@@ -17,6 +17,7 @@ relaxation, so we compare bounds, never read solution values).
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.constraint import QuadraticConstraint, SumSquares, sum_squares
 from fomtools.verifier import Verifier
 from tests.conftest import SDP_SOLVERS, TEST_EPS
@@ -172,7 +173,7 @@ def test_gurobi_miqcp_solve(sense, expected):
     vp = Verifier(method="mip", solver="gurobi", obbt_solver=None, params={"OutputFlag": 0})
     x = vp.iterate(3, lb=-5, ub=5)
     vp.add_constraint(_ss(x, sense, R**2))
-    vp.set_objective_norm(x, "inf")
+    vp.maximize(ft.norm(x, np.inf))
     assert abs(vp.solve() - expected) < 1e-4
 
 
@@ -191,13 +192,13 @@ def test_mip_bound_preserved(sdp_solver, sense):
     vs = Verifier(method="sdp", solver=sdp_solver)
     xs = vs.iterate(3, lb=-3, ub=3)
     vs.add_constraint(_ss(xs, sense, R**2))
-    vs.set_objective_norm(xs, 2)
+    vs.maximize(ft.sum_squares(xs))
     sdp_two_sq = vs.solve()
 
     vm = Verifier(method="mip", solver="gurobi", obbt_solver=None, params={"OutputFlag": 0})
     xm = vm.iterate(3, lb=-3, ub=3)
     vm.add_constraint(_ss(xm, sense, R**2))
-    vm.set_objective_norm(xm, "inf")
+    vm.maximize(ft.norm(xm, np.inf))
     mip_inf = vm.solve()
 
     assert mip_inf <= np.sqrt(sdp_two_sq) + TEST_EPS

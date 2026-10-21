@@ -66,7 +66,7 @@ The verification pipeline follows: **Step -> StepDecomposer -> Canonicalizer -> 
 
 ### Step Operators
 
-Call as `vp.<name>(arg, ...)` (also available as `vp.step.<name>`). Options after `arg` are keyword-only:
+Call as `vp.<name>(arg, ...)` (`vp.step.<name>` is deprecated). Options after `arg` are keyword-only:
 
 | Step | Method | Description |
 |------|--------|-------------|

@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 import scipy.sparse as spa
 
+import fomtools as ft
 from fomtools.linearexpression import LinearExpression
 from fomtools.steps import Relu
 from fomtools.verifier import Verifier
@@ -190,7 +191,7 @@ def test_sdp_partial_relu_bound_dominates_mip():
         v = Verifier(**kwargs)
         x = v.iterate(n, lb=-1.0, ub=1.0)
         y = v.relu(x, proj_ranges=proj_ranges)
-        v.set_infinity_norm_objective([y])
+        v.maximize(ft.norm([y], np.inf))
         return v.solve()
 
     mip_res = build(None, "gurobi", "gurobi")
@@ -272,7 +273,7 @@ def test_simulator_partial_relu_default_residual_matches_explicit():
                 proj_ranges=(1, 3),
             )
             if with_explicit_residual:
-                vp.set_objective_norm(z[k] - z[k - 1], np.inf)
+                vp.maximize(ft.norm(z[k] - z[k - 1], np.inf))
         return np.asarray(vp.solve())
 
     default = run(with_explicit_residual=False)
@@ -296,7 +297,7 @@ def test_simulator_partial_relu_differs_from_full():
         q = vp.parameter(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
         kwargs = {} if proj_ranges is None else {"proj_ranges": proj_ranges}
         z1 = vp.relu(z0 + q, **kwargs)
-        vp.set_objective_norm(z1 - z0, np.inf)
+        vp.maximize(ft.norm(z1 - z0, np.inf))
         return vp.solve()
 
     full_res = run(None)
@@ -333,7 +334,7 @@ def test_partial_relu_sdp_geq_mip_pgd():
         q_param = v.parameter(n, lb=q - q_offset, ub=q + q_offset)
         z0 = v.iterate(n, lb=-1.0, ub=-1.0)
         z1 = v.relu(z0 - t * (P @ z0 + q_param), proj_ranges=proj_ranges)
-        v.set_infinity_norm_objective([z1 - z0])
+        v.maximize(ft.norm([z1 - z0], np.inf))
         return v.solve()
 
     mip_res = build(None, "gurobi", "gurobi")

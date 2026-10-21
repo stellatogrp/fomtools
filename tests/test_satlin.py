@@ -1,5 +1,6 @@
 import numpy as np
 
+import fomtools as ft
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS, mip_params
 from tests.cvxpy import satlin as satlin_cvxpy
@@ -44,27 +45,27 @@ def test_satlin(vp_param_2):
         print(k)
         z[k] = vp_param_2.satlin(z[k - 1] - t * (P @ z[k - 1] + q_param), l=l, u=u)
 
-        vp_param_2.set_objective_norm(z[k] - z[k - 1], np.inf)
+        vp_param_2.maximize(ft.norm(z[k] - z[k - 1], np.inf))
         res = vp_param_2.solve()
         all_res.append(res)
 
-    print(f"opt q_param at last K: {vp_param_2.get_solution_value(q_param)}")
+    print(f"opt q_param at last K: {q_param.value}")
     print(f"VP resids: {all_res}")
 
     print("extracting values from VP:")
     for k in range(K + 1):
         print(f"-K={k}-")
-        print(vp_param_2.get_solution_value(z[k]))
+        print(z[k].value)
 
     z_test = np.array([-0.91651, 1, 0])
     print(
         "test grad step from K-1:",
-        z_test - t * (P @ z_test + vp_param_2.get_solution_value(q_param)),
+        z_test - t * (P @ z_test + q_param.value),
     )
     print("bounds:", vp_param_2.iterates[-1].lb, vp_param_2.iterates[-1].ub)
 
     zk = z0_init
-    q = vp_param_2.get_solution_value(q_param)
+    q = q_param.value
     PGD_resids = []
 
     for k in range(K):
@@ -112,12 +113,12 @@ def test_satlin_param(vp_param_2):
     for k in range(1, K + 1):
         print(k)
         z[k] = vp_param_2.satlin(z[k - 1] - t * (P @ z[k - 1] + q_param), l=l_param, u=u_param)
-        vp_param_2.set_objective_norm(z[k] - z[k - 1], np.inf)
+        vp_param_2.maximize(ft.norm(z[k] - z[k - 1], np.inf))
         res = vp_param_2.solve()
         all_res.append(res)
 
-        l_test = vp_param_2.get_solution_value(l_param)
-        u_test = vp_param_2.get_solution_value(u_param)
+        l_test = l_param.value
+        u_test = u_param.value
         print(l_test, u_test)
 
         assert l_test[0] == u_test[0]
@@ -150,7 +151,7 @@ def test_satlin_sdp_mip(vp_param_2, vp_sdp):
     z_s = [vp_s.iterate(n, lb=z0_init, ub=z0_init)]
     for k in range(K):
         z_s.append(vp_s.satlin(z_s[k] - t * (P @ z_s[k] + q_s), l=l, u=u))
-    vp_s.set_objective_norm(z_s[K] - z_s[K - 1], 2)
+    vp_s.maximize(ft.sum_squares(z_s[K] - z_s[K - 1]))
     sdp_res = vp_s.solve()
 
     # --- MIP ---
@@ -163,7 +164,7 @@ def test_satlin_sdp_mip(vp_param_2, vp_sdp):
     z_m = [vp_m.iterate(n, lb=z0_init, ub=z0_init)]
     for k in range(K):
         z_m.append(vp_m.satlin(z_m[k] - t * (P @ z_m[k] + q_m), l=l, u=u))
-    vp_m.set_objective_norm(z_m[K] - z_m[K - 1], np.inf)
+    vp_m.maximize(ft.norm(z_m[K] - z_m[K - 1], np.inf))
     mip_res = vp_m.solve()
 
     # SDP two-norm squared >= MIP inf-norm squared (relaxation upper bounds)
@@ -197,7 +198,7 @@ def test_satlin_param_sdp_mip(vp_param_2, vp_sdp):
     z_s = [vp_s.iterate(n, lb=0, ub=0)]
     for k in range(K):
         z_s.append(vp_s.satlin(z_s[k] - t * (P @ z_s[k] + q_s), l=l_s, u=u_s))
-    vp_s.set_objective_norm(z_s[K] - z_s[K - 1], 2)
+    vp_s.maximize(ft.sum_squares(z_s[K] - z_s[K - 1]))
     sdp_res = vp_s.solve()
 
     # --- MIP ---
@@ -216,7 +217,7 @@ def test_satlin_param_sdp_mip(vp_param_2, vp_sdp):
     z_m = [vp_m.iterate(n, lb=0, ub=0)]
     for k in range(K):
         z_m.append(vp_m.satlin(z_m[k] - t * (P @ z_m[k] + q_m), l=l_m, u=u_m))
-    vp_m.set_objective_norm(z_m[K] - z_m[K - 1], np.inf)
+    vp_m.maximize(ft.norm(z_m[K] - z_m[K - 1], np.inf))
     mip_res = vp_m.solve()
 
     # SDP two-norm squared >= MIP inf-norm squared
@@ -246,7 +247,7 @@ def test_satlin_diamond(vp_param_2):
     z0 = vp_param_2.iterate(n, lb=np.array([0.0]), ub=np.array([0.0]))
     z1 = vp_param_2.satlin(z0 - q_param, l=l, u=u)
 
-    vp_param_2.set_objective_norm(z1 - q_param, np.inf)
+    vp_param_2.maximize(ft.norm(z1 - q_param, np.inf))
     mip_res = vp_param_2.solve()
 
     true_worst_case = 4.0

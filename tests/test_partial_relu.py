@@ -1,5 +1,6 @@
 import numpy as np
 
+import fomtools as ft
 from tests.conftest import TEST_EPS
 from tests.cvxpy import partial_relu as partial_relu_cvxpy
 
@@ -41,16 +42,16 @@ def test_partial_nnqp(vp):
         print(k)
         z[k] = vp.relu(z[k - 1] - t * (P @ z[k - 1] + q_param), proj_ranges=proj_ranges)
 
-        vp.set_objective_norm(z[k] - z[k - 1], np.inf)
+        vp.maximize(ft.norm(z[k] - z[k - 1], np.inf))
         res = vp.solve(convex_hull_cuts=True)
         all_res.append(res)
         vp.post_process(z[k], z[0], all_res)
 
-    print(f"opt q_param at last K: {vp.get_solution_value(q_param)}")
+    print(f"opt q_param at last K: {q_param.value}")
     print(f"vp_gurobi resids: {all_res}")
 
     zk = -np.ones(n)
-    q = vp.get_solution_value(q_param)
+    q = q_param.value
     PGD_resids = []
 
     for k in range(K):

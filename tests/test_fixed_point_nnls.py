@@ -1,5 +1,6 @@
 import numpy as np
 
+import fomtools as ft
 from tests.conftest import TEST_EPS
 from tests.cvxpy import fixed_point
 
@@ -60,22 +61,22 @@ def test_nnls_convergence(vp_param_1):
         # Perform ReLU step: z[k] = ReLU(z[k-1] - eta * A^T(Az[k-1] - x))
         z[k] = vp_param_1.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x_param))
         # Set objective to measure ||z[k] - z*||_inf
-        vp_param_1.set_objective_norm([z[k] - z_star], np.inf)
+        vp_param_1.maximize(ft.norm([z[k] - z_star], np.inf))
         res = vp_param_1.solve()
         all_residuals.append(res)
 
-    print(f"opt x_param at last K: {vp_param_1.get_solution_value(x_param)}")
+    print(f"opt x_param at last K: {x_param.value}")
     print(f"VP resids: {all_residuals}")
 
     # Extract the actual values from the verification
-    z_star_value = vp_param_1.get_solution_value(z_star)
-    x_worst_case = vp_param_1.get_solution_value(x_param)  # Extract the worst-case x that was used
+    z_star_value = z_star.value
+    x_worst_case = x_param.value  # Extract the worst-case x that was used
 
     print(f"\nExtracted z_star from verification: {z_star_value}")
     print("extracting values from VP:")
     for k in range(K + 1):
         print(f"-K={k}-")
-        print(vp_param_1.get_solution_value(z[k]))
+        print(z[k].value)
 
     # Solve the same problem with CVXPY using the exact same x that verification used
     z_optimal_value = fixed_point(n, A, x_worst_case, l=0)

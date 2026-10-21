@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.constraint import ComplementarityConstraint
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
@@ -46,14 +47,14 @@ def test_complementarity_enforced_in_solution(vp):
     b = vp.iterate(n, lb=0, ub=10)
 
     vp.add_constraint(vp.complementarity(a, b))
-    vp.set_objective_norm([a + b], np.inf)
+    vp.maximize(ft.norm([a + b], np.inf))
     result = vp.solve()
 
     assert result is not None
     assert np.isfinite(result)
 
-    a_val = vp.get_solution_value(a)
-    b_val = vp.get_solution_value(b)
+    a_val = a.value
+    b_val = b.value
     assert np.all(np.minimum(a_val, b_val) < TEST_EPS), (
         f"Complementarity violated: a={a_val}, b={b_val}"
     )
@@ -74,7 +75,7 @@ def test_complementarity_blocks_both_positive(vp):
     vp.add_constraint(vp.complementarity(a, b))
     vp.add_constraint(a >= 1)
     vp.add_constraint(b >= 1)
-    vp.set_objective_norm([a + b], np.inf)
+    vp.maximize(ft.norm([a + b], np.inf))
 
     raised = False
     result = None
@@ -114,12 +115,12 @@ def test_router_skips_obbt_for_complementarity(vp):
 
     # Should not raise (would AttributeError if routed into _tighten_constraint_bounds).
     vp.add_constraint(vp.complementarity(a, b))
-    vp.set_objective_norm([a + b], np.inf)
+    vp.maximize(ft.norm([a + b], np.inf))
     result = vp.solve()
 
     assert np.isfinite(result)
-    a_val = vp.get_solution_value(a)
-    b_val = vp.get_solution_value(b)
+    a_val = a.value
+    b_val = b.value
     assert np.all(np.minimum(a_val, b_val) < TEST_EPS)
 
 
@@ -136,7 +137,7 @@ def test_linear_constraint_still_tightens_with_obbt(vp):
 
     vp.add_constraint(x == p)
     z = vp.relu(x)
-    vp.set_objective_norm([z], np.inf)
+    vp.maximize(ft.norm([z], np.inf))
     result = vp.solve()
 
     assert np.isfinite(result)
@@ -162,14 +163,14 @@ def test_complementarity_sdp_valid_bound_vs_mip(vp_sdp):
     am = vm.iterate(n, lb=0, ub=2)
     bm = vm.iterate(n, lb=0, ub=2)
     vm.add_constraint(vm.complementarity(am, bm))
-    vm.set_objective_norm([am + bm], np.inf)
+    vm.maximize(ft.norm([am + bm], np.inf))
     mip_inf = vm.solve()
 
     vs = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
     a = vs.iterate(n, lb=0, ub=2)
     b = vs.iterate(n, lb=0, ub=2)
     vs.add_constraint(vs.complementarity(a, b))
-    vs.set_objective_norm(a + b, 2)
+    vs.maximize(ft.sum_squares(a + b))
     sdp_two = np.sqrt(vs.solve())
 
     assert np.isfinite(mip_inf)

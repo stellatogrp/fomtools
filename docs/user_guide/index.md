@@ -145,9 +145,8 @@ residuals, residuals involving the problem parameters, and distances to a refere
 expression. The package supports four objectives: the $\ell_1$ norm `ft.norm(expr, 1)`, the
 $\ell_\infty$ norm `ft.norm(expr, np.inf)`, the squared $\ell_2$ norm `ft.sum_squares(expr)`, and a
 zero objective for feasibility checks (`set_zero_objective`). The objective is set with
-`vp.maximize(...)`; `set_objective_norm(expr, ord)` is the equivalent lower-level call,
-where `ord=2` is also the squared norm. With the MIP backend the squared $\ell_2$ norm makes the
-problem a mixed-integer QP, which needs `solver="gurobi"`.
+`vp.maximize(...)`. The two-norm objective is always squared. With the MIP backend it makes
+the problem a mixed-integer QP, which needs `solver="gurobi"`.
 `ft.norm` also accepts a list of expressions, which the package stacks into a single
 vector before applying the norm, useful for composite metrics such as the OSQP convergence
 check, which monitors both the primal and the dual residual.

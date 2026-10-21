@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 import scipy.sparse as spa
 
+import fomtools as ft
 from fomtools.codegen.config import (
     Backend,
     CodegenConfig,
@@ -634,7 +635,7 @@ def build_ista_objective(*, K=3, max_iters=200, tol=1e-6, check_termination=None
     dtype = kw.pop("dtype", "float64")
     case = build_ista(K=K, max_iters=max_iters, dtype=dtype)
     its = case["iterates"]
-    case["verifier"].set_objective_norm(its[-1] - its[-2], np.inf)
+    case["verifier"].maximize(ft.norm(its[-1] - its[-2], np.inf))
     case["config"] = objective_config(
         max_iters=max_iters, tol=tol, check_termination=check_termination, dtype=dtype, **kw
     )
@@ -663,7 +664,8 @@ def build_scheduled_objective(*, extrapolated=True, ord=np.inf, max_iters=300, t
         y_curr = v.iterate(n, lb=z0, ub=z0)
         extrap = y_curr + gamma * (y_curr - y_prev)
         y_next = v.soft_threshold(d["At"] @ extrap + d["Bt"] @ b, lambd=threshold)
-        v.set_objective_norm(y_next - (extrap if extrapolated else y_curr), ord)
+        residual = y_next - (extrap if extrapolated else y_curr)
+        v.maximize(ft.sum_squares(residual) if ord == 2 else ft.norm(residual, ord))
         return Recording(v, next_state=[y_curr, y_next], state=[y_prev, y_curr])
 
     return dict(

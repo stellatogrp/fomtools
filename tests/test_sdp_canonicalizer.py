@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.canonicalizers.sdp import SDP
 from fomtools.verifier import Verifier
 
@@ -165,7 +166,7 @@ class TestCanonicalizeAffine:
         x = v.iterate(3, lb=-1.0, ub=1.0)
         y = v.implicit_linear(arg=-x + np.ones(3), output_mat=np.eye(3))
         z = v.relu(arg=y)
-        v.set_two_norm_objective([z])
+        v.maximize(ft.sum_squares([z]))
 
         residual = v.solve()
 

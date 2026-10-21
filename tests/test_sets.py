@@ -10,6 +10,7 @@ rejection, (6) SDP behavior, and (7) the simulator support split.
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import NormL1
 from fomtools.sets import (
@@ -203,9 +204,9 @@ def test_mip_projection_matches_numeric(name, make, x0, _sim, _ind):
     u = v.project(make(), x)
     assert isinstance(u, LinearExpression)
     assert u.ndim == len(x0)
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), make().project(x0), atol=PROX_ATOL)
+    np.testing.assert_allclose(u.value, make().project(x0), atol=PROX_ATOL)
 
 
 # --- class shorthand --------------------------------------------------------
@@ -217,20 +218,16 @@ def test_class_shorthand_matches_instance():
 
     v_cls = _make_verifier("mip", obbt="gurobi")
     u_cls = v_cls.project(NonNegative, v_cls.parameter(3, lb=x0, ub=x0))
-    v_cls.set_objective_norm([u_cls], np.inf)
+    v_cls.maximize(ft.norm([u_cls], np.inf))
     v_cls.solve()
 
     v_inst = _make_verifier("mip", obbt="gurobi")
     u_inst = v_inst.project(NonNegative(), v_inst.parameter(3, lb=x0, ub=x0))
-    v_inst.set_objective_norm([u_inst], np.inf)
+    v_inst.maximize(ft.norm([u_inst], np.inf))
     v_inst.solve()
 
-    np.testing.assert_allclose(
-        v_cls.get_solution_value(u_cls), v_inst.get_solution_value(u_inst), atol=PROX_ATOL
-    )
-    np.testing.assert_allclose(
-        v_cls.get_solution_value(u_cls), NonNegative().project(x0), atol=PROX_ATOL
-    )
+    np.testing.assert_allclose(u_cls.value, u_inst.value, atol=PROX_ATOL)
+    np.testing.assert_allclose(u_cls.value, NonNegative().project(x0), atol=PROX_ATOL)
 
 
 # --- input rejection --------------------------------------------------------
@@ -274,7 +271,7 @@ def test_sdp_projection_tight_at_fixed_point(make, x0):
     v = _make_verifier("sdp")
     x = v.parameter(len(x0), lb=x0, ub=x0)
     u = v.project(make(), x)
-    v.set_objective_norm(u, 2)
+    v.maximize(ft.sum_squares(u))
     obj = v.solve()
     proj = make().project(x0)
     # With lb == ub the lifted feasible set collapses to a single rank-one point (no

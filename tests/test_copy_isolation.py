@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.verifier import Verifier
 
 
@@ -17,7 +18,7 @@ class TestMIPCopyIsolation:
         z = vp.relu(x)
 
         # Solve twice with same objective
-        vp.set_objective_norm([z], np.inf)
+        vp.maximize(ft.norm([z], np.inf))
         result1 = vp.solve()
         result2 = vp.solve()
 
@@ -32,18 +33,18 @@ class TestMIPCopyIsolation:
         z = vp.relu(x)
 
         # Solve with first objective
-        vp.set_objective_norm([z], np.inf)
+        vp.maximize(ft.norm([z], np.inf))
         result1 = vp.solve()
 
         # Change objective (shifted expression)
-        vp.set_objective_norm([z - 5], np.inf)
+        vp.maximize(ft.norm([z - 5], np.inf))
         result2 = vp.solve()
 
         # Results should be different
         assert result1 != result2
 
         # Solve again with original objective to verify no corruption
-        vp.set_objective_norm([z], np.inf)
+        vp.maximize(ft.norm([z], np.inf))
         result3 = vp.solve()
 
         # Should match first result
@@ -81,7 +82,7 @@ class TestSDPCopyIsolation:
         z = vp.relu(x)
 
         # Solve twice with same objective
-        vp.set_objective_norm(z, 2)
+        vp.maximize(ft.sum_squares(z))
         result1 = vp.solve()
         result2 = vp.solve()
 
@@ -96,7 +97,7 @@ class TestSDPCopyIsolation:
         x = vp.iterate(3, lb=0, ub=10)
         z = vp.relu(x)
 
-        vp.set_objective_norm(z, 2)
+        vp.maximize(ft.sum_squares(z))
 
         # Get initial psd cone count
         initial_psd_count = len(vp.canonicalizer.psd_cone_indices)

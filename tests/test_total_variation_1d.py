@@ -4,6 +4,7 @@ import cvxpy as cp
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import TotalVariation1D
 from fomtools.proxable_functions.total_variation_1d import diff_matrix
@@ -60,9 +61,9 @@ def test_decomposer_warns_on_short_signal():
     x = v.parameter(1, lb=np.array([2.5]), ub=np.array([2.5]))
     with pytest.warns(UserWarning, match="total variation is identically"):
         out = v.prox(TotalVariation1D(1.0), x)
-    v.set_objective_norm([out], np.inf)
+    v.maximize(ft.norm([out], np.inf))
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(out), np.array([2.5]), atol=PROX_ATOL)
+    np.testing.assert_allclose(out.value, np.array([2.5]), atol=PROX_ATOL)
 
 
 def test_prox_matches_dual_box_qp():
@@ -100,11 +101,9 @@ def test_mip_matches_numeric(x0, lam, g):
     v = _make_verifier("mip", obbt="gurobi")
     x = v.parameter(len(x0), lb=x0, ub=x0)  # fixed arg
     out = v.prox(TotalVariation1D(lam), x, gamma=g)
-    v.set_objective_norm([out], np.inf)
+    v.maximize(ft.norm([out], np.inf))
     v.solve()
-    np.testing.assert_allclose(
-        v.get_solution_value(out), TotalVariation1D(lam).prox(x0, gamma=g), atol=PROX_ATOL
-    )
+    np.testing.assert_allclose(out.value, TotalVariation1D(lam).prox(x0, gamma=g), atol=PROX_ATOL)
 
 
 def test_param_lambd():
@@ -115,11 +114,9 @@ def test_param_lambd():
     x = v.parameter(4, lb=x0, ub=x0)
     lam_param = v.parameter(1, lb=np.array([lam0]), ub=np.array([lam0]))
     out = v.prox(TotalVariation1D(lam_param), x)
-    v.set_objective_norm([out], np.inf)
+    v.maximize(ft.norm([out], np.inf))
     v.solve()
-    np.testing.assert_allclose(
-        v.get_solution_value(out), TotalVariation1D(lam0).prox(x0), atol=PROX_ATOL
-    )
+    np.testing.assert_allclose(out.value, TotalVariation1D(lam0).prox(x0), atol=PROX_ATOL)
 
 
 @pytest.mark.parametrize(
@@ -132,7 +129,7 @@ def test_sdp_valid_bound_at_fixed_point(x0, lam):
     v = Verifier(method="sdp", solver="clarabel", params={"static_regularization_constant": 1e-7})
     x = v.parameter(len(x0), lb=x0, ub=x0)
     out = v.prox(TotalVariation1D(lam), x)
-    v.set_objective_norm(out, 2)
+    v.maximize(ft.sum_squares(out))
     obj = v.solve()
     proj = TotalVariation1D(lam).prox(x0)
     assert obj >= float(proj @ proj) - TEST_EPS
@@ -146,13 +143,13 @@ def test_sdp_bound_vs_mip_over_box():
     vm = _make_verifier("mip", obbt="gurobi")
     xm = vm.parameter(4, lb=arg_lb, ub=arg_ub)
     om = vm.prox(TotalVariation1D(lam), xm)
-    vm.set_objective_norm([om], np.inf)
+    vm.maximize(ft.norm([om], np.inf))
     mip_inf = vm.solve()
 
     vs = _make_verifier("sdp")
     xs = vs.parameter(4, lb=arg_lb, ub=arg_ub)
     os_ = vs.prox(TotalVariation1D(lam), xs)
-    vs.set_objective_norm(os_, 2)
+    vs.maximize(ft.sum_squares(os_))
     sdp_two = np.sqrt(vs.solve())
 
     assert np.isfinite(mip_inf)

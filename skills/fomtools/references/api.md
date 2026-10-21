@@ -60,7 +60,7 @@ Create a sum-of-squares expression for use in constraints.
 
 ### Step Operators
 
-Called as `vp.<name>(arg, ...)` (also available as `vp.step.<name>`); options after `arg` are keyword-only:
+Called as `vp.<name>(arg, ...)` (`vp.step.<name>` is deprecated); options after `arg` are keyword-only:
 
 - `vp.relu(arg, proj_ranges=None)` -- ReLU / projection onto non-negative orthant
 - `vp.soft_threshold(arg, lambd=t)` -- soft thresholding
@@ -105,7 +105,6 @@ vp.standard_form_linear_program(c, A=None, b=None,
 ```python
 vp.maximize(ft.norm(expr, np.inf))       # or ft.norm(expr, 1); a list of expressions is stacked
 vp.maximize(ft.sum_squares(expr))        # squared two-norm; MIQP, needs solver="gurobi" for MIP
-vp.set_objective_norm(expr, ord=np.inf)  # lower-level equivalent; ord=2 is the squared two-norm
 vp.set_zero_objective()
 vp.fixed_point(n_dim, operator, lb, ub)  # new iterate z_star == operator(z_star)
 result = vp.solve(convex_hull_cuts=False, cut_rounds=1, tighten_objective_bounds=None,
@@ -129,7 +128,7 @@ incumbents, squared norms, or a bound only for the last step.
 ### Solution Values
 
 ```python
-expr.value -> np.ndarray   # any expression at the MIP incumbent (vp.get_solution_value(expr) also works)
+expr.value -> np.ndarray   # any expression at the MIP incumbent
 ```
 
 Raises `RuntimeError` without an incumbent or for steps added after the last solve,
