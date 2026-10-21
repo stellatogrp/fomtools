@@ -22,7 +22,14 @@ rules keep the coefficients there, where it can see them:
   routine may read only its own matrix's data, no code outside every routine (a
   macro, static data, an unreached function) may read matrix data at all, and
   every function but the ``fom_apply_<name>`` entry points must be ``static``,
-  so nothing reaches a routine's helpers except through it.
+  so nothing reaches a routine's helpers except through it. A
+  ``fom_fused_<block>`` (every per-iteration product of one output block, checked
+  against the sum of its members) is a routine too, and may read the data of
+  each of its members; the setup functions may not call it either.
+* **No schedule in ``fom_ops.c``.** Schedule values reach a routine only as
+  arguments, so no code there may read ``FOM_SCHED_*`` or ``fom_sched_*``: a
+  routine that could compare its argument to the table could be right for
+  exactly the values the solver passes and wrong for every other.
 * **Checkable structure.** Each function these rules inspect (``fom_setup`` and
   ``fom_update_params`` in the solver, every ``fom_apply_<name>`` in
   ``fom_ops.c``) must be found as a single plain C definition with balanced
@@ -88,8 +95,14 @@ ALLOWED_FLOAT_LITERALS = frozenset({0.0, 0.5, 1.0, 2.0})
 #: Functions that run once per setup or parameter update, not per iteration.
 SETUP_FUNCTIONS = ("fom_setup", "fom_update_params")
 
-#: A use of ``fom_apply_<name>``: a call, or the function's address.
-_APPLY_REF = re.compile(r"\bfom_apply_(\w+)\b")
+#: A use of ``fom_apply_<name>`` or ``fom_fused_<block>``: a call, or the
+#: function's address.
+_APPLY_REF = re.compile(r"\bfom_(?:apply|fused)_\w+\b")
+
+#: A read of the schedule tables or their accessors. ``fom_ops.c`` gets each
+#: schedule value as an argument; reading the tables there would let a routine
+#: special-case exactly the values the solver passes it.
+_SCHED_REF = re.compile(r"\bFOM_SCHED_\w+|\bfom_sched_\w+")
 
 _FUNCTION_DEF = re.compile(r"\b([A-Za-z_]\w*)\s*\([^;{)]*\)\s*\{")
 _C_KEYWORDS = frozenset({"if", "for", "while", "switch", "return", "sizeof"})
@@ -203,9 +216,9 @@ def reachable(bodies: dict[str, list[str]], roots) -> set[str]:
 
 
 def setup_apply_calls(code: str) -> set[str] | None:
-    """Matrices whose ``fom_apply_<name>`` the setup functions use, directly or
-    through the functions of the file they reach, or ``None`` if a setup function
-    cannot be found."""
+    """The ``fom_apply_*`` / ``fom_fused_*`` routines the setup functions use,
+    directly or through the functions of the file they reach, or ``None`` if a
+    setup function cannot be found."""
     if any(function_body(code, fn) is None for fn in SETUP_FUNCTIONS):
         return None
     bodies, _ = functions(code)
@@ -236,15 +249,21 @@ def _new_literals(code: str, known: set[str]) -> list[str]:
     ]
 
 
-def _routine_regions(code: str, names) -> tuple[dict[str, set[str]], dict, str, list[str]]:
-    """``fom_ops.c`` split by routine: the functions each ``fom_apply_<name>``
-    reaches (itself included), the function bodies, the code outside every
-    region (file scope and functions no routine reaches), and violations of
-    its structure."""
+def _routines(names, fused) -> dict[str, set[str]]:
+    """Each entry point of ``fom_ops.c`` with the matrices whose data it may read:
+    ``fom_apply_<name>`` its own, ``fom_fused_<block>`` its members'."""
+    out = {f"fom_apply_{name}": {name} for name in names}
+    out.update({f"fom_fused_{block}": set(members) for block, members in (fused or {}).items()})
+    return out
+
+
+def _routine_regions(code: str, routines) -> tuple[dict[str, set[str]], dict, str, list[str]]:
+    """``fom_ops.c`` split by routine: the functions each entry point reaches
+    (itself included), the function bodies, the code outside every region (file
+    scope and functions no routine reaches), and violations of its structure."""
     bodies, scope = functions(code)
     regions, violations = {}, []
-    for name in names:
-        fn = f"fom_apply_{name}"
+    for fn in routines:
         if fn not in bodies:
             violations.append(_not_found(fn))
         elif len(bodies[fn]) > 1:
@@ -253,41 +272,50 @@ def _routine_regions(code: str, names) -> tuple[dict[str, set[str]], dict, str, 
                 "rules check one plain definition"
             )
         else:
-            regions[name] = reachable(bodies, [fn])
+            regions[fn] = reachable(bodies, [fn])
     covered = set().union(*regions.values())
     outside = " ".join([scope] + [b for fn, bs in bodies.items() if fn not in covered for b in bs])
     return regions, bodies, outside, violations
 
 
-def _check_ops(code: str, base: str, matvec_names) -> list[str]:
+def _check_ops(code: str, base: str, matvec_names, fused=None) -> list[str]:
     """``fom_ops.c``: each routine (with the helpers it reaches) on its own data,
-    literals per routine, and no entry points but the routines."""
-    regions, bodies, outside, violations = _routine_regions(code, matvec_names)
-    base_regions, base_bodies, base_outside, _ = _routine_regions(base, matvec_names)
-    entry = {f"fom_apply_{name}" for name in matvec_names}
+    literals per routine, no schedule reads, and no entry points but the routines."""
+    routines = _routines(matvec_names, fused)
+    regions, bodies, outside, violations = _routine_regions(code, routines)
+    base_regions, base_bodies, base_outside, _ = _routine_regions(base, routines)
     for fn, prefix, _ in _iter_functions(code):
-        if fn not in entry and not re.search(r"\bstatic\b", prefix):
+        if fn not in routines and not re.search(r"\bstatic\b", prefix):
             violations.append(
                 f"{fn} is not static; every function of fom_ops.c but the "
-                "fom_apply_<name> routines must be, so it is reached only through them"
+                "fom_apply_<name> and fom_fused_<block> routines must be, so it is "
+                "reached only through them"
             )
-    for name, region in regions.items():
-        fn = f"fom_apply_{name}"
+    for fn, region in regions.items():
         text = " ".join(b for g in sorted(region) for b in bodies[g])
-        base_text = " ".join(b for g in base_regions.get(name, ()) for b in base_bodies[g])
+        base_text = " ".join(b for g in base_regions.get(fn, ()) for b in base_bodies[g])
         violations += [f"{fn}: {v}" for v in _new_literals(text, set(float_literals(base_text)))]
+        own = routines[fn]
         for other in matvec_names:
-            if other != name and _mat_data(other).search(text):
+            if other not in own and _mat_data(other).search(text):
                 violations.append(
                     f"{fn} reads FOM_MAT_{other}, the data of another product; each "
                     "routine (and every helper it calls) may read only its own matrix"
+                    + (" (a fused routine: its members')" if fn.startswith("fom_fused_") else "")
                 )
     for name in matvec_names:
         if _mat_data(name).search(outside):
+            users = [fn for fn, own in routines.items() if name in own]
             violations.append(
-                f"FOM_MAT_{name} is read outside fom_apply_{name} and the helpers it "
-                "calls, where the rules cannot see which routine uses it"
+                f"FOM_MAT_{name} is read outside {' / '.join(users)} and the helpers "
+                f"{'it calls' if len(users) == 1 else 'they call'}, where the rules "
+                "cannot see which routine uses it"
             )
+    for ref in sorted(set(_SCHED_REF.findall(code))):
+        violations.append(
+            f"fom_ops.c reads the schedule ({ref}); a routine takes its schedule "
+            "values as arguments, and must apply them whatever their value"
+        )
     return _new_literals(outside, set(float_literals(base_outside))) + violations
 
 
@@ -300,18 +328,21 @@ def _solver_data_reads(code: str, matvec_names) -> list[str]:
     ]
 
 
-def check(kind: str, source: str, matvec_names, baseline: str | None = None) -> list[str]:
+def check(
+    kind: str, source: str, matvec_names, baseline: str | None = None, fused=None
+) -> list[str]:
     """Rule violations in a rewritten ``kind`` (``"solver"`` or ``"ops"``) source.
 
     ``baseline`` is the translated version of the same file; whatever it already
     contains is exempt. Kind ``"translation"`` is the translated solver itself:
     it has no baseline, so only the rule without one applies (it reads no
     matrix data, so every product goes through a checked ``fom_apply_<name>``).
+    ``fused`` maps each ``fom_fused_<block>`` to its member matrices.
     """
     code = strip_c_comments_and_strings(source)
     base = strip_c_comments_and_strings(baseline) if baseline is not None else ""
     if kind == "ops":
-        return _check_ops(code, base, matvec_names)
+        return _check_ops(code, base, matvec_names, fused)
     if kind == "translation":
         return _solver_data_reads(code, matvec_names)
     violations = _new_literals(code, set(float_literals(base)))
@@ -322,9 +353,9 @@ def check(kind: str, source: str, matvec_names, baseline: str | None = None) -> 
     if calls is None:
         missing = [fn for fn in SETUP_FUNCTIONS if function_body(code, fn) is None]
         return violations + [_not_found(fn) for fn in missing]
-    for name in sorted(calls - (setup_apply_calls(base) or set())):
+    for fn in sorted(calls - (setup_apply_calls(base) or set())):
         violations.append(
-            f"fom_apply_{name} is called from {' / '.join(SETUP_FUNCTIONS)}; apply "
+            f"{fn} is called from {' / '.join(SETUP_FUNCTIONS)}; apply "
             "matrices in the iteration, not to rebuild them at setup"
         )
     return violations
@@ -337,7 +368,9 @@ def main(config_path: str) -> int:
     failed = False
     for entry in config["files"]:
         source = (root / entry["path"]).read_text()
-        for v in check(entry["kind"], source, config["matvec"], entry.get("baseline")):
+        for v in check(
+            entry["kind"], source, config["matvec"], entry.get("baseline"), config.get("fused")
+        ):
             print(f"VERIFY FAILED: kernel rule: {entry['path']}: {v}")
             failed = True
     return 1 if failed else 0

@@ -108,16 +108,24 @@ the fastest correct implementation.
 """
 
 
-def _kernel_rules_block(src: str, ops_src: str, verify: str, ops_editable: bool) -> str:
+def _kernel_rules_block(
+    src: str, ops_src: str, verify: str, ops_editable: bool, fused: bool = False
+) -> str:
     """The kernel rules (`fomtools.codegen.kernel_rules`), on every target."""
-    own_data = (
-        f""" In `{ops_src}`, each `fom_apply_<name>` (one
+    if ops_editable and fused:
+        own_data = f""" In `{ops_src}`, each `fom_apply_<name>` (one
+  definition) and the helpers it calls read only its own matrix's data, and each
+  `fom_fused_<block>` only its members' data; no other code reads matrix data,
+  every function but these entry points is `static`, and nothing in
+  `{ops_src}` reads the schedule (`fom_sched_*`, `FOM_SCHED_*`): a routine
+  takes its schedule values as arguments and must be right for any value."""
+    elif ops_editable:
+        own_data = f""" In `{ops_src}`, each `fom_apply_<name>` (one
   definition) and the helpers it calls read only its own matrix's data; no other
   code reads matrix data, and every function but the `fom_apply_<name>` entry
   points is `static`."""
-        if ops_editable
-        else ""
-    )
+    else:
+        own_data = ""
     files = f"`{src}` and `{ops_src}`" if ops_editable else f"`{src}`"
     same_routine = f", in the same routine of `{ops_src}`," if ops_editable else ""
     return f"""
@@ -131,7 +139,7 @@ rewrite that breaks any of them is discarded when it is collected:
   `0.5`, `1.0` and `2.0`, whether written as decimal or hex float literals or as
   integers cast to a floating type (literals the translated file already
   had{same_routine} are fine).
-- `fom_setup` and `fom_update_params` must not add calls to `fom_apply_*`: apply
+- `fom_setup` and `fom_update_params` must not add calls to `fom_apply_*`{" or `fom_fused_*`" if fused else ""}: apply
   matrices in the iteration, never probe them to rebuild a matrix."""
 
 
@@ -145,6 +153,8 @@ def code_optimization_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     notes_block = f"\n{notes}\n" if notes else ""
     editable = target.optimization_editable_paths()
     ops_data = target.ops_data_path()
+    fused = target.fused_routines(ir) if ops_src in editable else {}
+    selections = target.selection_matrices(ir)
     if linsolve_src in editable:
         both = ops_src in editable
         others = f"`{linsolve_src}` (the linear solves, usually the hottest code)"
@@ -180,12 +190,41 @@ hardcode them. `{verify}` checks every `fom_apply_<name>` directly against its
 matrix, column by column (probing each unit vector) and on random vectors, so a
 kernel must apply exactly `M` for every input and must keep accumulating into
 `out`."""
+        if both and fused:
+            names = ", ".join(f"`fom_fused_{b}`" for b in fused)
+            scope += f"""
+
+`{ops_src}` also implements one FUSED routine per output block ({names};
+prototypes and formulas in `include/fom_ops.h`): `fom_fused_<block>(sources...,
+schedule values..., out)` adds every per-iteration product of that block in one
+call, `out += sum_k s_k * (M_k @ src_k)`. Parameter terms are left out so you
+can still compute them once per solve. Calling the fused routine in place of
+the separate `fom_apply_*` calls, and rewriting it, is how to merge the products
+into one pass and exploit relations BETWEEN its member matrices: one member
+equal to a rearrangement or a signed copy of another's block, a shared block,
+members that cancel, so `A x + g D x` collapses to a single smaller product. A
+fused routine may read every member's data (and only those). `{verify}` checks
+it directly against its members: every unit vector of every source, with every
+schedule value at 0 and with each alone at 1 (which recovers each member
+exactly), and on random sources and schedule values. So it must be exact for
+ANY schedule value, not just the ones the solver passes."""
+        if selections:
+            items = "\n".join(f"  - `{name}`: {what}" for name, what in selections.items())
+            scope += f"""
+
+These products are 0/1 SELECTIONS (at most one 1.0 per row, see SPEC.md):
+{items}
+You may apply them in `{src}` yourself, as copies or by writing a result
+straight into its destination, instead of calling `fom_apply_<name>`; the index
+map is in `include/fom_data.h` as `FOM_SEL_<name>_SRC` (-1 for an empty row).
+Such a copy is checked only by the end-to-end `{verify}`, so get the indices
+exactly right. This is the one exception to never writing a product in `{src}`."""
     else:
         scope = f"""\
 Edit ONLY `{src}`: the Makefile, build flags, headers, numeric data,
 `{linsolve_src}`, and `{ops_src}` are fixed and restored automatically before
 every check, so changes to them are discarded (don't waste turns editing them)."""
-    scope += _kernel_rules_block(src, ops_src, verify, ops_src in editable)
+    scope += _kernel_rules_block(src, ops_src, verify, ops_src in editable, bool(fused))
     objective_src = target.objective_source_path()
     objective_block = _objective_block(ir, objective_src)
     if objective_block:

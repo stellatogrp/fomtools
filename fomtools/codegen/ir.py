@@ -168,6 +168,44 @@ def csr_arrays(matrix, tol: float = EMIT_ZERO_TOL) -> tuple[np.ndarray, np.ndarr
     return m.indptr, m.indices, m.data
 
 
+def selection_indices(md: "MatrixData") -> np.ndarray | None:
+    """The source index of each row when ``md`` is a 0/1 selection, else ``None``.
+
+    A selection has at most one nonzero per row and every nonzero exactly 1.0, so
+    ``(M x)[i] = x[src[i]]`` (``src[i] = -1`` for an empty row): an identity, a
+    shift, or a gather. Products by such a matrix are copies, which the code
+    optimization phase may write itself (see ``selection_description``).
+    """
+    if len(md.shape) != 2:
+        return None
+    rowptr, colidx, vals = md.csr()
+    counts = np.diff(rowptr)
+    if counts.size == 0 or np.any(counts > 1) or not np.all(vals == 1.0):
+        return None
+    src = np.full(md.shape[0], -1, dtype=int)
+    src[counts == 1] = colidx
+    return src
+
+
+def selection_description(src: np.ndarray, cols: int) -> str:
+    """A short human description of a selection (``selection_indices``)."""
+    rows = np.arange(src.size)
+    full = src >= 0
+    empty = int(np.count_nonzero(~full))
+    tail = f", {empty} empty rows (left unchanged)" if empty else ""
+    if not full.any():
+        return "zero"
+    offsets = np.unique(src[full] - rows[full])
+    if offsets.size == 1:
+        k = int(offsets[0])
+        if k == 0 and not empty and src.size == cols:
+            return "identity"
+        what = "out[i] += x[i]" if k == 0 else f"out[i] += x[i {'+' if k > 0 else '-'} {abs(k)}]"
+        lo, hi = int(rows[full].min()), int(rows[full].max())
+        return f"shift: {what} for rows {lo}..{hi}{tail}"
+    return f"gather: out[i] += x[src[i]] on {int(full.sum())} rows{tail}"
+
+
 def max_abs(values) -> float:
     """Largest magnitude of a dense or sparse array (0 for an empty one)."""
     data = values.data if spa.issparse(values) else np.asarray(values)
