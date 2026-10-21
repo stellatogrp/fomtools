@@ -179,10 +179,10 @@ def _(
         params={"output_flag": False},
     )
 
-    z = verifier.add_iterate(n_total, lb=z0, ub=z0)
-    v = verifier.add_iterate(n_total, lb=v0, ub=v0)
-    def project(VP, v_prev):
-        return VP.step.satlin(v_prev, l=lower, u=upper)
+    z = verifier.iterate(n_total, lb=z0, ub=z0)
+    v = verifier.iterate(n_total, lb=v0, ub=v0)
+    def project(vp, v_prev):
+        return vp.satlin(v_prev, l=lower, u=upper)
 
     z_next, v_next, _ = admm_step(
         verifier, M, q, rho, sigma, z, v, project, lhs

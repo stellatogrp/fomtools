@@ -98,10 +98,10 @@ def _build_ista(seed, K, box=1.5, lam_scale=2.0, obbt_solver=None, n=2, m=3):
     vp = Verifier(
         method="mip", solver="gurobi", obbt_solver=obbt_solver, params=dict(GUROBI_SILENT)
     )
-    z = [vp.add_iterate(n, lb=-box, ub=box)]
-    bp = vp.add_param(m, lb=b - 0.5, ub=b + 0.5)
+    z = [vp.iterate(n, lb=-box, ub=box)]
+    bp = vp.parameter(m, lb=b - 0.5, ub=b + 0.5)
     for k in range(K):
-        z.append(vp.step.soft_threshold(At @ z[k] + Bt @ bp, lambd=lam))
+        z.append(vp.soft_threshold(At @ z[k] + Bt @ bp, lambd=lam))
     vp.set_objective_norm(z[K] - z[K - 1], 2)
     return vp, z, bp, At, Bt, lam, K
 
@@ -202,8 +202,8 @@ def test_softthreshold_single_step_branches_exact():
                 obbt_solver=None,
                 params=dict(GUROBI_SILENT),
             )
-            x = vp.add_iterate(1, lb=lb, ub=ub)
-            y = vp.step.soft_threshold(x, lambd=lam)
+            x = vp.iterate(1, lb=lb, ub=ub)
+            y = vp.soft_threshold(x, lambd=lam)
             # Linear objective (max +/- y) to probe both directions of the graph.
             vp.set_objective_norm(sense * y, 1)
             vp.solve()
@@ -226,10 +226,10 @@ def test_relu_solution_on_graph_smoke():
     A = rng.normal(size=(m, n))
     t = 1.0 / float(np.max(np.linalg.eigvalsh(A.T @ A)))
     vp = Verifier(method="mip", solver="gurobi", obbt_solver=None, params=dict(GUROBI_SILENT))
-    x = vp.add_param(m, lb=0.0, ub=2.0)
-    z = [vp.add_iterate(n, lb=-2.0, ub=2.0)]
+    x = vp.parameter(m, lb=0.0, ub=2.0)
+    z = [vp.iterate(n, lb=-2.0, ub=2.0)]
     for k in range(2):
-        z.append(vp.step.relu(z[k] - t * A.T @ (A @ z[k] - x)))
+        z.append(vp.relu(z[k] - t * A.T @ (A @ z[k] - x)))
     vp.set_objective_norm(z[2] - z[1], 2)
     vp.solve()
     for step in vp.steps:
@@ -249,10 +249,10 @@ def test_satlin_solution_on_graph_smoke():
     hi = np.array([0.5, 1.0])
     t = 0.5
     vp = Verifier(method="mip", solver="gurobi", obbt_solver=None, params=dict(GUROBI_SILENT))
-    q_param = vp.add_param(n, lb=q - 0.5, ub=q + 0.5)
-    z = [vp.add_iterate(n, lb=-1.0, ub=1.0)]
+    q_param = vp.parameter(n, lb=q - 0.5, ub=q + 0.5)
+    z = [vp.iterate(n, lb=-1.0, ub=1.0)]
     for k in range(2):
-        z.append(vp.step.satlin(z[k] - t * (P @ z[k] + q_param), l=lo, u=hi))
+        z.append(vp.satlin(z[k] - t * (P @ z[k] + q_param), l=lo, u=hi))
     vp.set_objective_norm(z[2] - z[1], 2)
     vp.solve()
     for step in vp.steps:
@@ -287,10 +287,10 @@ def _build_boxpgd(seed, K, obbt_solver=None):
     vp = Verifier(
         method="mip", solver="gurobi", obbt_solver=obbt_solver, params=dict(GUROBI_SILENT)
     )
-    q_param = vp.add_param(n, lb=q - 0.5, ub=q + 0.5)
-    z = [vp.add_iterate(n, lb=-1.5, ub=1.5)]  # straddles [lo, hi] faces
+    q_param = vp.parameter(n, lb=q - 0.5, ub=q + 0.5)
+    z = [vp.iterate(n, lb=-1.5, ub=1.5)]  # straddles [lo, hi] faces
     for k in range(K):
-        z.append(vp.step.satlin(z[k] - t * (P @ z[k] + q_param), l=lo, u=hi))
+        z.append(vp.satlin(z[k] - t * (P @ z[k] + q_param), l=lo, u=hi))
     vp.set_objective_norm(z[K] - z[K - 1], 2)
     return vp, z, q_param, P, q, lo, hi, t, K
 

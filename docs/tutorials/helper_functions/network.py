@@ -60,7 +60,7 @@ def make_network_data(
 
 
 def pdhg_step(
-    VP,
+    vp,
     A_supply,
     A_demand,
     eta,
@@ -95,7 +95,7 @@ def pdhg_step(
     w_trajectory, w_current = unpack(w_prev, "w_prev")
 
     beta_k = (k - 1) / (k + 2) if momentum else 0.0
-    z_next = VP.step.satlin(
+    z_next = vp.satlin(
         z_current - eta * (cost + A_supply.T @ v_current - A_demand.T @ w_current),
         l=np.zeros(A_supply.shape[1]),
         u=capacity,
@@ -105,14 +105,14 @@ def pdhg_step(
         z_next = z_trajectory[k]
 
     z_bar = z_next + beta_k * (z_next - z_current)
-    v_next = VP.step.relu(
+    v_next = vp.relu(
         v_current + eta * (-supply + A_supply @ (2 * z_bar - z_current))
     )
     if v_trajectory is not None:
         v_trajectory[k] = v_next
         v_next = v_trajectory[k]
 
-    w_next = VP.step.implicit_linear(
+    w_next = vp.implicit_linear(
         w_current + eta * (x_param - A_demand @ (2 * z_bar - z_current)),
         output_mat=np.eye(A_demand.shape[0]),
     )

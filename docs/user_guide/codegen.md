@@ -42,12 +42,12 @@ Bt = t * A.T
 K = 200
 
 vp = Verifier(method="simulator", obbt_solver=None)
-b_param = vp.add_param(m, lb=b - 1.0, ub=b + 1.0)
+b_param = vp.parameter(m, lb=b - 1.0, ub=b + 1.0)
 
 z = vp.iterate_trajectory(K + 1)
-z[0] = vp.add_iterate(n, lb=2, ub=2)
+z[0] = vp.iterate(n, lb=2, ub=2)
 for k in range(1, K + 1):
-    z[k] = vp.step.soft_threshold(At @ z[k - 1] + Bt @ b_param, lambd=t)
+    z[k] = vp.soft_threshold(At @ z[k - 1] + Bt @ b_param, lambd=t)
 ```
 
 Verify it however you normally would, then hand the same object to `codegen`:
@@ -117,13 +117,13 @@ step output:
 
 ```python
 dr = Verifier(method="simulator", obbt_solver=None)
-q_dr = dr.add_param(n, lb=-1, ub=1)
+q_dr = dr.parameter(n, lb=-1, ub=1)
 kkt = np.eye(n) + A.T @ A
 z_dr = dr.iterate_trajectory(K + 1)
-z_dr[0] = dr.add_iterate(n, lb=2, ub=2)
+z_dr[0] = dr.iterate(n, lb=2, ub=2)
 for k in range(1, K + 1):
-    u = dr.step.implicit_linear(z_dr[k - 1] - q_dr, output_mat=kkt)
-    ut = dr.step.relu(2 * u - z_dr[k - 1])
+    u = dr.implicit_linear(z_dr[k - 1] - q_dr, output_mat=kkt)
+    ut = dr.relu(2 * u - z_dr[k - 1])
     z_dr[k] = z_dr[k - 1] + ut - u        # not a step output
 ```
 
@@ -490,8 +490,8 @@ Write the coefficient in Python, where the rest of your algorithm already lives:
 
 ```python
 vp = Verifier(method="simulator", obbt_solver=None)
-b_param = vp.add_param(m, lb=b - 1.0, ub=b + 1.0)
-y0 = vp.add_iterate(n, lb=2, ub=2)
+b_param = vp.parameter(m, lb=b - 1.0, ub=b + 1.0)
+y0 = vp.iterate(n, lb=2, ub=2)
 
 y_prev, y_curr, beta = y0, y0, 1.0
 iterates = []
@@ -499,7 +499,7 @@ for _ in range(K):
     beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
     gamma = (beta - 1.0) / beta_next          # ordinary Python, evaluated while recording
     extrap = y_curr + gamma * (y_curr - y_prev)
-    y_next = vp.step.soft_threshold(At @ extrap + Bt @ b_param, lambd=t)
+    y_next = vp.soft_threshold(At @ extrap + Bt @ b_param, lambd=t)
     y_prev, y_curr, beta = y_curr, y_next, beta_next
     iterates.append(y_next)
 
@@ -538,11 +538,11 @@ def momentum(k):
 
 def build(gamma):
     vp = Verifier(method="simulator", obbt_solver=None)
-    b_param = vp.add_param(m, lb=b - 1.0, ub=b + 1.0)
-    y_prev = vp.add_iterate(n, lb=2, ub=2)
-    y_curr = vp.add_iterate(n, lb=2, ub=2)
+    b_param = vp.parameter(m, lb=b - 1.0, ub=b + 1.0)
+    y_prev = vp.iterate(n, lb=2, ub=2)
+    y_curr = vp.iterate(n, lb=2, ub=2)
     extrap = y_curr + gamma * (y_curr - y_prev)
-    y_next = vp.step.soft_threshold(At @ extrap + Bt @ b_param, lambd=t)
+    y_next = vp.soft_threshold(At @ extrap + Bt @ b_param, lambd=t)
     # the state shifts: (y_prev, y_curr) <- (y_curr, y_next)
     return Recording(vp, next_state=[y_curr, y_next], state=[y_prev, y_curr])
 

@@ -30,14 +30,14 @@ def test_optimal_control_stacked_box_without_metadata_uses_each_sample():
 
     vp = Verifier(method="simulator", obbt_solver=None)
 
-    x = vp.add_param(ndim=1, samples=x_samples)
-    u_min = vp.add_param(ndim=1, lb=-0.5, ub=-0.5)
-    u_max = vp.add_param(ndim=1, lb=1.5, ub=1.5)
+    x = vp.parameter(ndim=1, samples=x_samples)
+    u_min = vp.parameter(ndim=1, lb=-0.5, ub=-0.5)
+    u_max = vp.parameter(ndim=1, lb=1.5, ub=1.5)
 
     lower = vp.add_param_stack([x, u_min])
     upper = vp.add_param_stack([x, u_max])
 
-    v = vp.add_param(ndim=2, samples=v_samples)
+    v = vp.parameter(ndim=2, samples=v_samples)
     projected = vp.prox(IndBox(l=lower, u=upper), v)
 
     expected_samples = np.array(
@@ -46,7 +46,7 @@ def test_optimal_control_stacked_box_without_metadata_uses_each_sample():
             [2.0, 1.5],
         ]
     )
-    expected = vp.add_param(ndim=2, samples=expected_samples)
+    expected = vp.parameter(ndim=2, samples=expected_samples)
     vp.set_objective_norm(projected - expected, ord=np.inf)
 
     residuals = vp.solve()
@@ -67,13 +67,13 @@ def test_optimal_control_stacked_box_ignores_global_sample_metadata():
 
     vp = Verifier(method="simulator", obbt_solver=None)
 
-    x = vp.add_param(ndim=1, lb=-1.0, ub=2.0, samples=x_samples)
-    u_min = vp.add_param(ndim=1, lb=-0.5, ub=-0.5)
-    u_max = vp.add_param(ndim=1, lb=1.5, ub=1.5)
+    x = vp.parameter(ndim=1, lb=-1.0, ub=2.0, samples=x_samples)
+    u_min = vp.parameter(ndim=1, lb=-0.5, ub=-0.5)
+    u_max = vp.parameter(ndim=1, lb=1.5, ub=1.5)
     lower = vp.add_param_stack([x, u_min])
     upper = vp.add_param_stack([x, u_max])
 
-    v = vp.add_param(ndim=2, samples=v_samples)
+    v = vp.parameter(ndim=2, samples=v_samples)
     projected = vp.prox(IndBox(l=lower, u=upper), v)
 
     expected_samples = np.array(
@@ -82,7 +82,7 @@ def test_optimal_control_stacked_box_ignores_global_sample_metadata():
             [2.0, 1.5],
         ]
     )
-    expected = vp.add_param(ndim=2, samples=expected_samples)
+    expected = vp.parameter(ndim=2, samples=expected_samples)
     vp.set_objective_norm(projected - expected, ord=np.inf)
 
     residuals = vp.solve()
@@ -108,16 +108,16 @@ def test_network_flow_projection_uses_sampled_capacities():
 
     vp = Verifier(method="simulator", obbt_solver=None)
 
-    capacity = vp.add_param(
+    capacity = vp.parameter(
         ndim=2,
         lb=np.array([0.5, 1.0]),
         ub=np.array([2.0, 3.0]),
         samples=capacity_samples,
     )
-    flow = vp.add_param(ndim=2, samples=flow_samples)
+    flow = vp.parameter(ndim=2, samples=flow_samples)
     projected = vp.prox(IndBox(l=0.0, u=capacity), flow)
 
-    expected = vp.add_param(ndim=2, samples=capacity_samples)
+    expected = vp.parameter(ndim=2, samples=capacity_samples)
     vp.set_objective_norm(projected - expected, ord=np.inf)
 
     residuals = vp.solve()
@@ -158,22 +158,22 @@ def test_parameter_dependent_satlin_evaluates_both_bounds_per_sample():
 
     vp = Verifier(method="simulator", obbt_solver=None)
 
-    arg = vp.add_param(ndim=2, samples=arg_samples)
-    lower = vp.add_param(
+    arg = vp.parameter(ndim=2, samples=arg_samples)
+    lower = vp.parameter(
         ndim=2,
         lb=np.array([-2.0, 0.0]),
         ub=np.array([1.0, 2.0]),
         samples=lower_samples,
     )
-    upper = vp.add_param(
+    upper = vp.parameter(
         ndim=2,
         lb=np.array([-1.0, 1.0]),
         ub=np.array([2.0, 3.0]),
         samples=upper_samples,
     )
-    projected = vp.step.satlin(arg, l=lower, u=upper)
+    projected = vp.satlin(arg, l=lower, u=upper)
 
-    expected = vp.add_param(ndim=2, samples=expected_samples)
+    expected = vp.parameter(ndim=2, samples=expected_samples)
     vp.set_objective_norm(projected - expected, ord=np.inf)
 
     residuals = vp.solve()
@@ -184,9 +184,9 @@ def test_parameter_dependent_satlin_evaluates_both_bounds_per_sample():
 def test_param_without_samples_raises_a_clear_error():
     """Bounds alone do not define a distribution: the simulator asks for samples."""
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(ndim=3, lb=-1.0, ub=1.0)  # allowed: code generation never simulates
-    z0 = v.add_iterate(ndim=3, init=np.zeros(3))
-    v.step.implicit_linear(z0 + x, output_mat=np.eye(3))
+    x = v.parameter(ndim=3, lb=-1.0, ub=1.0)  # allowed: code generation never simulates
+    z0 = v.iterate(ndim=3, init=np.zeros(3))
+    v.implicit_linear(z0 + x, output_mat=np.eye(3))
     with pytest.raises(ValueError, match=r"1 parameter\(s\) \(ndim 3\) have no samples"):
         v.solve()
 
@@ -196,15 +196,15 @@ def test_param_with_wrong_sample_shape_raises():
     with pytest.raises(
         ValueError, match=r"samples must have shape \(num_samples, 3\), got \(10, 2\)"
     ):
-        v.add_param(ndim=3, samples=np.zeros((10, 2)))
+        v.parameter(ndim=3, samples=np.zeros((10, 2)))
 
 
 def test_param_pinned_by_equal_bounds_needs_no_samples():
     """A parameter fixed by equal finite bounds is a constant, so samples are optional."""
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(ndim=1, samples=np.full((5, 1), 3.0))
-    c = v.add_param(ndim=1, lb=2.0, ub=2.0)
-    z0 = v.add_iterate(ndim=1, init=np.zeros(1))
-    v.step.implicit_linear(z0 + x + c, output_mat=np.eye(1))
+    x = v.parameter(ndim=1, samples=np.full((5, 1), 3.0))
+    c = v.parameter(ndim=1, lb=2.0, ub=2.0)
+    z0 = v.iterate(ndim=1, init=np.zeros(1))
+    v.implicit_linear(z0 + x + c, output_mat=np.eye(1))
     residuals = np.asarray(v.solve())
     np.testing.assert_allclose(residuals[:, -1], 5.0)

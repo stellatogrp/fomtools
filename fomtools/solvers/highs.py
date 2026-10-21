@@ -66,6 +66,8 @@ class HiGHSSolver(MIPSolver):
         """
         model_copy = self.model.getModel()
         self._relaxed_model = hp.Highs()
+        # Options first: HiGHS prints its banner on the first model change if logging is on.
+        self._relaxed_model.passOptions(self.model.getOptions())
         self._relaxed_model.passModel(model_copy)
 
         for i in range(self._relaxed_model.getNumCol()):
@@ -412,6 +414,8 @@ class HiGHSSolver(MIPSolver):
         new_solver._relaxed_model = None
         new_solver.solver_params = self.solver_params
         new_solver.model = hp.Highs()
+        # Options first: HiGHS prints its banner on the first model change if logging is on.
+        new_solver.model.passOptions(self.model.getOptions())
         new_solver._var_counter = self._var_counter
 
         # Copy the model data

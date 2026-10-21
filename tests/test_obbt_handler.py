@@ -43,11 +43,11 @@ def build_relu_chain(obbt, solver, *, method="mip", K=3, seed=1, n=3, m=3, t=0.1
     G = t * A.T
     params = mip_params(solver) if method == "mip" else None
     v = Verifier(method=method, solver=solver, obbt_solver=obbt, params=params)
-    z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
-    b = v.add_param(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
+    z = v.iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
+    b = v.parameter(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
     iterates = [z]
     for _ in range(K):
-        z = v.step.relu(arg=W @ z + G @ b)
+        z = v.relu(arg=W @ z + G @ b)
         iterates.append(z)
     return v, iterates
 
@@ -61,11 +61,11 @@ def build_satlin_chain(obbt, solver, *, method="mip", K=3, seed=2, n=3, m=3, t=0
     u = 0.3 * np.ones(n)
     params = mip_params(solver) if method == "mip" else None
     v = Verifier(method=method, solver=solver, obbt_solver=obbt, params=params)
-    z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
-    b = v.add_param(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
+    z = v.iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
+    b = v.parameter(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
     iterates = [z]
     for _ in range(K):
-        z = v.step.satlin(arg=W @ z + G @ b, l=l, u=u)
+        z = v.satlin(arg=W @ z + G @ b, l=l, u=u)
         iterates.append(z)
     return v, iterates
 
@@ -254,7 +254,7 @@ def test_affine_obbt_input_tightening(solver):
     n = 3
     W = np.random.normal(size=(n, n))
     v = Verifier(solver=solver, obbt_solver=solver, params=mip_params(solver))
-    z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
+    z = v.iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
     y = v.run_step(z, Affine, weight=W)
 
     affine_step = v.steps[-1]
@@ -269,7 +269,7 @@ def test_affine_obbt_input_tightening(solver):
 
     # The affine equality is in the OBBT LP: a downstream ReLU's input can be
     # tightened against it (otherwise OBBT would be a no-op).
-    v.step.relu(arg=y)
+    v.relu(arg=y)
     relu_step = v.steps[-1]
     relu_lb, relu_ub = relu_step.arg.bound_propagation()
     assert np.all(relu_step.lb >= relu_lb - TEST_EPS)
@@ -298,7 +298,7 @@ def test_affine_obbt_tightens_when_constrained(solver):
     W1 = np.random.normal(size=(n, n))
     W2 = np.random.normal(size=(n, n))
     v = Verifier(solver=solver, obbt_solver=solver, params=mip_params(solver))
-    z = v.add_iterate(n, lb=-1.0 * np.ones(n), ub=1.0 * np.ones(n))
+    z = v.iterate(n, lb=-1.0 * np.ones(n), ub=1.0 * np.ones(n))
     y = v.run_step(z, Affine, weight=W1)  # Affine_1 equality into OBBT LP
     _ = v.run_step(y, Affine, weight=W2)  # Affine_2 input is what we check
 
@@ -337,12 +337,12 @@ def build_relu_linsolve_chain(
     M = np.eye(n) if identity else np.eye(n) + t * A.T @ A
     params = mip_params(solver) if method == "mip" else None
     v = Verifier(method=method, solver=solver, obbt_solver=obbt, params=params, **kwargs)
-    z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
-    b = v.add_param(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
+    z = v.iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
+    b = v.parameter(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
     iterates = [z]
     for _ in range(K):
-        y = v.step.relu(arg=W @ z + G @ b)
-        z = v.step.implicit_linear(arg=y - z, output_mat=M)
+        y = v.relu(arg=W @ z + G @ b)
+        z = v.implicit_linear(arg=y - z, output_mat=M)
         iterates.append(z)
     return v, iterates
 
@@ -565,6 +565,8 @@ def test_obbt_params_override():
 
 
 def test_obbt_params_from_highs_key():
-    assert Verifier._obbt_params_from({"output_flag": False}, "highs") == {"output_flag": False}
-    assert Verifier._obbt_params_from({"OutputFlag": 0}, "highs") is None
-    assert Verifier._obbt_params_from(None, "gurobi") is None
+    assert Verifier._obbt_params_from({"output_flag": True}, "highs") == {"output_flag": True}
+    # Without the OBBT backend's own key, the OBBT solver follows ``verbose``.
+    assert Verifier._obbt_params_from({"OutputFlag": 1}, "highs") == {"output_flag": False}
+    assert Verifier._obbt_params_from(None, "gurobi") == {"OutputFlag": False}
+    assert Verifier._obbt_params_from(None, "highs", verbose=True) == {"output_flag": True}

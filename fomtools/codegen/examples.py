@@ -85,11 +85,11 @@ def ista_example(*, n: int = 2, m: int = 4, seed: int = 0, K: int = 3) -> dict:
     Bt = t * A.T
 
     v = Verifier(method="simulator", obbt_solver=None)
-    b_param = v.add_param(m, lb=b - 1.0, ub=b + 1.0)
-    z = v.add_iterate(n, lb=2, ub=2)
+    b_param = v.parameter(m, lb=b - 1.0, ub=b + 1.0)
+    z = v.iterate(n, lb=2, ub=2)
     iterates = [z]
     for _ in range(K):
-        z = v.step.soft_threshold(At @ z + Bt @ b_param, lambd=lambd * t)
+        z = v.soft_threshold(At @ z + Bt @ b_param, lambd=lambd * t)
         iterates.append(z)
     return {"verifier": v, "next_state": iterates[1], "name": "ista"}
 
@@ -135,8 +135,8 @@ def fista_example(*, n: int = 2, m: int = 4, seed: int = 0, K: int = 6) -> dict:
     threshold = d["lambd"] * d["t"]
 
     v = Verifier(method="simulator", obbt_solver=None)
-    b_param = v.add_param(m, lb=d["b"] - 1.0, ub=d["b"] + 1.0)
-    y0 = v.add_iterate(n, lb=z0, ub=z0)
+    b_param = v.parameter(m, lb=d["b"] - 1.0, ub=d["b"] + 1.0)
+    y0 = v.iterate(n, lb=z0, ub=z0)
 
     y_prev, y_curr, beta = y0, y0, 1.0
     iterates = []
@@ -144,7 +144,7 @@ def fista_example(*, n: int = 2, m: int = 4, seed: int = 0, K: int = 6) -> dict:
         beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
         gamma = (beta - 1.0) / beta_next
         extrap = y_curr + gamma * (y_curr - y_prev)
-        y_next = v.step.soft_threshold(At @ extrap + Bt @ b_param, lambd=threshold)
+        y_next = v.soft_threshold(At @ extrap + Bt @ b_param, lambd=threshold)
         y_prev, y_curr, beta = y_curr, y_next, beta_next
         iterates.append(y_next)
 
@@ -180,11 +180,11 @@ def scheduled_example(*, n: int = 2, m: int = 4, seed: int = 0) -> dict:
         from fomtools.codegen.extract_scheduled import Recording
 
         v = Verifier(method="simulator", obbt_solver=None)
-        b_param = v.add_param(m, lb=d["b"] - 1.0, ub=d["b"] + 1.0)
-        y_prev = v.add_iterate(n, lb=z0, ub=z0)
-        y_curr = v.add_iterate(n, lb=z0, ub=z0)
+        b_param = v.parameter(m, lb=d["b"] - 1.0, ub=d["b"] + 1.0)
+        y_prev = v.iterate(n, lb=z0, ub=z0)
+        y_curr = v.iterate(n, lb=z0, ub=z0)
         extrap = y_curr + gamma * (y_curr - y_prev)
-        y_next = v.step.soft_threshold(At @ extrap + Bt @ b_param, lambd=threshold)
+        y_next = v.soft_threshold(At @ extrap + Bt @ b_param, lambd=threshold)
         # The state shifts: (y_prev, y_curr) <- (y_curr, y_next).
         return Recording(v, next_state=[y_curr, y_next], state=[y_prev, y_curr])
 
@@ -231,12 +231,12 @@ def dr_example(*, n: int = 4, m: int = 3, seed: int = 5, K: int = 3) -> dict:
     q_u = np.hstack([c + 0.1, b])
 
     v = Verifier(method="simulator", obbt_solver=None)
-    q_param = v.add_param(n + m, lb=q_l, ub=q_u)
-    z0 = v.add_iterate(m + n, lb=np.zeros(n + m), ub=np.zeros(n + m))
+    q_param = v.parameter(n + m, lb=q_l, ub=q_u)
+    z0 = v.iterate(m + n, lb=np.zeros(n + m), ub=np.zeros(n + m))
     z = [z0]
     for _ in range(K):
-        u = v.step.implicit_linear(z[-1] - q_param, output_mat=lhs.todense())
-        utilde = v.step.relu(2 * u - z[-1], proj_ranges=(n, n + m))
+        u = v.implicit_linear(z[-1] - q_param, output_mat=lhs.todense())
+        utilde = v.relu(2 * u - z[-1], proj_ranges=(n, n + m))
         z.append(z[-1] + utilde - u)
     return {"verifier": v, "next_state": z[1], "name": "dr"}
 
@@ -319,20 +319,20 @@ def mpc_osqp_example(
     q_nom = 0.1 * rng.normal(size=nv)
 
     v = Verifier(method="simulator", obbt_solver=None)
-    q = v.add_param(nv, lb=q_nom - 0.05, ub=q_nom + 0.05)
-    x = v.add_iterate(nv, lb=np.zeros(nv), ub=np.zeros(nv))
-    z = v.add_iterate(nc, lb=np.zeros(nc), ub=np.zeros(nc))
-    y = v.add_iterate(nc, lb=np.zeros(nc), ub=np.zeros(nc))
+    q = v.parameter(nv, lb=q_nom - 0.05, ub=q_nom + 0.05)
+    x = v.iterate(nv, lb=np.zeros(nv), ub=np.zeros(nv))
+    z = v.iterate(nc, lb=np.zeros(nc), ub=np.zeros(nc))
+    y = v.iterate(nc, lb=np.zeros(nc), ub=np.zeros(nc))
 
     # Solve the KKT system for (x_tilde, nu_dual).
     rhs = stack([sigma * x - q, z - (1.0 / rho) * y])
-    sol = v.step.implicit_linear(rhs, output_mat=KKT)
+    sol = v.implicit_linear(rhs, output_mat=KKT)
     x_tilde = sol[:nv]
     nu_dual = sol[nv : nv + nc]
 
     z_tilde = z + (1.0 / rho) * (nu_dual - y)
     proj_arg = alpha * z_tilde + (1.0 - alpha) * z + (1.0 / rho) * y
-    z_next = v.step.satlin(proj_arg, l=lvec, u=uvec)
+    z_next = v.satlin(proj_arg, l=lvec, u=uvec)
     x_next = alpha * x_tilde + (1.0 - alpha) * x
     y_next = y + rho * (alpha * z_tilde + (1.0 - alpha) * z - z_next)
 
@@ -383,11 +383,11 @@ def cg_qp_example(*, n: int = 6, seed: int = 3, bandwidth: int | None = None) ->
         M = _banded_spd(n, bandwidth, seed)
 
     v = Verifier(method="simulator", obbt_solver=None)
-    q = v.add_param(n, lb=-np.ones(n), ub=np.ones(n))
-    x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    q = v.parameter(n, lb=-np.ones(n), ub=np.ones(n))
+    x = v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
     iterates = [x]
     for _ in range(3):
-        x = v.step.implicit_linear(x + q, output_mat=M)
+        x = v.implicit_linear(x + q, output_mat=M)
         iterates.append(x)
     return {"verifier": v, "next_state": iterates[1], "name": "cgqp"}
 
@@ -429,13 +429,13 @@ def pdhg_lp_example(*, n: int = 4, m: int = 3, seed: int = 7, density: float | N
     tau = sigma = 0.9 / normA
 
     v = Verifier(method="simulator", obbt_solver=None)
-    c = v.add_param(n, lb=c_nom - 0.1, ub=c_nom + 0.1)
-    x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
-    y = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
+    c = v.parameter(n, lb=c_nom - 0.1, ub=c_nom + 0.1)
+    x = v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    y = v.iterate(m, lb=np.zeros(m), ub=np.zeros(m))
     iters = [stack([x, y])]
     for _ in range(3):
-        x_next = v.step.satlin(x - tau * c + tau * (A.T @ y), l=lo, u=hi)
-        y_next = v.step.relu(y + sigma * b - sigma * (A @ (2 * x_next - x)))
+        x_next = v.satlin(x - tau * c + tau * (A.T @ y), l=lo, u=hi)
+        y_next = v.relu(y + sigma * b - sigma * (A @ (2 * x_next - x)))
         x, y = x_next, y_next
         iters.append(stack([x, y]))
     return {"verifier": v, "next_state": iters[1], "name": "pdhg_lp"}
@@ -456,11 +456,11 @@ def indefinite_kkt_example(*, n: int = 4, seed: int = 4) -> dict:
     K = np.block([[np.zeros((n, n)), A.T], [A, np.zeros((n, n))]])
 
     v = Verifier(method="simulator", obbt_solver=None)
-    q = v.add_param(2 * n, lb=-np.ones(2 * n), ub=np.ones(2 * n))
-    x = v.add_iterate(2 * n, lb=np.zeros(2 * n), ub=np.zeros(2 * n))
+    q = v.parameter(2 * n, lb=-np.ones(2 * n), ub=np.ones(2 * n))
+    x = v.iterate(2 * n, lb=np.zeros(2 * n), ub=np.zeros(2 * n))
     iters = [x]
     for _ in range(3):
-        x = v.step.implicit_linear(x + q, output_mat=K)
+        x = v.implicit_linear(x + q, output_mat=K)
         iters.append(x)
     return {"verifier": v, "next_state": iters[1], "name": "indef_kkt"}
 

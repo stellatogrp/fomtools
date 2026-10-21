@@ -14,7 +14,7 @@ def make_nnls_matrix(m: int = 5, n: int = 3, seed: int = 0) -> np.ndarray:
     return rng.normal(size=(m, n))
 
 
-def pgd_step(VP, A, eta, z_prev, w_prev, x_param, k, momentum=False):
+def pgd_step(vp, A, eta, z_prev, w_prev, x_param, k, momentum=False):
     """Apply one projected-gradient step, optionally with FISTA momentum.
 
     ``z_prev`` may be either the current iterate expression or an
@@ -35,7 +35,7 @@ def pgd_step(VP, A, eta, z_prev, w_prev, x_param, k, momentum=False):
             f"{type(z_prev).__name__}."
         )
 
-    w_next = VP.step.relu(current - eta * A.T @ (A @ current - x_param))
+    w_next = vp.relu(current - eta * A.T @ (A @ current - x_param))
     if momentum:
         beta_k = (k - 1) / (k + 2)
         z_next = w_next + beta_k * (w_next - w_prev)

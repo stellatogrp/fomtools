@@ -108,8 +108,8 @@ def _(
         params={"output_flag": False},
     )
 
-    x_param = verifier.add_param(m, lb=x_lb, ub=x_ub)
-    z = verifier.add_iterate(n, lb=z0, ub=z0)
+    x_param = verifier.parameter(m, lb=x_lb, ub=x_ub)
+    z = verifier.iterate(n, lb=z0, ub=z0)
     z_next, _, _ = pgd_step(
         verifier, A, eta, z, z, x_param, k=1, momentum=False,
     )

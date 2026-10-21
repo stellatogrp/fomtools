@@ -12,6 +12,7 @@ from fomtools.canonicalizers.simulator import Simulator
 from fomtools.constraint import (
     ComplementarityConstraint,
     Constraint,
+    Norm,
     SumSquares,
     complementarity,
     is_binary_free,
@@ -63,6 +64,7 @@ class Verifier(object):
         cross_cut=False,
         subgrad_mono_cut=False,
         obbt_params=None,
+        verbose=False,
     ):
         """
         Initialize a Verifier instance.
@@ -83,7 +85,8 @@ class Verifier(object):
         params : dict, optional
             Solver-specific parameters forwarded to the canonicalizer. Only the
             verbosity key (``OutputFlag`` for Gurobi, ``output_flag`` for HiGHS)
-            is inherited by the OBBT solver, unless ``obbt_params`` is given.
+            is inherited by the OBBT solver, unless ``obbt_params`` is given. A
+            verbosity key here overrides ``verbose``.
         rlt_cuts : bool, default False
             SDP-only: when True, add RLT cuts between cone-mate index
             pairs (paper §4.5 eq 18). No effect for ``method != "sdp"``.
@@ -128,6 +131,8 @@ class Verifier(object):
         obbt_params : dict, optional
             Parameters passed verbatim to the OBBT solver. When ``None``, the
             OBBT solver inherits only the verbosity key from ``params``.
+        verbose : bool, default False
+            Print the solver logs, for the main solves and for the OBBT LPs.
         """
         self.theory_func = theory_func
         self.method = method.lower()
@@ -142,6 +147,9 @@ class Verifier(object):
         # generated solver on the verified metric (TerminationKind.OBJECTIVE).
         self.objective: tuple[tuple[LinearExpression, ...], int | float] | None = None
 
+        # An explicit verbosity key in ``params`` overrides ``verbose``.
+        params = {**self._verbosity_option(method, solver, verbose), **(params or {})} or None
+        self._solver_name = solver
         self.canonicalizer = self._get_canonicalizer(
             method,
             params,
@@ -160,7 +168,7 @@ class Verifier(object):
         if obbt_solver == "auto":
             obbt_solver = solver if is_mip_solver(solver) else None
         if obbt_solver and obbt_params is None:
-            obbt_params = self._obbt_params_from(params, obbt_solver)
+            obbt_params = self._obbt_params_from(params, obbt_solver, verbose)
         self.obbt_handler = (
             OBBTHandler(solver=obbt_solver, solver_params=obbt_params) if obbt_solver else None
         )
@@ -313,15 +321,32 @@ class Verifier(object):
                 raise ValueError(f"Method must be 'mip', 'sdp' or 'simulator', got {method}")
 
     @staticmethod
-    def _obbt_params_from(params: dict | None, obbt_solver: str) -> dict | None:
+    def _verbosity_option(method: str, solver: str, verbose: bool) -> dict:
+        """The native solver option that turns the log on or off, if the backend has one."""
+        if method.lower() == "mip":
+            cls = solver_class(solver)
+            if cls is not None and cls.VERBOSITY_KEY is not None:
+                return {cls.VERBOSITY_KEY: verbose}
+        # Clarabel and CVXPY are silent by default; CuClarabel takes no options.
+        elif method.lower() == "sdp" and verbose and solver.lower() != "cuclarabel":
+            return {"verbose": True}
+        return {}
+
+    @staticmethod
+    def _obbt_params_from(
+        params: dict | None, obbt_solver: str, verbose: bool = False
+    ) -> dict | None:
         """
         Extract the verbosity setting from the main solver ``params`` for the OBBT solver.
 
         The rest of ``params`` (time limits, gaps, SDP-solver options) is not forwarded:
-        it targets the main solve and may be invalid for the OBBT backend.
+        it targets the main solve and may be invalid for the OBBT backend. Without a
+        verbosity key in ``params``, the OBBT solver follows ``verbose``.
         """
         cls = solver_class(obbt_solver)
-        return cls.verbosity_params(params) if cls is not None else None
+        if cls is None:
+            return None
+        return cls.verbosity_params(params) or {cls.VERBOSITY_KEY: verbose}
 
     @staticmethod
     def _get_step_decomposer(method: str):
@@ -414,17 +439,18 @@ class Verifier(object):
 
         """
         self.canonicalizer.add_var(var, **kwargs)
+        var._verifier = self
         if self.use_obbt_handler:
             self.obbt_handler.add_var(var)
 
-    def add_iterate(
+    def iterate(
         self, ndim: int, lb: float = -np.inf, ub: float = np.inf, **kwargs
     ) -> LinearExpression:
         """
-        Create and register an iterate to the Problem instance. This
-        method creates a new `LinearExpression` of dimension `ndim`
-        and registers it with the underlying canonicalizer and OBBT
-        Handler instance.
+        Create an iterate, typically the initial iterate, in the box ``[lb, ub]``.
+
+        Equal bounds fix the iterate. The iterate is a new `LinearExpression` of
+        dimension ``ndim``, registered with the canonicalizer and the OBBT handler.
 
         Parameters
         ----------
@@ -454,6 +480,13 @@ class Verifier(object):
             self.canonicalizer.record_iterate(iterate)
         return iterate
 
+    def add_iterate(self, *args, **kwargs) -> LinearExpression:
+        """Deprecated alias of `iterate`."""
+        warnings.warn(
+            "add_iterate is deprecated; use Verifier.iterate.", DeprecationWarning, stacklevel=2
+        )
+        return self.iterate(*args, **kwargs)
+
     def _add_aux_iterate(self, ndim, lb=-np.inf, ub=np.inf, **kwargs):
         """Register a leaf without making an internal KKT variable a user iterate."""
         self.iterates.append(iterate := self._create_var(ndim, lb, ub))
@@ -467,13 +500,15 @@ class Verifier(object):
             self.canonicalizer.record_iterate(output)
         return output
 
-    def add_param(
+    def parameter(
         self, ndim: int, lb: float = -np.inf, ub: float = np.inf, **kwargs
     ) -> LinearExpression:
         """
-        Create and register a new parameter. This method creates a new
-        `LinearExpression` of dimension `ndim` and registers it with
-        the underlying canonicalizer and OBBT Handler instance.
+        Create a problem parameter in the box ``[lb, ub]``.
+
+        The parameter is a new `LinearExpression` of dimension ``ndim``, registered
+        with the canonicalizer and the OBBT handler. With ``method="simulator"``,
+        pass ``samples`` of shape ``(num_samples, ndim)``.
 
         Parameters
         ----------
@@ -508,7 +543,7 @@ class Verifier(object):
                 shape = np.shape(samples)
                 if len(shape) != 2 or shape[1] != ndim:
                     raise ValueError(
-                        f"add_param(ndim={ndim}): samples must have shape "
+                        f"parameter(ndim={ndim}): samples must have shape "
                         f"(num_samples, {ndim}), got {shape}."
                     )
             elif not (np.all(np.isfinite(var.lb)) and np.array_equal(var.lb, var.ub)):
@@ -516,16 +551,23 @@ class Verifier(object):
         self._register_var(var, var_type="param", **kwargs)
         return var
 
+    def add_param(self, *args, **kwargs) -> LinearExpression:
+        """Deprecated alias of `parameter`."""
+        warnings.warn(
+            "add_param is deprecated; use Verifier.parameter.", DeprecationWarning, stacklevel=2
+        )
+        return self.parameter(*args, **kwargs)
+
     def add_param_stack(self, param_list: List[LinearExpression]) -> LinearExpression:
         """
         Stack multiple parameters into a single composite LinearExpression.
 
         Equivalent to `fomtools.stack`; preserved for API consistency
-        with ``add_param`` / ``add_iterate``. Does not create a new leaf or
+        with ``parameter`` / ``iterate``. Does not create a new leaf or
         any solver-side equality constraints — the result is a view sharing
         storage with the input parameters via sparse block-selection matrices.
 
-        The constituent parameters must already be registered (via ``add_param``).
+        The constituent parameters must already be registered (via ``parameter``).
 
         Parameters
         ----------
@@ -575,9 +617,9 @@ class Verifier(object):
         Examples
         --------
         >>> z = verifier.iterate_trajectory(K + 1)
-        >>> z[0] = verifier.add_iterate(n, lb=z0, ub=z0)
+        >>> z[0] = verifier.iterate(n, lb=z0, ub=z0)
         >>> for k in range(1, K + 1):
-        ...     z[k] = verifier.step.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x))
+        ...     z[k] = verifier.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x))
         """
         from fomtools.iteratetrajectory import IterateTrajectory
 
@@ -889,7 +931,7 @@ class Verifier(object):
             arg=arg,
             relax_binary_vars=relax_binary_vars,
         )
-        # Composite step: the decomposer creates the primal x via add_iterate (already
+        # Composite step: the decomposer creates the primal x via iterate (already
         # tracked in self.iterates) and returns it; just record the step itself.
         x = self.step_decomposer.process_step(step)
         self.steps.append(step)
@@ -986,8 +1028,8 @@ class Verifier(object):
         Examples
         -------
         >>> verifier = Verifier()
-        >>> expr = verifier.add_param(2)
-        >>> x = verifier.step.relu(arg=expr, relax_binary_vars=True)
+        >>> expr = verifier.parameter(2)
+        >>> x = verifier.relu(arg=expr, relax_binary_vars=True)
 
         """
         return self._step_proxy
@@ -1028,6 +1070,42 @@ class Verifier(object):
 
         return self._record_output(output)
 
+    def relu(self, arg, proj_ranges=None, relax_binary_vars=False) -> LinearExpression:
+        r"""
+        Projection onto the nonnegative orthant, $\Pi_{\mathbf{R}^n_+}(\text{arg})$.
+
+        Same as ``verifier.step.relu``; see `Relu` for the parameters.
+        """
+        return self.run_step(arg, Relu, relax_binary_vars, proj_ranges=proj_ranges)
+
+    def satlin(self, arg, l, u, relax_binary_vars=False) -> LinearExpression:
+        r"""
+        Projection onto the box $[l, u]$, $\Pi_{[l,u]}(\text{arg})$.
+
+        Same as ``verifier.step.satlin``; see `SaturatedLinear` for the parameters.
+        """
+        return self.run_step(arg, SaturatedLinear, relax_binary_vars, l=l, u=u)
+
+    def soft_threshold(self, arg, lambd, relax_binary_vars=False) -> LinearExpression:
+        r"""
+        Soft-thresholding $\mathbf{soft}_\lambda(\text{arg})$, the prox of $\lambda\|\cdot\|_1$.
+
+        Same as ``verifier.step.soft_threshold``; see `SoftThreshold` for the parameters.
+        """
+        return self.run_step(arg, SoftThreshold, relax_binary_vars, lambd=lambd)
+
+    def implicit_linear(
+        self, arg, output_mat=None, weight=None, bias=None, relax_binary_vars=False
+    ) -> LinearExpression:
+        """
+        Implicit affine step ``output_mat @ w = weight @ arg + bias``.
+
+        Same as ``verifier.step.implicit_linear``; see `Affine` for the parameters.
+        """
+        return self.run_step(
+            arg, Affine, relax_binary_vars, output_mat=output_mat, weight=weight, bias=bias
+        )
+
     def fixed_point(self, n_dim, operator, lb=-np.inf, ub=np.inf):
         """
         Encode a fixed point of an operator as a new iterate.
@@ -1059,7 +1137,7 @@ class Verifier(object):
         LinearExpression
             The fixed-point iterate ``z_star``.
         """
-        z_star = self.add_iterate(n_dim, lb=lb, ub=ub)
+        z_star = self.iterate(n_dim, lb=lb, ub=ub)
         s_star = operator(z_star)
         self.add_constraint(z_star == s_star)
 
@@ -1226,12 +1304,37 @@ class Verifier(object):
             case _:
                 raise ValueError(f"Unsupported norm order: {ord}. Use 1, 2, np.inf, or 'inf'.")
 
+    def maximize(self, objective: Norm | SumSquares) -> None:
+        """
+        Set the objective to maximize, the worst case that ``solve`` bounds.
+
+        Parameters
+        ----------
+        objective : Norm or SumSquares
+            ``ft.norm(expr, 1)``, ``ft.norm(expr, np.inf)``, or
+            ``ft.sum_squares(expr)`` for the squared two-norm.
+
+        Examples
+        --------
+        >>> vp.maximize(ft.norm(z - z_prev, np.inf))
+        """
+        if isinstance(objective, Norm):
+            self.set_objective_norm(list(objective.exprs), objective.p)
+        elif isinstance(objective, SumSquares):
+            self.set_two_norm_objective(objective.expr)
+        else:
+            raise TypeError(
+                "maximize takes ft.norm(expr, p) or ft.sum_squares(expr), "
+                f"got {type(objective).__name__}."
+            )
+
     def solve(
         self,
         convex_hull_cuts: bool = False,
         cut_rounds: int = 1,
         tighten_objective_bounds: bool | None = None,
         warm_start: bool = True,
+        verbose: bool | None = None,
         **kwargs,
     ) -> float:
         """
@@ -1270,6 +1373,10 @@ class Verifier(object):
             and the worst of the samples given to ``set_start_samples``.
             Solvers without MIP starts ignore them. Statistics are stored on
             ``canonicalizer.warm_start_stats``.
+        verbose : bool or None, default None
+            Print the log of this solve. ``None`` keeps the ``verbose`` setting of
+            the constructor. The OBBT LPs, which run while the steps are added,
+            follow the constructor setting only.
         **kwargs
             Keyword arguments forwarded to the canonicalizer's
             ``solve_model``. Any keyword is passed **verbatim** to the active
@@ -1291,6 +1398,8 @@ class Verifier(object):
             Simulator: an array of sampled residuals, with summary statistics
             available through ``vp["max"]`` and related keys.
         """
+        if verbose is not None:
+            kwargs = {**self._verbosity_option(self.method, self._solver_name, verbose), **kwargs}
         # ``cut_stats`` has one entry per round that added cuts; ``separation_stats``
         # one per round that ran, including a final round that found nothing.
         self.cut_stats = []
@@ -1332,7 +1441,7 @@ class Verifier(object):
             raise ValueError(
                 f"{len(self._unsampled_params)} parameter(s) (ndim {dims}) have no samples. "
                 "The simulator does not sample from bounds: pass "
-                "add_param(ndim, samples=<array of shape (num_samples, ndim)>), drawn "
+                "parameter(ndim, samples=<array of shape (num_samples, ndim)>), drawn "
                 "from the distribution the probabilistic bound should hold for "
                 "(equal finite bounds fix a constant and need no samples)."
             )
@@ -1439,9 +1548,9 @@ class Verifier(object):
         verified with, no restructuring:
 
         >>> z = verifier.iterate_trajectory(K + 1)
-        >>> z[0] = verifier.add_iterate(n, lb=z0, ub=z0)
+        >>> z[0] = verifier.iterate(n, lb=z0, ub=z0)
         >>> for k in range(1, K + 1):
-        ...     z[k] = verifier.step.soft_threshold(...)
+        ...     z[k] = verifier.soft_threshold(...)
         >>> verifier.solve()
         >>> verifier.codegen("out/", iterates=z)
 
@@ -1564,6 +1673,10 @@ class Verifier(object):
             evaluated values of the iterate at the current model
             solution.
         """
+        if not hasattr(self.canonicalizer, "get_solution_value"):
+            raise NotImplementedError(
+                f"Solution values are not available with method={self.method!r}."
+            )
         return self.canonicalizer.get_solution_value(iterate)
 
 

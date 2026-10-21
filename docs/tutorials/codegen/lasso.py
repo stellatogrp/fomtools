@@ -137,8 +137,8 @@ def _(
         params={"output_flag": False},
     )
 
-    x_param = verifier.add_param(p, lb=x_lb, ub=x_ub)
-    s = verifier.add_iterate(n, lb=s0, ub=s0)
+    x_param = verifier.parameter(p, lb=x_lb, ub=x_ub)
+    s = verifier.iterate(n, lb=s0, ub=s0)
     next_s, _, _, _ = ista_step(
         verifier, D, eta, lambd, s, s, x_param, 1.0, k=1, momentum=False
     )

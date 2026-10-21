@@ -73,7 +73,7 @@ def build_admm_lhs(M, P, rho, sigma):
     return csr_matrix(P + sigma * spa.eye(P.shape[0]) + rho * (M.T @ M))
 
 
-def admm_step(VP, M, q, rho, sigma, z_prev, v_prev, project, lhs_mat, k=None):
+def admm_step(vp, M, q, rho, sigma, z_prev, v_prev, project, lhs_mat, k=None):
     """Apply one OSQP-style ADMM step for the control problem.
 
     ``z_prev`` and ``v_prev`` may be current expressions or backend-aware
@@ -88,9 +88,9 @@ def admm_step(VP, M, q, rho, sigma, z_prev, v_prev, project, lhs_mat, k=None):
     z_current = z_trajectory[k - 1] if z_trajectory is not None else z_prev
     v_current = v_trajectory[k - 1] if v_trajectory is not None else v_prev
 
-    w_next = project(VP, v_current)
+    w_next = project(vp, v_current)
     rhs = sigma * z_current - q + rho * M.T @ (2 * w_next - v_current)
-    z_next = VP.step.implicit_linear(rhs, output_mat=lhs_mat)
+    z_next = vp.implicit_linear(rhs, output_mat=lhs_mat)
     if z_trajectory is not None:
         z_trajectory[k] = z_next
         z_next = z_trajectory[k]

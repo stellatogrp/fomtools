@@ -20,7 +20,7 @@ from fomtools.verifier import Verifier
 
 def _issue_123_iterate(solver):
     vp = Verifier(solver=solver)
-    x = vp.add_iterate(ndim=2, lb=np.array([-np.inf, 0.0]), ub=np.array([np.inf, 1.0]))
+    x = vp.iterate(ndim=2, lb=np.array([-np.inf, 0.0]), ub=np.array([np.inf, 1.0]))
     return vp, x
 
 
@@ -40,7 +40,7 @@ def test_issue_123_relu_on_unbounded_input_fails_clearly(solver):
     vp, x = _issue_123_iterate(solver)
     A = np.array([[0.0, 1.0], [1.0, 1.0]])
     with pytest.raises(ValueError, match="finite bounds"):
-        vp.step.relu(A @ x)
+        vp.relu(A @ x)
 
 
 def test_relu_upper_envelope_limits():
@@ -156,28 +156,28 @@ def test_softthreshold_envelope_finite_unchanged():
 @pytest.mark.parametrize("i", range(len(SOFT_LB)))
 def test_softthreshold_exact_mip_refuses_unbounded_input(solver, i):
     vp = Verifier(solver=solver)
-    x = vp.add_iterate(ndim=1, lb=SOFT_LB[i : i + 1], ub=SOFT_UB[i : i + 1])
+    x = vp.iterate(ndim=1, lb=SOFT_LB[i : i + 1], ub=SOFT_UB[i : i + 1])
     with pytest.raises(ValueError, match="finite bounds"):
-        vp.step.soft_threshold(x, lambd=LAMBD)
+        vp.soft_threshold(x, lambd=LAMBD)
 
 
 @pytest.mark.parametrize("solver", SOLVERS)
 @pytest.mark.parametrize("i", range(len(SATLIN_LB)))
 def test_satlin_exact_mip_refuses_unbounded_input(solver, i):
     vp = Verifier(solver=solver)
-    x = vp.add_iterate(ndim=1, lb=SATLIN_LB[i : i + 1], ub=SATLIN_UB[i : i + 1])
+    x = vp.iterate(ndim=1, lb=SATLIN_LB[i : i + 1], ub=SATLIN_UB[i : i + 1])
     with pytest.raises(ValueError, match="finite bounds"):
-        vp.step.satlin(x, l=-0.5 * np.ones(1), u=0.5 * np.ones(1))
+        vp.satlin(x, l=-0.5 * np.ones(1), u=0.5 * np.ones(1))
 
 
 @pytest.mark.parametrize("solver", SOLVERS)
 def test_softthreshold_relaxed_builds_without_nan(solver, recorded_rows):
     """Relaxed MIP and the OBBT LP get the limit rows, never NaN."""
     vp = Verifier(solver=solver)
-    x = vp.add_iterate(ndim=len(SOFT_LB), lb=SOFT_LB, ub=SOFT_UB)
+    x = vp.iterate(ndim=len(SOFT_LB), lb=SOFT_LB, ub=SOFT_UB)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        vp.step.soft_threshold(x, lambd=LAMBD, relax_binary_vars=True)
+        vp.soft_threshold(x, lambd=LAMBD, relax_binary_vars=True)
     assert recorded_rows
     _assert_finite_rows(recorded_rows)
 
@@ -186,11 +186,11 @@ def test_softthreshold_relaxed_builds_without_nan(solver, recorded_rows):
 def test_satlin_relaxed_builds_without_nan(solver, recorded_rows):
     """Satlin chord slopes go to 0 with an infinite bound: finite rows in the MIP and OBBT LP."""
     vp = Verifier(solver=solver)
-    x = vp.add_iterate(ndim=len(SATLIN_LB), lb=SATLIN_LB, ub=SATLIN_UB)
+    x = vp.iterate(ndim=len(SATLIN_LB), lb=SATLIN_LB, ub=SATLIN_UB)
     n = len(SATLIN_LB)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        vp.step.satlin(x, l=-0.5 * np.ones(n), u=0.5 * np.ones(n), relax_binary_vars=True)
+        vp.satlin(x, l=-0.5 * np.ones(n), u=0.5 * np.ones(n), relax_binary_vars=True)
     assert recorded_rows
     _assert_finite_rows(recorded_rows)
 

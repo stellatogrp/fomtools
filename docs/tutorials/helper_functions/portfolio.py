@@ -21,7 +21,7 @@ def make_portfolio_data(n: int = 4, seed: int = 0, position_limit: float = 0.6):
 
 
 def admm_step(
-    VP,
+    vp,
     constraint_matrix,
     lower,
     upper,
@@ -47,13 +47,13 @@ def admm_step(
     x_current = x_trajectory[k - 1] if x_trajectory is not None else x_prev
     v_current = v_trajectory[k - 1] if v_trajectory is not None else v_prev
 
-    w_next = VP.step.satlin(v_current, l=lower, u=upper)
+    w_next = vp.satlin(v_current, l=lower, u=upper)
     rhs = (
         sigma * x_current
         + expected_return
         + rho * constraint_matrix.T @ (2 * w_next - v_current)
     )
-    x_next = VP.step.implicit_linear(rhs, output_mat=lhs_mat)
+    x_next = vp.implicit_linear(rhs, output_mat=lhs_mat)
     if x_trajectory is not None:
         x_trajectory[k] = x_next
         x_next = x_trajectory[k]

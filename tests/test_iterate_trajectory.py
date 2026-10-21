@@ -35,7 +35,7 @@ def test_list_semantics():
     assert isinstance(traj, IterateTrajectory)
     assert len(traj) == 3
 
-    z0 = v.add_iterate(2, lb=-1, ub=1)
+    z0 = v.iterate(2, lb=-1, ub=1)
     traj[0] = z0
     assert traj[0] is z0
     # negative index maps to the same slot
@@ -62,8 +62,8 @@ def test_list_semantics():
         traj[0:2] = z0
 
     # iteration yields stored expressions (raises on gaps)
-    traj[1] = v.step.relu(z0)
-    traj[2] = v.step.relu(traj[1])
+    traj[1] = v.relu(z0)
+    traj[2] = v.relu(traj[1])
     assert [e.ndim for e in traj] == [2, 2, 2]
 
 
@@ -78,7 +78,7 @@ def test_constructor_validation():
 def test_iter_raises_on_unset_slot():
     v = _mip()
     traj = v.iterate_trajectory(2)
-    traj[0] = v.add_iterate(2, lb=0, ub=1)
+    traj[0] = v.iterate(2, lb=0, ub=1)
     with pytest.raises(LookupError):
         list(traj)
 
@@ -91,7 +91,7 @@ def test_iter_raises_on_unset_slot():
 def _affine_delta(v, collapse_expr):
     """Assign a collapsed affine expr and return (Δiterates, Δsteps)."""
     traj = v.iterate_trajectory(2, collapse_expr=collapse_expr)
-    traj[0] = v.add_iterate(2, lb=-1, ub=1)
+    traj[0] = v.iterate(2, lb=-1, ub=1)
     M = np.array([[1.0, 0.5], [0.0, 1.0]])
     n_it, n_st = len(v.iterates), len(v.steps)
     traj[1] = M @ traj[0] + np.array([0.1, 0.2])
@@ -127,9 +127,9 @@ def test_leaf_value_never_mints_extra():
         (_sdp(), False),
     ]:
         traj = v.iterate_trajectory(2, collapse_expr=policy)
-        traj[0] = v.add_iterate(2, lb=-1, ub=1)
+        traj[0] = v.iterate(2, lb=-1, ub=1)
         n_it, n_st = len(v.iterates), len(v.steps)
-        out = v.step.relu(traj[0])
+        out = v.relu(traj[0])
         after_step = (len(v.iterates) - n_it, len(v.steps) - n_st)
         traj[1] = out  # assigning an already-leaf value must add nothing more
         after_assign = (len(v.iterates) - n_it, len(v.steps) - n_st)
@@ -156,12 +156,12 @@ def _accumulating_loop(collapse_expr, K=7):
     dim = n + m
 
     v = Verifier(method="simulator", obbt_solver=None)
-    q = v.add_param(dim, lb=-np.ones(dim), ub=np.ones(dim))
+    q = v.parameter(dim, lb=-np.ones(dim), ub=np.ones(dim))
     z = v.iterate_trajectory(K + 1, collapse_expr=collapse_expr)
-    z[0] = v.add_iterate(dim, lb=np.zeros(dim), ub=np.zeros(dim))
+    z[0] = v.iterate(dim, lb=np.zeros(dim), ub=np.zeros(dim))
     for k in range(1, K + 1):
-        u = v.step.implicit_linear(z[k - 1] - q, output_mat=kkt)
-        ut = v.step.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
+        u = v.implicit_linear(z[k - 1] - q, output_mat=kkt)
+        ut = v.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
         z[k] = z[k - 1] + ut - u
     return [_support(z[k]) for k in range(K + 1)]
 
@@ -174,12 +174,12 @@ def _anchored_loop(collapse_expr, K=7):
     eta = 1.0 / np.max(np.linalg.eigvalsh(dmat.T @ dmat))
 
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(m, lb=-np.ones(m), ub=np.ones(m))
+    x = v.parameter(m, lb=-np.ones(m), ub=np.ones(m))
     z = v.iterate_trajectory(K + 1, collapse_expr=collapse_expr)
-    z[0] = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    z[0] = v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
     for k in range(1, K + 1):
         alpha = 1.0 / (k + 1.0)
-        tz = v.step.soft_threshold(
+        tz = v.soft_threshold(
             (np.eye(n) - eta * dmat.T @ dmat) @ z[k - 1] + eta * dmat.T @ x, lambd=0.05 * eta
         )
         z[k] = alpha * z[0] + (1.0 - alpha) * tz
@@ -212,11 +212,11 @@ def test_auto_leaves_an_anchored_loop_collapsed():
 def test_auto_leaves_a_loop_of_step_outputs_alone():
     """Every slot is already a single variable; the policy has nothing to do."""
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(3, lb=-np.ones(3), ub=np.ones(3))
+    x = v.parameter(3, lb=-np.ones(3), ub=np.ones(3))
     z = v.iterate_trajectory(6)
-    z[0] = v.add_iterate(3, lb=np.zeros(3), ub=np.zeros(3))
+    z[0] = v.iterate(3, lb=np.zeros(3), ub=np.zeros(3))
     for k in range(1, 6):
-        z[k] = v.step.relu(z[k - 1] + x)
+        z[k] = v.relu(z[k - 1] + x)
     assert [_support(z[k]) for k in range(6)] == ["leaf"] * 6
 
 
@@ -224,10 +224,10 @@ def test_a_single_widening_that_settles_does_not_latch():
     """A two-term recursion widens once and stays put; that is not accumulation."""
     v = Verifier(method="simulator", obbt_solver=None)
     z = v.iterate_trajectory(6)
-    z[0] = v.add_iterate(2, lb=np.zeros(2), ub=np.zeros(2))
+    z[0] = v.iterate(2, lb=np.zeros(2), ub=np.zeros(2))
     prev = z[0]
     for k in range(1, 6):
-        step = v.step.relu(z[k - 1])
+        step = v.relu(z[k - 1])
         # References the step output and the previous iterate: support 2 throughout.
         z[k] = 0.5 * step + 0.5 * prev
         prev = step
@@ -244,12 +244,12 @@ def test_the_latch_does_not_change_a_mip_bound():
 
     def solve(collapse_expr):
         v = _mip()
-        q = v.add_param(dim, lb=-0.2, ub=0.2)
+        q = v.parameter(dim, lb=-0.2, ub=0.2)
         z = v.iterate_trajectory(K + 1, collapse_expr=collapse_expr)
-        z[0] = v.add_iterate(dim, lb=-0.1, ub=0.1)
+        z[0] = v.iterate(dim, lb=-0.1, ub=0.1)
         for k in range(1, K + 1):
-            u = v.step.implicit_linear(z[k - 1] - q, output_mat=kkt)
-            ut = v.step.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
+            u = v.implicit_linear(z[k - 1] - q, output_mat=kkt)
+            ut = v.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
             z[k] = z[k - 1] + ut - u
         v.set_objective_norm([z[K] - z[K - 1]], np.inf)
         return v.solve()
@@ -268,11 +268,11 @@ def _build_softthresh_ista(solver, collapse_expr, K=2, seed=0):
     np.random.seed(seed)
     A = np.random.normal(size=(m, n))
     v = Verifier(method="sdp", solver=solver, obbt_solver=None)
-    x = v.add_param(m, lb=-1, ub=1)
+    x = v.parameter(m, lb=-1, ub=1)
     z = v.iterate_trajectory(K + 1, collapse_expr=collapse_expr)
-    z[0] = v.add_iterate(n, lb=-0.5, ub=0.5)
+    z[0] = v.iterate(n, lb=-0.5, ub=0.5)
     for k in range(1, K + 1):
-        z[k] = v.step.soft_threshold(z[k - 1] - t * A.T @ (A @ z[k - 1] - x), lambd=lambd * t)
+        z[k] = v.soft_threshold(z[k - 1] - t * A.T @ (A @ z[k - 1] - x), lambd=lambd * t)
     v.set_objective_norm(z[K] - z[K - 1], 2)
     return v
 
@@ -296,11 +296,11 @@ def _build_relu_nnls(solver, collapse_expr, K=2, seed=0):
     np.random.seed(seed)
     A = np.random.normal(size=(m, n))
     v = Verifier(method="sdp", solver=solver, obbt_solver=None)
-    x = v.add_param(m, lb=0, ub=0.1)
+    x = v.parameter(m, lb=0, ub=0.1)
     z = v.iterate_trajectory(K + 1, collapse_expr=collapse_expr)
-    z[0] = v.add_iterate(n, lb=5, ub=5.1)
+    z[0] = v.iterate(n, lb=5, ub=5.1)
     for k in range(1, K + 1):
-        z[k] = v.step.relu(z[k - 1] - t * A.T @ (A @ z[k - 1] - x))
+        z[k] = v.relu(z[k - 1] - t * A.T @ (A @ z[k - 1] - x))
     v.set_objective_norm(z[K] - z[K - 1], 2)
     return v
 
@@ -331,11 +331,11 @@ def test_cross_backend_mip_le_sdp(vp_sdp):
         sdp_two_norm_sq = _build_relu_nnls(solver, False, K=K).solve()
 
         vm = _mip()
-        xm = vm.add_param(m, lb=0, ub=0.1)
+        xm = vm.parameter(m, lb=0, ub=0.1)
         zm = vm.iterate_trajectory(K + 1)  # auto -> collapse on MIP
-        zm[0] = vm.add_iterate(n, lb=5, ub=5.1)
+        zm[0] = vm.iterate(n, lb=5, ub=5.1)
         for k in range(1, K + 1):
-            zm[k] = vm.step.relu(zm[k - 1] - t * A.T @ (A @ zm[k - 1] - xm))
+            zm[k] = vm.relu(zm[k - 1] - t * A.T @ (A @ zm[k - 1] - xm))
         vm.set_objective_norm([zm[K] - zm[K - 1]], np.inf)
         mip_inf_norm = vm.solve()
 
@@ -371,12 +371,12 @@ def test_legacy_idiom_parity_mip(vp_param_1):
 
     def run(builder):
         v = vp_param_1
-        x = v.add_param(m, lb=10, ub=11)
+        x = v.parameter(m, lb=10, ub=11)
         z = builder(v, K + 1)
-        z[0] = v.add_iterate(n, lb=1, ub=1)
+        z[0] = v.iterate(n, lb=1, ub=1)
         res = []
         for k in range(1, K + 1):
-            z[k] = v.step.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x))
+            z[k] = v.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x))
             v.set_objective_norm([z[k] - z[k - 1]], np.inf)
             res.append(v.solve())
         return res
@@ -386,12 +386,12 @@ def test_legacy_idiom_parity_mip(vp_param_1):
     solver = {"GurobiSolver": "gurobi", "HiGHSSolver": "highs"}[solver]
 
     v_list = Verifier(method="mip", solver=solver, obbt_solver=solver, params=mip_params(solver))
-    xl = v_list.add_param(m, lb=10, ub=11)
+    xl = v_list.parameter(m, lb=10, ub=11)
     zl = [None] * (K + 1)
-    zl[0] = v_list.add_iterate(n, lb=1, ub=1)
+    zl[0] = v_list.iterate(n, lb=1, ub=1)
     res_list = []
     for k in range(1, K + 1):
-        zl[k] = v_list.step.relu(zl[k - 1] - eta * A.T @ (A @ zl[k - 1] - xl))
+        zl[k] = v_list.relu(zl[k - 1] - eta * A.T @ (A @ zl[k - 1] - xl))
         v_list.set_objective_norm([zl[k] - zl[k - 1]], np.inf)
         res_list.append(v_list.solve())
 

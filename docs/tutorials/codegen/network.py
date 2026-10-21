@@ -166,10 +166,10 @@ def _(
         params={"output_flag": False},
     )
 
-    x_param = verifier.add_param(n_demand, lb=x_lb, ub=x_ub)
-    z = verifier.add_iterate(n_edges, lb=z0, ub=z0)
-    v = verifier.add_iterate(n_supply, lb=v0, ub=v0)
-    w = verifier.add_iterate(n_demand, lb=w0, ub=w0)
+    x_param = verifier.parameter(n_demand, lb=x_lb, ub=x_ub)
+    z = verifier.iterate(n_edges, lb=z0, ub=z0)
+    v = verifier.iterate(n_supply, lb=v0, ub=v0)
+    w = verifier.iterate(n_demand, lb=w0, ub=w0)
     z_next, v_next, w_next, _ = pdhg_step(
         verifier,
         A_supply,

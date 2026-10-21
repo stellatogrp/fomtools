@@ -126,7 +126,7 @@ def test_mip_dense_and_sparse_P_agree(P):
     C, d = _box(2, -np.ones(2), np.ones(2))
     x0 = np.array([2.0, -3.0])
     v = _make_verifier("mip", obbt="gurobi")
-    xp = v.add_param(2, lb=x0, ub=x0)
+    xp = v.parameter(2, lb=x0, ub=x0)
     u = v.quadratic_program(P=P, q=-xp, C=C, d=d, dual_ub=10.0)
     v.set_objective_norm([u], np.inf)
     v.solve()
@@ -139,8 +139,8 @@ def test_mip_parametric_q_b():
     b0 = np.array([1.0])
     A = np.array([[1.0, 1.0]])
     v = _make_verifier("mip", obbt="gurobi")
-    xp = v.add_param(2, lb=x0, ub=x0)
-    bp = v.add_param(1, lb=b0, ub=b0)
+    xp = v.parameter(2, lb=x0, ub=x0)
+    bp = v.parameter(1, lb=b0, ub=b0)
     u = v.quadratic_program(
         P=np.eye(2),
         q=-xp,
@@ -161,7 +161,7 @@ def test_mip_reproduces_indpolyhedral_projection():
     bpoly = np.array([1.0, 1.0, -0.5])
     x0 = np.array([3.0, 3.0])
     v = _make_verifier("mip", obbt="gurobi")
-    xp = v.add_param(2, lb=x0, ub=x0)
+    xp = v.parameter(2, lb=x0, ub=x0)
     u = v.quadratic_program(P=np.eye(2), q=-xp, C=Apoly, d=bpoly, dual_ub=20.0)
     v.set_objective_norm([u], np.inf)
     v.solve()
@@ -178,7 +178,7 @@ def test_without_dual_ub_raises(method):
     """Inequality constraints without dual_ub raise eagerly on both backends."""
     C, d = _box(2, -np.ones(2), np.ones(2))
     v = _make_verifier(method, obbt="gurobi" if method == "mip" else None)
-    x = v.add_param(2, lb=np.array([2.0, -3.0]), ub=np.array([2.0, -3.0]))
+    x = v.parameter(2, lb=np.array([2.0, -3.0]), ub=np.array([2.0, -3.0]))
     with pytest.raises(ValueError, match="dual_ub"):
         v.quadratic_program(P=np.eye(2), q=-x, C=C, d=d)
 
@@ -194,7 +194,7 @@ def test_simulator_equality_only_supported():
     """Simulator lowers an unconstrained / equality-only QP to a batched Affine
     block-KKT solve."""
     v = _make_verifier("simulator")
-    arg = v.add_param(2, lb=-1.0, ub=1.0)
+    arg = v.parameter(2, lb=-1.0, ub=1.0)
     out = v.quadratic_program(P=np.eye(2), q=-arg)
     assert out.ndim == 2
 
@@ -202,7 +202,7 @@ def test_simulator_equality_only_supported():
 def test_simulator_inequality_supported():
     """A QP with inequality constraints lowers to a per-sample cvxpy solve."""
     v = _make_verifier("simulator")
-    arg = v.add_param(2, lb=-1.0, ub=1.0)
+    arg = v.parameter(2, lb=-1.0, ub=1.0)
     out = v.quadratic_program(P=np.eye(2), q=-arg, C=np.eye(2), d=np.ones(2), dual_ub=10.0)
     assert out.ndim == 2
 
@@ -223,7 +223,7 @@ def test_sdp_projection_bound_tight_at_fixed_point(C, d, x0, dual_ub):
     SDP is a relaxation with no primal extraction, so we assert via the objective bound.
     """
     v = _make_verifier("sdp")
-    xp = v.add_param(len(x0), lb=x0, ub=x0)
+    xp = v.parameter(len(x0), lb=x0, ub=x0)
     u = v.quadratic_program(P=np.eye(len(x0)), q=-xp, C=C, d=d, dual_ub=dual_ub)
     v.set_objective_norm(u, 2)
     obj = v.solve()
@@ -237,13 +237,13 @@ def test_sdp_bound_dominates_mip_over_box():
     arg_lb, arg_ub = -np.ones(2), np.ones(2)
 
     vm = _make_verifier("mip", obbt="gurobi")
-    xm = vm.add_param(2, lb=arg_lb, ub=arg_ub)
+    xm = vm.parameter(2, lb=arg_lb, ub=arg_ub)
     um = vm.quadratic_program(P=np.eye(2), q=-xm, C=C, d=d, dual_ub=10.0)
     vm.set_objective_norm([um], np.inf)
     mip_inf = vm.solve()
 
     vs = _make_verifier("sdp")
-    xs = vs.add_param(2, lb=arg_lb, ub=arg_ub)
+    xs = vs.parameter(2, lb=arg_lb, ub=arg_ub)
     us = vs.quadratic_program(P=np.eye(2), q=-xs, C=C, d=d, dual_ub=10.0)
     vs.set_objective_norm(us, 2)
     sdp_two = np.sqrt(vs.solve())

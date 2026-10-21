@@ -31,9 +31,9 @@ def test_satlin(vp_param_2):
     assert np.linalg.norm(x - zk) <= TEST_EPS
 
     q_offset = 1
-    q_param = vp_param_2.add_param(n, lb=q - q_offset, ub=q + q_offset)
+    q_param = vp_param_2.parameter(n, lb=q - q_offset, ub=q + q_offset)
 
-    z0 = vp_param_2.add_iterate(n, lb=z0_init, ub=z0_init)
+    z0 = vp_param_2.iterate(n, lb=z0_init, ub=z0_init)
 
     K = 12
     z = [None for _ in range(K + 1)]
@@ -42,7 +42,7 @@ def test_satlin(vp_param_2):
     all_res = []
     for k in range(1, K + 1):
         print(k)
-        z[k] = vp_param_2.step.satlin(z[k - 1] - t * (P @ z[k - 1] + q_param), l=l, u=u)
+        z[k] = vp_param_2.satlin(z[k - 1] - t * (P @ z[k - 1] + q_param), l=l, u=u)
 
         vp_param_2.set_objective_norm(z[k] - z[k - 1], np.inf)
         res = vp_param_2.solve()
@@ -92,12 +92,12 @@ def test_satlin_param(vp_param_2):
     print("test solution from cvxpy:", x)
 
     q_offset = 0.2
-    q_param = vp_param_2.add_param(n, lb=q - q_offset, ub=q + q_offset)
+    q_param = vp_param_2.parameter(n, lb=q - q_offset, ub=q + q_offset)
 
     top_dim = 1
-    top_param = vp_param_2.add_param(top_dim, lb=0.5, ub=0.6)
-    l_rest = vp_param_2.add_param(n - 1, lb=np.array([-1.2, -0.35]), ub=np.array([-1.1, 0]))
-    u_rest = vp_param_2.add_param(n - 1, lb=np.array([0, 0.1]), ub=np.array([0.1, 0.2]))
+    top_param = vp_param_2.parameter(top_dim, lb=0.5, ub=0.6)
+    l_rest = vp_param_2.parameter(n - 1, lb=np.array([-1.2, -0.35]), ub=np.array([-1.1, 0]))
+    u_rest = vp_param_2.parameter(n - 1, lb=np.array([0, 0.1]), ub=np.array([0.1, 0.2]))
 
     l_param = vp_param_2.add_param_stack([top_param, l_rest])
     u_param = vp_param_2.add_param_stack([top_param, u_rest])
@@ -106,12 +106,12 @@ def test_satlin_param(vp_param_2):
     K = 5
 
     z = [None for _ in range(K + 1)]
-    z[0] = vp_param_2.add_iterate(n, lb=0, ub=0)
+    z[0] = vp_param_2.iterate(n, lb=0, ub=0)
 
     all_res = []
     for k in range(1, K + 1):
         print(k)
-        z[k] = vp_param_2.step.satlin(z[k - 1] - t * (P @ z[k - 1] + q_param), l=l_param, u=u_param)
+        z[k] = vp_param_2.satlin(z[k - 1] - t * (P @ z[k - 1] + q_param), l=l_param, u=u_param)
         vp_param_2.set_objective_norm(z[k] - z[k - 1], np.inf)
         res = vp_param_2.solve()
         all_res.append(res)
@@ -146,10 +146,10 @@ def test_satlin_sdp_mip(vp_param_2, vp_sdp):
 
     # --- SDP ---
     vp_s = Verifier(method="sdp", solver=sdp_solver_name, obbt_solver="highs")
-    q_s = vp_s.add_param(n, lb=q - q_offset, ub=q + q_offset)
-    z_s = [vp_s.add_iterate(n, lb=z0_init, ub=z0_init)]
+    q_s = vp_s.parameter(n, lb=q - q_offset, ub=q + q_offset)
+    z_s = [vp_s.iterate(n, lb=z0_init, ub=z0_init)]
     for k in range(K):
-        z_s.append(vp_s.step.satlin(z_s[k] - t * (P @ z_s[k] + q_s), l=l, u=u))
+        z_s.append(vp_s.satlin(z_s[k] - t * (P @ z_s[k] + q_s), l=l, u=u))
     vp_s.set_objective_norm(z_s[K] - z_s[K - 1], 2)
     sdp_res = vp_s.solve()
 
@@ -159,10 +159,10 @@ def test_satlin_sdp_mip(vp_param_2, vp_sdp):
         obbt_solver=mip_solver_name,
         params=mip_params(mip_solver_name, limited=True),
     )
-    q_m = vp_m.add_param(n, lb=q - q_offset, ub=q + q_offset)
-    z_m = [vp_m.add_iterate(n, lb=z0_init, ub=z0_init)]
+    q_m = vp_m.parameter(n, lb=q - q_offset, ub=q + q_offset)
+    z_m = [vp_m.iterate(n, lb=z0_init, ub=z0_init)]
     for k in range(K):
-        z_m.append(vp_m.step.satlin(z_m[k] - t * (P @ z_m[k] + q_m), l=l, u=u))
+        z_m.append(vp_m.satlin(z_m[k] - t * (P @ z_m[k] + q_m), l=l, u=u))
     vp_m.set_objective_norm(z_m[K] - z_m[K - 1], np.inf)
     mip_res = vp_m.solve()
 
@@ -187,16 +187,16 @@ def test_satlin_param_sdp_mip(vp_param_2, vp_sdp):
 
     # --- SDP ---
     vp_s = Verifier(method="sdp", solver=sdp_solver_name, obbt_solver="highs")
-    q_s = vp_s.add_param(n, lb=q - q_offset, ub=q + q_offset)
-    top_s = vp_s.add_param(1, lb=0.5, ub=0.6)
-    l_rest_s = vp_s.add_param(n - 1, lb=np.array([-1.2, -0.35]), ub=np.array([-1.1, 0]))
-    u_rest_s = vp_s.add_param(n - 1, lb=np.array([0, 0.1]), ub=np.array([0.1, 0.2]))
+    q_s = vp_s.parameter(n, lb=q - q_offset, ub=q + q_offset)
+    top_s = vp_s.parameter(1, lb=0.5, ub=0.6)
+    l_rest_s = vp_s.parameter(n - 1, lb=np.array([-1.2, -0.35]), ub=np.array([-1.1, 0]))
+    u_rest_s = vp_s.parameter(n - 1, lb=np.array([0, 0.1]), ub=np.array([0.1, 0.2]))
     l_s = vp_s.add_param_stack([top_s, l_rest_s])
     u_s = vp_s.add_param_stack([top_s, u_rest_s])
 
-    z_s = [vp_s.add_iterate(n, lb=0, ub=0)]
+    z_s = [vp_s.iterate(n, lb=0, ub=0)]
     for k in range(K):
-        z_s.append(vp_s.step.satlin(z_s[k] - t * (P @ z_s[k] + q_s), l=l_s, u=u_s))
+        z_s.append(vp_s.satlin(z_s[k] - t * (P @ z_s[k] + q_s), l=l_s, u=u_s))
     vp_s.set_objective_norm(z_s[K] - z_s[K - 1], 2)
     sdp_res = vp_s.solve()
 
@@ -206,16 +206,16 @@ def test_satlin_param_sdp_mip(vp_param_2, vp_sdp):
         obbt_solver=mip_solver_name,
         params=mip_params(mip_solver_name, limited=True),
     )
-    q_m = vp_m.add_param(n, lb=q - q_offset, ub=q + q_offset)
-    top_m = vp_m.add_param(1, lb=0.5, ub=0.6)
-    l_rest_m = vp_m.add_param(n - 1, lb=np.array([-1.2, -0.35]), ub=np.array([-1.1, 0]))
-    u_rest_m = vp_m.add_param(n - 1, lb=np.array([0, 0.1]), ub=np.array([0.1, 0.2]))
+    q_m = vp_m.parameter(n, lb=q - q_offset, ub=q + q_offset)
+    top_m = vp_m.parameter(1, lb=0.5, ub=0.6)
+    l_rest_m = vp_m.parameter(n - 1, lb=np.array([-1.2, -0.35]), ub=np.array([-1.1, 0]))
+    u_rest_m = vp_m.parameter(n - 1, lb=np.array([0, 0.1]), ub=np.array([0.1, 0.2]))
     l_m = vp_m.add_param_stack([top_m, l_rest_m])
     u_m = vp_m.add_param_stack([top_m, u_rest_m])
 
-    z_m = [vp_m.add_iterate(n, lb=0, ub=0)]
+    z_m = [vp_m.iterate(n, lb=0, ub=0)]
     for k in range(K):
-        z_m.append(vp_m.step.satlin(z_m[k] - t * (P @ z_m[k] + q_m), l=l_m, u=u_m))
+        z_m.append(vp_m.satlin(z_m[k] - t * (P @ z_m[k] + q_m), l=l_m, u=u_m))
     vp_m.set_objective_norm(z_m[K] - z_m[K - 1], np.inf)
     mip_res = vp_m.solve()
 
@@ -242,9 +242,9 @@ def test_satlin_diamond(vp_param_2):
     l = np.array([0.0])
     u = np.array([1.0])
 
-    q_param = vp_param_2.add_param(n, lb=np.array([-3.0]), ub=np.array([3.0]))
-    z0 = vp_param_2.add_iterate(n, lb=np.array([0.0]), ub=np.array([0.0]))
-    z1 = vp_param_2.step.satlin(z0 - q_param, l=l, u=u)
+    q_param = vp_param_2.parameter(n, lb=np.array([-3.0]), ub=np.array([3.0]))
+    z0 = vp_param_2.iterate(n, lb=np.array([0.0]), ub=np.array([0.0]))
+    z1 = vp_param_2.satlin(z0 - q_param, l=l, u=u)
 
     vp_param_2.set_objective_norm(z1 - q_param, np.inf)
     mip_res = vp_param_2.solve()

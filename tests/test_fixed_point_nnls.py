@@ -38,18 +38,18 @@ def test_nnls_convergence(vp_param_1):
     print(f"Step size eta: {eta:.6f}")
 
     # Add parameter x as a box constraint
-    x_param = vp_param_1.add_param(m, lb=x_lb, ub=x_ub)
+    x_param = vp_param_1.parameter(m, lb=x_lb, ub=x_ub)
 
     # Get fixed point z* using Verifier's fixed_point method
     z_star = vp_param_1.fixed_point(
         n_dim=n,
-        operator=lambda z: vp_param_1.step.relu(z - eta * A.T @ (A @ z - x_param)),
+        operator=lambda z: vp_param_1.relu(z - eta * A.T @ (A @ z - x_param)),
         lb=0,
         ub=100,
     )
 
     # Set up initial iterate
-    z0 = vp_param_1.add_iterate(n, lb=1, ub=1)
+    z0 = vp_param_1.iterate(n, lb=1, ub=1)
     z = [None for _ in range(K + 1)]
     z[0] = z0
 
@@ -58,7 +58,7 @@ def test_nnls_convergence(vp_param_1):
     for k in range(1, K + 1):
         print(k)
         # Perform ReLU step: z[k] = ReLU(z[k-1] - eta * A^T(Az[k-1] - x))
-        z[k] = vp_param_1.step.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x_param))
+        z[k] = vp_param_1.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x_param))
         # Set objective to measure ||z[k] - z*||_inf
         vp_param_1.set_objective_norm([z[k] - z_star], np.inf)
         res = vp_param_1.solve()

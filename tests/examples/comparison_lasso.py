@@ -51,14 +51,14 @@ MATCH_MIP_AT_K1 = True
 # ── MIP — squared 2-norm of fixed-point residual (MIQP, Gurobi only) ──────────
 vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver="gurobi", params=solver_params)
 
-x_mip = vp_mip.add_param(p, lb=x_lb, ub=x_ub)
+x_mip = vp_mip.parameter(p, lb=x_lb, ub=x_ub)
 s_mip = [s0]
 
 mip_residuals = []
 x_worst_k5 = None
 for k in range(1, K + 1):
     s_mip.append(
-        vp_mip.step.soft_threshold(
+        vp_mip.soft_threshold(
             s_mip[k - 1] - eta * D.T @ (D @ s_mip[k - 1] - x_mip), lambd=lambd * eta
         )
     )
@@ -71,13 +71,13 @@ for k in range(1, K + 1):
 # ── SDP — squared 2-norm of fixed-point residual ──────────────────────────────
 vp_sdp = Verifier(method="sdp", solver="clarabel", obbt_solver="highs")
 
-x_sdp = vp_sdp.add_param(p, lb=x_lb, ub=x_ub)
+x_sdp = vp_sdp.parameter(p, lb=x_lb, ub=x_ub)
 s_sdp = [s0]
 
 sdp_residuals = []
 for k in range(1, K + 1):
     s_sdp.append(
-        vp_sdp.step.soft_threshold(
+        vp_sdp.soft_threshold(
             s_sdp[k - 1] - eta * D.T @ (D @ s_sdp[k - 1] - x_sdp), lambd=lambd * eta
         )
     )
@@ -123,12 +123,12 @@ for k in range(1, K + 1):
 # ── Simulator — squared 2-norm of fixed-point residual, num_star samples ──────
 vp_sim = Verifier(method="simulator")
 
-x_sim = vp_sim.add_param(ndim=p, lb=x_lb, ub=x_ub, samples=x_samples.T)
+x_sim = vp_sim.parameter(ndim=p, lb=x_lb, ub=x_ub, samples=x_samples.T)
 s_sim = [s0]  # fixed initial point
 
 for k in range(1, K + 1):
     s_sim.append(
-        vp_sim.step.soft_threshold(
+        vp_sim.soft_threshold(
             s_sim[k - 1] - eta * D.T @ (D @ s_sim[k - 1] - x_sim), lambd=lambd * eta
         )
     )

@@ -35,9 +35,9 @@ def test_ista(vp_theory):
     print(xk)
     assert np.linalg.norm(x - xk) <= TEST_EPS
     b_offset = 1.0
-    b_param = vp_theory.add_param(m, lb=b - b_offset, ub=b + b_offset)
+    b_param = vp_theory.parameter(m, lb=b - b_offset, ub=b + b_offset)
 
-    z0 = vp_theory.add_iterate(n, lb=2, ub=2)
+    z0 = vp_theory.iterate(n, lb=2, ub=2)
 
     K = 5
     z = [None for _ in range(K + 1)]
@@ -49,7 +49,7 @@ def test_ista(vp_theory):
     for k in range(1, K + 1):
         print(k)
 
-        z[k] = vp_theory.step.soft_threshold(At @ z[k - 1] + Bt @ b_param, lambd=lambda_t)
+        z[k] = vp_theory.soft_threshold(At @ z[k - 1] + Bt @ b_param, lambd=lambda_t)
         vp_theory.theory_bound(k, z[k], z[k - 1])
 
         vp_theory.set_objective_norm(z[k] - z[k - 1], np.inf)

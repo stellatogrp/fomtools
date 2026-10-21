@@ -5,7 +5,7 @@ Tests for the root-node convex hull cuts of ReLU and saturated linear steps.
    is valid on the box, and whenever the relaxed point lies above the concave
    envelope (or below the convex envelope) by more than the formulation's own rows
    allow, the most violated cut is tight at that point.
-2. In a VP, the cuts are valid for the actual step graphs, including argument
+2. In a vp, the cuts are valid for the actual step graphs, including argument
    constants and arguments spanning several leaves.
 3. Cuts never change the MIP optimum, persist across solves (sequential ``K``),
    respect ``cut_rounds``, and reach the OBBT LP with one tightening pass per round.
@@ -226,16 +226,16 @@ def _pgd_chain(kind, K, *, const, obbt=None, seed=3, n=3):
     l, u = -0.3 * np.ones(n), 0.4 * np.ones(n)
     lambd = 0.05
     vp = Verifier(method="mip", solver="gurobi", obbt_solver=obbt, params=MIP_EXACT)
-    q = vp.add_param(n, lb=-np.ones(n), ub=np.ones(n))
-    z = [vp.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))]
+    q = vp.parameter(n, lb=-np.ones(n), ub=np.ones(n))
+    z = [vp.iterate(n, lb=np.zeros(n), ub=np.zeros(n))]
     for _ in range(K):
         arg = z[-1] - t * (P @ z[-1] + q) + const
         if kind == "relu":
-            z.append(vp.step.relu(arg))
+            z.append(vp.relu(arg))
         elif kind == "satlin":
-            z.append(vp.step.satlin(arg, l=l, u=u))
+            z.append(vp.satlin(arg, l=l, u=u))
         else:
-            z.append(vp.step.soft_threshold(arg, lambd=lambd))
+            z.append(vp.soft_threshold(arg, lambd=lambd))
 
     def simulate(Q):
         Z = [np.zeros_like(Q)]
@@ -361,10 +361,10 @@ def test_portfolio_like_steps_do_not_crash():
     """Affine (implicit linear) steps are skipped instead of raising."""
     n = 3
     vp = Verifier(method="mip", solver="gurobi", obbt_solver="gurobi", params=MIP_EXACT)
-    x = vp.add_param(n, lb=np.zeros(n), ub=0.6 * np.ones(n))
-    y0 = vp.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
-    y1 = vp.step.implicit_linear(y0 + x, output_mat=2.0 * np.eye(n))
-    w = vp.step.satlin(y1 - 0.1, l=np.zeros(n), u=0.25 * np.ones(n))
-    s = x - vp.step.relu(x - w)
+    x = vp.parameter(n, lb=np.zeros(n), ub=0.6 * np.ones(n))
+    y0 = vp.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    y1 = vp.implicit_linear(y0 + x, output_mat=2.0 * np.eye(n))
+    w = vp.satlin(y1 - 0.1, l=np.zeros(n), u=0.25 * np.ones(n))
+    s = x - vp.relu(x - w)
     vp.set_objective_norm(s - y0, np.inf)
     assert vp.solve(convex_hull_cuts=True) == pytest.approx(vp.solve(), abs=1e-6)

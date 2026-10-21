@@ -229,7 +229,7 @@ def _add_params(v: Verifier, qp: QPData) -> tuple[dict, tuple[str, ...]]:
     for piece in PIECES:
         if piece in qp.param_dependent:
             lb, ub = qp.bounds[piece]
-            exprs[piece] = v.add_param(values[piece].size, lb=lb, ub=ub)
+            exprs[piece] = v.parameter(values[piece].size, lb=lb, ub=ub)
         else:
             exprs[piece] = values[piece]
     # The add order above is PIECES order, which is what _param_copy reports;
@@ -307,7 +307,7 @@ def set_residual_objective(v: Verifier, qp: QPData, exprs: dict, x, y) -> None:
     if n_eq > 0:
         parts.append(spa.diags(1.0 / E[:n_eq]) @ (A[:n_eq] @ x - exprs["b"]))
     if m - n_eq > 0:
-        parts.append(v.step.relu(spa.diags(1.0 / E[n_eq:]) @ (A[n_eq:] @ x - exprs["u_ineq"])))
+        parts.append(v.relu(spa.diags(1.0 / E[n_eq:]) @ (A[n_eq:] @ x - exprs["u_ineq"])))
     dual = A.T @ y + exprs["q"]
     if qp.P.nnz:
         dual = spa.csr_matrix(qp.P) @ x + dual
@@ -347,7 +347,7 @@ def _admm_step(v: Verifier, qp: QPData, exprs: dict, consts: tuple, sigma: float
 
     def one_iteration(x, z, y):
         rhs = stack([sigma * x - q_e, z - Rinv @ y])
-        sol = v.step.implicit_linear(rhs, output_mat=kkt)
+        sol = v.implicit_linear(rhs, output_mat=kkt)
         x_tilde = sol[:n]
         nu = sol[n : n + m]
 
@@ -362,7 +362,7 @@ def _admm_step(v: Verifier, qp: QPData, exprs: dict, consts: tuple, sigma: float
             parts.append(b_expr)
         if m - n_eq > 0:
             w = proj_arg[n_eq:m]
-            parts.append(w - v.step.relu(w - u_e))
+            parts.append(w - v.relu(w - u_e))
         z_next = stack(parts)
 
         x_next = alpha * x_tilde + (1.0 - alpha) * x
@@ -396,9 +396,9 @@ def build_admm_qp(
     v = Verifier(method="simulator", obbt_solver=None)
     exprs, param_copy = _add_params(v, qp)
 
-    x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
-    z = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
-    y = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
+    x = v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    z = v.iterate(m, lb=np.zeros(m), ub=np.zeros(m))
+    y = v.iterate(m, lb=np.zeros(m), ub=np.zeros(m))
 
     one_iteration = _admm_step(v, qp, exprs, consts, sigma, alpha)
     state = (x, z, y)
@@ -485,9 +485,9 @@ def build_relaxed_admm_qp(
         v = Verifier(method="simulator", obbt_solver=None)
         exprs, _ = _add_params(v, qp)
 
-        x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
-        z = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
-        y = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
+        x = v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+        z = v.iterate(m, lb=np.zeros(m), ub=np.zeros(m))
+        y = v.iterate(m, lb=np.zeros(m), ub=np.zeros(m))
 
         # The recorded relaxation is the probe scalar rather than a constant;
         # everything else is the plain builder's iteration, unchanged.
@@ -538,8 +538,8 @@ def build_pdhg_lp(qp: QPData, *, step_scale: float = 0.9) -> FomSpec:
     exprs, param_copy = _add_params(v, qp)
     q_e, b_e, u_e = exprs["q"], exprs["b"], exprs["u_ineq"]
 
-    x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
-    y = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
+    x = v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    y = v.iterate(m, lb=np.zeros(m), ub=np.zeros(m))
 
     def one_iteration(x, y):
         # Primal step: the prox of a linear objective is a shift.
@@ -554,7 +554,7 @@ def build_pdhg_lp(qp: QPData, *, step_scale: float = 0.9) -> FomSpec:
         if m - n_eq > 0:
             v_in = v_arg[n_eq:m]
             # proj onto (-inf, u]: w - relu(w - u) => y+ = sig * relu(v/sig - u).
-            parts.append(sig * v.step.relu((1.0 / sig) * v_in - u_e))
+            parts.append(sig * v.relu((1.0 / sig) * v_in - u_e))
         return x_next, stack(parts)
 
     state = (x, y)

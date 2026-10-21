@@ -43,11 +43,11 @@ def test_verifier(vp):
     print(f"x from DR: {xk}")
 
     b_offset = 0.1
-    c_param = vp.add_param(n, lb=c, ub=c)
-    b_param = vp.add_param(m, lb=b - b_offset, ub=b + b_offset)  # add boxes here when testing
+    c_param = vp.parameter(n, lb=c, ub=c)
+    b_param = vp.parameter(m, lb=b - b_offset, ub=b + b_offset)  # add boxes here when testing
 
-    x0 = vp.add_iterate(n, lb=1, ub=1)
-    y0 = vp.add_iterate(m, lb=1, ub=1)
+    x0 = vp.iterate(n, lb=1, ub=1)
+    y0 = vp.iterate(m, lb=1, ub=1)
 
     K = 10
 
@@ -60,7 +60,7 @@ def test_verifier(vp):
     all_res = []
     for k in range(1, K + 1):
         print(k)
-        x[k] = vp.step.relu(x[k - 1] - t * (c_param - A.T @ y[k - 1]))
+        x[k] = vp.relu(x[k - 1] - t * (c_param - A.T @ y[k - 1]))
         y[k] = y[k - 1] - t * (A @ (2 * x[k] - x[k - 1]) - b_param)
 
         vp.set_objective_norm([x[k] - x[k - 1], y[k] - y[k - 1]], np.inf)

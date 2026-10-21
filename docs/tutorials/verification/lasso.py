@@ -199,28 +199,28 @@ def _(D, eta, ista_step, lambd, n, np, p):
 
         Builds a simulator-mode :class:`Verifier`, registers the parameter
         ``x`` and initial iterate ``s0`` as sampled parameters, rolls out the
-        recurrence with ``ista_step``, and simulates via ``VP.solve()``. Each
+        recurrence with ``ista_step``, and simulates via ``vp.solve()``. Each
         ``*_samples`` array has shape ``(n_samples, dim)`` (a single-row array
         replays one instance), and the returned ``residuals`` has shape
         ``(n_samples, K)``. ``ord`` defaults to ``inf``, matching
         :func:`ista_verification`; ``set_objective_norm(..., 2)`` would maximize
         the *squared* Euclidean norm, so with ``ord=2`` the returned residuals
         are in squared units. Summary statistics (``mean``, ``min``, ``max``,
-        ...) are available on the returned instance ``VP`` via ``VP[...]``.
+        ...) are available on the returned instance ``vp`` via ``vp[...]``.
         """
-        VP = Verifier(method='simulator', obbt_solver=None)
-        x_param = VP.add_param(ndim=p, samples=x_samples)
-        s0 = VP.add_param(n, samples=s0_samples)
+        vp = Verifier(method='simulator', obbt_solver=None)
+        x_param = vp.parameter(ndim=p, samples=x_samples)
+        s0 = vp.parameter(n, samples=s0_samples)
 
         z, y, t = s0, s0, 1.0
         for k in range(1, K + 1):
             z, y, t, residual = ista_step(
-                VP, D, eta, lambd, z, y, x_param, t, k=k, momentum=momentum
+                vp, D, eta, lambd, z, y, x_param, t, k=k, momentum=momentum
             )
-            VP.set_objective_norm(residual, ord)
+            vp.set_objective_norm(residual, ord)
 
-        residuals = VP.solve()
-        return VP, residuals
+        residuals = vp.solve()
+        return vp, residuals
 
     return Verifier, ista_simulation
 
@@ -280,7 +280,7 @@ def _(D, Verifier, eta, ista_step, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
 
         Builds a ``Verifier`` in ``method`` mode, registers the parameter box
         ``[x_lb, x_ub]`` and the initial iterate box ``[s0_lb, s0_ub]``, rolls
-        out ``ista_step`` over the horizon ``K``, and returns ``(VP, residuals)``
+        out ``ista_step`` over the horizon ``K``, and returns ``(vp, residuals)``
         with one worst-case residual per iteration. Extra ``verifier_kwargs``
         (``solver``, ``params``, ...) are forwarded to the ``Verifier``
         constructor.
@@ -288,20 +288,20 @@ def _(D, Verifier, eta, ista_step, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
         ``ord`` defaults to ``inf``, which keeps the MIP a MILP. A 2-norm
         objective is squared, so its value is square-rooted on return.
         """
-        VP = Verifier(method=method, **verifier_kwargs)
-        x_param = VP.add_param(p, lb=x_lb, ub=x_ub)
-        z = VP.iterate_trajectory(K + 1, collapse_expr='auto')
-        z[0] = VP.add_iterate(n, lb=s0_lb, ub=s0_ub)
+        vp = Verifier(method=method, **verifier_kwargs)
+        x_param = vp.parameter(p, lb=x_lb, ub=x_ub)
+        z = vp.iterate_trajectory(K + 1, collapse_expr='auto')
+        z[0] = vp.iterate(n, lb=s0_lb, ub=s0_ub)
         y, t = z[0], 1.0
         residuals = []
         for k in range(1, K + 1):
             z, y, t, residual = ista_step(
-                VP, D, eta, lambd, z, y, x_param, t, k=k, momentum=momentum
+                vp, D, eta, lambd, z, y, x_param, t, k=k, momentum=momentum
             )
-            VP.set_objective_norm(residual, ord)
-            val = VP.solve()
+            vp.set_objective_norm(residual, ord)
+            val = vp.solve()
             residuals.append(np.sqrt(val) if ord == 2 else val)
-        return VP, residuals
+        return vp, residuals
 
     return (ista_verification,)
 

@@ -29,8 +29,8 @@ def test_partial_nnqp(vp):
     assert np.linalg.norm(x - zk) <= TEST_EPS
 
     q_offset = 1
-    q_param = vp.add_param(n, lb=q - q_offset, ub=q + q_offset)
-    z0 = vp.add_iterate(n, lb=-1, ub=-1)
+    q_param = vp.parameter(n, lb=q - q_offset, ub=q + q_offset)
+    z0 = vp.iterate(n, lb=-1, ub=-1)
 
     K = 10
     z = [None for _ in range(K + 1)]
@@ -39,7 +39,7 @@ def test_partial_nnqp(vp):
     all_res = []
     for k in range(1, K + 1):
         print(k)
-        z[k] = vp.step.relu(z[k - 1] - t * (P @ z[k - 1] + q_param), proj_ranges=proj_ranges)
+        z[k] = vp.relu(z[k - 1] - t * (P @ z[k - 1] + q_param), proj_ranges=proj_ranges)
 
         vp.set_objective_norm(z[k] - z[k - 1], np.inf)
         res = vp.solve(convex_hull_cuts=True)

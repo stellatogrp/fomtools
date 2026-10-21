@@ -67,11 +67,11 @@ def build_fom():
     at, bt = np.eye(n) - eta * d.T @ d, eta * d.T
 
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(m, lb=-np.ones(m), ub=np.ones(m))
+    x = v.parameter(m, lb=-np.ones(m), ub=np.ones(m))
     z = v.iterate_trajectory(STEPS + 1)
-    z[0] = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    z[0] = v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
     for k in range(1, STEPS + 1):
-        z[k] = v.step.soft_threshold(at @ z[k - 1] + bt @ x, lambd=0.05 * eta)
+        z[k] = v.soft_threshold(at @ z[k - 1] + bt @ x, lambd=0.05 * eta)
     return {"verifier": v, "iterates": z, "name": "recorded"}
 """
 
@@ -149,8 +149,8 @@ def build_fom():
     at, bt = np.eye(n) - eta * d.T @ d, eta * d.T
 
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(m, lb=-np.ones(m), ub=np.ones(m))
-    y_prev = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    x = v.parameter(m, lb=-np.ones(m), ub=np.ones(m))
+    y_prev = v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
     y_curr = y_prev
 
     iterates, beta = [], 1.0
@@ -158,7 +158,7 @@ def build_fom():
         beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
         gamma = (beta - 1.0) / beta_next
         extrap = y_curr + gamma * (y_curr - y_prev)
-        y_next = v.step.soft_threshold(at @ extrap + bt @ x, lambd=0.05 * eta)
+        y_next = v.soft_threshold(at @ extrap + bt @ x, lambd=0.05 * eta)
         y_prev, y_curr, beta = y_curr, y_next, beta_next
         iterates.append(y_next)
 

@@ -33,7 +33,7 @@ TOL_SOLVER = 1e-4  # cvxpy-referenced cases
 
 def _residual_max(vp, x, x_ref, n):
     """Wire an inf-norm oracle on (x - x_ref) and return the max final residual."""
-    xref = vp.add_param(ndim=n, samples=x_ref)
+    xref = vp.parameter(ndim=n, samples=x_ref)
     vp.set_infinity_norm_objective(x - xref)
     residuals = vp.solve()
     return residuals[:, -1].max()
@@ -96,7 +96,7 @@ def test_simplex_prox_simulator():
     x_ref = np.stack([IndSimplex(a=1.0).prox(v) for v in v_samples])
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    v = vp.add_param(ndim=n, samples=v_samples)
+    v = vp.parameter(ndim=n, samples=v_samples)
     x = vp.prox(IndSimplex(a=1.0), v)
     assert _residual_max(vp, x, x_ref, n) < TOL_SOLVER
 
@@ -109,7 +109,7 @@ def test_l1ball_prox_simulator():
     x_ref = np.stack([IndBallL1(r=1.0).prox(v) for v in v_samples])
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    v = vp.add_param(ndim=n, samples=v_samples)
+    v = vp.parameter(ndim=n, samples=v_samples)
     x = vp.prox(IndBallL1(r=1.0), v)
     assert _residual_max(vp, x, x_ref, n) < TOL_SOLVER
 
@@ -121,7 +121,7 @@ def test_norminf_prox_simulator():
     x_ref = np.stack([NormInf(lambd).prox(v, gamma=gamma) for v in v_samples])
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    v = vp.add_param(ndim=n, samples=v_samples)
+    v = vp.parameter(ndim=n, samples=v_samples)
     x = vp.prox(NormInf(lambd), v, gamma=gamma)
     assert _residual_max(vp, x, x_ref, n) < TOL_SOLVER
 
@@ -135,7 +135,7 @@ def test_tv1d_prox_simulator():
     x_ref = np.stack([TotalVariation1D(lambd).prox(v, gamma=gamma) for v in v_samples])
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    v = vp.add_param(ndim=n, samples=v_samples)
+    v = vp.parameter(ndim=n, samples=v_samples)
     x = vp.prox(TotalVariation1D(lambd), v, gamma=gamma)
     assert _residual_max(vp, x, x_ref, n) < TOL_SOLVER
 
@@ -150,7 +150,7 @@ def test_polyhedral_prox_simulator():
     x_ref = np.stack([IndPolyhedral(A, b).prox(v) for v in v_samples])
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    v = vp.add_param(ndim=n, samples=v_samples)
+    v = vp.parameter(ndim=n, samples=v_samples)
     x = vp.prox(IndPolyhedral(A, b), v)
     assert _residual_max(vp, x, x_ref, n) < TOL_SOLVER
 
@@ -166,8 +166,8 @@ def test_polyhedral_prox_per_sample_b_simulator():
     x_ref = np.stack([IndPolyhedral(A, b_samples[i]).prox(v_samples[i]) for i in range(N)])
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    v = vp.add_param(ndim=n, samples=v_samples)
-    b_param = vp.add_param(ndim=2 * n, samples=b_samples)
+    v = vp.parameter(ndim=n, samples=v_samples)
+    b_param = vp.parameter(ndim=2 * n, samples=b_samples)
     x = vp.prox(IndPolyhedral(A, b_param), v)
     assert _residual_max(vp, x, x_ref, n) < TOL_SOLVER
 
@@ -186,7 +186,7 @@ def test_inequality_qp_simulator():
     x_ref = np.stack([QuadraticProgram(P=P, q=q, C=C, d=d).solve() for q in q_samples])
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    q_param = vp.add_param(ndim=n, samples=q_samples)
+    q_param = vp.parameter(ndim=n, samples=q_samples)
     x = vp.quadratic_program(P=P, q=q_param, C=C, d=d)
     assert _residual_max(vp, x, x_ref, n) < TOL_SOLVER
 
@@ -200,7 +200,7 @@ def test_lp_simulator():
     x_ref = np.stack([LinearProgram(q=q, C=C, d=d).solve() for q in q_samples])
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    q_param = vp.add_param(ndim=n, samples=q_samples)
+    q_param = vp.parameter(ndim=n, samples=q_samples)
     x = vp.linear_program(q=q_param, C=C, d=d)
     assert _residual_max(vp, x, x_ref, n) < TOL_SOLVER
 
@@ -214,7 +214,7 @@ def test_standardform_lp_simulator():
     x_ref = np.stack([StandardFormLinearProgram(c=c, A=A, b=b).solve() for c in c_samples])
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    c_param = vp.add_param(ndim=n, samples=c_samples)
+    c_param = vp.parameter(ndim=n, samples=c_samples)
     x = vp.standard_form_linear_program(c=c_param, A=A, b=b)
     assert _residual_max(vp, x, x_ref, n) < TOL_SOLVER
 
@@ -224,7 +224,7 @@ def test_per_sample_scalar_param_rejected():
     rng = np.random.default_rng(10)
     n, N = 3, 4
     vp = Verifier(method="simulator", obbt_solver=None)
-    v = vp.add_param(ndim=n, samples=rng.normal(size=(N, n)))
-    a_param = vp.add_param(ndim=1, samples=rng.uniform(0.5, 1.5, size=(N, 1)))
+    v = vp.parameter(ndim=n, samples=rng.normal(size=(N, n)))
+    a_param = vp.parameter(ndim=1, samples=rng.uniform(0.5, 1.5, size=(N, 1)))
     with pytest.raises(NotImplementedError):
         vp.prox(IndSimplex(a=a_param), v)

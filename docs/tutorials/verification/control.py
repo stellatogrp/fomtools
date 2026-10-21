@@ -299,32 +299,32 @@ def _(
         Builds a simulator-mode :class:`Verifier`, registers the initial-state
         parameter ``x`` and the initial iterates ``(z0, v0)`` as sampled
         parameters, rolls out the recurrence with ``admm_step``, and simulates
-        via ``VP.solve()``.
+        via ``vp.solve()``.
         The projection clips the input block with ``satlin`` and stacks ``x``
         on top. Each ``*_samples`` array has shape ``(n_samples, dim)`` (a
         single-row array replays one instance), and the returned ``residuals``
         has shape ``(n_samples, K)``. Summary statistics (``mean``, ``min``,
-        ``max``, ...) are available on the returned instance ``VP`` via
-        ``VP[...]``.
+        ``max``, ...) are available on the returned instance ``vp`` via
+        ``vp[...]``.
         """
-        VP = Verifier(method='simulator', obbt_solver=None)
-        x_param = VP.add_param(ndim=n_s, samples=x_samples)
-        z = VP.add_param(n_xz, samples=z0_samples)
-        v = VP.add_param(n_xz, samples=v0_samples)
+        vp = Verifier(method='simulator', obbt_solver=None)
+        x_param = vp.parameter(ndim=n_s, samples=x_samples)
+        z = vp.parameter(n_xz, samples=z0_samples)
+        v = vp.parameter(n_xz, samples=v0_samples)
 
-        def project(VP, v_prev):
-            w_control = VP.step.satlin(v_prev[n_s:], l=u_stack_min, u=u_stack_max)
-            return VP.add_param_stack([x_param, w_control])
+        def project(vp, v_prev):
+            w_control = vp.satlin(v_prev[n_s:], l=u_stack_min, u=u_stack_max)
+            return vp.add_param_stack([x_param, w_control])
 
         lhs_mat = build_lhs(P).toarray()
         for _ in range(K):
             z, v, residual = admm_step(
-                VP, M, q, rho, sigma, z, v, project, lhs_mat
+                vp, M, q, rho, sigma, z, v, project, lhs_mat
             )
-            VP.set_objective_norm(residual, ord)
+            vp.set_objective_norm(residual, ord)
 
-        residuals = VP.solve()
-        return VP, residuals
+        residuals = vp.solve()
+        return vp, residuals
 
     return Verifier, admm_simulation
 
@@ -404,41 +404,41 @@ def _(
         parameter (fixed at ``x_init`` or searched over ``[x_lb, x_ub]`` per
         ``fix_initial_x``) and the initial iterate boxes, and rolls out
         ``admm_step`` projecting onto the stacked ``IndBox``. Returns
-        ``(VP, residuals)`` with one worst-case residual per iteration; the MIP
+        ``(vp, residuals)`` with one worst-case residual per iteration; the MIP
         uses the infinity-norm objective, so the caller converts it to squared
         Euclidean units.
         """
-        VP = Verifier(method=method, **verifier_kwargs)
+        vp = Verifier(method=method, **verifier_kwargs)
 
         if fix_initial_x:
-            x_param = VP.add_param(n_s, lb=x_init, ub=x_init)
+            x_param = vp.parameter(n_s, lb=x_init, ub=x_init)
         else:
-            x_param = VP.add_param(n_s, lb=x_lb, ub=x_ub)
+            x_param = vp.parameter(n_s, lb=x_lb, ub=x_ub)
 
         # l(x) <= M@z <= u(x): pin the state block to x, clip the input block.
-        l_param = VP.add_param((T-1)*n_u, lb=u_stack_min, ub=u_stack_min)
-        u_param = VP.add_param((T-1)*n_u, lb=u_stack_max, ub=u_stack_max)
-        l_x = VP.add_param_stack([x_param, l_param])
-        u_x = VP.add_param_stack([x_param, u_param])
+        l_param = vp.parameter((T-1)*n_u, lb=u_stack_min, ub=u_stack_min)
+        u_param = vp.parameter((T-1)*n_u, lb=u_stack_max, ub=u_stack_max)
+        l_x = vp.add_param_stack([x_param, l_param])
+        u_x = vp.add_param_stack([x_param, u_param])
         indbox = IndBox(l=l_x, u=u_x)
 
-        def project(VP, v_prev):
-            return VP.prox(indbox, v_prev)
+        def project(vp, v_prev):
+            return vp.prox(indbox, v_prev)
 
-        z = VP.iterate_trajectory(K + 1, collapse_expr='auto')
-        v = VP.iterate_trajectory(K + 1, collapse_expr='auto')
-        z[0] = VP.add_iterate(n_xz, lb=z0_lb, ub=z0_ub)
-        v[0] = VP.add_iterate(n_xz, lb=v0_lb, ub=v0_ub)
+        z = vp.iterate_trajectory(K + 1, collapse_expr='auto')
+        v = vp.iterate_trajectory(K + 1, collapse_expr='auto')
+        z[0] = vp.iterate(n_xz, lb=z0_lb, ub=z0_ub)
+        v[0] = vp.iterate(n_xz, lb=v0_lb, ub=v0_ub)
         lhs_mat = build_lhs(P)
 
         residuals = []
         for k in range(1, K + 1):
             z, v, residual = admm_step(
-                VP, M, q, rho, sigma, z, v, project, lhs_mat, k=k
+                vp, M, q, rho, sigma, z, v, project, lhs_mat, k=k
             )
-            VP.set_objective_norm(residual, ord)
-            residuals.append(VP.solve())
-        return VP, residuals
+            vp.set_objective_norm(residual, ord)
+            residuals.append(vp.solve())
+        return vp, residuals
 
     return (admm_verification,)
 

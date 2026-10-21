@@ -111,10 +111,10 @@ def build_nnls(*, K=3, seed=1, n=4, m=6):
     b0 = rng.normal(size=m)
     t = 1.0 / np.linalg.norm(A, 2) ** 2
     v = Verifier(method="simulator", obbt_solver=None)
-    b = v.add_param(m, lb=b0 - 0.5, ub=b0 + 0.5)
-    xs = [v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))]
+    b = v.parameter(m, lb=b0 - 0.5, ub=b0 + 0.5)
+    xs = [v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))]
     for _ in range(K):
-        xs.append(v.step.relu(xs[-1] - t * (A.T @ (A @ xs[-1] - b))))
+        xs.append(v.relu(xs[-1] - t * (A.T @ (A @ xs[-1] - b))))
     return dict(verifier=v, iterates=xs, param=b, data=dict(A=A, b0=b0, t=t, n=n, m=m))
 
 
@@ -122,7 +122,7 @@ def nnls_kkt(case):
     """Set the KKT-type objective [x_K - x_{K-1}; max(-A'(A x_K - b), 0)]."""
     v, xs, b = case["verifier"], case["iterates"], case["param"]
     A = case["data"]["A"]
-    dual_infeas = v.step.relu(-1.0 * (A.T @ (A @ xs[-1] - b)))
+    dual_infeas = v.relu(-1.0 * (A.T @ (A @ xs[-1] - b)))
     return xs[-1] - xs[-2], dual_infeas
 
 
@@ -166,7 +166,7 @@ def test_check_iterations_include_the_last():
 
 def test_verifier_records_the_objective():
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_iterate(2, lb=0, ub=1)
+    x = v.iterate(2, lb=0, ub=1)
     assert v.objective is None
     for ord, label in ((1, "1"), (2, "2"), (np.inf, "inf"), ("inf", "inf")):
         v.set_objective_norm(x, ord)
@@ -296,7 +296,7 @@ def test_mixed_rows_in_one_expression_and_scaled_relu():
 def test_objective_rows_the_loop_cannot_evaluate(objective, match):
     case = build_nnls()
     _, relu = nnls_kkt(case)
-    relu2 = case["verifier"].step.relu(case["iterates"][-1] - 1.0)
+    relu2 = case["verifier"].relu(case["iterates"][-1] - 1.0)
     case["verifier"].set_objective_norm(objective(case["iterates"], relu, relu2), np.inf)
     with pytest.raises(ObjectiveExtractionError, match=match):
         extract_ir(
@@ -310,7 +310,7 @@ def test_objective_rows_the_loop_cannot_evaluate(objective, match):
 def test_nested_relu_is_rejected():
     case = build_nnls()
     _, relu = nnls_kkt(case)
-    nested = case["verifier"].step.relu(relu - 1.0)
+    nested = case["verifier"].relu(relu - 1.0)
     case["verifier"].set_objective_norm(nested, np.inf)
     with pytest.raises(ObjectiveExtractionError, match="nested"):
         extract_ir(
@@ -324,7 +324,7 @@ def test_nested_relu_is_rejected():
 def test_other_steps_outside_the_loop_are_rejected():
     case = build_ista(K=3)
     v, its = case["verifier"], case["iterates"]
-    v.set_objective_norm(v.step.soft_threshold(its[-1], lambd=0.1), np.inf)
+    v.set_objective_norm(v.soft_threshold(its[-1], lambd=0.1), np.inf)
     with pytest.raises(ObjectiveExtractionError, match="does not carry"):
         extract_fom_ir(v, case["next_state"], config=objective_config(), **gate(case))
 
@@ -332,7 +332,7 @@ def test_other_steps_outside_the_loop_are_rejected():
 def test_parameters_the_iteration_does_not_read_are_rejected():
     case = build_ista(K=3)
     v, its = case["verifier"], case["iterates"]
-    extra = v.add_param(case["data"]["n"], lb=-1.0, ub=1.0)
+    extra = v.parameter(case["data"]["n"], lb=-1.0, ub=1.0)
     v.set_objective_norm(its[-1] - its[-2] + extra, np.inf)
     with pytest.raises(ObjectiveExtractionError, match="parameter that the iteration does not"):
         extract_fom_ir(v, case["next_state"], config=objective_config(), **gate(case))

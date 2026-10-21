@@ -51,6 +51,8 @@ class LinearExpression:
     counter = 0
     # this is necessary else numpy will not even look at the @ operator due to precedence
     __array_priority__ = 1000
+    # The Verifier a leaf is registered with; set by ``Verifier._register_var``.
+    _verifier = None
 
     def __init__(self, decomposition_dict: dict, const: np.ndarray = None, is_binary: bool = False):
         """
@@ -693,9 +695,29 @@ class LinearExpression:
 
         return out_lb, out_ub
 
-    def eval(self):
-        # TODO
-        raise NotImplementedError("LinExpr.eval() needs to be implemented.")
+    @property
+    def value(self) -> np.ndarray:
+        """
+        Value of the expression at the worst case found by the last ``solve``.
+
+        For the MIP backend this is the solver's incumbent, a feasible point whose
+        objective is a lower bound on the worst case returned by ``solve``.
+
+        Raises
+        ------
+        RuntimeError
+            If the expression is not registered with a ``Verifier`` or no
+            incumbent is available.
+        """
+        if not self.decomposition_dict:
+            return self.const.copy()
+        verifier = next(
+            (leaf._verifier for leaf in self.decomposition_dict if leaf._verifier is not None),
+            None,
+        )
+        if verifier is None:
+            raise RuntimeError("The expression is not registered with a Verifier.")
+        return verifier.get_solution_value(self)
 
 
 def stack(exprs: list[LinearExpression]) -> LinearExpression:

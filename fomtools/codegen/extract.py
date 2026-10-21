@@ -7,8 +7,8 @@ user-supplied ``next_state`` expression — the iterate after exactly one
 iteration — which works uniformly whether an iteration is a single step (ISTA)
 or several (Douglas–Rachford's affine-solve + projection).
 
-Leaf roles are resolved structurally: ``Verifier.add_iterate`` appends to
-``verifier.iterates`` while ``Verifier.add_param`` does not, so any external leaf
+Leaf roles are resolved structurally: ``Verifier.iterate`` appends to
+``verifier.iterates`` while ``Verifier.parameter`` does not, so any external leaf
 in ``verifier.iterates`` is *state* and any other external leaf is a *parameter*.
 """
 

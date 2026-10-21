@@ -111,10 +111,10 @@ class TestCanonicalizeAffine:
     def test_canonicalize_does_not_raise(self):
         """Issuing an Affine step on SDP completes without NotImplementedError."""
         v = self._make_verifier()
-        x = v.add_iterate(3, lb=-1.0, ub=1.0)
+        x = v.iterate(3, lb=-1.0, ub=1.0)
         # Pure affine: y = W @ x with identity output_mat
         W = np.eye(3) * 2.0
-        y = v.step.implicit_linear(arg=W @ x, output_mat=np.eye(3))
+        y = v.implicit_linear(arg=W @ x, output_mat=np.eye(3))
         assert y.ndim == 3
 
     def test_emits_six_aeq_matrices_for_three_output_coords(self):
@@ -123,20 +123,20 @@ class TestCanonicalizeAffine:
         strengthening matrix to ``Aeq_matrices``: 2 * ndim total.
         """
         v = self._make_verifier()
-        x = v.add_iterate(3, lb=-1.0, ub=1.0)
+        x = v.iterate(3, lb=-1.0, ub=1.0)
         prior = len(v.canonicalizer.Aeq_matrices)
 
-        v.step.implicit_linear(arg=2.0 * x, output_mat=np.eye(3))
+        v.implicit_linear(arg=2.0 * x, output_mat=np.eye(3))
 
         assert len(v.canonicalizer.Aeq_matrices) - prior == 2 * 3
 
     def test_emits_aeq_matrices_for_two_output_coords(self):
         """Coordinate count drives the matrix count: 2D output → 4 matrices."""
         v = self._make_verifier()
-        x = v.add_iterate(2, lb=-1.0, ub=1.0)
+        x = v.iterate(2, lb=-1.0, ub=1.0)
         prior = len(v.canonicalizer.Aeq_matrices)
 
-        v.step.implicit_linear(arg=2.0 * x, output_mat=np.eye(2))
+        v.implicit_linear(arg=2.0 * x, output_mat=np.eye(2))
 
         assert len(v.canonicalizer.Aeq_matrices) - prior == 2 * 2
 
@@ -146,8 +146,8 @@ class TestCanonicalizeAffine:
         homogenization index 0 plus the involved leaf indices.
         """
         v = self._make_verifier()
-        x = v.add_iterate(3, lb=-1.0, ub=1.0)
-        y = v.step.implicit_linear(arg=2.0 * x, output_mat=np.eye(3))
+        x = v.iterate(3, lb=-1.0, ub=1.0)
+        y = v.implicit_linear(arg=2.0 * x, output_mat=np.eye(3))
 
         # At least one PSD cone group covers index 0 + every leaf index in {x, y}
         x_idx = v.canonicalizer.var_idx_map[x]
@@ -162,9 +162,9 @@ class TestCanonicalizeAffine:
         squared norm should approach 12 (= 4 * 3).
         """
         v = self._make_verifier()
-        x = v.add_iterate(3, lb=-1.0, ub=1.0)
-        y = v.step.implicit_linear(arg=-x + np.ones(3), output_mat=np.eye(3))
-        z = v.step.relu(arg=y)
+        x = v.iterate(3, lb=-1.0, ub=1.0)
+        y = v.implicit_linear(arg=-x + np.ones(3), output_mat=np.eye(3))
+        z = v.relu(arg=y)
         v.set_two_norm_objective([z])
 
         residual = v.solve()

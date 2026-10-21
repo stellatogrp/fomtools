@@ -423,3 +423,61 @@ def sum_squares(expr: "LinearExpression") -> SumSquares:
         The atom; compare it with ``<=`` / ``>=`` / ``==`` to obtain a constraint.
     """
     return SumSquares(expr)
+
+
+class Norm:
+    r"""
+    Symbolic norm atom ``\|expr\|_p`` used as an objective in `Verifier.maximize`.
+
+    A list of expressions stands for the norm of their stacked vector. Created via
+    `norm`.
+
+    Attributes
+    ----------
+    exprs : tuple[LinearExpression, ...]
+        The wrapped linear expressions.
+    p : int or float
+        The norm order, ``1`` or ``np.inf``.
+    """
+
+    def __init__(self, exprs: tuple, p: int | float):
+        self.exprs = exprs
+        self.p = p
+
+    def __repr__(self):
+        return f"<Norm, p={self.p}, dim={sum(e.ndim for e in self.exprs)}>"
+
+
+def norm(expr, p) -> Norm:
+    r"""
+    Build a norm atom ``\|expr\|_p`` to maximize with `Verifier.maximize`::
+
+        vp.maximize(ft.norm(z - z_prev, np.inf))
+
+    Parameters
+    ----------
+    expr : LinearExpression or Sequence[LinearExpression]
+        The expression, or a list of expressions whose stacked vector is taken.
+    p : {1, np.inf, 'inf'}
+        The norm order. For the squared two-norm, maximize ``ft.sum_squares(expr)``.
+
+    Returns
+    -------
+    Norm
+        The atom.
+
+    Raises
+    ------
+    ValueError
+        If ``p`` is not ``1`` or infinity.
+    """
+    if p == 2:
+        raise ValueError(
+            "The two-norm objective is squared: maximize ft.sum_squares(expr) instead."
+        )
+    if p == "inf":
+        p = np.inf
+    if p not in (1, np.inf):
+        raise ValueError(f"Unsupported norm order: {p}. Use 1 or np.inf.")
+    exprs = tuple(expr) if isinstance(expr, (list, tuple)) else (expr,)
+    return Norm(exprs, p)

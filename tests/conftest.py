@@ -134,12 +134,12 @@ def build_lasso_ista(obbt, solver, *, method="mip", K=3, seed=0, n=3, m=4, t=0.0
 
     params = mip_params(solver) if method == "mip" else None
     v = Verifier(method=method, solver=solver, obbt_solver=obbt, params=params)
-    z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
-    b = v.add_param(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
+    z = v.iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
+    b = v.parameter(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
 
     iterates = [z]
     for _ in range(K):
-        z = v.step.soft_threshold(arg=W @ z + G @ b, lambd=lambd * t)
+        z = v.soft_threshold(arg=W @ z + G @ b, lambd=lambd * t)
         iterates.append(z)
     return v, iterates
 

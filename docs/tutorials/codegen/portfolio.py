@@ -138,8 +138,8 @@ def _(
         params={"output_flag": False},
     )
 
-    x = verifier.add_iterate(n, lb=x0, ub=x0)
-    v = verifier.add_iterate(n + 1, lb=v0, ub=v0)
+    x = verifier.iterate(n, lb=x0, ub=x0)
+    v = verifier.iterate(n + 1, lb=v0, ub=v0)
     x_next, v_next, _ = admm_step(
         verifier, A, lower, upper, expected_return, rho, sigma, x, v, lhs
     )

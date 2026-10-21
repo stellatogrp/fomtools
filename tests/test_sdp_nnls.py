@@ -13,11 +13,11 @@ def test_nnls_sdp(vp_sdp):
     A = np.random.normal(size=(m, n))
     t = 0.01
 
-    x = vp_sdp.add_param(m, lb=0, ub=0.1)
-    z0 = vp_sdp.add_iterate(n, lb=5, ub=5.1)
+    x = vp_sdp.parameter(m, lb=0, ub=0.1)
+    z0 = vp_sdp.iterate(n, lb=5, ub=5.1)
 
-    z1 = vp_sdp.step.relu(z0 - t * A.T @ (A @ z0 - x))
-    z2 = vp_sdp.step.relu(z1 - t * A.T @ (A @ z1 - x))
+    z1 = vp_sdp.relu(z0 - t * A.T @ (A @ z0 - x))
+    z2 = vp_sdp.relu(z1 - t * A.T @ (A @ z1 - x))
 
     vp_sdp.set_objective_norm(z2 - z1, 2)
 
@@ -34,11 +34,11 @@ def test_sdp_direct_solver_calls():
     A = np.random.normal(size=(m, n))
     t = 0.01
 
-    x = vp.add_param(m, lb=0, ub=0.1)
-    z0 = vp.add_iterate(n, lb=5, ub=5.1)
+    x = vp.parameter(m, lb=0, ub=0.1)
+    z0 = vp.iterate(n, lb=5, ub=5.1)
 
-    z1 = vp.step.relu(z0 - t * A.T @ (A @ z0 - x))
-    z2 = vp.step.relu(z1 - t * A.T @ (A @ z1 - x))
+    z1 = vp.relu(z0 - t * A.T @ (A @ z0 - x))
+    z2 = vp.relu(z1 - t * A.T @ (A @ z1 - x))
 
     vp.set_objective_norm(z2 - z1, 2)
 
@@ -60,7 +60,7 @@ def test_sdp_direct_solver_calls():
 
 def test_sdp_infinity_norm_supported(vp_sdp):
     """Test that infinity-norm objective is now supported for SDP."""
-    x = vp_sdp.add_param(2, lb=0, ub=1)
+    x = vp_sdp.parameter(2, lb=0, ub=1)
 
     # Should not raise - infinity-norm is now implemented
     vp_sdp.set_objective_norm([x], np.inf)
@@ -72,8 +72,8 @@ def test_sdp_infinity_norm_supported(vp_sdp):
 
 def test_sdp_update_bounds(vp_sdp):
     """Test that update_bounds correctly modifies constraint matrices."""
-    x = vp_sdp.add_param(2, lb=0, ub=1)
-    _z = vp_sdp.add_iterate(2, lb=0, ub=1)
+    x = vp_sdp.parameter(2, lb=0, ub=1)
+    _z = vp_sdp.iterate(2, lb=0, ub=1)
 
     # Tighten bounds
     vp_sdp.canonicalizer.update_bounds(x, lb=np.array([0.1, 0.2]), ub=np.array([0.8, 0.9]))
@@ -93,11 +93,11 @@ def test_sdp_update_bounds(vp_sdp):
 
 def test_sdp_update_bounds_not_found(vp_sdp):
     """Test that update_bounds raises ValueError for unknown expression."""
-    _x = vp_sdp.add_param(2, lb=0, ub=1)
+    _x = vp_sdp.parameter(2, lb=0, ub=1)
 
     # Create a different expression that wasn't added
     vp2 = Verifier(method="sdp", solver="clarabel", obbt_solver="highs")
-    y = vp2.add_param(2, lb=0, ub=1)
+    y = vp2.parameter(2, lb=0, ub=1)
 
     with pytest.raises(ValueError, match="Expression not found"):
         vp_sdp.canonicalizer.update_bounds(y, lb=np.array([0.1, 0.2]), ub=np.array([0.8, 0.9]))

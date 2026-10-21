@@ -36,9 +36,9 @@ def test_quadratic_prox_simulator():
     x_ref = np.linalg.solve(M, (v_samples - gamma * q).T).T  # (N, n)
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    v = vp.add_param(ndim=n, samples=v_samples)
+    v = vp.parameter(ndim=n, samples=v_samples)
     x = vp.prox(Quadratic(Q=Q, q=q), v, gamma=gamma)
-    xref = vp.add_param(ndim=n, samples=x_ref)
+    xref = vp.parameter(ndim=n, samples=x_ref)
     vp.set_infinity_norm_objective(x - xref)
 
     residuals = vp.solve()
@@ -66,9 +66,9 @@ def test_quadratic_prox_sparse_Q_simulator():
     assert spa.issparse(prox.Q)
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    v = vp.add_param(ndim=n, samples=v_samples)
+    v = vp.parameter(ndim=n, samples=v_samples)
     x = vp.prox(prox, v, gamma=gamma)
-    xref = vp.add_param(ndim=n, samples=x_ref)
+    xref = vp.parameter(ndim=n, samples=x_ref)
     vp.set_infinity_norm_objective(x - xref)
 
     residuals = vp.solve()
@@ -90,9 +90,9 @@ def test_leastsquares_prox_simulator():
     x_ref = np.linalg.solve(M, (v_samples - gamma * q).T).T
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    v = vp.add_param(ndim=n, samples=v_samples)
+    v = vp.parameter(ndim=n, samples=v_samples)
     x = vp.prox(LeastSquares(A=A, b=b), v, gamma=gamma)
-    xref = vp.add_param(ndim=n, samples=x_ref)
+    xref = vp.parameter(ndim=n, samples=x_ref)
     vp.set_infinity_norm_objective(x - xref)
 
     residuals = vp.solve()
@@ -113,9 +113,9 @@ def test_indaffine_prox_simulator():
     x_ref = v_samples - nu @ A  # (N, n)
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    v = vp.add_param(ndim=n, samples=v_samples)
+    v = vp.parameter(ndim=n, samples=v_samples)
     x = vp.prox(IndAffine(A=A, b=b), v)
-    xref = vp.add_param(ndim=n, samples=x_ref)
+    xref = vp.parameter(ndim=n, samples=x_ref)
     vp.set_infinity_norm_objective(x - xref)
 
     residuals = vp.solve()
@@ -140,9 +140,9 @@ def test_equality_qp_simulator():
     x_ref = np.linalg.solve(M_block, rhs.T).T[:, :n]
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    q_param = vp.add_param(ndim=n, samples=q_samples)
+    q_param = vp.parameter(ndim=n, samples=q_samples)
     x = vp.quadratic_program(P=P, q=q_param, A=A, b=b)
-    xref = vp.add_param(ndim=n, samples=x_ref)
+    xref = vp.parameter(ndim=n, samples=x_ref)
     vp.set_infinity_norm_objective(x - xref)
 
     residuals = vp.solve()
@@ -160,9 +160,9 @@ def test_unconstrained_qp_simulator():
     x_ref = np.linalg.solve(P, (-q_samples).T).T
 
     vp = Verifier(method="simulator", obbt_solver=None)
-    q_param = vp.add_param(ndim=n, samples=q_samples)
+    q_param = vp.parameter(ndim=n, samples=q_samples)
     x = vp.quadratic_program(P=P, q=q_param)
-    xref = vp.add_param(ndim=n, samples=x_ref)
+    xref = vp.parameter(ndim=n, samples=x_ref)
     vp.set_infinity_norm_objective(x - xref)
 
     residuals = vp.solve()

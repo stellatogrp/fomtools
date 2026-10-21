@@ -94,7 +94,7 @@ def test_highs_status_bound(
 @pytest.mark.parametrize("solver", ["highs", "gurobi"])
 def test_solve_returns_bound_not_incumbent(monkeypatch, solver):
     v = Verifier(solver=solver, obbt_solver=None, params=mip_params(solver))
-    x = v.add_iterate(1, lb=-1, ub=2)
+    x = v.iterate(1, lb=-1, ub=2)
     v.set_objective_norm(x, np.inf)
     cls = type(v.canonicalizer.solver)
     monkeypatch.setattr(cls, "get_best_bound", lambda self: 3.0)
@@ -105,7 +105,7 @@ def test_solve_returns_bound_not_incumbent(monkeypatch, solver):
 @pytest.mark.parametrize("solver", ["highs", "gurobi"])
 def test_infeasible_model_has_no_scalar_or_solution(solver):
     v = Verifier(solver=solver, obbt_solver=None, params=mip_params(solver))
-    x = v.add_iterate(1, lb=0, ub=1)
+    x = v.iterate(1, lb=0, ub=1)
     v.add_constraint(x >= 2)
     v.set_zero_objective()
     with pytest.raises(RuntimeError):
@@ -125,7 +125,7 @@ def test_infeasible_model_has_no_scalar_or_solution(solver):
 )
 def test_native_sdp_rejects_unaccepted_solution(monkeypatch, status):
     v = Verifier(method="sdp", solver="clarabel", obbt_solver=None)
-    x = v.add_iterate(1, lb=-1, ub=1)
+    x = v.iterate(1, lb=-1, ub=1)
     v.set_objective_norm(x, 2)
     monkeypatch.setattr(
         clarabel,
@@ -146,7 +146,7 @@ def test_cvxpy_sdp_rejects_unaccepted_solution(monkeypatch, status):
 
     monkeypatch.setattr(cp.Problem, "solve", solve)
     v = Verifier(method="sdp", solver="cvxpy", obbt_solver=None)
-    x = v.add_iterate(1, lb=-1, ub=1)
+    x = v.iterate(1, lb=-1, ub=1)
     v.set_objective_norm(x, 2)
     with pytest.raises(RuntimeError, match="terminated"):
         v.solve()
@@ -154,7 +154,7 @@ def test_cvxpy_sdp_rejects_unaccepted_solution(monkeypatch, status):
 
 def test_native_sdp_almost_solved_warns(monkeypatch):
     v = Verifier(method="sdp", solver="clarabel", obbt_solver=None)
-    x = v.add_iterate(1, lb=-1, ub=1)
+    x = v.iterate(1, lb=-1, ub=1)
     v.set_objective_norm(x, 2)
     monkeypatch.setattr(
         clarabel,
@@ -172,8 +172,8 @@ def test_native_sdp_almost_solved_warns(monkeypatch):
 @pytest.mark.parametrize("solver", ["clarabel", "cvxpy"])
 def test_sdp_iteration_limit_is_rejected(solver):
     v = Verifier(method="sdp", solver=solver, obbt_solver=None)
-    x = v.add_iterate(2, lb=-1, ub=1)
-    z = v.step.relu(x + 0.1)
+    x = v.iterate(2, lb=-1, ub=1)
+    z = v.relu(x + 0.1)
     v.set_objective_norm(z - x, 2)
     with pytest.raises(RuntimeError):
         v.solve(max_iter=0)
@@ -184,8 +184,8 @@ def test_non_singleton_theory_and_postprocess_bounds(solver):
     v = Verifier(
         solver=solver, obbt_solver=solver, theory_func=lambda k: 0.5, params=mip_params(solver)
     )
-    ref = v.add_param(2, lb=np.array([1.0, 2.0]), ub=np.array([3.0, 5.0]))
-    target = v.add_iterate(2, lb=-10, ub=10)
+    ref = v.parameter(2, lb=np.array([1.0, 2.0]), ub=np.array([3.0, 5.0]))
+    target = v.iterate(2, lb=-10, ub=10)
     assert v.theory_bound(1, target, ref) == 1.0
     np.testing.assert_allclose(target.lb, [0.5, 1.5])
     np.testing.assert_allclose(target.ub, [3.5, 5.5])
@@ -196,7 +196,7 @@ def test_non_singleton_theory_and_postprocess_bounds(solver):
     lb, ub = v.obbt_handler.obbt(target, np.full(2, -10.0), np.full(2, 10.0))
     np.testing.assert_allclose(lb, target.lb, atol=1e-5)
     np.testing.assert_allclose(ub, target.ub, atol=1e-5)
-    later = v.add_iterate(2, lb=-10, ub=10)
+    later = v.iterate(2, lb=-10, ub=10)
     assert v.post_process(later, ref, [0.5, 1.0]) == 1.0
     np.testing.assert_allclose(later.lb, [-0.5, 0.5])
     np.testing.assert_allclose(later.ub, [4.5, 6.5])
@@ -211,7 +211,7 @@ def test_non_singleton_theory_and_postprocess_bounds(solver):
 @pytest.mark.parametrize("solver", ["highs", "gurobi"])
 def test_expression_values_preserve_constants(solver):
     v = Verifier(solver=solver, obbt_solver=None, params=mip_params(solver))
-    x = v.add_iterate(2, lb=np.array([1.0, -2.0]), ub=np.array([1.0, -2.0]))
+    x = v.iterate(2, lb=np.array([1.0, -2.0]), ub=np.array([1.0, -2.0]))
     A = np.array([[1.0, 2.0], [3.0, -1.0]])
     expr = A @ x + np.array([4.0, -7.0])
     v.set_zero_objective()
@@ -243,9 +243,9 @@ def test_vector_multiplication_and_bad_shapes_are_rejected():
 @pytest.mark.parametrize("kind", ["affine", "elastic"])
 def test_default_simulator_residuals_follow_prox_outputs(kind):
     v = Verifier(method="simulator", obbt_solver=None)
-    v.add_param(1, samples=np.zeros((3, 1)))
+    v.parameter(1, samples=np.zeros((3, 1)))
     initial = np.array([2.0, -1.0])
-    z = v.add_iterate(2, lb=initial, ub=initial)
+    z = v.iterate(2, lb=initial, ub=initial)
     if kind == "affine":
         prox = IndAffine(A=np.array([[1.0, 1.0]]), b=np.array([0.5]))
 
@@ -270,7 +270,7 @@ def test_prox_subclass_inherits_lowering():
         pass
 
     v = Verifier(method="simulator", obbt_solver=None)
-    p = v.add_param(2, samples=np.array([[1.0, -2.0]]))
+    p = v.parameter(2, samples=np.array([[1.0, -2.0]]))
     out = v.prox(WeightedL1(lambd=0.5), p)
     v.set_objective_norm(out, np.inf)
     np.testing.assert_allclose(v.solve(), [[1.5]])
@@ -278,7 +278,7 @@ def test_prox_subclass_inherits_lowering():
 
 def test_obbt_padding_covers_small_lp_error(monkeypatch):
     v = Verifier(params={"output_flag": False})
-    x = v.add_iterate(1, lb=-2, ub=2)
+    x = v.iterate(1, lb=-2, ub=2)
     handler = v.obbt_handler
     # A computed interval slightly inside the exact [-1, 1] range.
     values = iter([-0.99999995, 0.99999995])
@@ -292,8 +292,8 @@ def test_obbt_padding_covers_small_lp_error(monkeypatch):
 
 def test_unsupported_theory_cut_does_not_mutate_bounds():
     v = Verifier(method="sdp", solver="clarabel", obbt_solver=None, theory_func=lambda k: 0.5)
-    ref = v.add_iterate(1, lb=0, ub=1)
-    target = v.add_iterate(1, lb=-10, ub=10)
+    ref = v.iterate(1, lb=0, ub=1)
+    target = v.iterate(1, lb=-10, ub=10)
     with pytest.raises(NotImplementedError):
         v.theory_bound(1, target, ref)
     np.testing.assert_array_equal(target.lb, [-10.0])

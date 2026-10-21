@@ -53,7 +53,7 @@ def test_manual_fista_loop_reproduces_the_tape():
 
 
 def test_halpern_anchor_resolves_as_a_state_slot():
-    """The anchor is an ``add_iterate`` leaf nothing updates, so it *is* the state."""
+    """The anchor is an ``iterate`` leaf nothing updates, so it *is* the state."""
     v, iterates, x, d = build_halpern_loop()
     ir = extract_unrolled_ir(v, iterates, name="halpern")
 

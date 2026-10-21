@@ -57,7 +57,7 @@ def test_prox_scalar_identity():
 def test_decomposer_warns_on_short_signal():
     """The verification lowering also warns (and is the identity) for length < 2."""
     v = _make_verifier("mip", obbt="gurobi")
-    x = v.add_param(1, lb=np.array([2.5]), ub=np.array([2.5]))
+    x = v.parameter(1, lb=np.array([2.5]), ub=np.array([2.5]))
     with pytest.warns(UserWarning, match="total variation is identically"):
         out = v.prox(TotalVariation1D(1.0), x)
     v.set_objective_norm([out], np.inf)
@@ -82,7 +82,7 @@ def test_prox_matches_dual_box_qp():
 
 def test_returns_linear_expression_on_mip():
     v = _make_verifier("mip", obbt="gurobi")
-    arg = v.add_param(4, lb=-2.0, ub=2.0)
+    arg = v.parameter(4, lb=-2.0, ub=2.0)
     out = v.prox(TotalVariation1D(0.5), arg)
     assert isinstance(out, LinearExpression)
     assert out.ndim == 4
@@ -98,7 +98,7 @@ def test_returns_linear_expression_on_mip():
 )
 def test_mip_matches_numeric(x0, lam, g):
     v = _make_verifier("mip", obbt="gurobi")
-    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed arg
+    x = v.parameter(len(x0), lb=x0, ub=x0)  # fixed arg
     out = v.prox(TotalVariation1D(lam), x, gamma=g)
     v.set_objective_norm([out], np.inf)
     v.solve()
@@ -112,8 +112,8 @@ def test_param_lambd():
     x0 = np.array([0.0, 0.1, 0.9, 1.0])
     lam0 = 0.5
     v = _make_verifier("mip", obbt="gurobi")
-    x = v.add_param(4, lb=x0, ub=x0)
-    lam_param = v.add_param(1, lb=np.array([lam0]), ub=np.array([lam0]))
+    x = v.parameter(4, lb=x0, ub=x0)
+    lam_param = v.parameter(1, lb=np.array([lam0]), ub=np.array([lam0]))
     out = v.prox(TotalVariation1D(lam_param), x)
     v.set_objective_norm([out], np.inf)
     v.solve()
@@ -130,7 +130,7 @@ def test_sdp_valid_bound_at_fixed_point(x0, lam):
     # With lb == ub the SDP has no interior; Clarabel's default regularization can
     # stall (InsufficientProgress) there, while 1e-7 solves both instances cleanly.
     v = Verifier(method="sdp", solver="clarabel", params={"static_regularization_constant": 1e-7})
-    x = v.add_param(len(x0), lb=x0, ub=x0)
+    x = v.parameter(len(x0), lb=x0, ub=x0)
     out = v.prox(TotalVariation1D(lam), x)
     v.set_objective_norm(out, 2)
     obj = v.solve()
@@ -144,13 +144,13 @@ def test_sdp_bound_vs_mip_over_box():
     lam = 0.5
 
     vm = _make_verifier("mip", obbt="gurobi")
-    xm = vm.add_param(4, lb=arg_lb, ub=arg_ub)
+    xm = vm.parameter(4, lb=arg_lb, ub=arg_ub)
     om = vm.prox(TotalVariation1D(lam), xm)
     vm.set_objective_norm([om], np.inf)
     mip_inf = vm.solve()
 
     vs = _make_verifier("sdp")
-    xs = vs.add_param(4, lb=arg_lb, ub=arg_ub)
+    xs = vs.parameter(4, lb=arg_lb, ub=arg_ub)
     os_ = vs.prox(TotalVariation1D(lam), xs)
     vs.set_objective_norm(os_, 2)
     sdp_two = np.sqrt(vs.solve())
@@ -163,6 +163,6 @@ def test_simulator_supported():
     """Simulator now evaluates the 1-D TV prox via Condat's direct algorithm,
     returning a LinearExpression of the input dimension."""
     v = _make_verifier("simulator")
-    arg = v.add_param(4, lb=-1.0, ub=1.0)
+    arg = v.parameter(4, lb=-1.0, ub=1.0)
     out = v.prox(TotalVariation1D(0.5), arg)
     assert out.ndim == 4

@@ -77,10 +77,10 @@ CONFIGS = [
 def build_nnls(vp, K, A, t, z0_lo, z0_hi, x_lo, x_hi):
     """Projected-gradient NNLS: z_{k+1} = relu(z_k - t A^T (A z_k - x))."""
     m, n = A.shape
-    x = vp.add_param(m, lb=x_lo, ub=x_hi)
-    z = [vp.add_iterate(n, lb=z0_lo, ub=z0_hi)]
+    x = vp.parameter(m, lb=x_lo, ub=x_hi)
+    z = [vp.iterate(n, lb=z0_lo, ub=z0_hi)]
     for k in range(K):
-        z.append(vp.step.relu(z[k] - t * A.T @ (A @ z[k] - x)))
+        z.append(vp.relu(z[k] - t * A.T @ (A @ z[k] - x)))
     return z[K] - z[K - 1]
 
 
@@ -88,20 +88,20 @@ def build_ista(vp, K, At, Bt, lambda_t, b, b_hw, z0_lo, z0_hi):
     """ISTA: z_{k+1} = soft_threshold(At z_k + Bt b, lambda_t)."""
     n = At.shape[0]
     m = Bt.shape[1]
-    b_p = vp.add_param(m, lb=b - b_hw, ub=b + b_hw)
-    z = [vp.add_iterate(n, lb=z0_lo, ub=z0_hi)]
+    b_p = vp.parameter(m, lb=b - b_hw, ub=b + b_hw)
+    z = [vp.iterate(n, lb=z0_lo, ub=z0_hi)]
     for k in range(K):
-        z.append(vp.step.soft_threshold(At @ z[k] + Bt @ b_p, lambd=lambda_t))
+        z.append(vp.soft_threshold(At @ z[k] + Bt @ b_p, lambd=lambda_t))
     return z[K] - z[K - 1]
 
 
 def build_boxpgd(vp, K, P, q, lo, hi, t, q_hw, z0_lo, z0_hi):
     """Box-PGD: z_{k+1} = satlin(z_k - t (P z_k + q), l, u) (box projection)."""
     n = P.shape[0]
-    q_p = vp.add_param(n, lb=q - q_hw, ub=q + q_hw)
-    z = [vp.add_iterate(n, lb=z0_lo, ub=z0_hi)]
+    q_p = vp.parameter(n, lb=q - q_hw, ub=q + q_hw)
+    z = [vp.iterate(n, lb=z0_lo, ub=z0_hi)]
     for k in range(K):
-        z.append(vp.step.satlin(z[k] - t * (P @ z[k] + q_p), l=lo, u=hi))
+        z.append(vp.satlin(z[k] - t * (P @ z[k] + q_p), l=lo, u=hi))
     return z[K] - z[K - 1]
 
 

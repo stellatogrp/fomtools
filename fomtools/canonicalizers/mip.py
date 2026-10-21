@@ -18,7 +18,7 @@ def _require_finite_bounds(kind: str, i: int, lb: float, ub: float) -> None:
         raise ValueError(
             f"{kind} input {i} has bounds [{lb}, {ub}]: the exact MIP encoding needs finite "
             f"bounds on every {kind} input that crosses a breakpoint. Bound the iterates or "
-            "parameters that feed it (for example with add_iterate/add_param bounds or OBBT)."
+            "parameters that feed it (for example with iterate/parameter bounds or OBBT)."
         )
 
 

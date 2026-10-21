@@ -43,10 +43,10 @@ def test_dr(vp):
     c_offset = 0.1
     q_l = np.hstack([c - c_offset, b])
     q_u = np.hstack([c + c_offset, b])
-    q_param = vp.add_param(n + m, lb=q_l, ub=q_u)
+    q_param = vp.parameter(n + m, lb=q_l, ub=q_u)
 
     z0_init = np.zeros(n + m)
-    z0 = vp.add_iterate(m + n, lb=z0_init, ub=z0_init)
+    z0 = vp.iterate(m + n, lb=z0_init, ub=z0_init)
 
     K = 5
     u = [None for _ in range(K + 1)]
@@ -58,8 +58,8 @@ def test_dr(vp):
 
     for k in range(1, K + 1):
         print(f"-K = {k}-")
-        u[k] = vp.step.implicit_linear(z[k - 1] - q_param, output_mat=output.todense())
-        utilde[k] = vp.step.relu(2 * u[k] - z[k - 1], proj_ranges=(n, n + m))
+        u[k] = vp.implicit_linear(z[k - 1] - q_param, output_mat=output.todense())
+        utilde[k] = vp.relu(2 * u[k] - z[k - 1], proj_ranges=(n, n + m))
         z[k] = z[k - 1] + utilde[k] - u[k]
 
         vp.set_objective_norm(z[k] - z[k - 1], np.inf)

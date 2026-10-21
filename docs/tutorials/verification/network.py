@@ -264,32 +264,32 @@ def _(A_d, A_s, b_s, c, eta, mu, n_d, n_e, n_s, np, pdhg_step):
         Builds a simulator-mode :class:`Verifier`, registers the demand
         parameter and the initial iterates ``(z0, v0, w0)`` as sampled
         parameters, rolls out the PDHG recurrence with ``pdhg_step``,
-        and simulates via ``VP.solve()``. Each of the four ``*_samples`` arrays has shape
+        and simulates via ``vp.solve()``. Each of the four ``*_samples`` arrays has shape
         ``(n_samples, dim)`` (a single-row array replays one instance), and the
         returned ``residuals`` has shape ``(n_samples, K)``. Summary statistics
         (``mean``, ``min``, ``max``, ``final_residuals``, ...) are available on
-        the returned instance ``VP`` via ``VP[...]``.
+        the returned instance ``vp`` via ``vp[...]``.
 
         ``ord`` defaults to ``inf``, matching :func:`pdhg_verification`; see
         the note there on why this example is plotted in the infinity norm
         rather than the 2-norm.
         """
-        VP = Verifier(method='simulator', obbt_solver=None)
-        x_param = VP.add_param(ndim=n_d, samples=x_samples)
-        z0 = VP.add_param(ndim=n_e, samples=z0_samples)
-        v0 = VP.add_param(ndim=n_s, samples=v0_samples)
-        w0 = VP.add_param(ndim=n_d, samples=w0_samples)
+        vp = Verifier(method='simulator', obbt_solver=None)
+        x_param = vp.parameter(ndim=n_d, samples=x_samples)
+        z0 = vp.parameter(ndim=n_e, samples=z0_samples)
+        v0 = vp.parameter(ndim=n_s, samples=v0_samples)
+        w0 = vp.parameter(ndim=n_d, samples=w0_samples)
 
         z, v, w = z0, v0, w0
         for k in range(1, K + 1):
             z, v, w, residual = pdhg_step(
-                VP, A_s, A_d, eta, z, v, w, x_param, c, mu, b_s,
+                vp, A_s, A_d, eta, z, v, w, x_param, c, mu, b_s,
                 k=k, momentum=momentum,
             )
-            VP.set_objective_norm(residual, ord)
+            vp.set_objective_norm(residual, ord)
 
-        residuals = VP.solve()
-        return VP, residuals
+        residuals = vp.solve()
+        return vp, residuals
 
     return Verifier, pdhg_simulation
 
@@ -445,7 +445,7 @@ def _(
         Builds a ``Verifier`` in ``method`` mode, registers the demand parameter,
         the capacity, cost, and supply parameters, and the ``(z0, v0, w0)``
         iterate boxes, rolls out ``pdhg_step`` over the horizon ``K``, and
-        returns ``(VP, residuals)`` with one worst-case residual per iteration.
+        returns ``(vp, residuals)`` with one worst-case residual per iteration.
 
         Every curve in this notebook reports $\\|r^k\\|_\\infty$, so ``ord``
         defaults to ``inf``; the resulting MIP is a MILP and solves in well under
@@ -453,29 +453,29 @@ def _(
         return. Extra ``verifier_kwargs`` (``solver``, ``obbt_solver``,
         ``params``, ...) are forwarded to the ``Verifier`` constructor.
         """
-        VP = Verifier(method=method, **verifier_kwargs)
-        x_param = VP.add_param(n_d, lb=x_lb, ub=x_ub)
-        capacity = VP.add_param(n_e, lb=c_lb * np.ones(n_e), ub=c_ub * np.ones(n_e))
-        supply = VP.add_param(n_s, lb=b_s, ub=b_s)
-        cost = VP.add_param(n_e, lb=mu, ub=mu)
+        vp = Verifier(method=method, **verifier_kwargs)
+        x_param = vp.parameter(n_d, lb=x_lb, ub=x_ub)
+        capacity = vp.parameter(n_e, lb=c_lb * np.ones(n_e), ub=c_ub * np.ones(n_e))
+        supply = vp.parameter(n_s, lb=b_s, ub=b_s)
+        cost = vp.parameter(n_e, lb=mu, ub=mu)
 
-        z = VP.iterate_trajectory(K + 1, collapse_expr='auto')
-        v = VP.iterate_trajectory(K + 1, collapse_expr='auto')
-        w = VP.iterate_trajectory(K + 1, collapse_expr='auto')
-        z[0] = VP.add_iterate(n_e, lb=z0_lb, ub=z0_ub)
-        v[0] = VP.add_iterate(n_s, lb=v0_lb, ub=v0_ub)
-        w[0] = VP.add_iterate(n_d, lb=w0_lb, ub=w0_ub)
+        z = vp.iterate_trajectory(K + 1, collapse_expr='auto')
+        v = vp.iterate_trajectory(K + 1, collapse_expr='auto')
+        w = vp.iterate_trajectory(K + 1, collapse_expr='auto')
+        z[0] = vp.iterate(n_e, lb=z0_lb, ub=z0_ub)
+        v[0] = vp.iterate(n_s, lb=v0_lb, ub=v0_ub)
+        w[0] = vp.iterate(n_d, lb=w0_lb, ub=w0_ub)
 
         residuals = []
         for k in range(1, K + 1):
             z, v, w, residual = pdhg_step(
-                VP, A_s, A_d, eta, z, v, w, x_param, capacity, cost, supply,
+                vp, A_s, A_d, eta, z, v, w, x_param, capacity, cost, supply,
                 k=k, momentum=momentum,
             )
-            VP.set_objective_norm(residual, ord)
-            val = VP.solve()
+            vp.set_objective_norm(residual, ord)
+            val = vp.solve()
             residuals.append(np.sqrt(val) if ord == 2 else val)
-        return VP, residuals
+        return vp, residuals
 
     return (pdhg_verification,)
 

@@ -1353,7 +1353,7 @@ class Simulator(Canonicalizer):
                 previous = expr
             if not specs:
                 raise ValueError(
-                    "Default residuals require an initial iterate; call add_iterate or set an explicit objective."
+                    "Default residuals require an initial iterate; call Verifier.iterate or set an explicit objective."
                 )
         compiled_residuals = self._compile_residuals(simulation_data, specs)
         n_residuals = len(compiled_residuals)

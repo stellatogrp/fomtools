@@ -30,8 +30,8 @@ sparse matrices, so the package tracks arbitrary affine combinations symbolicall
 ```python
 # reuse the imports and dimensions from the workflow above
 demo = ft.Verifier(method="mip")
-x_demo = demo.add_param(m, lb=0, ub=1)
-z0 = demo.add_iterate(n, lb=0, ub=0)
+x_demo = demo.parameter(m, lb=0, ub=1)
+z0 = demo.iterate(n, lb=0, ub=0)
 
 # arbitrary combinations
 A = np.random.normal(size=(n, n))
@@ -100,9 +100,9 @@ canonicalizer needs.
 ```python
 grad_demo = D.T @ (D @ z0 - x_demo)
 l, u = -np.ones(n), np.ones(n)
-s_relu = demo.step.relu(z0 - eta * grad_demo)
-s_soft = demo.step.soft_threshold(z0 - eta * grad_demo, lambd=lambd * eta)
-s_box = demo.step.satlin(z0 - eta * grad_demo, l=l, u=u)
+s_relu = demo.relu(z0 - eta * grad_demo)
+s_soft = demo.soft_threshold(z0 - eta * grad_demo, lambd=lambd * eta)
+s_box = demo.satlin(z0 - eta * grad_demo, l=l, u=u)
 ```
 
 ## Proxable functions
@@ -153,9 +153,9 @@ check, which monitors both the primal and the dual residual.
 # illustrative OSQP residuals with bounded primal and dual variables
 M, P = np.eye(n), D.T @ D
 q = -D.T @ x_demo
-zk = demo.add_iterate(n, lb=-1, ub=1)
-wk = demo.add_iterate(n, lb=-1, ub=1)
-yk = demo.add_iterate(n, lb=-1, ub=1)
+zk = demo.iterate(n, lb=-1, ub=1)
+wk = demo.iterate(n, lb=-1, ub=1)
+yk = demo.iterate(n, lb=-1, ub=1)
 demo.set_objective_norm([M @ zk - wk, P @ zk + q + M.T @ yk], np.inf)
 ```
 
@@ -177,11 +177,11 @@ Python function, together with bounds on $z^\star$.
 # fixed point for ista
 zk = z0
 for _ in range(K):
-    zk = demo.step.soft_threshold(
+    zk = demo.soft_threshold(
         zk - eta * D.T @ (D @ zk - x_demo), lambd=lambd * eta)
 z_star = demo.fixed_point(
     n_dim=n,
-    operator=lambda z: demo.step.soft_threshold(
+    operator=lambda z: demo.soft_threshold(
         z - eta * D.T @ (D @ z - x_demo), lambd=lambd * eta),
     lb=-100, ub=100,
 )
@@ -215,7 +215,7 @@ Set `FOMTOOLS_CODEGEN_AGENT=1` or pass an explicit `driver=`. See the
 
 ```python
 # the same trajectory that was verified, now compiled
-result = VP.codegen("out/fista", iterates=s, name="fista")
+result = vp.codegen("out/fista", iterates=s, name="fista")
 assert result.success
 ```
 
@@ -229,6 +229,34 @@ generation time rather than inverted, and structured matrices are emitted as spa
 operations, so the generated solver is fast before any optimization pass runs. The
 [code generation guide](codegen.md) covers rolling, tabulated coefficient schedules,
 termination criteria, and the emitted project layout in full.
+
+## Returned bounds and numerical checks
+
+`solve()` returns a finite MIP best bound, including after a time limit when one
+is available. It raises `RuntimeError` for unusable termination states or missing
+bounds. An incumbent is a feasible example that attains a lower bound on the worst case.
+`expr.value` evaluates an expression at the incumbent and raises `RuntimeError` when the
+solver found none.
+
+SDP solves ([experimental](sdp.md)) require an accurate optimal termination and return the dual objective.
+Inaccurate, infeasible, unbounded, and early terminations raise `RuntimeError`.
+The solved copy retains `last_solver.solution` for native Clarabel and
+`last_problem` for CVXPY. These are numerical bounds subject to solver tolerances,
+not exact-arithmetic proofs. OBBT also uses numerical LP solves; outward padding
+reduces sensitivity to small solver errors but is not a rigorous certificate.
+
+The simulator returns sampled residuals. Its default infinity-norm differences
+follow public step/prox outputs, excluding internal KKT and prox variables.
+For algorithms with several state blocks or intermediate operations, set an
+explicit objective at each iteration. Statistical risk bounds require independent
+evaluation samples from the specified distribution and a fixed tolerance.
+
+`Verifier.post_process`, which tightens later iterates from earlier residual bounds, is
+valid only when its list contains upper bounds on **every**
+successive infinity-norm difference from the reference to the target over the same
+family. Do not pass a final-step bound alone, an incumbent, or a sample maximum.
+Generated-code checks likewise compare sampled numerical executions and do not
+prove floating-point equivalence for all inputs.
 
 ## Implementation notes
 

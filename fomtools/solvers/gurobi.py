@@ -10,6 +10,16 @@ from fomtools.solvers.mip_solver import MIPSolver
 
 log = logging.getLogger(__name__)
 
+_QUIET_ENV = None
+
+
+def _quiet_env() -> gp.Env:
+    """A shared Gurobi environment started with ``OutputFlag=0``."""
+    global _QUIET_ENV
+    if _QUIET_ENV is None:
+        _QUIET_ENV = gp.Env(params={"OutputFlag": 0})
+    return _QUIET_ENV
+
 
 class GurobiSolver(MIPSolver):
     """
@@ -40,8 +50,10 @@ class GurobiSolver(MIPSolver):
         solver_params
             Gurobi parameters; they override ``DEFAULT_PARAMS``.
         """
-        self.model = gp.Model()
         user = solver_params or {}
+        # A silenced model is built in a silenced environment, which also skips the
+        # license banner Gurobi prints when it starts the default environment.
+        self.model = gp.Model(env=_quiet_env()) if not user.get("OutputFlag", 1) else gp.Model()
         # Apply the user's verbosity first, so a silenced model does not log the defaults.
         verbosity = {k: user[k] for k in (self.VERBOSITY_KEY,) if k in user}
         super().__init__({**verbosity, **self.DEFAULT_PARAMS, **user})

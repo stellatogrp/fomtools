@@ -19,7 +19,7 @@ decomposition into many small PSD cones that is often much faster to solve.
 MIP/simulator, keep a separate leaf on SDP. ``True`` / ``False`` force the
 choice regardless of backend. The policy only *applies* to non-leaf values;
 an assignment whose value is already a leaf (e.g. a ``relu`` output, or an
-``add_iterate`` variable) is stored as-is on every backend.
+``iterate`` variable) is stored as-is on every backend.
 
 ``'auto'`` also watches for *accumulation*, which is the second situation where
 collapsing is the wrong choice. Writing ``z[k] = z[k-1] + ut - u``, as
@@ -130,7 +130,7 @@ class IterateTrajectory:
         Notes
         -----
         The policy only has an effect when ``value`` is *not* already a leaf.
-        A leaf value (e.g. a ``relu``/``add_iterate`` output) is stored as-is
+        A leaf value (e.g. a ``relu``/``iterate`` output) is stored as-is
         on every backend and policy, since it is already a single registered
         solver variable.
         """
@@ -139,7 +139,7 @@ class IterateTrajectory:
             raise TypeError(
                 "IterateTrajectory slots must hold a LinearExpression, got "
                 f"{type(value).__name__}. Build the iterate with verifier.step.* "
-                "or verifier.add_iterate before assigning."
+                "or verifier.iterate before assigning."
             )
 
         policy = self._default_policy if collapse_expr is None else collapse_expr
@@ -204,7 +204,7 @@ class IterateTrajectory:
                     "params finite bounds, enable OBBT, or pass collapse_expr=True "
                     "for this slot."
                 )
-        return self._verifier.step.implicit_linear(value, output_mat=spa.eye(value.ndim))
+        return self._verifier.implicit_linear(value, output_mat=spa.eye(value.ndim))
 
 
 def _validate_policy(collapse_expr):

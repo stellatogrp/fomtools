@@ -161,11 +161,11 @@ def test_unrolled_stationary_ista_collapses_to_three_blocks(steps):
     at, bt = np.eye(n) - eta * dmat.T @ dmat, eta * dmat.T
 
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(m, lb=-np.ones(m), ub=np.ones(m))
-    z = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    x = v.parameter(m, lb=-np.ones(m), ub=np.ones(m))
+    z = v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
     iterates = []
     for _ in range(steps):
-        z = v.step.soft_threshold(at @ z + bt @ x, lambd=0.05 * eta)
+        z = v.soft_threshold(at @ z + bt @ x, lambd=0.05 * eta)
         iterates.append(z)
 
     ir = extract_ir(v, iterates[-1], config=ONE_PASS)

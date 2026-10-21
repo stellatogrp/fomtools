@@ -195,25 +195,25 @@ def _(A_mat, admm_step, l_val, lhs_mat, mu, n, np, rho, sigma, u_val, x0_val):
 
         Builds a simulator-mode :class:`Verifier`, registers the initial dual
         iterate ``v0`` as a sampled parameter (fixing $x^0 = 0$), rolls out the
-        recurrence with ``admm_step``, and simulates via ``VP.solve()``.
+        recurrence with ``admm_step``, and simulates via ``vp.solve()``.
         ``v0_samples`` has shape ``(n_samples, n+1)`` (a single-row array
         replays one instance), and the returned ``residuals`` has shape
         ``(n_samples, K)``. Summary statistics (``mean``, ``min``, ``max``, ...)
-        are available on the returned instance ``VP`` via ``VP[...]``.
+        are available on the returned instance ``vp`` via ``vp[...]``.
         """
-        VP = Verifier(method="simulator", obbt_solver=None)
+        vp = Verifier(method="simulator", obbt_solver=None)
         x = x0_val
-        v = VP.add_param(n + 1, samples=v0_samples)
+        v = vp.parameter(n + 1, samples=v0_samples)
 
         lhs_mat_dense = lhs_mat.toarray()
         for _ in range(K):
             x, v, residual = admm_step(
-                VP, A_mat, l_val, u_val, mu, rho, sigma, x, v, lhs_mat_dense
+                vp, A_mat, l_val, u_val, mu, rho, sigma, x, v, lhs_mat_dense
             )
-            VP.set_objective_norm(residual, ord)
+            vp.set_objective_norm(residual, ord)
 
-        residuals = VP.solve()
-        return VP, residuals
+        residuals = vp.solve()
+        return vp, residuals
 
     return Verifier, admm_simulation
 
@@ -274,7 +274,7 @@ def _(
 
         Builds a ``Verifier`` in ``method`` mode, registers the initial dual
         iterate box ``[v0_lb, v0_ub]`` (fixing $x^0 = 0$), rolls out
-        ``admm_step`` over the horizon ``K``, and returns ``(VP, residuals)``
+        ``admm_step`` over the horizon ``K``, and returns ``(vp, residuals)``
         with one worst-case residual per iteration. Extra ``verifier_kwargs``
         (``solver``, ``obbt_solver``, ``params``, ...) are forwarded to the
         ``Verifier`` constructor.
@@ -286,21 +286,21 @@ def _(
         forwards only the OBBT backend's own verbosity key from ``params``, so
         Gurobi's ``OutputFlag`` does not reach it.
         """
-        VP = Verifier(method=method, obbt_params=obbt_params, **verifier_kwargs)
-        x = VP.iterate_trajectory(K + 1, collapse_expr="auto")
-        v = VP.iterate_trajectory(K + 1, collapse_expr="auto")
-        x[0] = VP.add_iterate(n, lb=x0_val, ub=x0_val)
-        v[0] = VP.add_iterate(n + 1, lb=v0_lb, ub=v0_ub)
+        vp = Verifier(method=method, obbt_params=obbt_params, **verifier_kwargs)
+        x = vp.iterate_trajectory(K + 1, collapse_expr="auto")
+        v = vp.iterate_trajectory(K + 1, collapse_expr="auto")
+        x[0] = vp.iterate(n, lb=x0_val, ub=x0_val)
+        v[0] = vp.iterate(n + 1, lb=v0_lb, ub=v0_ub)
 
         residuals = []
         for k in range(1, K + 1):
             x, v, residual = admm_step(
-                VP, A_mat, l_val, u_val, mu, rho, sigma, x, v, lhs_mat, k=k
+                vp, A_mat, l_val, u_val, mu, rho, sigma, x, v, lhs_mat, k=k
             )
-            VP.set_objective_norm(residual, ord)
-            val = VP.solve()
+            vp.set_objective_norm(residual, ord)
+            val = vp.solve()
             residuals.append(np.sqrt(val) if ord == 2 else val)
-        return VP, residuals
+        return vp, residuals
 
     return (admm_verification,)
 

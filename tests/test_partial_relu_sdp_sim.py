@@ -141,9 +141,9 @@ def test_get_ranges_tuple_of_tuples():
 def test_sdp_partial_relu_var_count(sdp_solver):
     """SDP allocates only len(proj_indices) fresh rows for partial relu."""
     v = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
-    x = v.add_iterate(3, lb=-1.0, ub=1.0)
+    x = v.iterate(3, lb=-1.0, ub=1.0)
     pre_marker = v.canonicalizer.range_marker
-    step_output = v.step.relu(x, proj_ranges=(1, 3))
+    step_output = v.relu(x, proj_ranges=(1, 3))
     delta = v.canonicalizer.range_marker - pre_marker
     # Without the composite-output optimization, delta would equal arg.ndim = 3.
     # With it, only the proj-leaf rows are fresh (= 2).
@@ -156,9 +156,9 @@ def test_sdp_partial_relu_var_count(sdp_solver):
 def test_sdp_partial_relu_aeq_count(sdp_solver):
     """canonicalize_relu emits len(proj_indices) lifted equalities, not arg.ndim."""
     v = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
-    x = v.add_iterate(4, lb=-1.0, ub=1.0)
+    x = v.iterate(4, lb=-1.0, ub=1.0)
     pre = len(v.canonicalizer.Aeq_matrices)
-    v.step.relu(x, proj_ranges=(1, 3))
+    v.relu(x, proj_ranges=(1, 3))
     delta = len(v.canonicalizer.Aeq_matrices) - pre
     # Full relu would emit 4 equalities (one per output); partial emits only 2.
     assert delta == 2
@@ -168,9 +168,9 @@ def test_sdp_partial_relu_aeq_count(sdp_solver):
 def test_sdp_full_relu_unchanged_var_count(sdp_solver):
     """Regression: full relu still allocates arg.ndim rows."""
     v = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
-    x = v.add_iterate(3, lb=-1.0, ub=1.0)
+    x = v.iterate(3, lb=-1.0, ub=1.0)
     pre = v.canonicalizer.range_marker
-    v.step.relu(x)
+    v.relu(x)
     delta = v.canonicalizer.range_marker - pre
     assert delta == 3
 
@@ -188,8 +188,8 @@ def test_sdp_partial_relu_bound_dominates_mip():
         else:
             kwargs["method"] = method
         v = Verifier(**kwargs)
-        x = v.add_iterate(n, lb=-1.0, ub=1.0)
-        y = v.step.relu(x, proj_ranges=proj_ranges)
+        x = v.iterate(n, lb=-1.0, ub=1.0)
+        y = v.relu(x, proj_ranges=proj_ranges)
         v.set_infinity_norm_objective([y])
         return v.solve()
 
@@ -224,17 +224,17 @@ def test_simulator_partial_relu_runs():
 
     vp = Verifier(method="simulator", obbt_solver=None)
     z = [None] * (K + 1)
-    z[0] = vp.add_iterate(ndim=n, lb=-10.0, ub=10.0, init=np.full(n, 1.0))
+    z[0] = vp.iterate(ndim=n, lb=-10.0, ub=10.0, init=np.full(n, 1.0))
 
     P = np.random.normal(size=(n, n))
     P = P @ P.T
 
     rng = np.random.default_rng(0)
     q_samples = rng.uniform(low=-1.0, high=1.0, size=(50, n))
-    q_param = vp.add_param(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
+    q_param = vp.parameter(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
 
     for k in range(1, K + 1):
-        z[k] = vp.step.relu(
+        z[k] = vp.relu(
             z[k - 1] - step_size * (P @ z[k - 1] + q_param),
             proj_ranges=(1, 3),
         )
@@ -264,10 +264,10 @@ def test_simulator_partial_relu_default_residual_matches_explicit():
     def run(with_explicit_residual: bool):
         vp = Verifier(method="simulator", obbt_solver=None)
         z = [None] * (K + 1)
-        z[0] = vp.add_iterate(ndim=n, lb=-10.0, ub=10.0, init=np.full(n, 1.0))
-        q = vp.add_param(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
+        z[0] = vp.iterate(ndim=n, lb=-10.0, ub=10.0, init=np.full(n, 1.0))
+        q = vp.parameter(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
         for k in range(1, K + 1):
-            z[k] = vp.step.relu(
+            z[k] = vp.relu(
                 z[k - 1] - step_size * (P @ z[k - 1] + q),
                 proj_ranges=(1, 3),
             )
@@ -292,10 +292,10 @@ def test_simulator_partial_relu_differs_from_full():
 
     def run(proj_ranges):
         vp = Verifier(method="simulator", obbt_solver=None)
-        z0 = vp.add_iterate(ndim=n, lb=-2.0, ub=2.0, init=np.full(n, -0.5))
-        q = vp.add_param(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
+        z0 = vp.iterate(ndim=n, lb=-2.0, ub=2.0, init=np.full(n, -0.5))
+        q = vp.parameter(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
         kwargs = {} if proj_ranges is None else {"proj_ranges": proj_ranges}
-        z1 = vp.step.relu(z0 + q, **kwargs)
+        z1 = vp.relu(z0 + q, **kwargs)
         vp.set_objective_norm(z1 - z0, np.inf)
         return vp.solve()
 
@@ -330,9 +330,9 @@ def test_partial_relu_sdp_geq_mip_pgd():
         else:
             kwargs["method"] = method
         v = Verifier(**kwargs)
-        q_param = v.add_param(n, lb=q - q_offset, ub=q + q_offset)
-        z0 = v.add_iterate(n, lb=-1.0, ub=-1.0)
-        z1 = v.step.relu(z0 - t * (P @ z0 + q_param), proj_ranges=proj_ranges)
+        q_param = v.parameter(n, lb=q - q_offset, ub=q + q_offset)
+        z0 = v.iterate(n, lb=-1.0, ub=-1.0)
+        z1 = v.relu(z0 - t * (P @ z0 + q_param), proj_ranges=proj_ranges)
         v.set_infinity_norm_objective([z1 - z0])
         return v.solve()
 

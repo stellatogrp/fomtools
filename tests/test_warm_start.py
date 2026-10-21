@@ -63,11 +63,11 @@ def test_partial_relu_and_affine_starts_are_feasible():
     M = rng.normal(size=(n, n))
     P = M @ M.T / n + 0.2 * np.eye(n)
     vp = Verifier(method="mip", solver="gurobi", obbt_solver="gurobi", params=MIP_EXACT)
-    x = vp.add_param(n, lb=-np.ones(n), ub=np.ones(n))
-    z = [vp.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))]
+    x = vp.parameter(n, lb=-np.ones(n), ub=np.ones(n))
+    z = [vp.iterate(n, lb=np.zeros(n), ub=np.zeros(n))]
     for k in range(1, 4):
-        y = vp.step.implicit_linear(z[-1] + 0.3 * x, output_mat=np.eye(n) + 0.5 * P)
-        z.append(vp.step.relu(y - 0.05, proj_ranges=(0, 2)))
+        y = vp.implicit_linear(z[-1] + 0.3 * x, output_mat=np.eye(n) + 0.5 * P)
+        z.append(vp.relu(y - 0.05, proj_ranges=(0, 2)))
         vp.set_objective_norm(z[k] - z[k - 1], np.inf)
         if k > 1:
             value, _ = _fixed_start_value(vp, 0)
@@ -139,7 +139,7 @@ def test_lp_step_gets_partial_start():
     """Steps without a forward evaluation leave their leaves to the solver."""
     C = np.vstack([np.eye(2), -np.eye(2)])
     v = Verifier(method="mip", solver="gurobi", obbt_solver="gurobi", params={"OutputFlag": 0})
-    q = v.add_param(2, lb=np.array([0.5, -1.0]), ub=np.array([1.0, -0.5]))
+    q = v.parameter(2, lb=np.array([0.5, -1.0]), ub=np.array([1.0, -0.5]))
     for _ in range(2):
         u = v.linear_program(
             q=q, C=C, d=np.ones(4), dual_ub=10.0, primal_bounds=(-np.ones(2), np.ones(2))

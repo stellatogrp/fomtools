@@ -47,13 +47,13 @@ def test_boxpgd_sdp_mip_comparison(vp, vp_sdp):
             obbt_solver="highs",
         )
 
-        q_sdp = vp_sdp_local.add_param(n, lb=q - 0.1, ub=q + 0.1)
-        z_sdp = [vp_sdp_local.add_iterate(n, lb=0, ub=0.1)]
+        q_sdp = vp_sdp_local.parameter(n, lb=q - 0.1, ub=q + 0.1)
+        z_sdp = [vp_sdp_local.iterate(n, lb=0, ub=0.1)]
 
         for k in range(K):
             # Box PGD step: z_{k+1} = proj(z_k - t * (P @ z_k + q), l, u)
             grad_step = z_sdp[k] - t * (P @ z_sdp[k] + q_sdp)
-            z_sdp.append(vp_sdp_local.step.satlin(grad_step, l=l, u=u))
+            z_sdp.append(vp_sdp_local.satlin(grad_step, l=l, u=u))
 
         vp_sdp_local.set_objective_norm(z_sdp[K] - z_sdp[K - 1], 2)
         sdp_two_norm_sq = vp_sdp_local.solve()
@@ -65,12 +65,12 @@ def test_boxpgd_sdp_mip_comparison(vp, vp_sdp):
             obbt_solver="highs",
         )
 
-        q_mip = vp_mip.add_param(n, lb=q - 0.1, ub=q + 0.1)
-        z_mip = [vp_mip.add_iterate(n, lb=0, ub=0.1)]
+        q_mip = vp_mip.parameter(n, lb=q - 0.1, ub=q + 0.1)
+        z_mip = [vp_mip.iterate(n, lb=0, ub=0.1)]
 
         for k in range(K):
             grad_step = z_mip[k] - t * (P @ z_mip[k] + q_mip)
-            z_mip.append(vp_mip.step.satlin(grad_step, l=l, u=u))
+            z_mip.append(vp_mip.satlin(grad_step, l=l, u=u))
 
         vp_mip.set_objective_norm([z_mip[K] - z_mip[K - 1]], np.inf)
         mip_inf_norm = vp_mip.solve()
@@ -113,15 +113,15 @@ def test_boxpgd_sdp_satlin_vs_relus(vp_sdp):
         obbt_solver="highs",
     )
 
-    q_manual = vp_manual.add_param(n, lb=q - 0.1, ub=q + 0.1)
-    z0_manual = vp_manual.add_iterate(n, lb=0, ub=0.1)
+    q_manual = vp_manual.parameter(n, lb=q - 0.1, ub=q + 0.1)
+    z0_manual = vp_manual.iterate(n, lb=0, ub=0.1)
 
     # Compute the input to satlin: arg = z0 - t * (P @ z0 + q)
     arg = z0_manual - t * (P @ z0_manual + q_manual)
 
     # Manual ReLU decomposition
-    relu_lower_output = vp_manual.step.relu(arg - l)
-    relu_upper_output = vp_manual.step.relu(arg - u)
+    relu_lower_output = vp_manual.relu(arg - l)
+    relu_upper_output = vp_manual.relu(arg - u)
 
     # z1 = relu(x - l) - relu(x - u) + l (this is the satlin output)
     z1_manual = relu_lower_output - relu_upper_output + l
@@ -137,12 +137,12 @@ def test_boxpgd_sdp_satlin_vs_relus(vp_sdp):
         obbt_solver="highs",
     )
 
-    q_auto = vp_auto.add_param(n, lb=q - 0.1, ub=q + 0.1)
-    z0_auto = vp_auto.add_iterate(n, lb=0, ub=0.1)
+    q_auto = vp_auto.parameter(n, lb=q - 0.1, ub=q + 0.1)
+    z0_auto = vp_auto.iterate(n, lb=0, ub=0.1)
 
     # Use automatic satlin decomposition
     arg_auto = z0_auto - t * (P @ z0_auto + q_auto)
-    z1_auto = vp_auto.step.satlin(arg_auto, l=l, u=u)
+    z1_auto = vp_auto.satlin(arg_auto, l=l, u=u)
 
     vp_auto.set_objective_norm(z1_auto - z0_auto, 2)
     result_auto = vp_auto.solve()

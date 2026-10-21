@@ -148,8 +148,8 @@ def _(mo):
     The shared implementation used throughout this tutorial is:
 
     ```python
-    def pgd_step(VP, A, eta, z_prev, w_prev, x_param, k, momentum=False):
-        w_next = VP.step.relu(
+    def pgd_step(vp, A, eta, z_prev, w_prev, x_param, k, momentum=False):
+        w_next = vp.relu(
             z_prev - eta * A.T @ (A @ z_prev - x_param)
         )
         if momentum:
@@ -240,29 +240,29 @@ def _(A, eta, m, n, np, pgd_step):
 
         Builds a simulator-mode :class:`Verifier`, registers the parameter ``x`` and
         initial iterate ``z0`` as sampled parameters, rolls out the recurrence with
-        ``pgd_step``, and simulates via ``VP.solve()``. Each ``*_samples`` array
+        ``pgd_step``, and simulates via ``vp.solve()``. Each ``*_samples`` array
         has shape ``(n_samples, dim)`` (a single-row array replays one instance),
         and the returned ``residuals`` has shape ``(n_samples, K)``. Summary statistics
         (``mean``, ``min``, ``max``, ...) are available on the returned instance
-        ``VP`` via ``VP[...]``.
+        ``vp`` via ``vp[...]``.
 
         ``ord`` defaults to ``inf``, matching :func:`pgd_verification`. Note that
         ``set_objective_norm(..., 2)`` would maximize the *squared* Euclidean norm,
         so with ``ord=2`` the returned residuals are in squared units.
         """
-        VP = Verifier(method='simulator', obbt_solver=None)
-        x_param = VP.add_param(ndim=m, samples=x_samples)
-        z0 = VP.add_param(ndim=n, samples=z0_samples)
+        vp = Verifier(method='simulator', obbt_solver=None)
+        x_param = vp.parameter(ndim=m, samples=x_samples)
+        z0 = vp.parameter(ndim=n, samples=z0_samples)
 
         z, w = z0, z0
         for k in range(1, K + 1):
             z, w, residual = pgd_step(
-                VP, A, eta, z, w, x_param, k=k, momentum=momentum,
+                vp, A, eta, z, w, x_param, k=k, momentum=momentum,
             )
-            VP.set_objective_norm(residual, ord)
+            vp.set_objective_norm(residual, ord)
 
-        residuals = VP.solve()
-        return VP, residuals
+        residuals = vp.solve()
+        return vp, residuals
 
     return Verifier, pgd_simulation
 
@@ -337,28 +337,28 @@ def _(A, Verifier, eta, m, n, np, pgd_step, x_lb, x_ub, z0_lb, z0_ub):
 
         Builds a ``Verifier`` in ``method`` mode, registers the parameter box
         ``[x_lb, x_ub]`` and the initial iterate box ``[z0_lb, z0_ub]``,
-        rolls out ``pgd_step`` over the horizon ``K``, and returns ``(VP, residuals)``
+        rolls out ``pgd_step`` over the horizon ``K``, and returns ``(vp, residuals)``
         with one worst-case residual per iteration. Extra ``verifier_kwargs``
         (``solver``, ``params``, ...) are forwarded to the ``Verifier`` constructor.
 
         ``ord`` defaults to ``inf``, which keeps the MIP a MILP. A 2-norm
         objective is squared, so its value is square-rooted on return.
         """
-        VP = Verifier(method=method, **verifier_kwargs)
-        x_param = VP.add_param(m, lb=x_lb, ub=x_ub)
-        z = VP.iterate_trajectory(K+1, collapse_expr='auto')
-        z[0] = VP.add_iterate(n, lb=z0_lb, ub=z0_ub)
+        vp = Verifier(method=method, **verifier_kwargs)
+        x_param = vp.parameter(m, lb=x_lb, ub=x_ub)
+        z = vp.iterate_trajectory(K+1, collapse_expr='auto')
+        z[0] = vp.iterate(n, lb=z0_lb, ub=z0_ub)
         w = z[0]
 
         residuals = []
         for k in range(1, K + 1):
             z, w, residual = pgd_step(
-                VP, A, eta, z, w, x_param, k=k, momentum=momentum,
+                vp, A, eta, z, w, x_param, k=k, momentum=momentum,
             )
-            VP.set_objective_norm(residual, ord)
-            val = VP.solve()
+            vp.set_objective_norm(residual, ord)
+            val = vp.solve()
             residuals.append(np.sqrt(val) if ord == 2 else val)
-        return VP, residuals
+        return vp, residuals
 
     return (pgd_verification,)
 

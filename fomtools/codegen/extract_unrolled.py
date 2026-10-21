@@ -149,7 +149,7 @@ def _check_no_blowup(ir: FomIR, n_iterations: int) -> None:
         "its default 'auto' policy notices the accumulation and keeps each iterate as "
         "its own variable.\n\n"
         "    z = verifier.iterate_trajectory(K + 1)\n"
-        "    z[0] = verifier.add_iterate(n, lb=z0, ub=z0)\n"
+        "    z[0] = verifier.iterate(n, lb=z0, ub=z0)\n"
         "    for k in range(1, K + 1):\n"
         "        ...\n"
         "        z[k] = <the iterate>\n\n"

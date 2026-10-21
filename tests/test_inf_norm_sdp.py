@@ -17,7 +17,7 @@ def test_infinity_norm_sdp_simple(vp_sdp):
     SDP provides an upper bound >= 10.
     """
     n = 3
-    x = vp_sdp.add_iterate(n, lb=-5, ub=10)
+    x = vp_sdp.iterate(n, lb=-5, ub=10)
 
     vp_sdp.set_objective_norm(x, np.inf)
     result = vp_sdp.solve()
@@ -35,8 +35,8 @@ def test_infinity_norm_sdp_after_relu(vp_sdp):
     SDP provides an upper bound >= 5.
     """
     n = 3
-    x = vp_sdp.add_iterate(n, lb=-5, ub=5)
-    z = vp_sdp.step.relu(x)
+    x = vp_sdp.iterate(n, lb=-5, ub=5)
+    z = vp_sdp.relu(x)
 
     vp_sdp.set_objective_norm(z, np.inf)
     result = vp_sdp.solve()
@@ -54,7 +54,7 @@ def test_infinity_norm_sdp_negative_bounds(vp_sdp):
     SDP provides an upper bound >= 10.
     """
     n = 2
-    x = vp_sdp.add_iterate(n, lb=-10, ub=-2)
+    x = vp_sdp.iterate(n, lb=-10, ub=-2)
 
     vp_sdp.set_objective_norm(x, np.inf)
     result = vp_sdp.solve()
@@ -72,8 +72,8 @@ def test_infinity_norm_sdp_expression_difference(vp_sdp):
     SDP provides an upper bound >= 5.
     """
     n = 2
-    x = vp_sdp.add_iterate(n, lb=0, ub=5)
-    y = vp_sdp.add_iterate(n, lb=0, ub=5)
+    x = vp_sdp.iterate(n, lb=0, ub=5)
+    y = vp_sdp.iterate(n, lb=0, ub=5)
 
     vp_sdp.set_objective_norm(x - y, np.inf)
     result = vp_sdp.solve()
@@ -87,7 +87,7 @@ def test_infinity_norm_sdp_multiple_solves(vp_sdp):
     Test that solving multiple times with SDP infinity-norm doesn't accumulate constraints.
     """
     n = 2
-    x = vp_sdp.add_iterate(n, lb=-5, ub=5)
+    x = vp_sdp.iterate(n, lb=-5, ub=5)
 
     vp_sdp.set_objective_norm(x, np.inf)
     result1 = vp_sdp.solve()
@@ -105,12 +105,12 @@ def test_infinity_norm_sdp_vs_mip(vp, vp_sdp):
     n = 3
 
     # MIP
-    x_mip = vp.add_iterate(n, lb=-5, ub=5)
+    x_mip = vp.iterate(n, lb=-5, ub=5)
     vp.set_objective_norm(x_mip, np.inf)
     mip_result = vp.solve()
 
     # SDP
-    x_sdp = vp_sdp.add_iterate(n, lb=-5, ub=5)
+    x_sdp = vp_sdp.iterate(n, lb=-5, ub=5)
     vp_sdp.set_objective_norm(x_sdp, np.inf)
     sdp_result = vp_sdp.solve()
 
@@ -134,13 +134,13 @@ def test_infinity_norm_sdp_vs_one_norm(vp_sdp):
 
     # One-norm
     vp1 = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
-    x1 = vp1.add_iterate(n, lb=0, ub=5)
+    x1 = vp1.iterate(n, lb=0, ub=5)
     vp1.set_objective_norm(x1, 1)
     one_norm_result = vp1.solve()
 
     # Infinity-norm
     vp2 = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
-    x2 = vp2.add_iterate(n, lb=0, ub=5)
+    x2 = vp2.iterate(n, lb=0, ub=5)
     vp2.set_objective_norm(x2, np.inf)
     inf_norm_result = vp2.solve()
 
@@ -156,14 +156,14 @@ def test_infinity_norm_sdp_mip_after_relu(vp, vp_sdp):
     n = 3
 
     # MIP
-    x_mip = vp.add_iterate(n, lb=-5, ub=10)
-    z_mip = vp.step.relu(x_mip)
+    x_mip = vp.iterate(n, lb=-5, ub=10)
+    z_mip = vp.relu(x_mip)
     vp.set_objective_norm(z_mip, np.inf)
     mip_result = vp.solve()
 
     # SDP
-    x_sdp = vp_sdp.add_iterate(n, lb=-5, ub=10)
-    z_sdp = vp_sdp.step.relu(x_sdp)
+    x_sdp = vp_sdp.iterate(n, lb=-5, ub=10)
+    z_sdp = vp_sdp.relu(x_sdp)
     vp_sdp.set_objective_norm(z_sdp, np.inf)
     sdp_result = vp_sdp.solve()
 
@@ -179,14 +179,14 @@ def test_infinity_norm_sdp_mip_expression_difference(vp, vp_sdp):
     n = 2
 
     # MIP
-    x_mip = vp.add_iterate(n, lb=0, ub=5)
-    y_mip = vp.add_iterate(n, lb=0, ub=5)
+    x_mip = vp.iterate(n, lb=0, ub=5)
+    y_mip = vp.iterate(n, lb=0, ub=5)
     vp.set_objective_norm(x_mip - y_mip, np.inf)
     mip_result = vp.solve()
 
     # SDP
-    x_sdp = vp_sdp.add_iterate(n, lb=0, ub=5)
-    y_sdp = vp_sdp.add_iterate(n, lb=0, ub=5)
+    x_sdp = vp_sdp.iterate(n, lb=0, ub=5)
+    y_sdp = vp_sdp.iterate(n, lb=0, ub=5)
     vp_sdp.set_objective_norm(x_sdp - y_sdp, np.inf)
     sdp_result = vp_sdp.solve()
 
@@ -201,7 +201,7 @@ def test_infinity_norm_sdp_scalar(vp_sdp):
 
     For scalar x in [-3, 7], ||x||_inf = |x| should have maximum 7.
     """
-    x = vp_sdp.add_iterate(1, lb=-3, ub=7)
+    x = vp_sdp.iterate(1, lb=-3, ub=7)
 
     vp_sdp.set_objective_norm(x, np.inf)
     result = vp_sdp.solve()
@@ -218,7 +218,7 @@ def test_infinity_norm_sdp_symmetric_bounds(vp_sdp):
     Expected MIP result: 5.
     """
     n = 3
-    x = vp_sdp.add_iterate(n, lb=-5, ub=5)
+    x = vp_sdp.iterate(n, lb=-5, ub=5)
 
     vp_sdp.set_objective_norm(x, np.inf)
     result = vp_sdp.solve()

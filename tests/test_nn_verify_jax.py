@@ -50,9 +50,9 @@ def small_model():
 def test_nn_solve(vp, small_model):
     layers = from_jax(small_model)
 
-    input_expr = vp.add_param(2, lb=-1.0, ub=1.0)
+    input_expr = vp.parameter(2, lb=-1.0, ub=1.0)
     output_expr = vp.neural_network(input_expr, layers)
-    final_expr = vp.step.soft_threshold(output_expr, lambd=0.1)
+    final_expr = vp.soft_threshold(output_expr, lambd=0.1)
 
     vp.set_objective_norm(final_expr, np.inf)
     result = vp.solve()
@@ -72,7 +72,7 @@ def test_nn_simulator(small_model):
 
     vp = Verifier(method="simulator", obbt_solver=None)
     layers = from_jax(small_model)
-    input_param = vp.add_param(2, lb=-1.0, ub=1.0, samples=x_samples)
+    input_param = vp.parameter(2, lb=-1.0, ub=1.0, samples=x_samples)
     output_expr = vp.neural_network(input_param, layers)
 
     vp.set_objective_norm(output_expr, np.inf)

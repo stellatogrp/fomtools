@@ -118,12 +118,12 @@ def test_non_affine_dependence_is_rejected():
 
     def build(gamma):
         v = Verifier(method="simulator", obbt_solver=None)
-        p = v.add_param(m, lb=-np.ones(m), ub=np.ones(m))
-        y_prev = v.add_iterate(n, lb=z0, ub=z0)
-        y_curr = v.add_iterate(n, lb=z0, ub=z0)
+        p = v.parameter(m, lb=-np.ones(m), ub=np.ones(m))
+        y_prev = v.iterate(n, lb=z0, ub=z0)
+        y_curr = v.iterate(n, lb=z0, ub=z0)
         # gamma**2 is not affine in gamma.
         extrap = y_curr + (gamma**2) * (y_curr - y_prev)
-        y_next = v.step.relu(extrap + A.T @ p)
+        y_next = v.relu(extrap + A.T @ p)
         return Recording(v, next_state=[y_curr, y_next], state=[y_prev, y_curr])
 
     config = CodegenConfig(termination=TerminationSpec(max_iters=10))
@@ -141,10 +141,10 @@ def test_scheduled_factorization_is_rejected():
 
     def build(rho):
         v = Verifier(method="simulator", obbt_solver=None)
-        p = v.add_param(n, lb=-np.ones(n), ub=np.ones(n))
-        z = v.add_iterate(n, lb=z0, ub=z0)
+        p = v.parameter(n, lb=-np.ones(n), ub=np.ones(n))
+        z = v.iterate(n, lb=z0, ub=z0)
         # The schedule reaches the *system matrix*, not just a coefficient.
-        z_next = v.step.implicit_linear(z + p, output_mat=M + rho * np.eye(n))
+        z_next = v.implicit_linear(z + p, output_mat=M + rho * np.eye(n))
         return Recording(v, next_state=[z_next], state=[z])
 
     config = CodegenConfig(termination=TerminationSpec(max_iters=10))
@@ -169,9 +169,9 @@ def test_a_weakly_varying_factorization_is_still_rejected():
 
     def build(rho):
         v = Verifier(method="simulator", obbt_solver=None)
-        p = v.add_param(n, lb=-np.ones(n), ub=np.ones(n))
-        z = v.add_iterate(n, lb=z0, ub=z0)
-        z_next = v.step.implicit_linear(z + p, output_mat=M + rho * 1e-8 * np.eye(n))
+        p = v.parameter(n, lb=-np.ones(n), ub=np.ones(n))
+        z = v.iterate(n, lb=z0, ub=z0)
+        z_next = v.implicit_linear(z + p, output_mat=M + rho * 1e-8 * np.eye(n))
         return Recording(v, next_state=[z_next], state=[z])
 
     config = CodegenConfig(termination=TerminationSpec(max_iters=10))
@@ -188,14 +188,14 @@ def test_shape_change_between_probes_is_rejected():
 
     def build(gamma):
         v = Verifier(method="simulator", obbt_solver=None)
-        p = v.add_param(m, lb=-np.ones(m), ub=np.ones(m))
-        y_prev = v.add_iterate(n, lb=z0, ub=z0)
-        y_curr = v.add_iterate(n, lb=z0, ub=z0)
+        p = v.parameter(m, lb=-np.ones(m), ub=np.ones(m))
+        y_prev = v.iterate(n, lb=z0, ub=z0)
+        y_curr = v.iterate(n, lb=z0, ub=z0)
         extrap = y_curr + gamma * (y_curr - y_prev)
-        y_next = v.step.relu(extrap + A.T @ p)
+        y_next = v.relu(extrap + A.T @ p)
         # Branching on the probe value records a different number of steps.
         if gamma > 0.5:
-            y_next = v.step.relu(y_next)
+            y_next = v.relu(y_next)
         return Recording(v, next_state=[y_curr, y_next], state=[y_prev, y_curr])
 
     config = CodegenConfig(termination=TerminationSpec(max_iters=10))
@@ -218,11 +218,11 @@ def test_a_vanishing_state_slot_is_reported_helpfully():
 
     def build(gamma):
         v = Verifier(method="simulator", obbt_solver=None)
-        p = v.add_param(m, lb=-np.ones(m), ub=np.ones(m))
-        y_prev = v.add_iterate(n, lb=z0, ub=z0)
-        y_curr = v.add_iterate(n, lb=z0, ub=z0)
+        p = v.parameter(m, lb=-np.ones(m), ub=np.ones(m))
+        y_prev = v.iterate(n, lb=z0, ub=z0)
+        y_curr = v.iterate(n, lb=z0, ub=z0)
         extrap = y_curr + gamma * (y_curr - y_prev)
-        y_next = v.step.relu(extrap + A.T @ p)
+        y_next = v.relu(extrap + A.T @ p)
         # No explicit state=, so the layout is inferred from what is referenced.
         return Recording(v, next_state=[y_curr, y_next])
 
