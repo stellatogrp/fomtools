@@ -35,6 +35,12 @@ rules keep the coefficients there, where it can see them:
   arguments, so no code there may read ``FOM_SCHED_*`` or ``fom_sched_*``: a
   routine that could compare its argument to the table could be right for
   exactly the values the solver passes and wrong for every other.
+* **Step, rest and iterate routines.** ``fom_step_<block>``, its ``__rest`` and
+  ``fom_iterate`` (the config's ``owners``) may read only the data of the
+  matrices they cover, like a fused routine. Their activation parameters,
+  constants and bounds come in as arguments (``bias``, ``act``), so nothing in
+  ``fom_ops.c`` may read ``FOM_ACT_*`` or the constant and bound vectors (the
+  config's ``vectors``), and the setup functions may not call them.
 * **Checkable structure.** Each function these rules inspect (``fom_setup`` and
   ``fom_update_params`` in the solver, every ``fom_apply_<name>`` in
   ``fom_ops.c``) must be found as a single plain C definition with balanced
@@ -102,12 +108,16 @@ SETUP_FUNCTIONS = ("fom_setup", "fom_update_params")
 
 #: A use of ``fom_apply_<name>`` or ``fom_fused_<block>``: a call, or the
 #: function's address.
-_APPLY_REF = re.compile(r"\bfom_(?:apply|fused)_\w+\b")
+_APPLY_REF = re.compile(r"\bfom_(?:apply|fused|step)_\w+\b|\bfom_iterate\b")
 
 #: A read of the schedule tables or their accessors. ``fom_ops.c`` gets each
 #: schedule value as an argument; reading the tables there would let a routine
 #: special-case exactly the values the solver passes it.
 _SCHED_REF = re.compile(r"\bFOM_SCHED_\w+|\bfom_sched_\w+")
+
+#: The package's default activation parameters: a routine takes them as its
+#: ``act`` argument, so ``make verify`` can pass others.
+_ACT_REF = re.compile(r"\bFOM_ACT_\w+")
 
 _FUNCTION_DEF = re.compile(r"\b([A-Za-z_]\w*)\s*\([^;{)]*\)\s*\{")
 _C_KEYWORDS = frozenset({"if", "for", "while", "switch", "return", "sizeof"})
@@ -254,11 +264,14 @@ def _new_literals(code: str, known: set[str]) -> list[str]:
     ]
 
 
-def _routines(names, fused) -> dict[str, set[str]]:
+def _routines(names, fused, owners=None) -> dict[str, set[str]]:
     """Each entry point of ``fom_ops.c`` with the matrices whose data it may read:
-    ``fom_apply_<name>`` its own, ``fom_fused_<block>`` its members'."""
+    ``fom_apply_<name>`` its own, ``fom_fused_<block>`` its members', and each
+    routine of ``owners`` (step, ``__rest`` and iterate routines) the members it
+    lists."""
     out = {f"fom_apply_{name}": {name} for name in names}
     out.update({f"fom_fused_{block}": set(members) for block, members in (fused or {}).items()})
+    out.update({fn: set(members) for fn, members in (owners or {}).items()})
     return out
 
 
@@ -283,7 +296,9 @@ def _routine_regions(code: str, routines) -> tuple[dict[str, set[str]], dict, st
     return regions, bodies, outside, violations
 
 
-def _check_ops(code: str, base: str, matvec_names, fused=None, exact=()) -> list[str]:
+def _check_ops(
+    code: str, base: str, matvec_names, fused=None, exact=(), owners=None, vectors=()
+) -> list[str]:
     """``fom_ops.c``: each routine (with the helpers it reaches) on its own data,
     literals per routine, no schedule reads, and no entry points but the routines.
 
@@ -292,7 +307,7 @@ def _check_ops(code: str, base: str, matvec_names, fused=None, exact=()) -> list
     literal is checked as exactly as one read from ``fom_data.c``: their literal
     rule is lifted. A helper they share with a routine outside ``exact`` is still
     held to it, through that routine's region."""
-    routines = _routines(matvec_names, fused)
+    routines = _routines(matvec_names, fused, owners)
     regions, bodies, outside, violations = _routine_regions(code, routines)
     base_regions, base_bodies, base_outside, _ = _routine_regions(base, routines)
     for fn, prefix, _ in _iter_functions(code):
@@ -330,6 +345,17 @@ def _check_ops(code: str, base: str, matvec_names, fused=None, exact=()) -> list
             f"fom_ops.c reads the schedule ({ref}); a routine takes its schedule "
             "values as arguments, and must apply them whatever their value"
         )
+    for ref in sorted(set(_ACT_REF.findall(code))):
+        violations.append(
+            f"fom_ops.c reads {ref}; a step routine takes its activation parameters "
+            "as its `act` argument, and must apply whatever it is passed"
+        )
+    for name in vectors:
+        if _mat_data(name).search(code):
+            violations.append(
+                f"fom_ops.c reads FOM_MAT_{name}, a constant or activation-bound vector; "
+                "it comes in through a routine's `bias` or `act` argument"
+            )
     return _new_literals(outside, set(float_literals(base_outside))) + violations
 
 
@@ -349,6 +375,8 @@ def check(
     baseline: str | None = None,
     fused=None,
     exact=(),
+    owners=None,
+    vectors=(),
 ) -> list[str]:
     """Rule violations in a rewritten ``kind`` (``"solver"`` or ``"ops"``) source.
 
@@ -358,12 +386,15 @@ def check(
     matrix data, so every product goes through a checked ``fom_apply_<name>``).
     ``fused`` maps each ``fom_fused_<block>`` to its member matrices, and
     ``exact`` names the ``fom_ops.c`` routines probed on every unit vector, which
-    may hold their coefficients as literals.
+    may hold their coefficients as literals. ``owners`` maps each step,
+    ``__rest`` and iterate routine to the matrices it may read, and ``vectors``
+    names the constant and activation-bound vectors no ``fom_ops.c`` code may
+    read (they come in as arguments).
     """
     code = strip_c_comments_and_strings(source)
     base = strip_c_comments_and_strings(baseline) if baseline is not None else ""
     if kind == "ops":
-        return _check_ops(code, base, matvec_names, fused, set(exact))
+        return _check_ops(code, base, matvec_names, fused, set(exact), owners, vectors)
     if kind == "translation":
         return _solver_data_reads(code, matvec_names)
     violations = _new_literals(code, set(float_literals(base)))
@@ -396,6 +427,8 @@ def main(config_path: str) -> int:
             entry.get("baseline"),
             config.get("fused"),
             config.get("exact", ()),
+            config.get("owners"),
+            config.get("vectors", ()),
         ):
             print(f"VERIFY FAILED: kernel rule: {entry['path']}: {v}")
             failed = True

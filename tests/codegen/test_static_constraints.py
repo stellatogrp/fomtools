@@ -90,6 +90,10 @@ def _ops(ir, bodies=None) -> str:
             f"{{ {bodies.get('fused_' + b.name, '')} }}"
             for b in _fused_blocks(ir)
         ]
+        + [
+            f"void {fn}(const fom_float *x, fom_float *out) {{ }}"
+            for fn in EmbeddedCTarget(CodegenConfig())._step_owners(ir)
+        ]
     )
 
 

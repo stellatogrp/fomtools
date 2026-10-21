@@ -245,6 +245,168 @@ def _selections(ir: FomIR) -> dict[str, np.ndarray]:
     return out
 
 
+@dataclass(frozen=True)
+class StepBlock(FusedBlock):
+    """One output block computed whole by a ``fom_step_<name>``.
+
+    ``out = act(bias + sum_k scale_k * (M_k @ src_k))``, overwriting ``out``: the
+    per-iteration products of a body step (or of the state update, ``su``), with
+    the caller's ``bias`` (the constant and the parameter terms, which the solver
+    can still hoist) and the step's activation folded in. The activation's
+    parameters come in through a ``FomAct_<name>`` the caller passes (the package
+    default is ``FOM_ACT_<name>``), so ``make verify`` can switch the activation
+    off and recover every member exactly, then check it on and at random bounds.
+    """
+
+    act: object = None  # the body step's ActivationOp; None for identity and su
+
+    @property
+    def activated(self) -> bool:
+        return self.act is not None
+
+
+def _step_blocks(ir: FomIR) -> list[StepBlock]:
+    """A `StepBlock` per body step without a linear solve whose linear op has a
+    product by a per-iteration source, and one for the state update. None for an
+    unrolled IR, whose body is the whole run."""
+    if getattr(ir, "unrolled", False):
+        return []
+    ops = [(s.name, s.linear_op, s.activation, s.solve) for s in ir.body]
+    ops.append(("su", ir.state_update, None, None))
+    blocks = []
+    for name, lin, act, solve in ops:
+        if solve is not None:
+            continue
+        terms = tuple(t for _, t in _live_terms(ir, lin) if not t.source.startswith("param:"))
+        if not terms:
+            continue
+        if act is not None and act.kind == ActivationKind.IDENTITY:
+            act = None
+        blocks.append(StepBlock(name=name, terms=terms, rows=lin.out_dim, act=act))
+    return blocks
+
+
+def _iterate_blocks(ir: FomIR, steps: list[StepBlock]) -> list[StepBlock]:
+    """The step blocks ``fom_iterate`` chains (every body step, then ``su``), or
+    ``[]`` when some body step has no step routine (a linear solve, say)."""
+    names = [s.name for s in ir.body] + ["su"]
+    by_name = {b.name: b for b in steps}
+    return [by_name[n] for n in names] if all(n in by_name for n in names) else []
+
+
+def _act_type(block: StepBlock) -> str:
+    return f"FomAct_{block.name}"
+
+
+def _act_typedef(block: StepBlock) -> list[str]:
+    """The ``FomAct_<block>`` struct holding the activation's parameters."""
+    kind = block.act.kind
+    if kind == ActivationKind.SOFT_THRESHOLD:
+        fields, what = ["fom_float lambd;"], "soft threshold: v -> sign(v) max(|v| - lambd, 0)"
+    elif kind == ActivationKind.RELU:
+        fields, what = ["const fom_float *lo;"], "relu: v -> max(v, lo[i]) (lo = 0 by default)"
+    elif kind == ActivationKind.SATURATED_LINEAR:
+        fields = ["const fom_float *lo;", "const fom_float *hi;"]
+        what = "saturated linear: v -> min(max(v, lo[i]), hi[i])"
+    else:
+        raise ValueError(f"no step activation for {kind}")
+    return [f"/* {what} */", f"typedef struct {{ {' '.join(fields)} }} {_act_type(block)};"]
+
+
+def _act_apply(block: StepBlock, v: str, i: str, act: str, indent: str) -> list[str]:
+    """C statements applying ``block``'s activation, with parameters ``act->``, to
+    the variable ``v`` of row ``i`` (the oracle's order of operations)."""
+    if block.act is None:
+        return []
+    kind = block.act.kind
+    if kind == ActivationKind.SOFT_THRESHOLD:
+        return [
+            f"{indent}{v} = ({v} > {act}->lambd) ? ({v} - {act}->lambd)"
+            f" : (({v} < -{act}->lambd) ? ({v} + {act}->lambd) : 0.0);"
+        ]
+    lines = [f"{indent}if ({v} < {act}->lo[{i}]) {v} = {act}->lo[{i}];"]
+    if kind == ActivationKind.SATURATED_LINEAR:
+        lines.append(f"{indent}if ({v} > {act}->hi[{i}]) {v} = {act}->hi[{i}];")
+    return lines
+
+
+def _selection_rows(ir: FomIR, block: FusedBlock) -> list[tuple[int, int, int]]:
+    """``(row, source index, column)`` of the rows of ``block`` that copy one
+    source entry: exactly one unscaled member has exactly one entry there, equal
+    to exactly 1.0, and every other member's row is empty."""
+    rows = block.rows
+    count = np.zeros(rows, dtype=int)
+    single: dict[int, tuple[int, int, float, object]] = {}
+    for t in block.terms:
+        rowptr, colidx, vals = ir.matrices[t.matrix].csr()
+        lengths = np.diff(np.asarray(rowptr))
+        count += lengths
+        si = block.sources.index(t.source)
+        for i in np.flatnonzero(lengths == 1):
+            single[int(i)] = (si, int(colidx[rowptr[i]]), float(vals[rowptr[i]]), t.scale)
+    out = []
+    for i in np.flatnonzero(count == 1):
+        si, col, val, scale = single[int(i)]
+        if val == 1.0 and scale is None:
+            out.append((int(i), si, col))
+    return out
+
+
+def _selection_rows_description(block: FusedBlock, rows: list[tuple[int, int, int]]) -> str:
+    """Runs of copied rows, e.g. ``rows 0..48 copy t_t0[0..48]``."""
+    runs: list[list[int]] = []
+    for i, si, col in rows:
+        if runs and runs[-1][1] == i - 1 and runs[-1][2] == si and runs[-1][4] == col - 1:
+            runs[-1][1], runs[-1][4] = i, col
+        else:
+            runs.append([i, i, si, col, col])
+    parts = []
+    for a, b, si, c, d in runs:
+        src = _fused_src(block.sources[si])
+        parts.append(
+            f"row {a} copies {src}[{c}]" if a == b else f"rows {a}..{b} copy {src}[{c}..{d}]"
+        )
+    return "; ".join(parts)
+
+
+def _step_signature(block: StepBlock, fname: str) -> str:
+    args = [f"const fom_float *{_fused_src(s)}" for s in block.sources]
+    args += [f"fom_float {_fused_scale(c)}" for c in block.scales]
+    args.append("const fom_float *bias")
+    if block.activated:
+        args.append(f"const {_act_type(block)} *act")
+    return f"void {fname}({', '.join(args + ['fom_float *out'])})"
+
+
+def _step_formula(block: StepBlock) -> str:
+    inner = _fused_formula(block)[len("out += ") :]
+    act = block.act.kind.value if block.activated else ""
+    return f"out = {act}(bias + {inner})" if act else f"out = bias + {inner}"
+
+
+def _iterate_scales(blocks: list[StepBlock]) -> list[str]:
+    return list(dict.fromkeys(c for b in blocks for c in b.scales))
+
+
+def _iterate_signature(blocks: list[StepBlock], fname: str) -> str:
+    args = ["const fom_float *state"]
+    args += [f"fom_float {_fused_scale(c)}" for c in _iterate_scales(blocks)]
+    args += [f"const fom_float *bias_{b.name}" for b in blocks]
+    args += [f"const {_act_type(b)} *act_{b.name}" for b in blocks if b.activated]
+    args += [f"fom_float *t_{b.name}" for b in blocks if b.name != "su"]
+    return f"void {fname}({', '.join(args + ['fom_float *new_state'])})"
+
+
+def _step_call(block: StepBlock, fname: str, out: str) -> str:
+    """A call of ``fname`` (a step routine of ``block``) inside ``fom_iterate``."""
+    args = [_fused_src(s) for s in block.sources]
+    args += [_fused_scale(c) for c in block.scales]
+    args.append(f"bias_{block.name}")
+    if block.activated:
+        args.append(f"act_{block.name}")
+    return f"    {fname}({', '.join(args + [out])});"
+
+
 def _is_csr(md) -> bool:
     """Emit a matrix as sparse CSR when it is large and structurally sparse."""
     shape = md.shape
@@ -542,6 +704,8 @@ class EmbeddedCTarget(TargetDescriptor):
             lines.append(_c_extern(f"FOM_SEL_{name}_SRC", "fom_int"))
             lines.append("")
 
+        lines += self._step_data_header(ir)
+
         # Activation scalars (soft-threshold lambda; scalar saturated-linear
         # bounds). Vector clip bounds are emitted above as FOM_MAT_* arrays.
         for step in ir.body:
@@ -588,6 +752,10 @@ class EmbeddedCTarget(TargetDescriptor):
         for name, src in self._selection_data(ir).items():
             lines.append(_c_int_array(f"FOM_SEL_{name}_SRC", src, storage="const"))
             lines.append("")
+        steps = self._step_data_source(ir)
+        if any(b.activated for b in self._steps(ir)):
+            lines.insert(1, '#include "fom_ops.h"  /* the FomAct_<block> types */')
+        lines += steps
         return "\n".join(lines)
 
     # -- matrix-vector products (sparse CSR where structured) --------------
@@ -624,6 +792,7 @@ class EmbeddedCTarget(TargetDescriptor):
         for block in blocks:
             lines.append(f"/* {_fused_formula(block)} */")
             lines.append(_fused_signature(ir, block, f"fom_fused_{block.name}") + ";")
+        lines += self._step_ops_header(ir)
         lines += self._objective_declaration(ir)
         lines += ["", "#ifdef __cplusplus", "}", "#endif", "", "#endif /* FOM_OPS_H */", ""]
         return "\n".join(lines)
@@ -661,6 +830,7 @@ class EmbeddedCTarget(TargetDescriptor):
             lines += self._apply_routine(name, ir.matrices[name], f"fom_apply_{name}")
         for block in self._fused(ir):
             lines += self._fused_routine(ir, block)
+        lines += self._step_ops_source(ir)
         return "\n".join(lines)
 
     def _fused(self, ir: FomIR) -> list[FusedBlock]:
@@ -672,6 +842,256 @@ class EmbeddedCTarget(TargetDescriptor):
     def _selection_data(self, ir: FomIR) -> dict[str, np.ndarray]:
         """Selections whose index data ``fom_data.c`` carries (`_selections`)."""
         return _selections(ir) if self.fused_kernels else {}
+
+    def _steps(self, ir: FomIR) -> list[StepBlock]:
+        """The step routines this target emits and checks (as `_fused`)."""
+        return _step_blocks(ir) if self.fused_kernels and self._checked_ops(ir) else []
+
+    def _iterate(self, ir: FomIR) -> list[StepBlock]:
+        """The step blocks ``fom_iterate`` chains, or ``[]`` if it is not emitted."""
+        return _iterate_blocks(ir, self._steps(ir))
+
+    def _selrow_blocks(self, ir: FomIR) -> dict[str, tuple[FusedBlock, list]]:
+        """Fused and step blocks with selection rows (`_selection_rows`), by name."""
+        out = {}
+        for block in [*self._fused(ir), *self._steps(ir)]:
+            if block.name not in out:
+                rows = _selection_rows(ir, block)
+                if rows:
+                    out[block.name] = (block, rows)
+        return out
+
+    def _rests(self, ir: FomIR) -> list[tuple[str, FusedBlock, set[int]]]:
+        """``(routine, block, selection rows)`` of each ``fom_fused_<block>__rest`` /
+        ``fom_step_<block>__rest``: the block on every row but its selection rows,
+        emitted where it has some of each."""
+        sel = self._selrow_blocks(ir)
+        out = []
+        for kind, blocks in (("fused", self._fused(ir)), ("step", self._steps(ir))):
+            for b in blocks:
+                if b.name in sel and len(sel[b.name][1]) < b.rows:
+                    out.append((f"fom_{kind}_{b.name}__rest", b, {r for r, _, _ in sel[b.name][1]}))
+        return out
+
+    def _member_row_sums(
+        self, ir: FomIR, block: FusedBlock, acc: str
+    ) -> tuple[list[str], list[str]]:
+        """Row ``i`` of each member's product, added to ``acc`` in linear-op order
+        (scaled ones times their schedule value), and the loop indices it uses."""
+        body, need = [], set()
+        for t in block.terms:
+            md = ir.matrices[t.matrix]
+            src = _fused_src(t.source)
+            mat = f"FOM_MAT_{t.matrix}"
+            body.append("        s = 0.0;")
+            if _is_csr(md):
+                need.add("p")
+                body.append(
+                    f"        for (p = {mat}_ROWPTR[i]; p < {mat}_ROWPTR[i + 1]; ++p) "
+                    f"s += {mat}_VALS[p] * {src}[{mat}_COLIDX[p]];"
+                )
+            else:
+                need.add("j")
+                cols = md.shape[1] if len(md.shape) > 1 else 1
+                body.append(
+                    f"        for (j = 0; j < {cols}; ++j) s += {mat}[i * {cols} + j] * {src}[j];"
+                )
+            body.append(
+                f"        {acc} += {_fused_scale(t.scale)} * s;"
+                if t.scale
+                else f"        {acc} += s;"
+            )
+        return body, [v for v in ("p", "j") if v in need]
+
+    def _block_routine(
+        self, ir: FomIR, block: FusedBlock, signature: str, step: bool, skip: set[int] = frozenset()
+    ) -> list[str]:
+        """A generated fused (``out +=``) or step (``out = act(bias + ...)``)
+        routine, on every row of ``block`` but those in ``skip`` (left untouched)."""
+        body, private = self._member_row_sums(ir, block, "v" if step else "out[i]")
+        lines = [signature + " {", f"    fom_int {', '.join(['i', 'r'] + private)};"]
+        lines += self._omp_for(f"private({', '.join(['i'] + private)})")
+        count = f"FOM_REST_{block.name}_N" if skip else str(block.rows)
+        lines += [
+            f"    for (r = 0; r < {count}; ++r) {{",
+            "        fom_float s" + (", v;" if step else ";"),
+            f"        i = FOM_REST_{block.name}_ROWS[r];" if skip else "        i = r;",
+        ]
+        if step:
+            lines.append("        v = bias[i];")
+        lines += body
+        if step:
+            lines += _act_apply(block, "v", "i", "act", "        ")
+            lines.append("        out[i] = v;")
+        lines += ["    }", "}", ""]
+        return lines
+
+    def _step_ops_header(self, ir: FomIR) -> list[str]:
+        """Prototypes of the step, rest and iterate routines, for ``fom_ops.h``."""
+        steps, lines = self._steps(ir), []
+        if steps:
+            lines += [
+                "",
+                "/* Step routines: a whole output block, out = act(bias + sum_k s_k M_k src_k),",
+                "   OVERWRITING out. `bias` is the constant plus the parameter terms (the",
+                "   caller computes it, so it can be hoisted); `act` carries the activation's",
+                "   parameters (pass &FOM_ACT_<block>). Checked against the members and a",
+                "   reference activation, with the activation off, on, and at random bounds. */",
+            ]
+        for b in steps:
+            if b.activated:
+                lines += _act_typedef(b)
+                lines.append(f"extern const {_act_type(b)} FOM_ACT_{b.name};")
+            lines.append(f"/* {_step_formula(b)} */")
+            lines.append(_step_signature(b, f"fom_step_{b.name}") + ";")
+        rests = self._rests(ir)
+        if rests:
+            lines += [
+                "",
+                "/* The same, on every row but the block's selection rows (FOM_SELROWS_<block>",
+                "   in fom_data.h), which it leaves untouched: the solver writes those copies. */",
+            ]
+        for fn, b, _ in rests:
+            sig = (
+                _step_signature(b, fn)
+                if fn.startswith("fom_step_")
+                else _fused_signature(ir, b, fn)
+            )
+            lines.append(sig + ";")
+        blocks = self._iterate(ir)
+        if blocks:
+            lines += [
+                "",
+                "/* One whole iteration: every body step in order (temporaries written to",
+                "   t_<name>), then the state update into new_state. Checked against the",
+                "   chained reference steps, temporaries included. */",
+                _iterate_signature(blocks, "fom_iterate") + ";",
+            ]
+        return lines
+
+    def _step_ops_source(self, ir: FomIR) -> list[str]:
+        """The generated step, rest and iterate routines, for ``fom_ops.c``."""
+        lines = []
+        for b in self._steps(ir):
+            lines += self._block_routine(ir, b, _step_signature(b, f"fom_step_{b.name}"), step=True)
+        for fn, b, skip in self._rests(ir):
+            step = fn.startswith("fom_step_")
+            sig = _step_signature(b, fn) if step else _fused_signature(ir, b, fn)
+            lines += self._block_routine(ir, b, sig, step=step, skip=skip)
+        blocks = self._iterate(ir)
+        if blocks:
+            lines.append(_iterate_signature(blocks, "fom_iterate") + " {")
+            for b in blocks:
+                out = "new_state" if b.name == "su" else f"t_{b.name}"
+                lines.append(_step_call(b, f"fom_step_{b.name}", out))
+            lines += ["}", ""]
+        return lines
+
+    def _step_ops_ref(self, ir: FomIR) -> tuple[list[str], list[str]]:
+        """Reference step and iterate routines (prototypes, definitions) for
+        ``test/ops_ref``: the members' references, then the activation."""
+        protos, lines = [], []
+        for b in self._steps(ir):
+            sig = _step_signature(b, f"fom_ref_step_{b.name}")
+            protos.append(sig + ";")
+            lines += [
+                sig + " {",
+                f"    static fom_float pre[{b.rows}], tmp[{b.rows}];",
+                "    fom_int i;",
+                f"    for (i = 0; i < {b.rows}; ++i) pre[i] = bias[i];",
+            ]
+            for t in b.terms:
+                scale = f"{_fused_scale(t.scale)} * " if t.scale else ""
+                lines += [
+                    f"    for (i = 0; i < {b.rows}; ++i) tmp[i] = 0.0;",
+                    f"    fom_ref_apply_{t.matrix}({_fused_src(t.source)}, tmp);",
+                    f"    for (i = 0; i < {b.rows}; ++i) pre[i] += {scale}tmp[i];",
+                ]
+            lines += [f"    for (i = 0; i < {b.rows}; ++i) {{", "        fom_float v = pre[i];"]
+            lines += _act_apply(b, "v", "i", "act", "        ")
+            lines += ["        out[i] = v;", "    }", "}", ""]
+        blocks = self._iterate(ir)
+        if blocks:
+            sig = _iterate_signature(blocks, "fom_ref_iterate")
+            protos.append(sig + ";")
+            lines.append(sig + " {")
+            for b in blocks:
+                out = "new_state" if b.name == "su" else f"t_{b.name}"
+                lines.append(_step_call(b, f"fom_ref_step_{b.name}", out))
+            lines += ["}", ""]
+        return protos, lines
+
+    def _step_data_header(self, ir: FomIR) -> list[str]:
+        """``FOM_SELROWS_<block>_*`` declarations for ``fom_data.h``."""
+        lines = []
+        sel = self._selrow_blocks(ir)
+        if sel:
+            lines += [
+                "/* Selection rows: row FOM_SELROWS_<b>_ROW[k] of block <b> is exactly",
+                "   source FOM_SELROWS_<b>_SRC[k] (0-based, in the order of the block's",
+                "   fom_fused/fom_step arguments) at index FOM_SELROWS_<b>_COL[k]. A solver",
+                "   may write these rows itself (see SPEC.md and the __rest routines). */",
+            ]
+        for name, (block, rows) in sel.items():
+            lines.append(f"/* {name}: {_selection_rows_description(block, rows)} */")
+            lines.append(f"#define FOM_SELROWS_{name}_N {len(rows)}")
+            for part in ("ROW", "SRC", "COL"):
+                lines.append(_c_extern(f"FOM_SELROWS_{name}_{part}", "fom_int"))
+            lines.append("")
+        for name, block, skip in self._rest_blocks(ir):
+            lines.append(
+                f"/* {name}: the rows a __rest routine computes (all but the selection rows). */"
+            )
+            lines.append(f"#define FOM_REST_{name}_N {block.rows - len(skip)}")
+            lines.append(_c_extern(f"FOM_REST_{name}_ROWS", "fom_int"))
+            lines.append("")
+        return lines
+
+    def _rest_blocks(self, ir: FomIR) -> list[tuple[str, FusedBlock, set[int]]]:
+        """The blocks with a ``__rest`` routine, once each."""
+        seen = {}
+        for _, block, skip in self._rests(ir):
+            seen.setdefault(block.name, (block.name, block, skip))
+        return list(seen.values())
+
+    def _step_data_source(self, ir: FomIR) -> list[str]:
+        """Selection-row arrays and the default ``FOM_ACT_<block>`` instances."""
+        lines = []
+        for name, block, skip in self._rest_blocks(ir):
+            rows = [i for i in range(block.rows) if i not in skip]
+            lines.append(_c_int_array(f"FOM_REST_{name}_ROWS", rows, "const"))
+            lines.append("")
+        for name, (_, rows) in self._selrow_blocks(ir).items():
+            for k, part in enumerate(("ROW", "SRC", "COL")):
+                lines.append(
+                    _c_int_array(f"FOM_SELROWS_{name}_{part}", [r[k] for r in rows], "const")
+                )
+            lines.append("")
+        for b in self._steps(ir):
+            if not b.activated:
+                continue
+            act, n = b.act, b.rows
+            if act.kind == ActivationKind.SOFT_THRESHOLD:
+                init = f"(fom_float){_fmt_float(act.lambd)}"
+            else:
+                bounds = []
+                for side, vec, scalar in (
+                    ("LO", act.lower, act.lower_scalar if act.kind != ActivationKind.RELU else 0.0),
+                    ("HI", act.upper, act.upper_scalar),
+                ):
+                    if side == "HI" and act.kind == ActivationKind.RELU:
+                        continue
+                    if vec is not None and act.kind == ActivationKind.SATURATED_LINEAR:
+                        bounds.append(f"FOM_MAT_{vec}")
+                    else:
+                        lines.append(
+                            _c_array(f"FOM_ACT_{b.name}_{side}", np.full(n, float(scalar)))
+                        )
+                        bounds.append(f"FOM_ACT_{b.name}_{side}")
+                init = ", ".join(bounds)
+            lines.append(f"const {_act_type(b)} FOM_ACT_{b.name} = {{{init}}};")
+            lines.append("")
+        return lines
 
     def _fused_routine(self, ir: FomIR, block: FusedBlock) -> list[str]:
         """The generated ``fom_fused_<block>``: each member's row product, in
@@ -807,6 +1227,9 @@ class EmbeddedCTarget(TargetDescriptor):
             _fused_signature(ir, block, f"fom_ref_fused_{block.name}") + ";"
             for block in self._fused(ir)
         ]
+        if any(b.activated for b in self._steps(ir)):
+            lines.insert(4, '#include "fom_ops.h"')
+        lines += self._step_ops_ref(ir)[0]
         lines += ["", "#endif /* FOM_OPS_REF_H */", ""]
         return "\n".join(lines)
 
@@ -829,6 +1252,7 @@ class EmbeddedCTarget(TargetDescriptor):
                     f"    for (i = 0; i < {block.rows}; ++i) out[i] += {scale}tmp[i];",
                 ]
             lines += ["}", ""]
+        lines += self._step_ops_ref(ir)[1]
         return "\n".join(lines)
 
     def _ops_basis_probes(self, md) -> bool:
@@ -1456,6 +1880,492 @@ class EmbeddedCTarget(TargetDescriptor):
             ]
         return lines
 
+    def _step_basis_probes(self, ir: FomIR, blocks: list[FusedBlock], settings: int) -> bool:
+        """Whether unit-vector probes of ``blocks`` (members' work per probe, times
+        ``settings`` schedule settings) fit the work budget."""
+        work = 0
+        for block in blocks:
+            for t in block.terms:
+                md = ir.matrices[t.matrix]
+                rows, cols = md.shape[0], md.shape[1] if len(md.shape) > 1 else 1
+                work += cols * ((md.nnz() if _is_csr(md) else rows * cols) + rows)
+        return work * settings <= self._OPS_PROBE_BUDGET
+
+    def _iterate_basis_probes(self, ir: FomIR, blocks: list[StepBlock]) -> bool:
+        """Every unit vector of the state, at ``2 + #schedules`` settings, through
+        every block of the iteration."""
+        work = 0
+        for block in blocks:
+            for t in block.terms:
+                md = ir.matrices[t.matrix]
+                rows, cols = md.shape[0], md.shape[1] if len(md.shape) > 1 else 1
+                work += (md.nnz() if _is_csr(md) else rows * cols) + rows
+        settings = 2 + len(_iterate_scales(blocks))
+        return ir.state_dim * settings * work <= self._OPS_PROBE_BUDGET
+
+    def _step_check_data(self, ir: FomIR) -> list[str]:
+        """Random sources, schedule values, biases and activation draws for the
+        step, rest and iterate checks, O(rows + cols) each."""
+        lines = []
+        rng = np.random.default_rng(self.config.seed + 4)
+        k = self._OPS_CHECK_RANDOM
+        checked = {b.name: b for b in self._steps(ir)}
+        checked.update({b.name: b for _, b, _ in self._rests(ir) if b.name not in checked})
+        for name, block in checked.items():
+            up = f"FOM_VERIFY_STEP_{name.upper()}"
+            for si, source in enumerate(block.sources):
+                n = _source_dim(ir, block, source)
+                lines.append(_c_array_2d(f"{up}_X{si}", rng.standard_normal((k, n)), f"[{k}][{n}]"))
+            if block.scales:
+                ns = len(block.scales)
+                lines.append(_c_array_2d(f"{up}_SC", rng.uniform(-2, 2, (k, ns)), f"[{k}][{ns}]"))
+            r = block.rows
+            lines.append(_c_array_2d(f"{up}_BIAS", rng.standard_normal((k, r)), f"[{k}][{r}]"))
+            lines.append(_c_array_2d(f"{up}_R1", rng.standard_normal((k, r)), f"[{k}][{r}]"))
+            lines.append(
+                _c_array_2d(f"{up}_R2", np.abs(rng.standard_normal((k, r))), f"[{k}][{r}]")
+            )
+            lines.append("")
+        blocks = self._iterate(ir)
+        if blocks:
+            n = ir.state_dim
+            lines.append(
+                _c_array_2d("FOM_VERIFY_ITER_X", rng.standard_normal((k, n)), f"[{k}][{n}]")
+            )
+            scales = _iterate_scales(blocks)
+            ns = max(len(scales), 1)
+            lines.append(
+                _c_array_2d(
+                    "FOM_VERIFY_ITER_SC", rng.uniform(-2, 2, (k + 1, ns)), f"[{k + 1}][{ns}]"
+                )
+            )
+            for b in blocks:
+                up = f"FOM_VERIFY_ITER_{b.name.upper()}"
+                lines.append(
+                    _c_array_2d(f"{up}_BIAS", rng.standard_normal((k, b.rows)), f"[{k}][{b.rows}]")
+                )
+                if b.activated:
+                    lines.append(
+                        _c_array_2d(
+                            f"{up}_R1", rng.standard_normal((k, b.rows)), f"[{k}][{b.rows}]"
+                        )
+                    )
+                    lines.append(
+                        _c_array_2d(
+                            f"{up}_R2", np.abs(rng.standard_normal((k, b.rows))), f"[{k}][{b.rows}]"
+                        )
+                    )
+            lines.append("")
+        return lines
+
+    @staticmethod
+    def _act_linear(block: StepBlock, act: str, lo: str, hi: str, indent: str) -> list[str]:
+        """Set the harness ``act`` so the activation is the identity."""
+        kind = block.act.kind
+        if kind == ActivationKind.SOFT_THRESHOLD:
+            return [f"{indent}{act}.lambd = 0.0;"]
+        lines = [f"{indent}for (i = 0; i < {block.rows}; ++i) {lo}[i] = -FOM_VERIFY_HUGE;"]
+        lines.append(f"{indent}{act}.lo = {lo};")
+        if kind == ActivationKind.SATURATED_LINEAR:
+            lines.append(f"{indent}for (i = 0; i < {block.rows}; ++i) {hi}[i] = FOM_VERIFY_HUGE;")
+            lines.append(f"{indent}{act}.hi = {hi};")
+        return lines
+
+    @staticmethod
+    def _act_random(
+        block: StepBlock, act: str, lo: str, hi: str, pre: str, r1: str, r2: str, indent: str
+    ) -> list[str]:
+        """Set the harness ``act`` to random parameters around the pre-activation
+        values ``pre``, so the activation is active on about half the rows."""
+        n = block.rows
+        lines = [
+            f"{indent}m = 0.0;",
+            f"{indent}for (i = 0; i < {n}; ++i) m += (({pre}[i] < 0) ? -{pre}[i] : {pre}[i]);",
+            f"{indent}m = (m > 0) ? m / {n} : 1.0;",
+        ]
+        kind = block.act.kind
+        if kind == ActivationKind.SOFT_THRESHOLD:
+            return lines + [f"{indent}{act}.lambd = 0.5 * m;"]
+        lines.append(f"{indent}for (i = 0; i < {n}; ++i) {lo}[i] = {pre}[i] + {r1}[i] * m;")
+        lines.append(f"{indent}{act}.lo = {lo};")
+        if kind == ActivationKind.SATURATED_LINEAR:
+            lines.append(f"{indent}for (i = 0; i < {n}; ++i) {hi}[i] = {lo}[i] + {r2}[i] * m;")
+            lines.append(f"{indent}{act}.hi = {hi};")
+        return lines
+
+    def _step_check_main(self, ir: FomIR) -> list[str]:
+        """Check each step routine, and each ``__rest`` routine, against the reference.
+
+        Step routines overwrite ``out``: the routine and the reference start from
+        different garbage. With the harness activation switched off (``lambd = 0``,
+        or bounds at +-``FOM_VERIFY_HUGE``) a step is linear in each source, so
+        unit-vector probes of one source at a time (the others zero, a random
+        bias), first with every schedule value at 0 and then with each alone at 1,
+        recover every member and the bias pass-through entry by entry. Random
+        probes follow with the activation off, with the package's
+        ``FOM_ACT_<block>``, and with random parameters around the pre-activation
+        values (active on about half the rows), so the activation itself is held
+        to the reference. A ``__rest`` routine is held to the full reference on
+        its rows and must leave every selection row bit-for-bit untouched.
+        """
+        lines = []
+        k = self._OPS_CHECK_RANDOM
+        routines = [(f"fom_step_{b.name}", b, frozenset()) for b in self._steps(ir)]
+        routines += [(fn, b, skip) for fn, b, skip in self._rests(ir)]
+        for fn, block, skip in routines:
+            step = fn.startswith("fom_step_")
+            up = f"FOM_VERIFY_STEP_{block.name.upper()}"
+            srcs = [_fused_src(x) for x in block.sources]
+            dims = [_source_dim(ir, block, x) for x in block.sources]
+            ns = len(block.scales)
+            rows = block.rows
+            act = step and getattr(block, "activated", False)
+            basis = self._step_basis_probes(ir, [block], 1 + ns)
+            ref_fn = f"fom_ref_step_{block.name}" if step else f"fom_ref_fused_{block.name}"
+            settings = ["all schedule values 0"] + [f"{_fused_scale(c)} = 1" for c in block.scales]
+            modes = (
+                ["activation off", "package activation", "random activation"] if act else ["random"]
+            )
+            args = ", ".join(f"x{si}" for si in range(len(srcs)))
+            args += "".join(f", sc[{c}]" for c in range(ns))
+            if step:
+                args += ", bias"
+
+            def call(f: str, use: str, out: str) -> str:
+                return f"            {f}({args}{', ' + use if act else ''}, {out});"
+
+            def check(use: str, fail: list[str]) -> list[str]:
+                init_ref = "-(fom_float)(i % 5) - 0.25" if step else "got[i]"
+                out = [
+                    f"            for (i = 0; i < {rows}; ++i) {{",
+                    "                got[i] = (fom_float)(i % 7) - 3.5;",
+                    f"                ref[i] = {init_ref};",
+                    "            }",
+                    call(fn, use, "got"),
+                    call(ref_fn, use, "ref"),
+                    "            err = 0.0; scale = 1.0; bad = 0; touched = -1;",
+                    f"            for (i = 0; i < {rows}; ++i) {{",
+                ]
+                if skip:
+                    out += [
+                        "                if (sel[i]) {",
+                        "                    if (!(got[i] == (fom_float)(i % 7) - 3.5)) touched = i;",
+                        "                    continue;",
+                        "                }",
+                    ]
+                base = "" if step else " - ((fom_float)(i % 7) - 3.5)"
+                out += [
+                    "                {",
+                    "                    fom_float d = got[i] - ref[i];",
+                    f"                    fom_float a = ref[i]{base}, b = pre[i];",
+                    "                    if (d < 0) d = -d;",
+                    "                    if (a < 0) a = -a;",
+                    "                    if (b < 0) b = -b;",
+                    "                    if (b > a) a = b;",
+                    "                    if (!(d <= err)) { err = d; bad = i; }  /* NaN-safe */",
+                    "                    if (1.0 + a > scale) scale = 1.0 + a;",
+                    "                }",
+                    "            }",
+                    "            if (!(err <= worst_op)) worst_op = err;",
+                    "            if (touched >= 0) {",
+                    f'                printf("VERIFY FAILED: {fn} changed selection row %d, which it '
+                    'must leave untouched\\n", touched);',
+                    "                return 1;",
+                    "            }",
+                    "            if (!(err <= ops_tol * scale)) {",
+                    *fail,
+                    "                return 1;",
+                    "            }",
+                ]
+                return out
+
+            sel = [1 if i in skip else 0 for i in range(rows)]
+            lines += [
+                "    {",
+                f"        /* {fn}: direct check against its members"
+                + (" and the reference activation" if act else "")
+                + (", leaving its selection rows untouched" if skip else "")
+                + ". */",
+                *[f"        static fom_float x{si}[{n}];" for si, n in enumerate(dims)],
+                f"        static fom_float bias[{rows}], got[{rows}], ref[{rows}], pre[{rows}];",
+                f"        static fom_float act_lo[{rows}], act_hi[{rows}];",
+                *(
+                    [
+                        f"        static const unsigned char sel[{rows}] = {{{', '.join(map(str, sel))}}};"
+                    ]
+                    if skip
+                    else []
+                ),
+                *([f"        {_act_type(block)} hact;"] if act else []),
+                f"        fom_float sc[{max(ns, 1)}];",
+                "        static const char *setting[] = {"
+                + ", ".join(f'"{t}"' for t in settings + modes)
+                + "};",
+                "        fom_float worst_op = 0.0, err, scale, m;",
+                "        int r, i, c, j, bad, touched, mode, probes = 0;",
+                "        (void)setting; (void)j; (void)sc; (void)m; (void)mode; (void)act_lo;",
+                "        (void)act_hi; (void)bias;",
+                f"        for (i = 0; i < {rows}; ++i) pre[i] = 0.0;",
+            ]
+            if act:
+                lines += self._act_linear(block, "hact", "act_lo", "act_hi", "        ")
+            if basis:
+                for si, (src, n) in enumerate(zip(srcs, dims)):
+                    lines += [
+                        f"        for (i = 0; i < {rows}; ++i) bias[i] = {up}_BIAS[0][i];",
+                        f"        for (j = 0; j < {n}; ++j) {{",
+                        f"          for (r = 0; r <= {ns}; ++r) {{",
+                        *[
+                            f"            for (c = 0; c < {d}; ++c) x{sj}[c] = 0.0;"
+                            for sj, d in enumerate(dims)
+                        ],
+                        f"            x{si}[j] = 1.0;",
+                        *[f"            sc[{c}] = (fom_float)(r == {c + 1});" for c in range(ns)],
+                        "            ++probes;",
+                        *check(
+                            "&hact",
+                            [
+                                f'                printf("VERIFY FAILED: {fn} entry (%d, %d) of '
+                                f'{src} is off by %.3e from its matrices (%s)\\n",',
+                                "                       bad, j, (double)err, setting[r]);",
+                            ],
+                        ),
+                        "          }",
+                        "        }",
+                    ]
+            uses = ["&hact", f"&FOM_ACT_{block.name}", "&hact"] if act else ["&hact"]
+            for mode, use in enumerate(uses):
+                lines += [
+                    f"        for (r = 0; r < {k}; ++r) {{",
+                    *[
+                        f"            for (c = 0; c < {n}; ++c) x{si}[c] = {up}_X{si}[r][c];"
+                        for si, n in enumerate(dims)
+                    ],
+                    *[f"            sc[{c}] = {up}_SC[r][{c}];" for c in range(ns)],
+                    f"            for (i = 0; i < {rows}; ++i) bias[i] = {up}_BIAS[r][i];",
+                ]
+                if act:
+                    lines += self._act_linear(block, "hact", "act_lo", "act_hi", "            ")
+                    ref_step = f"fom_ref_step_{block.name}"
+                    lines.append(f"            {ref_step}({args}, &hact, pre);")
+                    if mode == 2:
+                        lines += self._act_random(
+                            block,
+                            "hact",
+                            "act_lo",
+                            "act_hi",
+                            "pre",
+                            f"{up}_R1[r]",
+                            f"{up}_R2[r]",
+                            "            ",
+                        )
+                lines += [
+                    "            ++probes;",
+                    *check(
+                        use,
+                        [
+                            f'                printf("VERIFY FAILED: {fn} differs from its reference '
+                            f'by %.3e in row %d on random probe %d ({modes[mode]})\\n",',
+                            "                       (double)err, bad, r);",
+                        ],
+                    ),
+                    "        }",
+                ]
+                if act:
+                    lines.append(f"        for (i = 0; i < {rows}; ++i) pre[i] = 0.0;")
+                    lines += self._act_linear(block, "hact", "act_lo", "act_hi", "        ")
+            name = fn[len("fom_") :]
+            lines += [
+                f'        printf("OPSCHECK name={name} mode={"basis" if basis else "random"} '
+                'probes=%d max_err=%.3e\\n", probes, (double)worst_op);',
+                "    }",
+            ]
+        return lines
+
+    def _iterate_check_main(self, ir: FomIR) -> list[str]:
+        """Check ``fom_iterate`` against the chained reference steps.
+
+        Every output is compared: each temporary (which pins its block) and the
+        new state. With every activation switched off and zero biases the
+        iteration is linear in the state, so unit-vector probes at each schedule
+        setting (all 0, each alone at 1, and one random setting, which catches
+        products of schedule values across blocks) recover its matrix entry by
+        entry. Random states then follow with random biases, with the activations
+        off, at the package's ``FOM_ACT_<block>``, and at random parameters around
+        each block's activation-off values.
+        """
+        blocks = self._iterate(ir)
+        if not blocks:
+            return []
+        k = self._OPS_CHECK_RANDOM
+        n = ir.state_dim
+        scales = _iterate_scales(blocks)
+        ns = len(scales)
+        activated = [b for b in blocks if b.activated]
+        outs = [(f"t_{b.name}", b.rows) for b in blocks if b.name != "su"]
+        outs.append(("new_state", ir.state_dim))
+        basis = self._iterate_basis_probes(ir, blocks)
+        settings = ["all schedule values 0"]
+        settings += [f"{_fused_scale(c)} = 1" for c in scales]
+        settings.append("random schedule values")
+        modes = ["activations off", "package activations", "random activations"]
+        modes = modes if activated else modes[:1]
+
+        def args(prefix: str, acts: str) -> str:
+            a = ["x"] + [f"sc[{c}]" for c in range(ns)]
+            a += [f"bias_{b.name}" for b in blocks]
+            a += [f"{acts}{b.name}" for b in activated]
+            a += [f"{prefix}_{name}" for name, _ in outs]
+            return ", ".join(a)
+
+        def check(acts: str, fail: list[str]) -> list[str]:
+            lines = []
+            for name, rows in outs:
+                lines += [
+                    f"            for (i = 0; i < {rows}; ++i) {{ g_{name}[i] = (fom_float)(i % 7) - 3.5; "
+                    f"r_{name}[i] = -(fom_float)(i % 5) - 0.25; }}"
+                ]
+            lines += [
+                f"            fom_iterate({args('g', acts)});",
+                f"            fom_ref_iterate({args('r', acts)});",
+                "            err = 0.0; scale = 1.0; bad = 0; which = 0;",
+            ]
+            for o, (name, rows) in enumerate(outs):
+                lines += [
+                    f"            for (i = 0; i < {rows}; ++i) {{",
+                    f"                fom_float d = g_{name}[i] - r_{name}[i], a = r_{name}[i];",
+                    "                if (d < 0) d = -d;",
+                    "                if (a < 0) a = -a;",
+                    f"                if (!(d <= err)) {{ err = d; bad = i; which = {o}; }}",
+                    "                if (1.0 + a > scale) scale = 1.0 + a;",
+                    "            }",
+                ]
+            lines += [
+                "            if (!(err <= worst_op)) worst_op = err;",
+                "            if (!(err <= ops_tol * scale)) {",
+                *fail,
+                "                return 1;",
+                "            }",
+            ]
+            return lines
+
+        names = "{" + ", ".join(f'"{name}"' for name, _ in outs) + "}"
+        lines = [
+            "    {",
+            "        /* fom_iterate: direct check against the chained reference steps. */",
+            f"        static fom_float x[{n}];",
+            *[f"        static fom_float bias_{b.name}[{b.rows}];" for b in blocks],
+            *[
+                f"        static fom_float g_{name}[{rows}], r_{name}[{rows}];"
+                for name, rows in outs
+            ],
+            *[
+                f"        static fom_float lo_{b.name}[{b.rows}], hi_{b.name}[{b.rows}];"
+                for b in activated
+            ],
+            *[f"        {_act_type(b)} hact_{b.name};" for b in activated],
+            *[
+                f"        const {_act_type(b)} *pact_{b.name} = &FOM_ACT_{b.name};"
+                for b in activated
+            ],
+            f"        fom_float sc[{max(ns, 1)}];",
+            "        static const char *setting[] = {"
+            + ", ".join(f'"{t}"' for t in settings + modes)
+            + "};",
+            f"        static const char *output[] = {names};",
+            "        fom_float worst_op = 0.0, err, scale, m;",
+            "        int r, i, j, bad, which, probes = 0;",
+            "        (void)setting; (void)output; (void)j; (void)sc; (void)m;",
+        ]
+        if activated:
+            voids = [f"{v}_{b.name}" for b in activated for v in ("pact", "lo", "hi")]
+            lines.append("        (void)" + "; (void)".join(voids) + ";")
+        for b in activated:
+            lines += self._act_linear(
+                b, f"hact_{b.name}", f"lo_{b.name}", f"hi_{b.name}", "        "
+            )
+        hact = "&hact_"
+        if basis:
+            lines += [
+                *[
+                    f"        for (i = 0; i < {b.rows}; ++i) bias_{b.name}[i] = 0.0;"
+                    for b in blocks
+                ],
+                f"        for (j = 0; j < {n}; ++j) {{",
+                f"          for (r = 0; r <= {ns + 1}; ++r) {{",
+                f"            for (i = 0; i < {n}; ++i) x[i] = 0.0;",
+                "            x[j] = 1.0;",
+                *[
+                    f"            sc[{c}] = (r == {ns + 1}) ? FOM_VERIFY_ITER_SC[{k}][{c}] "
+                    f": (fom_float)(r == {c + 1});"
+                    for c in range(ns)
+                ],
+                "            ++probes;",
+                *check(
+                    hact,
+                    [
+                        '                printf("VERIFY FAILED: fom_iterate entry (%d, %d) of %s is '
+                        'off by %.3e from the reference (%s)\\n",',
+                        "                       bad, j, output[which], (double)err, setting[r]);",
+                    ],
+                ),
+                "          }",
+                "        }",
+            ]
+        for mode in range(len(modes)):
+            lines += [
+                f"        for (r = 0; r < {k}; ++r) {{",
+                f"            for (i = 0; i < {n}; ++i) x[i] = FOM_VERIFY_ITER_X[r][i];",
+                *[f"            sc[{c}] = FOM_VERIFY_ITER_SC[r][{c}];" for c in range(ns)],
+                *[
+                    f"            for (i = 0; i < {b.rows}; ++i) "
+                    f"bias_{b.name}[i] = FOM_VERIFY_ITER_{b.name.upper()}_BIAS[r][i];"
+                    for b in blocks
+                ],
+            ]
+            acts = hact
+            if mode == 1:
+                acts = "pact_"
+            if mode == 2:
+                # Activation-off reference values of every block, then random
+                # parameters around each.
+                lines.append(f"            fom_ref_iterate({args('r', hact)});")
+                for b in activated:
+                    up = f"FOM_VERIFY_ITER_{b.name.upper()}"
+                    lines += self._act_random(
+                        b,
+                        f"hact_{b.name}",
+                        f"lo_{b.name}",
+                        f"hi_{b.name}",
+                        f"r_t_{b.name}",
+                        f"{up}_R1[r]",
+                        f"{up}_R2[r]",
+                        "            ",
+                    )
+            lines += [
+                "            ++probes;",
+                *check(
+                    acts,
+                    [
+                        '                printf("VERIFY FAILED: fom_iterate differs from the '
+                        f'reference by %.3e in %s row %d on random probe %d ({modes[mode]})\\n",',
+                        "                       (double)err, output[which], bad, r);",
+                    ],
+                ),
+            ]
+            if mode == 2:
+                for b in activated:
+                    lines += self._act_linear(
+                        b, f"hact_{b.name}", f"lo_{b.name}", f"hi_{b.name}", "            "
+                    )
+            lines.append("        }")
+        lines += [
+            f'        printf("OPSCHECK name=iterate mode={"basis" if basis else "random"} '
+            'probes=%d max_err=%.3e\\n", probes, (double)worst_op);',
+            "    }",
+        ]
+        return lines
+
     def _verify_data(self, ir: FomIR) -> str:
         samples = self._sample_params(ir)
         n = len(samples)
@@ -1489,6 +2399,7 @@ class EmbeddedCTarget(TargetDescriptor):
         lines.append("")
         lines += self._ops_check_data(ir)
         lines += self._fused_check_data(ir)
+        lines += self._step_check_data(ir)
         lines += self._linsolve_check_data(ir)
         lines += ["#endif /* FOM_VERIFY_DATA_H */", ""]
         return "\n".join(lines)
@@ -1660,6 +2571,15 @@ class EmbeddedCTarget(TargetDescriptor):
                 *self._verify_check_includes(ir),
                 '#include "verify_data.h"',
                 "",
+                *(
+                    [
+                        "/* Activation bounds far outside any iterate: the activation is off. */",
+                        "#define FOM_VERIFY_HUGE ((fom_float)(sizeof(fom_float) == 4 ? 1e30 : 1e300))",
+                        "",
+                    ]
+                    if self._steps(ir)
+                    else []
+                ),
                 *(self._verify_stop_helper() if objective else []),
                 "int main(void) {",
                 "    FomWorkspace work;",
@@ -1678,6 +2598,8 @@ class EmbeddedCTarget(TargetDescriptor):
                 "",
                 *self._ops_check_main(ir),
                 *self._fused_check_main(ir),
+                *self._step_check_main(ir),
+                *self._iterate_check_main(ir),
                 *self._linsolve_check_main(ir),
                 "",
                 "    fom_set_default_settings(&settings);",
@@ -2037,7 +2959,27 @@ class EmbeddedCTarget(TargetDescriptor):
             baseline,
             self._fused_members(ir),
             self._exact_routines(ir),
+            self._step_owners(ir),
+            self._step_vectors(ir),
         )
+
+    def _step_owners(self, ir: FomIR) -> dict[str, list[str]]:
+        """Each step, ``__rest`` and iterate routine with the matrices it may read."""
+        owners = {f"fom_step_{b.name}": b.members for b in self._steps(ir)}
+        owners.update({fn: b.members for fn, b, _ in self._rests(ir)})
+        blocks = self._iterate(ir)
+        if blocks:
+            owners["fom_iterate"] = list(dict.fromkeys(m for b in blocks for m in b.members))
+        return owners
+
+    def _step_vectors(self, ir: FomIR) -> list[str]:
+        """Constant and activation-bound vectors, which ``fom_ops.c`` may not read
+        once step routines exist (they come in as ``bias`` and ``act``)."""
+        if not self._steps(ir):
+            return []
+        names = [lin.const for lin in [s.linear_op for s in ir.body] + [ir.state_update]]
+        names += [b for s in ir.body for b in (s.activation.lower, s.activation.upper)]
+        return [n for n in dict.fromkeys(names) if n]
 
     def _exact_routines(self, ir: FomIR) -> list[str]:
         """The ``fom_ops.c`` routines ``make verify`` probes on every unit vector
@@ -2052,6 +2994,19 @@ class EmbeddedCTarget(TargetDescriptor):
             for block in self._fused(ir)
             if self._fused_basis_probes(ir, block)
         ]
+        exact += [
+            f"fom_step_{b.name}"
+            for b in self._steps(ir)
+            if self._step_basis_probes(ir, [b], 1 + len(b.scales))
+        ]
+        exact += [
+            fn
+            for fn, b, _ in self._rests(ir)
+            if self._step_basis_probes(ir, [b], 1 + len(b.scales))
+        ]
+        blocks = self._iterate(ir)
+        if blocks and self._iterate_basis_probes(ir, blocks):
+            exact.append("fom_iterate")
         return exact
 
     def _fused_members(self, ir: FomIR) -> dict[str, list[str]]:
@@ -2064,6 +3019,21 @@ class EmbeddedCTarget(TargetDescriptor):
     def exact_routines(self, ir: FomIR) -> list[str]:
         return self._exact_routines(ir) if self._ops_editable() else []
 
+    def step_routines(self, ir: FomIR) -> dict[str, list[str]]:
+        return {f"fom_step_{b.name}": b.members for b in self._steps(ir)}
+
+    def iterate_routine(self, ir: FomIR) -> bool:
+        return bool(self._iterate(ir))
+
+    def selection_rows(self, ir: FomIR) -> dict[str, str]:
+        return {
+            name: _selection_rows_description(block, rows)
+            for name, (block, rows) in self._selrow_blocks(ir).items()
+        }
+
+    def rest_routines(self, ir: FomIR) -> list[str]:
+        return [fn for fn, _, _ in self._rests(ir)]
+
     def selection_matrices(self, ir: FomIR) -> dict[str, str]:
         return {
             name: selection_description(src, ir.matrices[name].shape[1])
@@ -2074,11 +3044,18 @@ class EmbeddedCTarget(TargetDescriptor):
         """``(routine, shape, nnz)`` of the routine behind an ``OPSCHECK`` name:
         a matrix, or ``fused_<block>`` (its output rows by the summed member
         columns, and the members' total nonzeros)."""
-        if name.startswith("fused_"):
-            block = next(b for b in self._fused(ir) if b.name == name[len("fused_") :])
+        if name == "iterate":
+            blocks = self._iterate(ir)
+            nnz = sum(ir.matrices[m].nnz() for b in blocks for m in b.members)
+            return "fom_iterate", (ir.state_dim, ir.state_dim), nnz
+        if name.startswith(("fused_", "step_")):
+            kind, rest = name.split("_", 1)
+            base = rest[: -len("__rest")] if rest.endswith("__rest") else rest
+            pool = self._fused(ir) if kind == "fused" else self._steps(ir)
+            block = next(b for b in pool if b.name == base)
             cols = sum(_source_dim(ir, block, s) for s in block.sources)
             nnz = sum(ir.matrices[m].nnz() for m in block.members)
-            return f"fom_fused_{block.name}", (block.rows, cols), nnz
+            return f"fom_{name}", (block.rows, cols), nnz
         md = ir.matrices[name]
         return f"fom_apply_{name}", tuple(md.shape), md.nnz()
 
@@ -2106,6 +3083,8 @@ class EmbeddedCTarget(TargetDescriptor):
             "matvec": _matvec_matrix_names(ir),
             "fused": self._fused_members(ir),
             "exact": self._exact_routines(ir),
+            "owners": self._step_owners(ir),
+            "vectors": self._step_vectors(ir),
             "files": files,
         }
         (Path(out_dir) / _KERNEL_CHECK_CONFIG).write_text(json.dumps(config, indent=1))

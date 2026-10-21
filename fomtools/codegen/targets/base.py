@@ -93,6 +93,24 @@ class TargetDescriptor(ABC):
         coefficients as literals. Default: none."""
         return []
 
+    def step_routines(self, ir) -> dict[str, list[str]]:
+        """``fom_step_<block>`` routines in the editable ops source, with their
+        member matrices. Default: none."""
+        return {}
+
+    def iterate_routine(self, ir) -> bool:
+        """Whether the editable ops source has a ``fom_iterate``. Default: no."""
+        return False
+
+    def selection_rows(self, ir) -> dict[str, str]:
+        """Blocks with rows that copy one source entry, with a description of
+        those rows. Default: none."""
+        return {}
+
+    def rest_routines(self, ir) -> list[str]:
+        """``__rest`` routines (a block without its selection rows). Default: none."""
+        return []
+
     def selection_matrices(self, ir) -> dict[str, str]:
         """0/1 selection matrices a solver may apply itself, with a description
         of each (see `fomtools.codegen.ir.selection_indices`). Default: none."""

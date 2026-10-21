@@ -417,7 +417,12 @@ def test_report_tables_each_routine_and_marks_the_rewritten_one(tmp_path, mpc, r
     result = _generate(tmp_path, mpc, _rewrite_one_routine("su_state"))
     assert result.optimization_kept, result.optimize.log
     rows = {c["name"]: c for c in result.kernel_checks}
-    assert list(rows) == _matvec_matrix_names(ir) + [f"fused_{b.name}" for b in _fused_blocks(ir)]
+    target = get_target(CONFIG)
+    expected = _matvec_matrix_names(ir) + [f"fused_{b.name}" for b in _fused_blocks(ir)]
+    expected += [fn[len("fom_") :] for fn in target.step_routines(ir)]
+    expected += [fn[len("fom_") :] for fn in target.rest_routines(ir)]
+    expected += ["iterate"] if target.iterate_routine(ir) else []
+    assert list(rows) == expected
     assert rows["su_state"]["rewritten"] and not rows["t0_state"]["rewritten"]
     md = ir.matrices["su_state"]
     assert rows["su_state"]["shape"] == tuple(md.shape)
@@ -450,9 +455,11 @@ def test_parse_ops_checks_round_trips_real_verify_output(tmp_path, mpc, requires
     assert proc.returncode == 0, proc.stdout
     checks = parse_ops_checks(proc.stdout)
     blocks = _fused_blocks(ir)
-    assert [c["name"] for c in checks] == _matvec_matrix_names(ir) + [
+    names = [c["name"] for c in checks]
+    assert names[: len(_matvec_matrix_names(ir)) + len(blocks)] == _matvec_matrix_names(ir) + [
         f"fused_{b.name}" for b in blocks
     ]
+    checks = checks[: len(_matvec_matrix_names(ir)) + len(blocks)]
     for c in checks[: -len(blocks)]:
         cols = ir.matrices[c["name"]].shape[1]
         assert c["mode"] == "basis" and c["probes"] == cols + 2 and c["max_err"] == 0.0
@@ -477,7 +484,7 @@ def test_a_routine_that_returns_nan_fails_verify(tmp_path, mpc, requires_compile
 
     monkeypatch.setattr(EmbeddedCTarget, "_checked_ops", lambda self, ir: [])
     scaffold(ir, tmp_path, CONFIG)
-    ops.write_text(nan_ops)
+    ops.write_text(ops.read_text().replace("out[i] += s;", "out[i] += s * (s - s) / (s - s);", 1))
     proc = _verify(tmp_path)
     assert proc.returncode != 0 and "VERIFY OK" not in proc.stdout
     # printf spells NaN "nan" or "-nan" depending on the libc; the verdict is what counts.

@@ -137,7 +137,8 @@ def _kernel_rules_block(
     if ops_editable and fused:
         own_data = f""" In `{ops_src}`, each `fom_apply_<name>` (one
   definition) and the helpers it calls read only its own matrix's data, and each
-  `fom_fused_<block>` only its members' data; no other code reads matrix data,
+  `fom_fused_<block>`, `fom_step_<block>` (and its `__rest`) only its members'
+  data, `fom_iterate` that of the whole iteration; no other code reads matrix data,
   every function but these entry points is `static`, and nothing in
   `{ops_src}` reads the schedule (`fom_sched_*`, `FOM_SCHED_*`): a routine
   takes its schedule values as arguments and must be right for any value."""
@@ -161,7 +162,7 @@ rewrite that breaks any of them is discarded when it is collected:
   `0.5`, `1.0` and `2.0`, whether written as decimal or hex float literals or as
   integers cast to a floating type (literals the translated file already
   had{same_routine} are fine).{_exact_literals_note(exact)}
-- `fom_setup` and `fom_update_params` must not add calls to `fom_apply_*`{" or `fom_fused_*`" if fused else ""}: apply
+- `fom_setup` and `fom_update_params` must not add calls to `fom_apply_*`{" or `fom_fused_*`, `fom_step_*`, `fom_iterate`" if fused else ""}: apply
   matrices in the iteration, never probe them to rebuild a matrix."""
 
 
@@ -177,6 +178,10 @@ def code_optimization_instructions(ir: FomIR, target: TargetDescriptor) -> str:
     ops_data = target.ops_data_path()
     fused = target.fused_routines(ir) if ops_src in editable else {}
     selections = target.selection_matrices(ir)
+    steps = target.step_routines(ir) if ops_src in editable else {}
+    iterate = target.iterate_routine(ir) if ops_src in editable else False
+    selection_rows = target.selection_rows(ir) if ops_src in editable else {}
+    rests = target.rest_routines(ir) if ops_src in editable else []
     if linsolve_src in editable:
         both = ops_src in editable
         others = f"`{linsolve_src}` (the linear solves, usually the hottest code)"
@@ -230,6 +235,52 @@ it directly against its members: every unit vector of every source, with every
 schedule value at 0 and with each alone at 1 (which recovers each member
 exactly), and on random sources and schedule values. So it must be exact for
 ANY schedule value, not just the ones the solver passes."""
+        if both and steps:
+            names = ", ".join(f"`{fn}`" for fn in steps)
+            scope += f"""
+
+It also implements one STEP routine per output block ({names}; prototypes in
+`include/fom_ops.h`): `fom_step_<block>(sources..., schedule values..., bias,
+act, out)` computes the whole block, `out = act(bias + sum_k s_k * (M_k @
+src_k))`, and OVERWRITES `out`. `bias` is everything outside the per-iteration
+products (the constant plus the parameter terms, which you still compute once
+per solve) and `act` the activation's parameters (pass `&FOM_ACT_<block>`;
+blocks without an activation take none). Use it to fold the activation and the
+bias into the product pass, write the result straight into its destination, and
+drop the zeroing and copy passes. It must apply whatever `act` it is passed:
+`{verify}` checks it with the activation switched off (which recovers every
+member exactly, unit vector by unit vector, at every schedule setting), at the
+package parameters, and at random parameters that make it active on about half
+the rows. Never hardcode a bound or threshold, and never read `FOM_ACT_*` or the
+constant and bound vectors in `{ops_src}`."""
+        if both and iterate:
+            scope += f"""
+
+`fom_iterate(state, schedule values..., bias_<block>..., act_<block>...,
+t_<name>..., new_state)` runs one whole iteration: every body step in order,
+writing each temporary `t_<name>` (the solver and `fom_objective` still need
+them), then the state update into `new_state`. By default it calls the step
+routines; rewrite it to compute the iteration in one pass, keep values in
+registers between blocks, and share intermediates between them. `{verify}`
+checks every temporary and the new state against the chained reference steps:
+unit vectors of the state at every schedule setting with the activations off,
+then random states, biases and activation parameters. It may read the data of
+every matrix of the iteration."""
+        if both and selection_rows:
+            items = "\n".join(f"  - `{name}`: {what}" for name, what in selection_rows.items())
+            rest = ", ".join(f"`{fn}`" for fn in rests) or "none"
+            scope += f"""
+
+These output blocks have SELECTION ROWS, rows that are a plain copy of one
+source entry (see SPEC.md; `FOM_SELROWS_<block>_ROW/SRC/COL` in
+`include/fom_data.h`):
+{items}
+You may write those rows in `{src}` yourself, for example a step block's row as
+`out[row] = act(bias[row] + src[col])` straight into its destination, and call
+the block's `__rest` routine ({rest}) for the other rows: it computes every row
+but the selection rows, which it must leave untouched (`{verify}` checks both).
+Copies you write are checked only by the end-to-end `{verify}`, so get the
+indices exactly right."""
         if selections:
             items = "\n".join(f"  - `{name}`: {what}" for name, what in selections.items())
             scope += f"""

@@ -120,7 +120,10 @@ def _routine_rewritten(name: str, translated: str, final: str) -> bool:
         )
 
     (before, before_scope), (after, after_scope) = parse(translated), parse(final)
-    fn = f"fom_fused_{name[6:]}" if name.startswith("fused_") else f"fom_apply_{name}"
+    if name == "iterate" or name.startswith(("fused_", "step_")):
+        fn = f"fom_{name}"
+    else:
+        fn = f"fom_apply_{name}"
     if fn not in before or fn not in after or before_scope != after_scope:
         return True
     return any(before.get(g) != after.get(g) for g in reachable(after, [fn]))
