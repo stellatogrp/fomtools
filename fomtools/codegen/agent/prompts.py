@@ -14,6 +14,8 @@ SUMMARY_BEGIN = _SUMMARY_BEGIN
 SUMMARY_END = _SUMMARY_END
 #: Heading of the summary section where the agent lists what the rules blocked.
 BLOCKED_HEADING = "Blocked by rules:"
+#: Heading of the summary section where the agent lists what it changed.
+APPLIED_HEADING = "Optimizations applied:"
 
 
 def _objective_block(ir: FomIR, objective_src: str) -> str:
@@ -351,8 +353,9 @@ marker lines exactly, each alone on its own line:
 Between the markers, give:
 - the initial vs. final whole-solve `mean_us` and the overall speedup factor;
 - the profiling breakdown of the FINAL solver (region, time, %), hottest first;
-- a short list of the optimizations you applied and why. For each one, name the
-  structure you exploited, so a reader can tell what made it valid here;
+- a section headed exactly `{APPLIED_HEADING}` listing the optimizations you
+  applied, one per line as `- <the change> | <the structure it exploits>`, so a
+  reader (and the next round) can tell what made it valid here;
 - a section headed exactly `{BLOCKED_HEADING}` listing every optimization you
   considered but did not make because a rule forbade it (the kernel rules, the
   files you may edit, or the target constraints), one per line as
@@ -372,13 +375,16 @@ def code_optimization_continuation(
     translated_us: float | None,
     last_gain: float | None,
     profile: list | None = None,
+    history: list[dict] | None = None,
 ) -> str:
     """The block appended to `code_optimization_instructions` for a later round.
 
     Each round is a fresh agent run on the solver the previous rounds left (the
     best one so far, re-verified and benchmarked by the pipeline), so the agent
     has to be told where it stands: which round this is, the current and the
-    translated whole-solve times, and what the last round gained.
+    translated whole-solve times, and what the last round gained. ``history``
+    (the earlier rounds, see `fomtools.codegen.generate.OptimizationRound`)
+    adds what each one applied and what a rule blocked (`_history_lines`).
     """
     lines = [
         "",
@@ -399,6 +405,8 @@ def code_optimization_continuation(
     if profile:
         lines.append("Its current profile (`make profile`), hottest first:")
         lines += [f"  {r.name:<24} {r.total_us:12.1f} us  {r.pct:6.2f}%" for r in profile]
+    if history:
+        lines += _history_lines(history)
     lines += [
         "Look for further speedups, including structure the earlier rounds did not "
         "exploit. If you find nothing that helps, leave the sources unchanged and say "
@@ -406,3 +414,57 @@ def code_optimization_continuation(
         "",
     ]
     return "\n".join(lines)
+
+
+def _clip(text: str, limit: int) -> str:
+    """``text`` on one line, cut to ``limit`` characters."""
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
+
+
+def _history_lines(history: list[dict], item_chars: int = 160, max_chars: int = 3000) -> list[str]:
+    """The earlier rounds, oldest first, for a later round's prompt.
+
+    Each round is a header (kept or not, and its gain) and what its summary
+    listed under `APPLIED_HEADING` and `BLOCKED_HEADING`. Timings and profiles
+    are left out: the prompt already gives the current ones. Each item is cut to
+    ``item_chars``; past ``max_chars`` in all, the oldest rounds shrink to their
+    header, then are dropped, so the newest stays whole.
+    """
+    entries = []
+    for r in history:
+        head = f"Round {r['index']}: {'kept' if r.get('kept') else 'reverted'}"
+        if r.get("kept") and r.get("gain") is not None:
+            head += f", {100 * r['gain']:.1f}% faster"
+        applied = [_clip(a, item_chars) for a in r.get("applied") or []]
+        blocked = [
+            _clip(" | ".join(p for p in (b.get("idea"), b.get("rule")) if p), item_chars)
+            for b in r.get("blocked") or []
+        ]
+        detail = []
+        if applied:
+            detail.append("  applied: " + "; ".join(applied))
+        if blocked:
+            detail.append("  blocked: " + "; ".join(blocked))
+        if not detail:
+            detail.append("  (no list of changes recovered from its summary)")
+        entries.append([head, detail])
+
+    def size() -> int:
+        return sum(len(h) + 1 + sum(len(d) + 1 for d in ds) for h, ds in entries)
+
+    omitted = 0
+    for entry in entries[:-1]:
+        if size() <= max_chars:
+            break
+        entry[1] = []
+    while size() > max_chars and len(entries) > 1:
+        entries.pop(0)
+        omitted += 1
+
+    lines = ["Earlier rounds, oldest first (what each applied, and what a rule blocked):"]
+    if omitted:
+        lines.append(f"  ({omitted} earlier round{'s' if omitted > 1 else ''} omitted)")
+    for head, detail in entries:
+        lines += [head, *detail]
+    return lines

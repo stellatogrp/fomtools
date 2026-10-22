@@ -14,8 +14,14 @@ import pytest
 from fomtools.codegen import StubAgentDriver, generate_code
 from fomtools.codegen import generate as gen
 from fomtools.codegen.agent.driver import AgentDriver
-from fomtools.codegen.agent.prompts import BLOCKED_HEADING, SUMMARY_BEGIN, SUMMARY_END
-from fomtools.codegen.postprocess import extract_rule_friction
+from fomtools.codegen.agent.prompts import (
+    APPLIED_HEADING,
+    BLOCKED_HEADING,
+    SUMMARY_BEGIN,
+    SUMMARY_END,
+    code_optimization_continuation,
+)
+from fomtools.codegen.postprocess import extract_applied_optimizations, extract_rule_friction
 from tests.codegen.conftest import build_ista
 
 GOLDEN = Path(__file__).parent / "golden" / "ista" / "embedded_c" / "fom_solver.c"
@@ -164,8 +170,8 @@ def test_run_code_optimization_on_a_copy(tmp_path, monkeypatch, requires_compile
 
 
 class ReportingDriver(ScriptedDriver):
-    """A scripted driver whose rounds each end with a summary naming what a rule
-    blocked."""
+    """A scripted driver whose rounds each end with a summary naming what it
+    applied and what a rule blocked."""
 
     def run(self, task):
         result = super().run(task)
@@ -173,11 +179,59 @@ class ReportingDriver(ScriptedDriver):
             return result
         k = len(self.prompts)
         summary = (
-            f"{SUMMARY_BEGIN}\nRound {k} notes.\n\n{BLOCKED_HEADING}\n"
+            f"{SUMMARY_BEGIN}\nRound {k} notes.\n\n{APPLIED_HEADING}\n"
+            f"- hoist the step {k} | constant step size\n\n{BLOCKED_HEADING}\n"
             f"- inline the identity copy {k} | selection rule | ~5%\n"
             f"- merge stages\n\nDone.\n{SUMMARY_END}\n"
         )
         return replace(result, agent_log=(result.agent_log or "") + summary)
+
+
+def test_extract_applied_optimizations():
+    notes = (
+        "Speedup 2x.\n\n**Optimizations applied:**\n"
+        "- hoist A^T b | constant parameter\n"
+        "* unroll the soft-threshold\n\nBlocked by rules:\n- merge | fused"
+    )
+    assert extract_applied_optimizations(notes) == [
+        "hoist A^T b | constant parameter",
+        "unroll the soft-threshold",
+    ]
+    assert extract_applied_optimizations(f"## {APPLIED_HEADING}\n- none\n") == []
+    assert extract_applied_optimizations("no section at all") == []
+
+
+def test_history_names_each_earlier_round():
+    history = [
+        dict(index=1, kept=True, gain=0.5, applied=["hoist x | constant"], blocked=[]),
+        dict(
+            index=2,
+            kept=True,
+            gain=0.25,
+            applied=[],
+            blocked=[dict(idea="merge stages", rule="fused rule", expected_gain="5%")],
+        ),
+        dict(index=3, kept=True, gain=0.1, applied=[], blocked=[]),
+    ]
+    text = code_optimization_continuation(4, 5, 10.0, 40.0, 0.1, [], history=history)
+    assert "Round 1: kept, 50.0% faster\n  applied: hoist x | constant" in text
+    assert "Round 2: kept, 25.0% faster\n  blocked: merge stages | fused rule" in text
+    assert "Round 3: kept, 10.0% faster\n  (no list of changes recovered" in text
+    # Without a history the block is absent, as before.
+    assert "Earlier rounds" not in code_optimization_continuation(2, 5, 10.0, 40.0, 0.1)
+
+
+def test_history_is_capped_and_keeps_the_newest_round():
+    item = "x" * 1000
+    history = [
+        dict(index=i, kept=True, gain=0.1, applied=[item] * 5, blocked=[]) for i in range(1, 5)
+    ]
+    text = code_optimization_continuation(5, 5, 10.0, 40.0, 0.1, [], history=history)
+    block = text[text.index("Earlier rounds") :]
+    assert len(block) < 3500
+    assert "x" * 1000 not in block  # each item is cut
+    assert "Round 1: kept, 10.0% faster\nRound 2" in block  # older rounds: header only
+    assert block.count("applied:") >= 1 and "Round 4: kept, 10.0% faster\n  applied:" in block
 
 
 def test_extract_rule_friction():
@@ -213,7 +267,11 @@ def test_rule_friction_is_collected_per_round_and_reported(
         code_optimization=True,
         profile=True,
     )
-    assert BLOCKED_HEADING in driver.prompts[0]
+    assert BLOCKED_HEADING in driver.prompts[0] and APPLIED_HEADING in driver.prompts[0]
+    # Round 2 is told what round 1 applied and what a rule blocked.
+    assert "Round 1: kept, 50.0% faster" in driver.prompts[1]
+    assert "applied: hoist the step 1 | constant step size" in driver.prompts[1]
+    assert "blocked: inline the identity copy 1 | selection rule; merge stages" in driver.prompts[1]
     assert [(f["round"], f["idea"]) for f in result.rule_friction] == [
         (1, "inline the identity copy 1"),
         (1, "merge stages"),

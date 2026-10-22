@@ -40,6 +40,7 @@ from fomtools.codegen.kernel_rules import functions, reachable, strip_c_comments
 from fomtools.codegen.oracle import check_stationary
 from fomtools.codegen.postprocess import (
     extract_agent_notes,
+    extract_applied_optimizations,
     extract_rule_friction,
     parse_ops_checks,
     unified_solver_diff,
@@ -521,6 +522,11 @@ class OptimizationRound:
     agent_wall_s: float = 0.0
     truncated: bool = False
     stop_reason: str | None = None
+    #: What the round's summary lists under ``Optimizations applied:`` and
+    #: ``Blocked by rules:`` (`extract_applied_optimizations`,
+    #: `extract_rule_friction`); later rounds' prompts carry them.
+    applied: list[str] = field(default_factory=list)
+    blocked: list[dict] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return dict(self.__dict__)
@@ -645,7 +651,13 @@ def run_code_optimization(
         if index > 1:
             last = rounds[-1]
             instructions += code_optimization_continuation(
-                index, n_rounds, best_us, translated_us, last.gain, best_profile
+                index,
+                n_rounds,
+                best_us,
+                translated_us,
+                last.gain,
+                best_profile,
+                history=[r.as_dict() for r in rounds],
             )
         task = AgentTask(
             workdir=out_dir,
@@ -688,6 +700,8 @@ def run_code_optimization(
             kept=False,
             agent_wall_s=wall,
             truncated=bool(result.truncated),
+            applied=extract_applied_optimizations(notes),
+            blocked=extract_rule_friction(notes),
         )
         rounds.append(record)
         if not changed:
