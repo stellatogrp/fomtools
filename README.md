@@ -33,41 +33,45 @@ you can:
 
 ## Example
 
-The following code verifies FISTA on a family of Lasso problems
-```
-minimize        0.5 ||D s - x||_2^2 + lambda ||s||_1
-```
+The following code verifies projected gradient descent on the parametric quadratic program
 
-where `s in R^n` is the optimization variable and the data vector `x` ranges over the box
-`[0, 1]^m`. After each iteration it computes the worst-case fixed-point residual
-`||s^{k+1} - s^k||_inf` over all such `x`.
+$$
+\begin{array}{ll}
+\text{minimize} & (1/2) z^T P z + q^T z \\
+\text{subject to} & z \geq 0,
+\end{array}
+$$
+
+where $z \in \mathbf{R}^n$ is the optimization variable, $P$ is a fixed symmetric positive
+semidefinite matrix, and the parameter $q$ ranges over the box $[-1, 1]^n$. Starting from
+$z^0 = 0$, each iteration takes a gradient step with step size $\eta$ and projects onto the
+nonnegative orthant,
+
+$$
+z^{k+1} = \Pi_{\mathbf{R}^n_+}\left(z^k - \eta(Pz^k + q)\right),
+$$
+
+and FOMTools computes the worst-case fixed-point residual $`\|z^K - z^{K-1}\|_\infty`$ over all
+$q \in [-1, 1]^n$.
 
 ```python3
 import numpy as np
 import fomtools as ft
 
-# Problem data
-m, n, lambd, K = 5, 8, 0.1, 5
-D = np.random.default_rng(0).normal(size=(m, n))
-eta = 1 / np.linalg.norm(D, 2) ** 2
+K, n, eta = 5, 3, 0.01
+A = np.random.default_rng(0).normal(size=(n, n))
+P = A @ A.T
 
-vp = ft.Verifier()  # MIP verification with HiGHS; use solver="gurobi" for Gurobi
+vp = ft.Verifier()                      # HiGHS by default; solver="gurobi" for Gurobi
+q = vp.parameter(n, lb=-1, ub=1)        # q in [-1, 1]^n
+z = vp.iterate(n, lb=0, ub=0)           # z^0 = 0
 
-# Parameter set and initial iterate
-x = vp.parameter(m, lb=0, ub=1)
-s = [vp.iterate(n, lb=0, ub=0)]
-w, beta = s[0], 1.0
-
-results = []
 for k in range(K):
-    # FISTA iteration
-    s.append(vp.soft_threshold(w - eta * D.T @ (D @ w - x), lambd=lambd * eta))
-    beta_old, beta = beta, 0.5 * (1 + np.sqrt(1 + 4 * beta**2))
-    w = s[k + 1] + (beta_old - 1) / beta * (s[k + 1] - s[k])
+    z_prev, z = z, vp.relu(z - eta * (P @ z + q))
 
-    # Worst-case residual after k + 1 iterations
-    vp.maximize(ft.norm(s[k + 1] - s[k], np.inf))
-    results.append(vp.solve())
+vp.maximize(ft.norm(z - z_prev, np.inf))
+print("worst-case residual:", vp.solve())
+print("worst-case q:", q.value)
 ```
 
 Steps can also be written with proximal operators and projections, e.g.,
@@ -87,11 +91,15 @@ vp.solve(epsilon=1e-3)
 vp["quantiles"][0.95], vp["risk_bound"], vp["throughput"]
 ```
 
-**Code generation.** Pass the recorded iterates, unchanged, to `codegen`. It produces a
-specialized solver together with a Python wrapper:
+**Code generation.** Keep the iterates in a list and pass them, unchanged, to `codegen`.
+It produces a specialized solver together with a Python wrapper:
 
 ```python3
-result = vp.codegen("out/fista", iterates=s, code_optimization=True)
+z = [vp.iterate(n, lb=0, ub=0)]
+for k in range(K):
+    z.append(vp.relu(z[-1] - eta * (P @ z[-1] + q)))
+
+result = vp.codegen("out/pgd", iterates=z, code_optimization=True)
 ```
 
 Targets include embedded C, multicore CPUs (OpenMP), and GPUs (CUDA). The package works with

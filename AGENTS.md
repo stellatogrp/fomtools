@@ -97,6 +97,7 @@ All `mo.md` cells in `docs/tutorials/` (verification and codegen notebooks) use 
 | Soft-thresholding | `\mathbf{soft}_{\lambda\eta}` (`soft_threshold` step) | `{\cal T}_\lambda`, `S_\lambda` |
 | Projection | `\Pi_C`: `\Pi_{\mathbf{R}^n_+}` (`relu` step), `\Pi_{[l,u]}` (`satlin` step / `IndBox`) | `\mathbf{ReLU}`, `\mathbf{prox}_{\mathbb{I}_C}` |
 | Proximal operator | `\mathbf{prox}_f` | `\operatorname{prox}` |
+| Fractions | inline slash: `(1/2) z^T P z`, `(t_k - 1)/t_{k+1}` | `\frac` |
 
 Norms always carry a subscript: `\|v\|_2`, `\|v\|_\infty` (never `\lVert v \rVert` or a bare `\|v\|`).
 Define soft-thresholding where it is first used: `\mathbf{soft}_\kappa(v)_i = \mathbf{sign}(v_i)\max\{|v_i| - \kappa, 0\}`, applied element-wise.
