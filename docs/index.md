@@ -13,7 +13,7 @@ gradient descent applied to the parametric quadratic program
 
 $$
 \begin{array}{ll}
-	\text{minimize} & \frac{1}{2} z^T P z + q^T z \\
+	\text{minimize} & (1/2) z^T P z + q^T z \\
 	\text{subject to} & z \geq 0,
 \end{array}
 $$

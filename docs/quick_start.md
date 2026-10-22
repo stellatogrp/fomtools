@@ -10,7 +10,7 @@ Suppose you want to verify the performance of FISTA on a LASSO problem
 
 $$
 \begin{array}{ll}
-\text{minimize} & \frac{1}{2}\|Ds - x\|_2^2 + \lambda \|s\|_1,
+\text{minimize} & (1/2)\|Ds - x\|_2^2 + \lambda \|s\|_1,
 \end{array}
 $$
 
@@ -29,8 +29,8 @@ $$
 $$
 \begin{array}{rcl}
 s^{k+1} &=& \mathbf{prox}_{\eta\lambda\|\cdot\|_1}\left(w^k - \eta D^T(Dw^k - x)\right), \\
-t_{k+1} &=& \frac{1}{2}\left(1 + \sqrt{1 + 4t_k^2}\right), \\
-w^{k+1} &=& s^{k+1} + \frac{t_k - 1}{t_{k+1}}\left(s^{k+1} - s^k\right),
+t_{k+1} &=& (1/2)\left(1 + \sqrt{1 + 4t_k^2}\right), \\
+w^{k+1} &=& s^{k+1} + ((t_k - 1)/t_{k+1})\left(s^{k+1} - s^k\right),
 \end{array}
 $$
 

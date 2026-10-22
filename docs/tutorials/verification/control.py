@@ -454,8 +454,7 @@ def _(mo):
         z^{k+1}
         = \mathbf{prox}_{f/(\sigma+\rho)}
         \left(
-            \frac{\sigma z^k+\rho(2w^{k+1}-v^k)}
-                 {\sigma+\rho}
+            (\sigma z^k+\rho(2w^{k+1}-v^k))/(\sigma+\rho)
         \right).
     $$
 
