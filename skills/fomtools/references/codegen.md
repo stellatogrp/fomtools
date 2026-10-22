@@ -25,7 +25,15 @@ config = CodegenConfig(
         check_termination=1,   # check every N iters; 0 disables early exit
     ),                         # (default 1; 25 for OBJECTIVE)
     tol_verify=1e-6,           # float64 verification tolerance
-    float_type="float64",      # "float64" or "float32" (tol_verify=1e-4)
+    dtype="float64",           # "float64" or "float32" (tol_verify=1e-4)
+    tol_kernel=None,           # kernel-check tolerance (1e-10 float64, 1e-4 float32)
+    agent_timeout_s=600,       # translation phase wall-clock budget
+    agent_optimize_timeout_s=7200,  # per optimization round
+    agent_optimize_max_turns=200,   # per optimization round
+    agent_optimize_rounds=5,
+    agent_optimize_min_gain=0.02,
+    agent_optimize_patience=2, # rounds in a row without a gain that end the phase
+    cg_auto_min_dim=256,       # CUDA: AUTO upgrades SPD solves this large to CG
 )
 ```
 
@@ -90,6 +98,12 @@ result.success      # bool: did the agent produce a verified solver?
 result.ir           # FomIR: the intermediate representation
 result.ir.unrolled  # bool: True if the body has >1 block
 result.ir.body      # list of iteration blocks
+result.translate    # AgentResult of the translation phase
+result.optimize     # AgentResult of the optimization phase (or None)
+result.translate.verify_output  # output of the last verify run (why it failed)
+result.translate.agent_log      # only the agent's own output
+result.optimization_kept  # True if an optimized solver was adopted
+result.kernel_checks      # direct fom_apply_* kernel checks (or None)
 result.timing       # TimingReport (if profile=True)
 result.timing.summary()  # formatted timing string
 ```
@@ -195,6 +209,11 @@ fomtools-codegen --module mymodule.py --out out/custom --driver agent
 #   --no-roll          Keep a recorded run unrolled
 #   --driver stub      No model; pair with --golden <solver source>
 #   --agent NAME       Select the agent backend
+#   --version, --backend, --solve-method, --dtype, --max-iter
+#   --tol, --objective, --check-termination N
+#   --[no-]code-optimization, --no-profile
+#   --translate-timeout S, --optimize-timeout S, --optimize-max-turns N
+#   --optimize-rounds N, --optimize-min-gain F, --optimize-patience N
 ```
 
 ### Custom module format
