@@ -329,8 +329,27 @@ Each agent phase runs under a budget, set per run on `CodegenConfig`:
 | setting | default | bounds |
 |---|---|---|
 | `agent_timeout_s` | 600 s (10 min) | wall-clock time of the translation phase |
-| `agent_optimize_timeout_s` | 7200 s (2 h) | wall-clock time of the code optimization phase |
-| `agent_optimize_max_turns` | 200 | agent turns of the code optimization phase |
+| `agent_optimize_timeout_s` | 7200 s (2 h) | wall-clock time of one code optimization round |
+| `agent_optimize_max_turns` | 200 | agent turns of one code optimization round |
+| `agent_optimize_rounds` | 5 | maximum number of code optimization rounds |
+| `agent_optimize_min_gain` | 0.02 | a round gaining less than this (relative) ends the phase |
+
+The code optimization phase runs in rounds. Each round is a fresh agent run on
+the fastest verified solver so far, told its current time and profile. After each
+round the pipeline re-verifies the rewrite (including the kernel rules) and
+benchmarks it head to head against that solver. A round that fails, is not
+faster, or gains less than `agent_optimize_min_gain` ends the phase; a failing or
+slower one is reverted first. `OPTIMIZATIONS.md` lists the rounds.
+
+Each round's summary also lists, under `Blocked by rules:`, the optimizations
+the agent considered but did not make because a rule forbade them, with the rule
+and an expected gain. They appear as a table in `OPTIMIZATIONS.md` and as
+`rule_friction` on the result. Collected across problems, they show which rules
+cost speed, and so which ones are worth replacing by an exact check that admits
+the optimization.
+`fomtools.codegen.generate.run_code_optimization` runs the phase on any directory
+that holds a verified translated solver, for example a copy, when you want to
+keep the translated solver too.
 
 Translation is a bounded task and rarely needs more than a few minutes. The code
 optimization phase is open-ended, and on a GPU every round (an `nvcc` build,
@@ -342,9 +361,9 @@ config = CodegenConfig(agent_optimize_timeout_s=4 * 3600, agent_optimize_max_tur
 result = generate_code(..., config=config, code_optimization=True)
 ```
 
-or, on the command line, `--translate-timeout`, `--optimize-timeout` (seconds)
-and `--optimize-max-turns`. The budgets apply to whichever agent driver runs, a
-driver you build yourself included: one built without a config takes the run's.
+or, on the command line, `--translate-timeout`, `--optimize-timeout` (seconds),
+`--optimize-max-turns`, `--optimize-rounds` and `--optimize-min-gain`. The
+budgets apply to whichever agent driver runs, a driver you build yourself included: one built without a config takes the run's.
 When a budget runs out the agent is stopped, whatever it wrote is re-verified and
 benchmarked as usual, and the report says so (in that case the agent may not have
 written its own summary). For reference, a CUDA CG solve stopped at 30 minutes
@@ -377,7 +396,7 @@ data cannot change:
 |---|---|---|
 | `src/fom_solver.c` (the iteration) | rewritten by the agent | end to end, against the Python reference on sampled parameters |
 | `src/fom_linsolve.c` (linear solves) | rewritten by the agent | each `fom_lin_solve_<name>` against the reference solve of its factorization, on random right-hand sides |
-| `src/fom_ops.c` (matrix-vector products) | rewritten by the agent | each `fom_apply_<name>` exactly against its matrix (below) |
+| `src/fom_ops.c` (matrix-vector products) | rewritten by the agent | each `fom_apply_<name>` exactly against its matrix, each `fom_fused_<block>` exactly against its members (below); each `fom_step_<block>`, `__rest` routine and `fom_iterate` exactly against its members and a reference activation |
 | `src/fom_data.c`, `src/fom_objective.c`, `include/`, `test/`, `Makefile` | package only | — |
 
 A matrix-vector routine is a linear map, so it can be checked for **every**
@@ -385,7 +404,10 @@ input, not just sampled ones. `make verify` runs each `fom_apply_<name>` next to
 package-written reference (`test/ops_ref.c`) that reads the same `fom_data.c`
 arrays, starting both from the same nonzero `out` (so the routine must still
 accumulate, `out += M @ x`). The tolerance scales with `M @ x`, not with that
-starting value, so each entry is held to `tol_verify` relative to itself:
+starting value, so each entry is held to `tol_kernel` relative to itself. A rewrite
+may only reorder arithmetic, so `tol_kernel` (1e-10 in double precision) is far
+tighter than the end-to-end `tol_verify`, and a slightly perturbed coefficient fails
+here even where the sampled solves would absorb it:
 
 - on **every unit vector** when the matrix is small enough
   (`cols × (nnz + rows) ≤ 1e8`): this recovers the routine's matrix column by
@@ -395,6 +417,88 @@ starting value, so each entry is held to `tol_verify` relative to itself:
 
 The check stores no matrix-sized data: the expected values are computed in C from
 `fom_data.c`, and the only stored data are the random probe vectors.
+
+**Fused products.** Some speedups come from relations *between* matrices, which
+no single `fom_apply_<name>` can see. In an accelerated method the slope of the
+momentum term is often a signed rearrangement of the base block
+(`D = [-A1, A1]` for `A = [0, A1]`), so `A x + gamma D x` is one smaller product,
+`A1 (x1 + gamma (x1 - x0))`. So `fom_ops.c` also holds one
+`fom_fused_<block>(sources..., schedule values..., out)` per output block with two
+or more products by the state or a temporary. It adds them all,
+`out += sum_k s_k * (M_k @ src_k)`. Parameter terms stay out, so the solver can
+still compute them once per solve. A fused routine may read the data of its
+members, and only theirs. `make verify` checks it against the sum of its members'
+references:
+
+- on every unit vector of each source (the other sources zero), first with every
+  schedule value at 0 and then with each alone at 1. At each setting the routine
+  is linear in the probed source, so this recovers every member exactly, entry by
+  entry;
+- on two random choices of all sources and schedule values, which catches a
+  routine that is right only at 0 and 1, or not linear in its inputs.
+
+`fom_ops.c` may not read the schedule tables or accessors (`fom_sched_*`,
+`FOM_SCHED_*`). A routine gets its schedule values as arguments, so it cannot
+special-case the values the solver will pass it; with the no-new-literals rule,
+it has nothing to compare them against.
+
+**Selections.** A matrix with at most one nonzero per row, every nonzero exactly
+1, is a copy: an identity, a shift, or a gather. `SPEC.md` lists these, and
+`fom_data.h` carries each index map as `FOM_SEL_<name>_SRC` (-1 for an empty
+row). The solver may apply them itself (or write a result straight to its
+destination) instead of calling `fom_apply_<name>`. Such a copy is checked end to
+end only; a wrong index moves whole entries of the state, which the sampled
+comparison sees. CUDA has neither fused routines nor selection maps: its products
+run on the device from `fom_ops.cu`'s own arrays.
+
+**Step routines.** A fused routine still leaves the activation, the constant
+and the parameter terms to the solver, and it accumulates, so the solver zeroes,
+copies and makes a second pass over every block. `fom_ops.c` therefore also holds
+one `fom_step_<block>(sources..., schedule values..., bias, act, out)` per output
+block (each body step without a linear solve, and the state update `su`). It
+computes the whole block, `out = act(bias + sum_k s_k * (M_k @ src_k))`, and
+**overwrites** `out`. `bias` is what the caller adds (the constant and the
+parameter terms, which it can still hoist), and `act` points at the activation's
+parameters: a `FomAct_<block>` with the soft-threshold `lambd`, or the `lo` (and
+`hi`) bound vectors, whose package values are `FOM_ACT_<block>`. A step routine
+must apply the parameters it is passed, so `make verify` can choose them:
+
+- with the activation switched off (`lambd = 0`, bounds at ±1e300), on every
+  unit vector of each source at every schedule setting and with a random bias.
+  The routine is then linear, so this recovers every member and the bias
+  pass-through exactly. `out` starts from garbage, so a routine that accumulates
+  fails;
+- on random sources, schedule values and biases, with the activation off, at
+  the package parameters, and at random parameters drawn around the
+  pre-activation values, which make it active on about half the rows. A routine
+  that hardcodes a bound or threshold, or is wrong only where the activation is
+  active, fails here, even one that recognizes the switched-off probes by their
+  huge bounds.
+
+`fom_ops.c` may not read `FOM_ACT_*`, the constant vectors, or the activation
+bounds: they come in only through `bias` and `act`.
+
+**The whole iteration.** `fom_iterate(state, schedule values..., bias_<block>...,
+act_<block>..., t_<name>..., new_state)` chains the step routines of one
+iteration (when no body step has a linear solve): it writes every temporary,
+which the solver and `fom_objective` still need, and the new state. A rewrite can
+keep values in registers from block to block and share intermediates between
+them. It may read the data of every matrix of the iteration. `make verify`
+compares every temporary and the new state with the chained reference steps: on
+every unit vector of the state, with the activations off and zero biases, at
+every schedule value alone at 1, all at 0, and one random setting (which catches
+products of schedule values across blocks); then on random states, biases and
+activation parameters as for a step routine.
+
+**Selection rows.** A block whose rows are partly plain copies (exactly one
+unscaled product with exactly one entry equal to 1 in the row, the others none)
+lists those rows in `fom_data.h` as `FOM_SELROWS_<block>_ROW/SRC/COL`, described
+in `SPEC.md`. Its `fom_fused_<block>__rest` and `fom_step_<block>__rest` compute
+every other row. `make verify` holds them to the full reference on their rows
+and checks that they leave every selection row bit for bit untouched. The solver
+may then write the selection rows itself, a step block's as
+`out[row] = act(bias[row] + src[col])`. Like whole selections, those copies are
+checked end to end only.
 
 Only code inside `fom_apply_<name>` goes through this check, so these rules keep
 every coefficient there. A rewrite that breaks one is discarded:
@@ -406,12 +510,21 @@ every coefficient there. A rewrite that breaks one is discarded:
   `fom_ops.c`, a routine is `fom_apply_<name>` with every helper it calls (on
   CUDA, its `__global__` kernel); it may read only its own matrix's data, no
   other code (a macro, static data, an unreached function) may read matrix data,
-  and every function but the `fom_apply_<name>` entry points must be `static`;
+  and every function but the `fom_apply_<name>` and `fom_fused_<block>` entry
+  points must be `static`. A fused routine may read its members' data, and
+  nothing in `fom_ops.c` may read the schedule;
 - the solver and `fom_ops.c` may not add floating-point constants other than
   `0`, `0.5`, `1` and `2`: decimal or hexadecimal float literals, or integer
-  literals cast to a floating type (coefficients come from `fom_data.c`);
+  literals cast to a floating type (coefficients come from `fom_data.c`). The
+  exception is a `fom_apply_<name>`, `fom_fused_<block>`, step, `__rest` or
+  iterate routine that `make verify`
+  probes on every unit vector: those probes recover its matrix exactly, so it may
+  hold its coefficients as literals (an unrolled product over the fixed sparsity,
+  with the values inlined). A routine over the probe budget, checked on random
+  vectors only, and the solver keep the rule;
 - `fom_setup` and `fom_update_params`, and any function of the solver they
-  reach, may not add uses of `fom_apply_*`, which is how a matrix would be
+  reach, may not add uses of `fom_apply_*`, `fom_fused_*`, `fom_step_*` or
+  `fom_iterate`, which is how a matrix would be
   rebuilt by probing it. This also rules out hoisting a product that depends
   only on the parameters out of the iteration and into `fom_update_params`: a
   syntactic rule cannot tell a parameter vector from a unit vector, and the
@@ -640,8 +753,8 @@ both side by side is the quickest way to see what declaring a coefficient buys.
 `--scaffold-only` emits everything except the solver body (useful to inspect the
 spec and data before invoking the agent). `--no-roll` keeps a recorded run
 unrolled even when it could be rolled back up. `--translate-timeout`,
-`--optimize-timeout` (seconds) and `--optimize-max-turns` set the agent's
-budgets for this run ([above](#time-and-turn-budgets)). `--tol` alone stops on the
+`--optimize-timeout` (seconds), `--optimize-max-turns`, `--optimize-rounds` and
+`--optimize-min-gain` set the agent's budgets for this run ([above](#time-and-turn-budgets)). `--tol` alone stops on the
 infinity-norm change; with `--objective` it stops on the verification objective
 the module set on its recording, and `--check-termination N` sets the interval.
 

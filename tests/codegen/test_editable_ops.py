@@ -24,7 +24,11 @@ from fomtools.codegen.examples import mpc_osqp_example
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.generate import generate_code
 from fomtools.codegen.targets import get_target
-from fomtools.codegen.targets.embedded_c import EmbeddedCTarget, _matvec_matrix_names
+from fomtools.codegen.targets.embedded_c import (
+    EmbeddedCTarget,
+    _fused_blocks,
+    _matvec_matrix_names,
+)
 
 GOLDEN = Path(__file__).parent / "golden" / "mpc" / "embedded_c" / "fom_solver.c"
 OPS = "src/fom_ops.c"
@@ -154,16 +158,34 @@ def test_random_probes_check_a_matrix_over_the_budget(
 
 def test_the_tolerance_scales_with_the_entry_not_the_starting_out(tmp_path, mpc, requires_compiler):
     # Row 6 of `out` starts at 3 and entry (6, 0) of t0_state is zero. An error
-    # of 2.5 * tol there must fail: scaled by the starting value it would pass.
+    # of 2.5 * tol_kernel there must fail: scaled by the starting value it would pass.
     _, ir = mpc
     scaffold(ir, tmp_path, CONFIG)
     (tmp_path / "src" / "fom_solver.c").write_text(GOLDEN.read_text())
     sig = "void fom_apply_t0_state(const fom_float *x, fom_float *out) {"
     ops = tmp_path / OPS
-    off = 2.5 * CONFIG.tol_verify
+    off = 2.5 * CONFIG.tol_kernel
     ops.write_text(ops.read_text().replace(sig, sig + f"\n    out[6] += {off!r} * x[0];"))
     proc = _verify(tmp_path)
     assert "fom_apply_t0_state entry (6, 0) is off by" in proc.stdout, proc.stdout
+
+
+def test_a_perturbation_below_the_end_to_end_tolerance_fails_the_kernel_check(
+    tmp_path, mpc, requires_compiler
+):
+    # A rewrite may only reorder arithmetic. A coefficient off by a tenth of
+    # tol_verify would pass the sampled whole-solver comparison; the direct check,
+    # at tol_kernel, rejects it.
+    _, ir = mpc
+    assert CONFIG.tol_kernel < 1e-3 * CONFIG.tol_verify
+    scaffold(ir, tmp_path, CONFIG)
+    (tmp_path / "src" / "fom_solver.c").write_text(GOLDEN.read_text())
+    sig = "void fom_apply_t0_state(const fom_float *x, fom_float *out) {"
+    ops = tmp_path / OPS
+    off = 0.1 * CONFIG.tol_verify
+    ops.write_text(ops.read_text().replace(sig, sig + f"\n    out[0] += {off!r} * x[0];"))
+    proc = _verify(tmp_path)
+    assert "fom_apply_t0_state entry (0, 0) is off by" in proc.stdout, proc.stdout
 
 
 def test_the_check_stores_no_matrix_sized_data(tmp_path, mpc):
@@ -226,7 +248,8 @@ def test_the_cuda_solver_is_held_to_the_kernel_rules(tmp_path, mpc, monkeypatch)
 
 
 def test_a_hardcoded_coefficient_in_ops_is_rejected(tmp_path, mpc, requires_compiler):
-    # Numerically right (adds 0.37 * 0), but a literal coefficient is untraceable.
+    # Numerically right (adds 0.37 * 0), but a literal outside every exactly
+    # probed routine is untraceable.
     def with_literal(text: str) -> str:
         return MARK + "\n" + text + "\nfom_float fom_unused_scale(void) { return 0.37 * 0; }\n"
 
@@ -394,7 +417,12 @@ def test_report_tables_each_routine_and_marks_the_rewritten_one(tmp_path, mpc, r
     result = _generate(tmp_path, mpc, _rewrite_one_routine("su_state"))
     assert result.optimization_kept, result.optimize.log
     rows = {c["name"]: c for c in result.kernel_checks}
-    assert list(rows) == _matvec_matrix_names(ir)
+    target = get_target(CONFIG)
+    expected = _matvec_matrix_names(ir) + [f"fused_{b.name}" for b in _fused_blocks(ir)]
+    expected += [fn[len("fom_") :] for fn in target.step_routines(ir)]
+    expected += [fn[len("fom_") :] for fn in target.rest_routines(ir)]
+    expected += ["iterate"] if target.iterate_routine(ir) else []
+    assert list(rows) == expected
     assert rows["su_state"]["rewritten"] and not rows["t0_state"]["rewritten"]
     md = ir.matrices["su_state"]
     assert rows["su_state"]["shape"] == tuple(md.shape)
@@ -426,9 +454,18 @@ def test_parse_ops_checks_round_trips_real_verify_output(tmp_path, mpc, requires
     proc = _verify(tmp_path)
     assert proc.returncode == 0, proc.stdout
     checks = parse_ops_checks(proc.stdout)
-    assert [c["name"] for c in checks] == _matvec_matrix_names(ir)
-    for c in checks:
+    blocks = _fused_blocks(ir)
+    names = [c["name"] for c in checks]
+    assert names[: len(_matvec_matrix_names(ir)) + len(blocks)] == _matvec_matrix_names(ir) + [
+        f"fused_{b.name}" for b in blocks
+    ]
+    checks = checks[: len(_matvec_matrix_names(ir)) + len(blocks)]
+    for c in checks[: -len(blocks)]:
         cols = ir.matrices[c["name"]].shape[1]
+        assert c["mode"] == "basis" and c["probes"] == cols + 2 and c["max_err"] == 0.0
+    for c, b in zip(checks[-len(blocks) :], blocks):
+        # every source's unit vectors (no schedule here) plus the random probes
+        cols = sum(ir.matrices[m].shape[1] for m in dict.fromkeys(b.members))
         assert c["mode"] == "basis" and c["probes"] == cols + 2 and c["max_err"] == 0.0
 
 
@@ -447,7 +484,7 @@ def test_a_routine_that_returns_nan_fails_verify(tmp_path, mpc, requires_compile
 
     monkeypatch.setattr(EmbeddedCTarget, "_checked_ops", lambda self, ir: [])
     scaffold(ir, tmp_path, CONFIG)
-    ops.write_text(nan_ops)
+    ops.write_text(ops.read_text().replace("out[i] += s;", "out[i] += s * (s - s) / (s - s);", 1))
     proc = _verify(tmp_path)
     assert proc.returncode != 0 and "VERIFY OK" not in proc.stdout
     # printf spells NaN "nan" or "-nan" depending on the libc; the verdict is what counts.

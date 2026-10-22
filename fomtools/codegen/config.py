@@ -17,6 +17,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 #: needs a looser equivalence gate than double; see ``CodegenConfig.tol_verify``.
 _TOL_VERIFY_DEFAULTS = {"float64": 1e-6, "float32": 1e-4}
 
+#: Kernel-check tolerance default per dtype; see ``CodegenConfig.tol_kernel``.
+_TOL_KERNEL_DEFAULTS = {"float64": 1e-10, "float32": 1e-4}
+
 
 class Version(str, Enum):
     """Which flavour of solver to emit.
@@ -223,6 +226,13 @@ class CodegenConfig(BaseModel):
         output against the Python reference oracle. When left unset it defaults
         by dtype (1e-6 for float64, 1e-4 for float32, since single precision
         cannot meet a 1e-6 gate); set it explicitly to override.
+    tol_kernel : float or None
+        Tolerance of the direct checks of each ``fom_apply_<name>`` and
+        ``fom_fused_<block>`` against the package's reference, relative to
+        ``1 + |M x|``. A rewritten kernel may only reorder arithmetic, so the
+        float64 default (1e-10) is far tighter than ``tol_verify``: a perturbed
+        coefficient that the end-to-end check would absorb fails here. Defaults
+        by dtype (1e-10 for float64, 1e-4 for float32).
     num_verify_samples : int
         Number of random parameter instances drawn for the golden verify data.
     seed : int
@@ -234,8 +244,13 @@ class CodegenConfig(BaseModel):
         Turn budget for one coding-agent attempt at the code optimization
         phase. Default 200.
     agent_optimize_timeout_s : int
-        Wall-clock budget, in seconds, for the code optimization phase.
-        Default 7200.
+        Wall-clock budget, in seconds, for one round of the code optimization
+        phase. Default 7200.
+    agent_optimize_rounds : int
+        Maximum number of code optimization rounds. Default 5.
+    agent_optimize_min_gain : float
+        A round that makes the solver less than this much faster (relative)
+        ends the phase. Default 0.02.
     cg_auto_min_dim : int
         Dimension threshold for the ``AUTO`` → CG upgrade on the large-scale
         CUDA backend (see `SolveMethod`). Raise it to keep more systems
@@ -256,6 +271,15 @@ class CodegenConfig(BaseModel):
             "1e-6 for float64, 1e-4 for float32 (single precision carries ~1e-7 "
             "relative error, which 1e-6 is too tight to absorb — especially for "
             "iterative CG). Set explicitly to override."
+        ),
+    )
+    tol_kernel: float | None = Field(
+        default=None,
+        description=(
+            "Tolerance of the direct kernel checks (fom_apply_*, fom_fused_*) "
+            "against the package's reference, relative to 1 + |M x|. Defaults by "
+            "dtype when left unset: 1e-10 for float64, 1e-4 for float32. A rewrite "
+            "may only reorder arithmetic, so this is much tighter than tol_verify."
         ),
     )
     num_verify_samples: int = 8
@@ -288,8 +312,8 @@ class CodegenConfig(BaseModel):
         ge=1,
         default=7200,
         description=(
-            "Wall-clock budget, in seconds, for the code optimization phase, "
-            "enforced as for agent_timeout_s. Larger than the translation budget "
+            "Wall-clock budget, in seconds, for one round of the code optimization "
+            "phase (each round gets its own), enforced as for agent_timeout_s. Larger than the translation budget "
             "because the phase is open-ended: profile, rewrite, re-verify, "
             "benchmark, repeat, and each round of a GPU kernel rewrite (nvcc "
             "build, verify, benchmark) is slow. Two hours by default: a CUDA CG "
@@ -297,6 +321,27 @@ class CodegenConfig(BaseModel):
             "still leaves whatever it had written on disk, which the pipeline "
             "re-verifies and benchmarks. The gates that run after the agent "
             "(verify, benchmark, profile) take seconds and are outside the budget."
+        ),
+    )
+    agent_optimize_rounds: int = Field(
+        ge=1,
+        default=5,
+        description=(
+            "Maximum number of code optimization rounds. Each round is a fresh agent "
+            "run on the fastest verified solver so far, told its current time and "
+            "profile; the pipeline re-verifies and benchmarks it head to head "
+            "against that solver, and keeps it only if it is faster. The phase "
+            "ends early when a round fails its gates, is not faster, or gains less "
+            "than agent_optimize_min_gain. One round is the single-pass behavior."
+        ),
+    )
+    agent_optimize_min_gain: float = Field(
+        ge=0.0,
+        default=0.02,
+        description=(
+            "Relative speedup below which a kept round ends the code optimization "
+            "phase: a round taking the solver from t to t' continues only if "
+            "(t - t') / t >= agent_optimize_min_gain."
         ),
     )
     cg_auto_min_dim: int = Field(
@@ -320,12 +365,17 @@ class CodegenConfig(BaseModel):
         if isinstance(data, dict) and data.get("tol_verify") is None:
             dtype = data.get("dtype", "float64")
             data["tol_verify"] = _TOL_VERIFY_DEFAULTS.get(dtype, 1e-6)
+        if isinstance(data, dict) and data.get("tol_kernel") is None:
+            dtype = data.get("dtype", "float64")
+            data["tol_kernel"] = _TOL_KERNEL_DEFAULTS.get(dtype, 1e-10)
         return data
 
     @model_validator(mode="after")
     def _check_tol_verify(self) -> "CodegenConfig":
         if self.tol_verify is None or self.tol_verify <= 0:
             raise ValueError("tol_verify must be a positive float")
+        if self.tol_kernel is None or self.tol_kernel <= 0:
+            raise ValueError("tol_kernel must be a positive float")
         return self
 
     @model_validator(mode="after")

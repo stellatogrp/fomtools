@@ -28,6 +28,8 @@ from fomtools.codegen.ir import (
     ParamSpec,
     StateSpec,
     Term,
+    selection_description,
+    selection_indices,
 )
 from fomtools.codegen.objective import objective_c_params, objective_call
 
@@ -469,10 +471,74 @@ def render_markdown(ir: FomIR) -> str:
             "`FOM_CHECK_TERMINATION`, and `FOM_TOL` are defined in `fom_workspace.h`."
         )
         lines.append("")
+    lines += _selection_markdown(ir)
+    lines += _selection_rows_markdown(ir)
     if ir.termination.uses_objective and ir.objective is not None:
         lines += _objective_markdown(ir)
     lines.append("All matrices/consts are provided numerically in `data.npz` / `fom_data.c`.")
     return "\n".join(lines)
+
+
+def _selection_markdown(ir: FomIR) -> list[str]:
+    """The 0/1 selection matrices among the products (`selection_indices`)."""
+    terms = [t for lin in [s.linear_op for s in ir.body] + [ir.state_update] for t in lin.terms]
+    found = {}
+    for t in terms:
+        md = ir.matrices[t.matrix]
+        if t.matrix not in found:
+            src = selection_indices(md)
+            if src is not None:
+                cols = md.shape[1] if len(md.shape) > 1 else 1
+                found[t.matrix] = selection_description(src, cols)
+    if not found:
+        return []
+    lines = [
+        "## Selection matrices",
+        "",
+        "These products are copies: each matrix has at most one nonzero per row, and",
+        "every nonzero is exactly 1, so `(M @ x)[i] = x[src[i]]`. On the CPU targets",
+        "`fom_data.h` carries each map as `FOM_SEL_<name>_SRC` (-1 for an empty row).",
+        "",
+    ]
+    lines += [f"- `{name}`: {what}" for name, what in found.items()]
+    lines.append("")
+    return lines
+
+
+def _selection_rows_markdown(ir: FomIR) -> list[str]:
+    """Rows of an output block that copy one source entry (on the CPU targets:
+    ``FOM_SELROWS_<block>_*``, which the solver may write itself)."""
+    from fomtools.codegen.targets.embedded_c import (
+        _fused_blocks,
+        _selection_rows,
+        _selection_rows_description,
+        _step_blocks,
+    )
+
+    found = {}
+    for block in [*_fused_blocks(ir), *_step_blocks(ir)]:
+        if block.name not in found:
+            rows = _selection_rows(ir, block)
+            if rows:
+                found[block.name] = (
+                    len(rows),
+                    block.rows,
+                    _selection_rows_description(block, rows),
+                )
+    if not found:
+        return []
+    lines = [
+        "## Selection rows",
+        "",
+        "Rows of an output block that are a plain copy: exactly one unscaled product",
+        "has exactly one entry there, equal to 1, and the others none. On the CPU",
+        "targets `fom_data.h` lists them as `FOM_SELROWS_<block>_ROW/SRC/COL`, and a",
+        "`fom_fused_<block>__rest` / `fom_step_<block>__rest` computes the other rows.",
+        "",
+    ]
+    lines += [f"- `{name}` ({n} of {rows} rows): {what}" for name, (n, rows, what) in found.items()]
+    lines.append("")
+    return lines
 
 
 def _objective_markdown(ir: FomIR) -> list[str]:

@@ -45,8 +45,13 @@ class OpenMpTarget(EmbeddedCTarget):
                 "# Serial by default for portable verification; real builds use -fopenmp.",
                 "OMPFLAGS ?=",
                 "BENCHFLAGS ?= -O3 -Iinclude",
-                "SRC = src/fom_solver.c src/fom_data.c src/fom_linsolve.c src/fom_ops.c "
-                "src/fom_objective.c",
+                "# The sources a rewrite may change, rebuilt (with LTO) on every build; the",
+                "# matrix data and the verify samples are large and change only with the",
+                "# problem (scaffold leaves an unchanged file untouched), so they are objects",
+                "# built once, without LTO: there is no code in them to inline.",
+                "CODE = src/fom_solver.c src/fom_linsolve.c src/fom_ops.c src/fom_objective.c",
+                "DATA = build/fom_data.o",
+                "SRC = $(CODE) src/fom_data.c",
                 "# Package-written reference matvecs for verify's direct check of fom_ops.c.",
                 "VERIFY_SRC = $(wildcard test/ops_ref.c)",
                 "",
@@ -59,32 +64,42 @@ class OpenMpTarget(EmbeddedCTarget):
                 "",
                 ".PHONY: verify bench profile lib release clean objective_guard",
                 "",
-                f"verify:{guard} $(SRC) $(VERIFY_SRC) test/verify_main.c",
+                "build/fom_data.o: src/fom_data.c include/fom_data.h include/fom_workspace.h",
+                "\t@mkdir -p build",
+                "\t$(CC) -O2 -fPIC -Iinclude -c src/fom_data.c -o $@",
+                "VERIFY_DEPS = test/verify_main.c $(wildcard test/*.h) $(wildcard include/*.h)",
+                "build/verify_main.o: $(VERIFY_DEPS)",
+                "\t@mkdir -p build",
+                "\t$(CC) $(CFLAGS) $(OMPFLAGS) -Itest -c test/verify_main.c -o $@",
+                "",
+                f"verify:{guard} $(CODE) $(VERIFY_SRC) $(DATA) build/verify_main.o",
                 _KERNEL_CHECK_RECIPE,
-                "\t$(CC) $(CFLAGS) $(LTOFLAGS) $(OMPFLAGS) -Itest $(SRC) $(VERIFY_SRC) test/verify_main.c "
-                "-o verify_bin -lm",
+                "\t$(CC) $(CFLAGS) $(LTOFLAGS) $(OMPFLAGS) -Itest $(CODE) $(VERIFY_SRC) $(DATA) "
+                "build/verify_main.o -o verify_bin -lm",
                 "\t./verify_bin",
                 "",
-                "release: release/fom_solver.c src/fom_data.c release/fom_linsolve.c "
+                "release: release/fom_solver.c $(DATA) release/fom_linsolve.c "
                 "release/fom_ops.c src/fom_objective.c",
-                "\t$(CC) $(CFLAGS) $(LTOFLAGS) $(OMPFLAGS) -shared -fPIC release/fom_solver.c src/fom_data.c "
+                "\t$(CC) $(CFLAGS) $(LTOFLAGS) $(OMPFLAGS) -shared -fPIC release/fom_solver.c $(DATA) "
                 "release/fom_linsolve.c release/fom_ops.c src/fom_objective.c "
                 "-o libfomsolver.$(LIBEXT) -lm",
                 "",
-                "bench: $(SRC) test/bench_main.c",
-                "\t$(CC) $(BENCHFLAGS) $(LTOFLAGS) $(OMPFLAGS) -Itest $(SRC) test/bench_main.c -o bench_bin -lm",
+                "bench: $(CODE) $(DATA) test/bench_main.c",
+                "\t$(CC) $(BENCHFLAGS) $(LTOFLAGS) $(OMPFLAGS) -Itest $(CODE) $(DATA) test/bench_main.c "
+                "-o bench_bin -lm",
                 "\t./bench_bin",
                 "",
-                "profile: $(SRC) src/fom_profile.c test/bench_main.c",
-                "\t$(CC) $(BENCHFLAGS) $(LTOFLAGS) $(OMPFLAGS) -DFOM_PROFILE -Itest $(SRC) src/fom_profile.c "
-                "test/bench_main.c -o profile_bin -lm",
+                "profile: $(CODE) $(DATA) src/fom_profile.c test/bench_main.c",
+                "\t$(CC) $(BENCHFLAGS) $(LTOFLAGS) $(OMPFLAGS) -DFOM_PROFILE -Itest $(CODE) $(DATA) "
+                "src/fom_profile.c test/bench_main.c -o profile_bin -lm",
                 "\t./profile_bin",
                 "",
-                "lib: $(SRC)",
-                "\t$(CC) $(CFLAGS) $(LTOFLAGS) $(OMPFLAGS) -shared -fPIC $(SRC) -o libfomsolver.$(LIBEXT) -lm",
+                "lib: $(CODE) $(DATA)",
+                "\t$(CC) $(CFLAGS) $(LTOFLAGS) $(OMPFLAGS) -shared -fPIC $(CODE) $(DATA) "
+                "-o libfomsolver.$(LIBEXT) -lm",
                 "",
                 "clean:",
-                "\trm -f verify_bin bench_bin profile_bin libfomsolver.so libfomsolver.dylib",
+                "\trm -rf verify_bin bench_bin profile_bin libfomsolver.so libfomsolver.dylib build",
                 "",
                 *guard_rules,
             ]

@@ -75,13 +75,25 @@ void fom_update_params(FomWorkspace *work, const FomParams *params) { (void)para
 
 
 def _ops(ir, bodies=None) -> str:
-    """A fom_ops.c defining every fom_apply_<name>, with ``bodies[name]`` where given."""
-    from fomtools.codegen.targets.embedded_c import _matvec_matrix_names
+    """A fom_ops.c defining every fom_apply_<name> and fom_fused_<block>, with
+    ``bodies[name]`` (``bodies["fused_<block>"]``) where given."""
+    from fomtools.codegen.targets.embedded_c import _fused_blocks, _matvec_matrix_names
 
     bodies = bodies or {}
     return "\n".join(
-        f"void fom_apply_{n}(const fom_float *x, fom_float *out) {{ {bodies.get(n, '')} }}"
-        for n in _matvec_matrix_names(ir)
+        [
+            f"void fom_apply_{n}(const fom_float *x, fom_float *out) {{ {bodies.get(n, '')} }}"
+            for n in _matvec_matrix_names(ir)
+        ]
+        + [
+            f"void fom_fused_{b.name}(const fom_float *x, fom_float *out) "
+            f"{{ {bodies.get('fused_' + b.name, '')} }}"
+            for b in _fused_blocks(ir)
+        ]
+        + [
+            f"void {fn}(const fom_float *x, fom_float *out) {{ }}"
+            for fn in EmbeddedCTarget(CodegenConfig())._step_owners(ir)
+        ]
     )
 
 
@@ -104,7 +116,9 @@ def test_structural_literals_and_integers_allowed(target, mpc_ir):
     assert target.kernel_checks("src/fom_ops.c", source, mpc_ir) == []
 
 
-def test_hex_floats_and_integer_casts_are_flagged(target, mpc_ir):
+def test_hex_floats_and_integer_casts_are_flagged(target, mpc_ir, monkeypatch):
+    # Over the probe budget, so the literal rule applies to every routine.
+    monkeypatch.setattr(EmbeddedCTarget, "_OPS_PROBE_BUDGET", 0)
     source = _ops(mpc_ir, {"t0_state": "out[0] += 0x1.8p0 * x[0] + (fom_float)3 * x[1];"})
     violations = target.kernel_checks("src/fom_ops.c", source, mpc_ir)
     assert any("'0x1.8p0'" in v for v in violations)
@@ -145,7 +159,9 @@ def test_a_missing_or_unbalanced_routine_is_a_violation(target, mpc_ir):
     assert any("could not find a definition of fom_apply_t0_state" in v for v in violations)
 
 
-def test_ops_literal_exemption_is_per_routine(target, mpc_ir):
+def test_ops_literal_exemption_is_per_routine(target, mpc_ir, monkeypatch):
+    # Over the probe budget, so the literal rule applies to every routine.
+    monkeypatch.setattr(EmbeddedCTarget, "_OPS_PROBE_BUDGET", 0)
     # 0.3 sits in another function of the translated file: it exempts that
     # function, not fom_apply_t0_state.
     baseline = _ops(mpc_ir) + "\nstatic fom_float step(void) { return 0.3; }"
@@ -296,7 +312,7 @@ def test_ops_helpers_must_be_static(target, mpc_ir):
     violations = target.kernel_checks("src/fom_ops.c", source, mpc_ir)
     assert violations == [
         "kern is not static; every function of fom_ops.c but the fom_apply_<name> "
-        "routines must be, so it is reached only through them"
+        "and fom_fused_<block> routines must be, so it is reached only through them"
     ]
 
 

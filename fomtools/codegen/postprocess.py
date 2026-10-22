@@ -19,7 +19,7 @@ import difflib
 import re
 from pathlib import Path
 
-from fomtools.codegen.agent.prompts import SUMMARY_BEGIN, SUMMARY_END
+from fomtools.codegen.agent.prompts import BLOCKED_HEADING, SUMMARY_BEGIN, SUMMARY_END
 
 # One line per matrix from verify's direct check of fom_apply_<name>.
 _OPSCHECK_RE = re.compile(
@@ -206,7 +206,10 @@ def _kernel_check_lines(
         "against the package's reference over the same `fom_data.c` matrix. *basis* "
         "probes every unit vector, which recovers the routine's matrix column by "
         "column (an exact check), plus random vectors; *random* uses random vectors "
-        "only (the matrix is over the probe budget).",
+        "only (the matrix is over the probe budget). A `fused_<block>` row is a "
+        "`fom_fused_<block>`, checked against the sum of its members: *basis* there "
+        "probes every unit vector of each source with every schedule value at 0 and "
+        "with each alone at 1, which recovers every member exactly.",
         "",
     ]
     if kernel_checks:
@@ -242,6 +245,66 @@ def _kernel_check_lines(
     return lines + [""]
 
 
+def _round_lines(rounds: list[dict]) -> list[str]:
+    """The report's per-round table of the code optimization phase."""
+
+    def us(value) -> str:
+        return f"{value:.3f}" if value is not None else "-"
+
+    lines = [
+        "## Rounds",
+        "",
+        "| round | before (us) | after (us) | gain | kept | agent (s) | outcome |",
+        "|---:|---:|---:|---:|:---:|---:|---|",
+    ]
+    for r in rounds:
+        gain = f"{100 * r['gain']:.1f}%" if r.get("gain") is not None else "-"
+        outcome = r.get("stop_reason") or "continued"
+        if r.get("truncated"):
+            outcome += " (agent stopped at its budget)"
+        lines.append(
+            f"| {r['index']} | {us(r.get('us_before'))} | {us(r.get('us_after'))} | {gain} "
+            f"| {'yes' if r.get('kept') else 'no'} | {r.get('agent_wall_s', 0):.0f} | {outcome} |"
+        )
+    return lines + [""]
+
+
+def extract_rule_friction(notes: str) -> list[dict]:
+    """The optimizations the agent reports a rule blocked, from its summary.
+
+    Reads the lines under the ``Blocked by rules:`` heading the optimization
+    prompt asks for, each ``- <idea> | <rule> | <expected gain>``, until the
+    first blank or non-list line. ``- none`` (or no section) gives ``[]``. A line
+    without separators is kept whole as the idea.
+    """
+    lines = notes.splitlines()
+    start = next(
+        (i for i, ln in enumerate(lines) if ln.strip().strip("*#").strip() == BLOCKED_HEADING),
+        None,
+    )
+    if start is None:
+        return []
+    found = []
+    for line in lines[start + 1 :]:
+        item = line.strip()
+        if not item.startswith(("-", "*")):
+            if found or item:
+                break
+            continue
+        item = item[1:].strip()
+        if not item or item.lower().rstrip(".") == "none":
+            continue
+        parts = [part.strip() for part in item.split("|")]
+        found.append(
+            dict(
+                idea=parts[0],
+                rule=parts[1] if len(parts) > 1 else "",
+                expected_gain=parts[2] if len(parts) > 2 else "",
+            )
+        )
+    return found
+
+
 def write_optimization_report(
     out_dir: str | Path,
     timing_summary: str,
@@ -252,6 +315,8 @@ def write_optimization_report(
     kernel_checks: list[dict] | None = None,
     rule_violations: list[str] | None = None,
     rewrite_collected: bool = True,
+    rounds: list[dict] | None = None,
+    rule_friction: list[dict] | None = None,
 ) -> Path:
     """Write ``OPTIMIZATIONS.md`` recording timing, agent notes, and the diff.
 
@@ -266,7 +331,11 @@ def write_optimization_report(
     ``rule_violations`` found when the rewrite was collected; ``None`` (a target
     whose products are not editable) leaves the section out.
     ``rewrite_collected`` is False when the phase returned no changed, verified
-    rewrite, so the rules never ran on one.
+    rewrite, so the rules never ran on one. ``rounds`` (one dict per round, see
+    `fomtools.codegen.generate.OptimizationRound`) adds a per-round table when
+    the phase ran more than one. ``rule_friction`` (see `extract_rule_friction`,
+    with a ``round``) adds the table of optimizations the agent says a rule
+    blocked.
     """
     out_dir = Path(out_dir)
     lines = ["# Optimization report", ""]
@@ -278,6 +347,8 @@ def write_optimization_report(
         else "not kept (reverted to the translated solver)"
     )
     lines += [f"Optimization outcome: **{status}**.", ""]
+    if rounds and len(rounds) > 1:
+        lines += _round_lines(rounds)
     if caveats:
         lines += ["## Caveats", ""]
         lines += [f"- {c}" for c in caveats]
@@ -286,6 +357,24 @@ def write_optimization_report(
         lines += _kernel_check_lines(
             kernel_checks, rule_violations or [], rewrite_collected, optimize_succeeded
         )
+    if rule_friction:
+        lines += [
+            "## Blocked by rules",
+            "",
+            "Optimizations the agent considered but did not make because a rule forbade "
+            "them, in its own words.",
+            "",
+            "| round | idea | rule | expected gain |",
+            "|---|---|---|---|",
+        ]
+        lines += [
+            "| {} | {} | {} | {} |".format(
+                f.get("round", ""),
+                *(str(f.get(k, "")).replace("|", "/") for k in ("idea", "rule", "expected_gain")),
+            )
+            for f in rule_friction
+        ]
+        lines += [""]
     lines += ["## What the agent changed", ""]
     if diff.strip():
         lines += ["```diff", diff.rstrip(), "```", ""]

@@ -83,6 +83,39 @@ class TargetDescriptor(ABC):
         """
         return ""
 
+    def fused_routines(self, ir) -> dict[str, list[str]]:
+        """``fom_fused_<block>`` routines in the editable ops source, with their
+        member matrices. Default: none."""
+        return {}
+
+    def exact_routines(self, ir) -> list[str]:
+        """Editable ops routines checked on every unit vector, which may hold their
+        coefficients as literals. Default: none."""
+        return []
+
+    def step_routines(self, ir) -> dict[str, list[str]]:
+        """``fom_step_<block>`` routines in the editable ops source, with their
+        member matrices. Default: none."""
+        return {}
+
+    def iterate_routine(self, ir) -> bool:
+        """Whether the editable ops source has a ``fom_iterate``. Default: no."""
+        return False
+
+    def selection_rows(self, ir) -> dict[str, str]:
+        """Blocks with rows that copy one source entry, with a description of
+        those rows. Default: none."""
+        return {}
+
+    def rest_routines(self, ir) -> list[str]:
+        """``__rest`` routines (a block without its selection rows). Default: none."""
+        return []
+
+    def selection_matrices(self, ir) -> dict[str, str]:
+        """0/1 selection matrices a solver may apply itself, with a description
+        of each (see `fomtools.codegen.ir.selection_indices`). Default: none."""
+        return {}
+
     def kernel_checks(self, rel: str, source: str, ir, baseline: str | None = None) -> list[str]:
         """Violations of the rules that keep rewritten kernels checkable (empty = OK).
 
