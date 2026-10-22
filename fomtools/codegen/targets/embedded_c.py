@@ -39,6 +39,20 @@ from fomtools.codegen.oracle import ReferenceOracle
 from fomtools.codegen.targets.base import TargetDescriptor, objective_violations
 
 
+def write_if_changed(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` unless it already holds exactly that.
+
+    ``scaffold`` runs before every verify of an agent's rewrite, restoring the
+    generated files; leaving an unchanged file alone keeps its modification time,
+    so ``make`` does not rebuild objects that depend on it (a large problem's
+    ``fom_data.c`` takes most of a minute to compile).
+    """
+    path = Path(path)
+    if path.exists() and path.stat().st_size == len(text.encode()) and path.read_text() == text:
+        return
+    path.write_text(text)
+
+
 def _fmt_float(x: float) -> str:
     return f"{float(x):.17g}"
 
@@ -485,32 +499,32 @@ class EmbeddedCTarget(TargetDescriptor):
         # the first thing a developer or the agent sees; nothing in the build
         # consumes it, so it is intentionally not buried under test/.
         spec.save(ir, out)
-        (out / "SPEC.md").write_text(spec.render_markdown(ir))
+        write_if_changed(out / "SPEC.md", spec.render_markdown(ir))
 
-        (out / "include" / "fom_workspace.h").write_text(self._workspace_header(ir))
-        (out / "include" / "fom_solver.h").write_text(self._solver_header())
-        (out / "include" / "fom_data.h").write_text(self._data_header(ir))
-        (out / "include" / "fom_profile.h").write_text(self._profile_header())
-        (out / "include" / "fom_linsolve.h").write_text(self._linsolve_header(ir))
+        write_if_changed(out / "include" / "fom_workspace.h", self._workspace_header(ir))
+        write_if_changed(out / "include" / "fom_solver.h", self._solver_header())
+        write_if_changed(out / "include" / "fom_data.h", self._data_header(ir))
+        write_if_changed(out / "include" / "fom_profile.h", self._profile_header())
+        write_if_changed(out / "include" / "fom_linsolve.h", self._linsolve_header(ir))
         (out / self.linsolve_source_path()).write_text(self._linsolve_source(ir))
-        (out / "include" / "fom_ops.h").write_text(self._ops_header(ir))
+        write_if_changed(out / "include" / "fom_ops.h", self._ops_header(ir))
         (out / self.ops_source_path()).write_text(self._ops_source(ir))
         if self.objective_source_path() != self.ops_source_path():
             (out / self.objective_source_path()).write_text(self._objective_file(ir))
-        (out / "src" / "fom_data.c").write_text(self._data_source(ir))
-        (out / "src" / "fom_profile.c").write_text(self._profile_source())
-        (out / "test" / "kernel_check.py").write_text(Path(kernel_rules.__file__).read_text())
+        write_if_changed(out / "src" / "fom_data.c", self._data_source(ir))
+        write_if_changed(out / "src" / "fom_profile.c", self._profile_source())
+        write_if_changed(out / "test" / "kernel_check.py", Path(kernel_rules.__file__).read_text())
         if self._checked_ops(ir):
-            (out / "test" / "ops_ref.h").write_text(self._ops_ref_header(ir))
-            (out / "test" / "ops_ref.c").write_text(self._ops_ref_source(ir))
+            write_if_changed(out / "test" / "ops_ref.h", self._ops_ref_header(ir))
+            write_if_changed(out / "test" / "ops_ref.c", self._ops_ref_source(ir))
         else:
             for rel in ("test/ops_ref.h", "test/ops_ref.c"):
                 (out / rel).unlink(missing_ok=True)
-        (out / "test" / "verify_data.h").write_text(self._verify_data(ir))
-        (out / "test" / "verify_main.c").write_text(self._verify_main(ir))
-        (out / "test" / "bench_main.c").write_text(self._bench_main(ir))
-        (out / "Makefile").write_text(self._makefile(ir))
-        (out / "README.md").write_text(self._readme(ir))
+        write_if_changed(out / "test" / "verify_data.h", self._verify_data(ir))
+        write_if_changed(out / "test" / "verify_main.c", self._verify_main(ir))
+        write_if_changed(out / "test" / "bench_main.c", self._bench_main(ir))
+        write_if_changed(out / "Makefile", self._makefile(ir))
+        write_if_changed(out / "README.md", self._readme(ir))
 
     # -- headers -----------------------------------------------------------
     def _workspace_header(self, ir: FomIR) -> str:

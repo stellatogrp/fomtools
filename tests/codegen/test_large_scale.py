@@ -214,6 +214,41 @@ def test_openmp_golden_verifies(tmp_path, requires_compiler):
     assert "VERIFY OK" in result.translate.log
 
 
+def test_openmp_data_and_verify_objects_are_built_once(tmp_path, requires_compiler):
+    # scaffold runs before every verify of a rewrite; it must leave unchanged files
+    # alone, so make does not recompile the (for a large problem, huge) data and
+    # verify samples on every build.
+    import time
+
+    from tests.codegen.conftest import build_ista
+
+    case = build_ista()
+    result = generate_code(
+        case["verifier"],
+        case["next_state"],
+        tmp_path,
+        config=_openmp_config(),
+        driver=StubAgentDriver(OPENMP_GOLDEN),
+        name="ista",
+    )
+    assert result.translate.success, result.translate.log
+    data, objs = (
+        tmp_path / "src" / "fom_data.c",
+        [
+            tmp_path / "build" / "fom_data.o",
+            tmp_path / "build" / "verify_main.o",
+        ],
+    )
+    before = [data.stat().st_mtime_ns] + [o.stat().st_mtime_ns for o in objs]
+    time.sleep(1.1)
+    result.target.scaffold(result.ir, tmp_path)
+    proc = subprocess.run(["make", "verify"], cwd=tmp_path, capture_output=True, text=True)
+    assert "VERIFY OK" in proc.stdout, proc.stdout + proc.stderr
+    assert "src/fom_data.c" not in proc.stdout  # not recompiled
+    after = [data.stat().st_mtime_ns] + [o.stat().st_mtime_ns for o in objs]
+    assert after == before
+
+
 def test_openmp_relaxed_static_checks():
     # Large-scale targets do not enforce the embedded no-malloc/division rules.
     target = get_target(_openmp_config())
@@ -317,7 +352,9 @@ def test_cuda_compile_builds_verify_and_bench(tmp_path):
     scaffold(ir, tmp_path, _cuda_config())
     mk = (tmp_path / "Makefile").read_text()
     assert "verify_bin" in mk and "bench_bin" in mk
-    assert "compile: $(OBJS) $(CHECK_OBJS) test/verify_main.c test/bench_main.c" in mk
+    assert "compile: $(OBJS) $(CHECK_OBJS) verify_main.o bench_main.o" in mk
+    # the data and verify samples are objects with dependencies, built once
+    assert "verify_main.o: $(VERIFY_DEPS)" in mk
     assert (tmp_path / "test" / "bench_main.c").exists()
 
 

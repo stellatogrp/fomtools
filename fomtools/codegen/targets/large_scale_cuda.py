@@ -59,6 +59,7 @@ from fomtools.codegen.targets.embedded_c import (
     _fmt_float,
     _is_csr,
     _matvec_matrix_names,
+    write_if_changed,
 )
 
 
@@ -217,10 +218,10 @@ class CudaTarget(EmbeddedCTarget):
     def scaffold(self, ir: FomIR, out_dir: Path) -> None:
         super().scaffold(ir, out_dir)
         out = Path(out_dir)
-        (out / "include" / "fom_ops_data.cuh").write_text(self._ops_data_header(ir))
+        write_if_changed(out / "include" / "fom_ops_data.cuh", self._ops_data_header(ir))
         if self._checked_ops(ir) or self._checked_factorizations(ir):
-            (out / "test" / "check_stage.h").write_text(self._check_stage_header(ir))
-            (out / "test" / "check_stage.cu").write_text(self._check_stage_source(ir))
+            write_if_changed(out / "test" / "check_stage.h", self._check_stage_header(ir))
+            write_if_changed(out / "test" / "check_stage.cu", self._check_stage_source(ir))
         else:
             for rel in ("test/check_stage.h", "test/check_stage.cu"):
                 (out / rel).unlink(missing_ok=True)
@@ -963,8 +964,15 @@ class CudaTarget(EmbeddedCTarget):
                 "\t$(NVCC) $(NVCCFLAGS) $(LINSOLVE_FLAGS) -c $< -o $@",
                 "fom_objective.o: src/fom_objective.cu",
                 "\t$(NVCC) $(NVCCFLAGS) -c $< -o $@",
-                "fom_data.o: src/fom_data.c",
+                "# The matrix data and the verify samples are large and change only when the",
+                "# problem does (scaffold leaves an unchanged file untouched): build them once.",
+                "fom_data.o: src/fom_data.c include/fom_data.h include/fom_workspace.h",
                 "\t$(CC) $(CFLAGS) -c $< -o $@",
+                "VERIFY_DEPS = test/verify_main.c $(wildcard test/*.h) $(wildcard include/*.h)",
+                "verify_main.o: $(VERIFY_DEPS)",
+                "\t$(CC) $(CFLAGS) -c test/verify_main.c -o $@",
+                "bench_main.o: test/bench_main.c $(wildcard include/*.h)",
+                "\t$(CC) $(CFLAGS) -c test/bench_main.c -o $@",
                 "",
                 "OBJS = fom_solver.o fom_ops.o fom_linsolve.o fom_objective.o fom_data.o",
                 "# Verify only, where fom_ops.cu / fom_linsolve.cu are editable: the host",
@@ -979,11 +987,9 @@ class CudaTarget(EmbeddedCTarget):
                 "# Compile-check: build BOTH the verify and bench binaries (no GPU run).",
                 "# Building bench_bin here too means a CI compile-check catches bench",
                 "# breakage even though benchmarking itself needs a GPU.",
-                f"compile:{guard} $(OBJS) $(CHECK_OBJS) test/verify_main.c test/bench_main.c",
+                f"compile:{guard} $(OBJS) $(CHECK_OBJS) verify_main.o bench_main.o",
                 _KERNEL_CHECK_RECIPE,
-                "\t$(CC) $(CFLAGS) -c test/verify_main.c -o verify_main.o",
                 "\t$(NVCC) $(NVCCFLAGS) $(OBJS) $(CHECK_OBJS) verify_main.o -o verify_bin $(LDLIBS)",
-                "\t$(CC) $(CFLAGS) -c test/bench_main.c -o bench_main.o",
                 "\t$(NVCC) $(NVCCFLAGS) $(OBJS) bench_main.o -o bench_bin $(LDLIBS)",
                 "",
                 "# Run-verification (requires a GPU): check the solver vs the oracle.",
