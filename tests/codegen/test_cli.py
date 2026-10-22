@@ -216,11 +216,14 @@ def test_budgets_are_set_per_run_and_reach_the_agent():
             "14400",
             "--optimize-max-turns",
             "400",
+            "--optimize-patience",
+            "3",
         ]
     )
     config = _build_config(args)
     assert (config.agent_timeout_s, config.agent_optimize_timeout_s) == (900, 14400)
     assert config.agent_optimize_max_turns == 400
+    assert config.agent_optimize_patience == 3 and default.agent_optimize_patience == 2
     driver = _make_driver(args, config)
     assert driver.config is config
     assert driver._timeout_for_phase("code_optimization") == 14400

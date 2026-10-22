@@ -40,6 +40,7 @@ from fomtools.codegen.kernel_rules import functions, reachable, strip_c_comments
 from fomtools.codegen.oracle import check_stationary
 from fomtools.codegen.postprocess import (
     extract_agent_notes,
+    extract_applied_optimizations,
     extract_rule_friction,
     parse_ops_checks,
     unified_solver_diff,
@@ -508,7 +509,9 @@ class OptimizationRound:
     ``us_before`` and ``us_after`` are the head-to-head ``make bench`` means of
     the best solver before the round and of the round's rewrite (``None`` when
     not measured); ``gain`` is ``(us_before - us_after) / us_before``.
-    ``stop_reason`` is set on the round that ended the phase.
+    ``reason`` says, on one line, why a round was reverted or made no gain
+    (later rounds' prompts carry it). ``stop_reason`` is set on the round that
+    ended the phase.
     """
 
     index: int
@@ -520,7 +523,13 @@ class OptimizationRound:
     gain: float | None = None
     agent_wall_s: float = 0.0
     truncated: bool = False
+    reason: str | None = None
     stop_reason: str | None = None
+    #: What the round's summary lists under ``Optimizations applied:`` and
+    #: ``Blocked by rules:`` (`extract_applied_optimizations`,
+    #: `extract_rule_friction`); later rounds' prompts carry them.
+    applied: list[str] = field(default_factory=list)
+    blocked: list[dict] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return dict(self.__dict__)
@@ -554,11 +563,28 @@ class CodeOptimizationResult:
 
 #: Why a round ended the phase.
 STOP_NO_CHANGE = "the round left the sources unchanged"
+STOP_PATIENCE = "agent_optimize_patience rounds in a row without a gain of agent_optimize_min_gain"
+STOP_MAX_ROUNDS = "the last of agent_optimize_rounds rounds"
+STOP_UNMEASURED = "no benchmark (profile off or no C compiler): one round only"
+# Former stop reasons, now a round's ``reason`` that uses up patience instead.
 STOP_FAILED = "the round's sources failed verification or the kernel rules"
 STOP_NOT_FASTER = "the round's sources were not faster than the best so far"
 STOP_SMALL_GAIN = "the round gained less than agent_optimize_min_gain"
-STOP_MAX_ROUNDS = "the last of agent_optimize_rounds rounds"
-STOP_UNMEASURED = "no benchmark (profile off or no C compiler): one round only"
+
+
+def _failure_line(text: str, limit: int = 200) -> str:
+    """One line of a failed verify's output that says why, cut to ``limit``.
+
+    The first ``VERIFY FAILED`` line, else the first line naming an error (a
+    compiler's), else the last non-empty line; ``""`` for empty output.
+    """
+    lines = [" ".join(ln.split()) for ln in text.splitlines()]
+    lines = [ln for ln in lines if ln]
+    line = next(
+        (ln for ln in lines if "VERIFY FAILED" in ln),
+        next((ln for ln in lines if "error" in ln.lower()), lines[-1] if lines else ""),
+    )
+    return line if len(line) <= limit else line[: limit - 3].rstrip() + "..."
 
 
 def run_code_optimization(
@@ -585,17 +611,18 @@ def run_code_optimization(
     on the best solver so far. After it, everything but the editable sources is
     restored, and the round's sources must
 
-    1. still verify and pass the kernel rules (otherwise they are reverted to the
-       best so far and the phase ends), and
-    2. be faster than the best so far, head to head (otherwise reverted, and the
-       phase ends). The first round keeps a rewrite within
-       `optimization_is_faster`'s 2% noise tolerance, as the single-pass phase
-       always has; later rounds must be strictly faster.
+    1. still verify and pass the kernel rules, and
+    2. gain at least ``agent_optimize_min_gain`` over the best so far, head to
+       head. The first round keeps a rewrite within `optimization_is_faster`'s
+       2% noise tolerance, as the single-pass phase always has.
 
-    A kept round that gains less than ``agent_optimize_min_gain`` ends the phase,
-    as does the last of ``agent_optimize_rounds``. Without a benchmark
-    (``profile`` off or no compiler) a correct rewrite is kept unmeasured and only
-    one round runs.
+    A round that misses either gate is reverted to the best so far, and its
+    ``reason`` goes into the next round's prompt with the earlier rounds'
+    summaries. ``agent_optimize_patience`` rounds in a row without a gain (a
+    kept first round within the tolerance counts) end the phase, as do the last
+    of ``agent_optimize_rounds`` and a round that leaves the sources unchanged.
+    Without a benchmark (``profile`` off or no compiler) a correct rewrite is
+    kept unmeasured and only one round runs.
 
     ``timing``, if given, gets ``c_initial_us`` / ``c_final_us`` (the translated
     and the shipped solver, head to head) and the shipped solver's profile.
@@ -640,12 +667,20 @@ def run_code_optimization(
     base_instructions = code_optimization_instructions(ir, target)
     n_rounds = config.agent_optimize_rounds
 
+    misses = 0  # rounds in a row without a gain
     for index in range(1, n_rounds + 1):
         instructions = base_instructions
         if index > 1:
             last = rounds[-1]
             instructions += code_optimization_continuation(
-                index, n_rounds, best_us, translated_us, last.gain, best_profile
+                index,
+                n_rounds,
+                best_us,
+                translated_us,
+                last.gain if last.kept else None,
+                best_profile,
+                history=[r.as_dict() for r in rounds],
+                patience=config.agent_optimize_patience,
             )
         task = AgentTask(
             workdir=out_dir,
@@ -688,6 +723,8 @@ def run_code_optimization(
             kept=False,
             agent_wall_s=wall,
             truncated=bool(result.truncated),
+            applied=extract_applied_optimizations(notes),
+            blocked=extract_rule_friction(notes),
         )
         rounds.append(record)
         if not changed:
@@ -703,54 +740,72 @@ def run_code_optimization(
         recheck = build_and_verify(out_dir, target) if result.success else None
         issues = _static_issues(target, ir, candidate, translated) if result.success else []
         record.correct = bool(result.success and recheck.success and not issues)
+        gained = False
         if not record.correct:
             write_editable(best)
-            static_issues = issues
+            static_issues += issues
             logs.append(
                 "[optimization round not kept: its sources failed verification]"
                 + ("\n" + recheck.output if recheck and not recheck.success else "")
                 + ("\n" + "\n".join(issues) if issues else "")
             )
-            record.stop_reason = STOP_FAILED
-            break
-
-        if not measure:
+            # Why, from the verify of the sources the round left: the pipeline's
+            # recheck, or else the driver's last verify (not the first failure in
+            # the agent's log, which it may have fixed since).
+            failed_output = recheck.output if recheck else result.verify_output
+            if issues and recheck.success:
+                record.reason = "broke a rule: " + _failure_line(issues[0])
+            elif line := _failure_line(failed_output or ""):
+                record.reason = "failed verification: " + line
+            else:
+                record.reason = "the agent's run did not end with a passing verify"
+            if result.truncated:
+                record.reason += " (the agent stopped at its budget)"
+        elif not measure:
             best, best_verify_output = candidate, recheck.output
             record.kept = True
             record.stop_reason = STOP_UNMEASURED
             break
+        else:
+            # Gate 2 (performance): head to head against the best so far,
+            # measured now (timings are noisy, so both are measured back to back).
+            us_after = _bench_mean_us(out_dir)
+            write_editable(best)
+            us_before = _bench_mean_us(out_dir)
+            if translated_us is None:  # nothing kept yet: the best is the translation
+                translated_us = us_before
+            record.us_before, record.us_after = us_before, us_after
+            if us_before and us_after:
+                record.gain = (us_before - us_after) / us_before
+            gained = record.gain is not None and record.gain >= config.agent_optimize_min_gain
+            if gained or (index == 1 and optimization_is_faster(us_after, us_before)):
+                write_editable(candidate)
+                best, best_us, best_verify_output = candidate, us_after, recheck.output
+                record.kept = True
+            else:
+                logs.append(
+                    f"[optimization round not kept: its build ({us_after} us) did not gain "
+                    f"{config.agent_optimize_min_gain:.1%} over the best so far ({us_before} us)]"
+                )
+            if not gained:
+                record.reason = "not enough gain: " + (
+                    f"{us_after:.3f} us vs {us_before:.3f} us best ({record.gain:+.1%})"
+                    if record.gain is not None
+                    else "not measured"
+                )
 
-        # Gate 2 (performance): head to head against the best so far, measured
-        # now (timings are noisy, so both are measured back to back).
-        us_after = _bench_mean_us(out_dir)
-        write_editable(best)
-        us_before = _bench_mean_us(out_dir)
-        if index == 1:
-            translated_us = us_before
-        record.us_before, record.us_after = us_before, us_after
-        if us_before and us_after:
-            record.gain = (us_before - us_after) / us_before
-        tol = 1.02 if index == 1 else 1.0
-        if not optimization_is_faster(us_after, us_before, tol=tol):
-            logs.append(
-                f"[optimization round not kept: its build ({us_after} us) was not "
-                f"faster than the best so far ({us_before} us)]"
-            )
-            record.stop_reason = STOP_NOT_FASTER
-            break
-        write_editable(candidate)
-        best, best_us, best_verify_output = candidate, us_after, recheck.output
-        record.kept = True
-        if record.gain is None or record.gain < config.agent_optimize_min_gain:
-            record.stop_reason = STOP_SMALL_GAIN
+        misses = 0 if gained else misses + 1
+        if misses >= config.agent_optimize_patience:
+            record.stop_reason = STOP_PATIENCE
             break
         if index == n_rounds:
             record.stop_reason = STOP_MAX_ROUNDS
             break
-        try:
-            best_profile = run_profile(out_dir)
-        except Exception:
-            best_profile = []
+        if record.kept:
+            try:
+                best_profile = run_profile(out_dir)
+            except Exception:
+                best_profile = []
 
     write_editable(best)
     kept = best != translated

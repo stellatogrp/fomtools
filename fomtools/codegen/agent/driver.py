@@ -89,6 +89,11 @@ class AgentResult:
         attempt can still leave correct code on disk, so this is independent of
         `success`; it means the agent had no chance to finish, and in
         particular may never have written its summary.
+    verify_output:
+        The output of the last verify the driver ran, on the sources as the run
+        left them. Unlike `log`, which also holds earlier attempts and any
+        verify the agent ran itself, this is what decided `success`, so it says
+        why a failed run failed. ``""`` if no verify ran.
     """
 
     success: bool
@@ -97,6 +102,7 @@ class AgentResult:
     turns_used: int = 0
     artifacts: list[Path] = field(default_factory=list)
     truncated: bool = False
+    verify_output: str = ""
 
 
 def _decode_stream(stream) -> str:
@@ -248,6 +254,7 @@ def run_verify_loop(
         task.extra["budget"] = budget
 
     attempts_made = 0
+    output = ""  # the last verify's output
     for attempt in range(max_attempts):
         if budget is not None and attempt > 0 and budget.remaining() <= 0:
             log_parts.append(
@@ -288,6 +295,7 @@ def run_verify_loop(
                 turns_used=attempt + 1,
                 artifacts=[task.workdir / task.solver_rel_path],
                 truncated=bool(truncated_probe and truncated_probe()),
+                verify_output=output,
             )
 
         # Re-prompt with the failure.
@@ -310,4 +318,5 @@ def run_verify_loop(
         agent_log="".join(agent_parts),
         turns_used=attempts_made,
         truncated=bool(truncated_probe and truncated_probe()),
+        verify_output=output,
     )

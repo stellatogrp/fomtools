@@ -333,14 +333,22 @@ Each agent phase runs under a budget, set per run on `CodegenConfig`:
 | `agent_optimize_timeout_s` | 7200 s (2 h) | wall-clock time of one code optimization round |
 | `agent_optimize_max_turns` | 200 | agent turns of one code optimization round |
 | `agent_optimize_rounds` | 5 | maximum number of code optimization rounds |
-| `agent_optimize_min_gain` | 0.02 | a round gaining less than this (relative) ends the phase |
+| `agent_optimize_min_gain` | 0.02 | the least relative speedup a round must make to be kept |
+| `agent_optimize_patience` | 2 | rounds in a row without that gain that end the phase |
 
 The code optimization phase runs in rounds. Each round is a fresh agent run on
-the fastest verified solver so far, told its current time and profile. After each
-round the pipeline re-verifies the rewrite (including the kernel rules) and
-benchmarks it head to head against that solver. A round that fails, is not
-faster, or gains less than `agent_optimize_min_gain` ends the phase; a failing or
-slower one is reverted first. `OPTIMIZATIONS.md` lists the rounds.
+the fastest verified solver so far, told its current time and profile, and what
+the earlier rounds did: for each one, whether it was kept and its gain, the
+optimizations its summary lists under `Optimizations applied:` and
+`Blocked by rules:`, and, for a reverted round, one line on why (the first
+`VERIFY FAILED` line, the rule it broke, or its time against the best). After
+each round the pipeline re-verifies the rewrite (including the kernel rules) and
+benchmarks it head to head against that solver. A round that fails, or gains less
+than `agent_optimize_min_gain` (which also absorbs benchmark noise), is reverted;
+the first round alone keeps a rewrite within 2% of the translated solver, as the
+single-pass phase does. `agent_optimize_patience` rounds in a row without that
+gain end the phase, as does a round that leaves the sources unchanged.
+`OPTIMIZATIONS.md` lists the rounds.
 
 Each round's summary also lists, under `Blocked by rules:`, the optimizations
 the agent considered but did not make because a rule forbade them, with the rule

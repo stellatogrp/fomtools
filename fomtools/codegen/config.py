@@ -249,8 +249,11 @@ class CodegenConfig(BaseModel):
     agent_optimize_rounds : int
         Maximum number of code optimization rounds. Default 5.
     agent_optimize_min_gain : float
-        A round that makes the solver less than this much faster (relative)
-        ends the phase. Default 0.02.
+        The least relative speedup a round must make to count as a gain; a
+        later round that gains less is reverted. Default 0.02.
+    agent_optimize_patience : int
+        Rounds in a row without a gain (failed, slower, or gaining less than
+        ``agent_optimize_min_gain``) that end the phase. Default 2.
     cg_auto_min_dim : int
         Dimension threshold for the ``AUTO`` → CG upgrade on the large-scale
         CUDA backend (see `SolveMethod`). Raise it to keep more systems
@@ -328,20 +331,35 @@ class CodegenConfig(BaseModel):
         default=5,
         description=(
             "Maximum number of code optimization rounds. Each round is a fresh agent "
-            "run on the fastest verified solver so far, told its current time and "
-            "profile; the pipeline re-verifies and benchmarks it head to head "
-            "against that solver, and keeps it only if it is faster. The phase "
-            "ends early when a round fails its gates, is not faster, or gains less "
-            "than agent_optimize_min_gain. One round is the single-pass behavior."
+            "run on the fastest verified solver so far, told its current time, "
+            "profile, and what the earlier rounds did; the pipeline re-verifies and "
+            "benchmarks it head to head against that solver, and keeps it only if "
+            "it gains at least agent_optimize_min_gain. The phase ends early after "
+            "agent_optimize_patience rounds in a row without such a gain, or when a "
+            "round leaves the sources unchanged. One round is the single-pass "
+            "behavior."
         ),
     )
     agent_optimize_min_gain: float = Field(
         ge=0.0,
         default=0.02,
         description=(
-            "Relative speedup below which a kept round ends the code optimization "
-            "phase: a round taking the solver from t to t' continues only if "
-            "(t - t') / t >= agent_optimize_min_gain."
+            "Relative speedup a code optimization round must make to count as a "
+            "gain, which also absorbs benchmark noise: a round taking the solver "
+            "from t to t' gains if (t - t') / t >= agent_optimize_min_gain. From "
+            "the second round on, a round without a gain is reverted; the first "
+            "keeps a rewrite within 2% of the translated solver, as the "
+            "single-pass phase does. Either way it uses up patience."
+        ),
+    )
+    agent_optimize_patience: int = Field(
+        ge=1,
+        default=2,
+        description=(
+            "Code optimization rounds in a row without a gain (one that fails "
+            "verification or the kernel rules, is slower, or gains less than "
+            "agent_optimize_min_gain) that end the phase. Such a round is "
+            "reverted, and the next one is told why. 1 stops at the first one."
         ),
     )
     cg_auto_min_dim: int = Field(
