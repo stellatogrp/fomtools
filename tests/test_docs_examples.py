@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -44,11 +45,25 @@ def test_quick_start(capfd):
     assert (np.asarray(scope["results"]) >= 0).all()
 
 
-def test_readme():
+def test_readme(capfd):
     scope = _run_first_block("README.md")
-    assert len(scope["results"]) == scope["K"]
-    assert len(scope["s"]) == scope["K"] + 1
-    assert np.isfinite(scope["results"]).all()
+    out = capfd.readouterr().out.splitlines()
+    assert len(out) == 2 and out[0].startswith("worst-case residual:")
+    # Same example as the docs intro, so the same worst case (up to the MIP gap).
+    _run_first_block("docs/index.md")
+    intro = capfd.readouterr().out.splitlines()
+    assert float(out[0].split(":")[1]) == pytest.approx(float(intro[0].split(":")[1]), rel=2e-4)
+    assert np.all(np.abs(scope["q"].value) <= 1 + 1e-9)
+
+
+def test_readme_codegen_recording():
+    # The README's code-generation snippet extends the example's Verifier; build the
+    # recording it passes to codegen, without calling the coding agent.
+    blocks = _blocks("README.md")
+    codegen = next(b for b in blocks if ".codegen(" in b)
+    recording = codegen.split("result = ")[0]
+    scope = _run("README.md", blocks[:1] + [recording])
+    assert len(scope["z"]) == scope["K"] + 1
 
 
 def test_quick_start_fixed_point():
