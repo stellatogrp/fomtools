@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/favicon.ico" />
+    <!-- Preload is necessary because we show these images when we disconnect from the server,
+    but at that point we cannot load these images from the server -->
+    <link rel="preload" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/gradient-yHQUC_QB.png" as="image" />
+    <link rel="preload" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/noise-60BoTA8O.png" as="image" />
+    <!-- Preload the fonts -->
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/Lora-VariableFont_wght-CZceb_kH.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/PTSans-Regular-Bam3NpBI.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/PTSans-Bold-C_DwAp7Z.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/FiraMono-Regular-CEsLFVD9.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/FiraMono-Medium-D5MAsWEG.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/FiraMono-Bold-C6PDArdf.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="a marimo app" />
+    <link rel="apple-touch-icon" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/apple-touch-icon.png" />
+    <link rel="manifest" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/manifest.json" />
+
+    <script data-marimo="true">
+      function __resizeIframe(obj) {
+        const scrollbarHeight = 20; // Max between windows, mac, and linux
+
+        function setHeight() {
+          // Guard against race condition where iframe isn't ready
+          if (!obj.contentWindow?.document?.documentElement) {
+            return;
+          }
+          const element = obj.contentWindow.document.documentElement;
+          // If there is no vertical scrollbar, we don't need to resize the iframe
+          if (element.scrollHeight === element.clientHeight) {
+            return;
+          }
+
+          // Create a new height that includes the scrollbar height if it's visible
+          const hasHorizontalScrollbar = element.scrollWidth > element.clientWidth;
+          const newHeight = element.scrollHeight + (hasHorizontalScrollbar ? scrollbarHeight : 0);
+
+          // Only update the height if it's different from the current height
+          if (obj.style.height !== `${newHeight}px`) {
+            obj.style.height = `${newHeight}px`;
+          }
+        }
+
+        // Resize the iframe to the height of the content and bottom scrollbar height
+        setHeight();
+
+        // Resize the iframe when the content changes
+        const resizeObserver = new ResizeObserver((_entries) => {
+          setHeight();
+        });
+        // Only observe if iframe content is ready
+        if (obj.contentWindow?.document?.body) {
+          resizeObserver.observe(obj.contentWindow.document.body);
+        }
+      }
+    </script>
+    <marimo-filename hidden>lasso.py</marimo-filename>
+    <!-- TODO(Trevor): Legacy, required by VS Code plugin. Remove when plugin is updated (see marimo/server/_templates/template.py) -->
+    <marimo-version data-version="{{ version }}" hidden></marimo-version>
+    <marimo-user-config data-config="{{ user_config }}" hidden></marimo-user-config>
+    <marimo-server-token data-token="{{ server_token }}" hidden></marimo-server-token>
+    <!-- /TODO -->
+    <title>lasso</title>
+    <script type="module" crossorigin src="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/index-s-M1OXjs.js"></script>
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/rolldown-runtime-B0Z9INg1.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/react-DVplv7_D.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/compiler-runtime-BrajqUja.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/useEvent-Dfcbgjhg.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/react-dom-_LrxgvjW.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/schemas-Dv42wLFq.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/isObject-BCaOs5rp.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/isSymbol-oX0TOjjx.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/now-Cmx0b_zA.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/debounce-aFmHgJZY.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/isArrayLikeObject-DnwgSs_Z.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/_baseMerge-CQpUq7ep.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/objects-snlMn4yk.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/useEventListener-D9cftcHj.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/invariant-Ci2dTZ72.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/config-VPSq73n8.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/utils-B4K466FK.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/session-DqoWmb7X.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/Deferred-CrTnjj37.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/config-DX8Y2WbJ.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/clsx-DB0hHKMi.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/cn-ldLVeaqm.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/jsx-runtime-B74pBk57.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/fullscreen-B9tHcfpV.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/dist-iaThVDkA.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/menu-items-BrwnTgyK.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/use-restore-focus-BxEGwIbk.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/createLucideIcon-DfJ2oMlA.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/circle-DXf-VWZG.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/button-COI-NGrx.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/check-BQNapYaf.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/I18nProvider-Cg2I_s1_.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/useNumberFormatter-D7O_26UI.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/select-DTBn5eTb.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/toast-BGzLGnvw.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/tooltip-C9TuY18o.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/paths-bkIFVj8h.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/useLifecycle-Mq4gc5kS.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/toDate-DOj9Q6uC.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/database-zap-B_PMVg8T.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/alert-dialog-BaPGzeOK.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/arrays-BqUx5USx.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/once-Haz_uxEL.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/numbers-Mk3-CcoU.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/useDebounce-B_ccBZTp.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/input-BoBxR50a.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/use-toast-Wu434mLr.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/requests-lt0JK8Jt.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/uuid-k9DpjH68.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/write-secret-modal-DzKAInL2.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/plus-C5silF6g.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/trash-2-DcgaW8fn.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/preload-helper-uBIymjUX.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/dist-Cny7_yZb.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/dist-DBMV4gqt.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/capabilities-BJvf-MD4.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/cjs-C49f7GXV.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/createReducer-DgRODTW6.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/dist-qhAY4L2r.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/marked.esm-B_3iMIUq.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/strings-B2vv-ENv.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/dist-BOfh4hMd.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/badge-crT3E0Rm.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/dist-DtH-7lot.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/dist-BmExfiwX.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/dist-1tmpVXyz.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/dist-LSsCJjA3.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/dist-DusFODSa.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/stex-Dc5bKD4z.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/useTheme-COhSHkCj.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/useAsyncData-C7aJJz0Y.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/purify.es--06brOip.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/cells-BRkCaSsh.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/coerce-CpE6kUdX.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/get-DjNf4SIX.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/_hasPath-BmRQipI0.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/hasIn-yw4sIeJR.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/_baseSet-Bpdo9AvU.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/pick-DKIID_Mo.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/state-BAJYRhmO.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/state-C3oDoyFe.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/LazyAnyLanguageCodeMirror-CKcCbG2G.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/copy-D8O_CYCG.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/micromark-factory-space-D9Dr-k4J.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/chunk-YOKDWASO-BIpRENEC.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/markdown-renderer-BG3sp2rs.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/copy-Djr5m5ac.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/copy-icon-BIiRXh_3.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/useRunCells-B2vUhREg.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/RenderHTML-BbOqmHy3.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/blob-D5nfNHOo.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/kbd-pdKBv96t.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/useInstallPackage-iX1eufdl.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/errors-DCrsa1nH.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/api-BeC_VSGv.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/share-BZW3tzEX.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/events-CbeVJ6OD.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/state-_Qai_QyX.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/pair-CaQyK6En.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/ErrorBoundary-Gl5nCA8C.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/config-BOKzA3tF.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/chevron-right-eAtVhbNZ.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/dropdown-menu-C1rnl-0o.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/html-to-image-DK9Zl1lU.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/download-DCJXy66H.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/switch-CTaiAjrz.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/tabs-BuQlZFbt.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/table-DG7Ap4H4.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/eye-off-CxVozGAC.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/refresh-cw-Qw1f8Jhy.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/tree-actions-GM5E_bUs.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/ellipsis-63DyBLHQ.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/external-link-UrX9KO36.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/spinner-DyNE-o8o.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/message-circle-C3rKm8_a.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/hat-glasses-C8RhSVii.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/package-GSoSTiIK.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/datasource-Cq6x_5ML.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/alert-DTaqCu_d.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/state-XsPO8hNi.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/cell-link-LSth_8hT.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/MarimoErrorOutput-D60XkCny.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/useDateFormatter-DA-62E-Y.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/en-US-Buu61juQ.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/isValid-q_Ad80ug.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/dates-BbFQ2oE4.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/defaultLocale-CNPGWpMu.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/precisionRound-Bq_nmf5u.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/defaultLocale-D5bOh7g6.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/vega-loader.browser-CLRkNgm7.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/tooltip-mT3CGest.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/react-icons.esm-D6tfmvq8.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/extends-CvVTau-c.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/objectWithoutPropertiesLoose-Do6ywDBO.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/useIframeCapabilities-CwTkczVN.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/error-banner-Cd69vvyX.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/utils-CaQYvazl.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/formats-yZ06h1Pl.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/table-vrvqpuKJ.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/react-resizable-panels.browser.esm-Dbe0MrFr.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/JsonOutput-D6HIIsCb.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/chart-no-axes-column-C4_v6fQW.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/square-function-_W_Lo0P4.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/spec-BfSBcO5B.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/semaphore-BjoL5P0h.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/fileToBase64-BgBraYAr.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/useBoolean-BDD6_xQQ.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/code-xml-SQaZqvcO.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/file-headphone-Dl35U6h3.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/file-BPBVl9pl.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/image-wZvTj8WY.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/file-icons-CdJgUy-I.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/globe-UdPdIbF7.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/esm-CI_o7NhW.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/useAddCell-GR7eEQrT.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/readonly-python-code-DCSMIsTX.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/data-grid-types-DgHVN_Zz.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/glide-utils-CIrAxdjv.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/column-preview-Cm2D6vyX.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/square-BPmgQFnh.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/triangle-alert-DmIqR8sY.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/prop-types-Djf4O40e.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/es-Cqst59WX.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/package-data-dv4FBHxR.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/markdown-export-DzhB1FrN.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/renderShortcut-BkVJQ_Zh.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/bundle.esm-D3tw5rqW.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/icons-CiZ_8zS-.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/useDeepCompareMemoize-DFIVN9dn.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/pathUtils-DPmlLd-r.js">
+    <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/floating-outline-XD9FAV-f.js">
+    <link rel="stylesheet" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/cells-0PFKL3SH.css">
+    <link rel="stylesheet" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/markdown-renderer-DjIHoF9Z.css">
+    <link rel="stylesheet" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/JsonOutput-B0GmlMnR.css">
+    <link rel="stylesheet" crossorigin href="https://cdn.jsdelivr.net/npm/@marimo-team/frontend@0.25.2/dist/assets/index-Bcdzex-3.css">
+  
+<script data-marimo="true">
+    Object.defineProperty(window, "__MARIMO_STATIC__", {
+        value: Object.freeze({
+            files: Object.freeze({}),
+            modelNotifications: Object.freeze([]),
+        }),
+        writable: false,
+        configurable: false,
+    });
+</script>
+
+<script data-marimo="true">
+    Object.defineProperty(window, "__MARIMO_EXPORT_CONTEXT__", {
+        value: Object.freeze({
+            trusted: true,
+            notebookCode: "import marimo\n\n__generated_with = \"0.25.2\"\napp = marimo.App(width=\"medium\")\n\n\n@app.cell(hide_code=True)\ndef _():\n    import statistics\n    import sys\n    import time\n    from pathlib import Path\n\n    import marimo as mo\n    import numpy as np\n\n    start = Path(__file__).resolve().parent if \"__file__\" in globals() else Path.cwd().resolve()\n    for candidate in (start, *start.parents):\n        if (candidate / \"fomtools\").is_dir():\n            repo_root = candidate\n            break\n    else:\n        repo_root = start\n\n    if str(repo_root) not in sys.path:\n        sys.path.insert(0, str(repo_root))\n\n    examples_dir = repo_root / \"examples\"\n\n    from docs.tutorials.helper_functions.lasso import (\n        ista_step,\n        make_lasso_data,\n        solve_ista_numpy,\n    )\n    from docs.tutorials.helper_functions.codegen_benchmarks import (\n        run_lasso_codegen_benchmark,\n    )\n    from fomtools.codegen import CodegenConfig, TerminationSpec\n    import fomtools as ft\n\n    timing_file = start / \"_recorded_timings.json\"\n\n    np.set_printoptions(precision=5)\n    np.set_printoptions(suppress=True)\n    return (\n        CodegenConfig,\n        TerminationSpec,\n        examples_dir,\n        ft,\n        ista_step,\n        make_lasso_data,\n        mo,\n        np,\n        run_lasso_codegen_benchmark,\n        solve_ista_numpy,\n        statistics,\n        time,\n        timing_file,\n    )\n\n\n@app.cell(hide_code=True)\ndef _(mo):\n    mo.md(r\"\"\"\n    # Lasso: Python vs Codegen\n\n    [Back to the code generation tutorials](./)\n\n    In this tutorial we benchmark iterative soft-thresholding for the Lasso problem:\n\n    \\begin{array}{ll}\n        \\text{minimize} \u0026 (1/2)\\|Dz - x\\|_2^2 + \\lambda \\|z\\|_1,\n    \\end{array}\n\n    where $D \\in \\mathbf{R}^{p \\times n}$, $z \\in \\mathbf{R}^n$ is the decision variable, and $x \\in \\mathbf{R}^p$ is the parameter.\n    The method is\n\n    $$\n    z^{k+1} =\n    \\mathbf{soft}_{\\lambda\\eta}\\left(z^k - \\eta D^T(Dz^k - x)\\right),\n    $$\n\n    where $\\mathbf{soft}_\\kappa(v)_i = \\mathbf{sign}(v_i)\\max\\{|v_i| - \\kappa, 0\\}$ is the soft-thresholding operator, applied element-wise.\n\n    We compare a direct NumPy implementation with the verified generated C solver.\n    The problem construction, ISTA step, and NumPy reference solver are shared with the [Lasso verification tutorial](../verification/lasso.html).\n    The generated C is timed after code generation, then timed again after the C-editing optimization pass.\n    \"\"\")\n    return\n\n\n@app.cell(hide_code=True)\ndef _(mo):\n    mo.md(r\"\"\"\n    We generate a small sparse dictionary $D$, sample sparse signals, and use those samples to define the range of possible inputs $x$.\n    Both implementations run the same update rule for the same number of iterations.\n    \"\"\")\n    return\n\n\n@app.cell\ndef _(examples_dir, make_lasso_data, np):\n    p, n, lambd = 3, 4, 1e-1\n    num_star = 200\n    D, x_lb, x_ub, _, eta, lambd = make_lasso_data(\n        p=p, n=n, lambd=lambd, num_signals=num_star, seed=0\n    )\n    x_mid = 0.5 * (x_lb + x_ub)\n\n    K = 200\n    s0 = np.zeros(n)\n\n    out_dir = examples_dir / \"_codegen_speedups\" / \"lasso_codegen_speedup\"\n    return D, K, eta, lambd, n, out_dir, p, s0, x_lb, x_mid, x_ub\n\n\n@app.cell\ndef _(\n    CodegenConfig,\n    D,\n    K,\n    TerminationSpec,\n    eta,\n    ft,\n    ista_step,\n    lambd,\n    n,\n    p,\n    s0,\n    x_lb,\n    x_ub,\n):\n    verifier = ft.Verifier(\n        method=\"mip\",\n        solver=\"highs\",\n        obbt_solver=None,\n    )\n\n    x_param = verifier.parameter(p, lb=x_lb, ub=x_ub)\n    s = verifier.iterate(n, lb=s0, ub=s0)\n    next_s, _, _, _ = ista_step(\n        verifier, D, eta, lambd, s, s, x_param, 1.0, k=1, momentum=False\n    )\n\n    config = CodegenConfig(\n        termination=TerminationSpec(max_iters=K),\n        num_verify_samples=4,\n    )\n    return config, next_s, s, verifier, x_param\n\n\n@app.cell(hide_code=True)\ndef _(D, K, eta, lambd, s0, solve_ista_numpy, statistics, time, x_mid):\n    def python_lasso_solve():\n        return solve_ista_numpy(D, eta, lambd, s0, x_mid, max_iters=K)\n\n    for _ in range(3):\n        python_lasso_solve()\n\n    python_times = []\n    for _ in range(40):\n        t0 = time.perf_counter()\n        python_lasso_solve()\n        python_times.append((time.perf_counter() - t0) * 1.0e6)\n\n    python_us = statistics.median(python_times)\n    return (python_us,)\n\n\n@app.cell(hide_code=True)\ndef _(\n    config,\n    next_s,\n    out_dir,\n    python_us,\n    run_lasso_codegen_benchmark,\n    s,\n    timing_file,\n    verifier,\n    x_param,\n):\n    timings = run_lasso_codegen_benchmark(\n        config=config,\n        next_state=next_s,\n        out_dir=out_dir,\n        python_us=python_us,\n        state=s,\n        timing_file=timing_file,\n        verifier=verifier,\n        x_param=x_param,\n    )\n    return (timings,)\n\n\n@app.cell(hide_code=True)\ndef _(K, mo, out_dir, timings):\n    if timings[\"live\"]:\n        _footer = f\"\"\"\n    Generated solver directory: `{out_dir}`\n\n    Generated solver source: `{timings[\"solver_path\"]}`\n    \"\"\"\n    else:\n        _footer = \"\"\n    summary = mo.md(f\"\"\"\n    ## Timing summary\n\n    One complete solve runs `{K}` iterations.\n\n    | implementation | median / mean per solve |\n    |---|---:|\n    | direct NumPy Python | `{timings[\"python_us\"]:.3f} \u00b5s` |\n    | generated C after code generation | `{timings[\"codegen_us\"]:.3f} \u00b5s` |\n    | generated C after optimization iteration | `{timings[\"iteration_us\"]:.3f} \u00b5s` |\n\n    The speedup from code generation is `{timings[\"codegen_speedup\"]:.1f}x`, while the speedup from the optimization iteration is `{timings[\"iteration_speedup\"]:.2f}x`, totaling a speedup of `{timings[\"total_speedup\"]:.1f}x`.\n\n    {_footer}\"\"\"\n    )\n    summary\n    return\n\n\nif __name__ == \"__main__\":\n    app.run()\n",
+        }),
+        writable: false,
+        configurable: false,
+    });
+</script>
+</head>
+  <body>
+    <div id="root"></div>
+    <script data-marimo="true">
+      Object.defineProperty(window, "__MARIMO_MOUNT_CONFIG__", {
+        value: Object.freeze({
+            "filename": "lasso.py",
+            "cwd": "",
+            "lspWorkspace": null,
+            "mode": "read",
+            "version": "0.25.2",
+            "serverToken": "static",
+            "config": {"ai": {"allow_provider_config": true, "custom_providers": {}, "enabled": true, "models": {"custom_models": [], "displayed_models": []}}, "completion": {"activate_on_typing": true, "auto_close_pairs": true, "copilot": false, "signature_hint_on_typing": false}, "diagnostics": {"sql_linter": true}, "display": {"cell_output": "below", "code_editor_font_size": 14, "code_lens": true, "dataframes": "rich", "default_table_max_columns": 50, "default_table_page_size": 10, "default_width": "medium", "reference_highlighting": true, "theme": "light"}, "formatting": {"line_length": 79}, "keymap": {"overrides": {}, "preset": "default"}, "language_servers": {"pylsp": {"enable_flake8": false, "enable_mypy": true, "enable_pydocstyle": false, "enable_pyflakes": false, "enable_pylint": false, "enable_ruff": true, "enabled": false}}, "mcp": {"mcpServers": {}, "presets": []}, "package_management": {"manager": "pip"}, "runtime": {"auto_instantiate": false, "auto_reload": "off", "default_csv_encoding": "utf-8", "default_sql_output": "auto", "on_cell_change": "autorun", "output_max_bytes": 8000000, "reactive_tests": true, "show_tracebacks": false, "std_stream_max_bytes": 1000000, "watcher_on_save": "lazy"}, "save": {"autosave": "after_delay", "autosave_delay": 1000, "format_on_save": false}, "server": {"browser": "default", "follow_symlink": false}, "snippets": {"custom_paths": [], "include_default_snippets": true}},
+            "configOverrides": {},
+            "appConfig": {"sql_output": "auto", "width": "medium"},
+            "layout": null,
+            "view": {"showAppCode": true},
+            "notebook": {"cells": [{"code": "import statistics\nimport sys\nimport time\nfrom pathlib import Path\n\nimport marimo as mo\nimport numpy as np\n\nstart = Path(__file__).resolve().parent if \"__file__\" in globals() else Path.cwd().resolve()\nfor candidate in (start, *start.parents):\n    if (candidate / \"fomtools\").is_dir():\n        repo_root = candidate\n        break\nelse:\n    repo_root = start\n\nif str(repo_root) not in sys.path:\n    sys.path.insert(0, str(repo_root))\n\nexamples_dir = repo_root / \"examples\"\n\nfrom docs.tutorials.helper_functions.lasso import (\n    ista_step,\n    make_lasso_data,\n    solve_ista_numpy,\n)\nfrom docs.tutorials.helper_functions.codegen_benchmarks import (\n    run_lasso_codegen_benchmark,\n)\nfrom fomtools.codegen import CodegenConfig, TerminationSpec\nimport fomtools as ft\n\ntiming_file = start / \"_recorded_timings.json\"\n\nnp.set_printoptions(precision=5)\nnp.set_printoptions(suppress=True)", "code_hash": "500ef53368bd828289a2019f4eb6fdd3", "config": {"column": null, "disabled": false, "expand_output": false, "hide_code": true}, "id": "Hbol", "name": "_"}, {"code": "mo.md(r\"\"\"\n# Lasso: Python vs Codegen\n\n[Back to the code generation tutorials](./)\n\nIn this tutorial we benchmark iterative soft-thresholding for the Lasso problem:\n\n\\begin{array}{ll}\n    \\text{minimize} \u0026 (1/2)\\|Dz - x\\|_2^2 + \\lambda \\|z\\|_1,\n\\end{array}\n\nwhere $D \\in \\mathbf{R}^{p \\times n}$, $z \\in \\mathbf{R}^n$ is the decision variable, and $x \\in \\mathbf{R}^p$ is the parameter.\nThe method is\n\n$$\nz^{k+1} =\n\\mathbf{soft}_{\\lambda\\eta}\\left(z^k - \\eta D^T(Dz^k - x)\\right),\n$$\n\nwhere $\\mathbf{soft}_\\kappa(v)_i = \\mathbf{sign}(v_i)\\max\\{|v_i| - \\kappa, 0\\}$ is the soft-thresholding operator, applied element-wise.\n\nWe compare a direct NumPy implementation with the verified generated C solver.\nThe problem construction, ISTA step, and NumPy reference solver are shared with the [Lasso verification tutorial](../verification/lasso.html).\nThe generated C is timed after code generation, then timed again after the C-editing optimization pass.\n\"\"\")", "code_hash": "9fb5c02161150fbc4a4b3f830d7671da", "config": {"column": null, "disabled": false, "expand_output": false, "hide_code": true}, "id": "MJUe", "name": "_"}, {"code": "mo.md(r\"\"\"\nWe generate a small sparse dictionary $D$, sample sparse signals, and use those samples to define the range of possible inputs $x$.\nBoth implementations run the same update rule for the same number of iterations.\n\"\"\")", "code_hash": "9aa30e74991504a2c539edc6a11fbdfc", "config": {"column": null, "disabled": false, "expand_output": false, "hide_code": true}, "id": "vblA", "name": "_"}, {"code": "p, n, lambd = 3, 4, 1e-1\nnum_star = 200\nD, x_lb, x_ub, _, eta, lambd = make_lasso_data(\n    p=p, n=n, lambd=lambd, num_signals=num_star, seed=0\n)\nx_mid = 0.5 * (x_lb + x_ub)\n\nK = 200\ns0 = np.zeros(n)\n\nout_dir = examples_dir / \"_codegen_speedups\" / \"lasso_codegen_speedup\"", "code_hash": "374cb31dcd271467e09fd4c249539a8b", "config": {"column": null, "disabled": false, "expand_output": false, "hide_code": false}, "id": "bkHC", "name": "_"}, {"code": "verifier = ft.Verifier(\n    method=\"mip\",\n    solver=\"highs\",\n    obbt_solver=None,\n)\n\nx_param = verifier.parameter(p, lb=x_lb, ub=x_ub)\ns = verifier.iterate(n, lb=s0, ub=s0)\nnext_s, _, _, _ = ista_step(\n    verifier, D, eta, lambd, s, s, x_param, 1.0, k=1, momentum=False\n)\n\nconfig = CodegenConfig(\n    termination=TerminationSpec(max_iters=K),\n    num_verify_samples=4,\n)", "code_hash": "afb4c6d6a8d133b5f4cf260be1a72188", "config": {"column": null, "disabled": false, "expand_output": false, "hide_code": false}, "id": "lEQa", "name": "_"}, {"code": "def python_lasso_solve():\n    return solve_ista_numpy(D, eta, lambd, s0, x_mid, max_iters=K)\n\nfor _ in range(3):\n    python_lasso_solve()\n\npython_times = []\nfor _ in range(40):\n    t0 = time.perf_counter()\n    python_lasso_solve()\n    python_times.append((time.perf_counter() - t0) * 1.0e6)\n\npython_us = statistics.median(python_times)", "code_hash": "672f8bb91b2c3275832eacfc9b1aff5c", "config": {"column": null, "disabled": false, "expand_output": false, "hide_code": true}, "id": "PKri", "name": "_"}, {"code": "timings = run_lasso_codegen_benchmark(\n    config=config,\n    next_state=next_s,\n    out_dir=out_dir,\n    python_us=python_us,\n    state=s,\n    timing_file=timing_file,\n    verifier=verifier,\n    x_param=x_param,\n)", "code_hash": "29fb2217be164ca6d1f18f57bd705536", "config": {"column": null, "disabled": false, "expand_output": false, "hide_code": true}, "id": "Xref", "name": "_"}, {"code": "if timings[\"live\"]:\n    _footer = f\"\"\"\nGenerated solver directory: `{out_dir}`\n\nGenerated solver source: `{timings[\"solver_path\"]}`\n\"\"\"\nelse:\n    _footer = \"\"\nsummary = mo.md(f\"\"\"\n## Timing summary\n\nOne complete solve runs `{K}` iterations.\n\n| implementation | median / mean per solve |\n|---|---:|\n| direct NumPy Python | `{timings[\"python_us\"]:.3f} \u00b5s` |\n| generated C after code generation | `{timings[\"codegen_us\"]:.3f} \u00b5s` |\n| generated C after optimization iteration | `{timings[\"iteration_us\"]:.3f} \u00b5s` |\n\nThe speedup from code generation is `{timings[\"codegen_speedup\"]:.1f}x`, while the speedup from the optimization iteration is `{timings[\"iteration_speedup\"]:.2f}x`, totaling a speedup of `{timings[\"total_speedup\"]:.1f}x`.\n\n{_footer}\"\"\"\n)\nsummary", "code_hash": "36406398345017cbb9a635c17e985db9", "config": {"column": null, "disabled": false, "expand_output": false, "hide_code": true}, "id": "SFPL", "name": "_"}], "metadata": {"marimo_version": "0.25.2"}, "version": "1"},
+            "session": {"cells": [{"code_hash": "500ef53368bd828289a2019f4eb6fdd3", "console": [], "id": "Hbol", "outputs": [{"data": {"text/plain": ""}, "type": "data"}]}, {"code_hash": "9fb5c02161150fbc4a4b3f830d7671da", "console": [], "id": "MJUe", "outputs": [{"data": {"text/markdown": "\u003Cspan class=\"markdown prose dark:prose-invert contents\"\u003E\u003Ch1 id=\"lasso-python-vs-codegen\"\u003ELasso: Python vs Codegen\u003C/h1\u003E\n\u003Cspan class=\"paragraph\"\u003E\u003Ca href=\"./\"\u003EBack to the code generation tutorials\u003C/a\u003E\u003C/span\u003E\n\u003Cspan class=\"paragraph\"\u003EIn this tutorial we benchmark iterative soft-thresholding for the Lasso problem:\u003C/span\u003E\n\u003Cmarimo-tex class=\"arithmatex\"\u003E||[\\begin{array}{ll}\n    \\text{minimize} \u0026amp; (1/2)\\|Dz - x\\|_2^2 + \\lambda \\|z\\|_1,\n\\end{array}||]\u003C/marimo-tex\u003E\u003Cspan class=\"paragraph\"\u003Ewhere \u003Cmarimo-tex class=\"arithmatex\"\u003E||(D \\in \\mathbf{R}^{p \\times n}||)\u003C/marimo-tex\u003E, \u003Cmarimo-tex class=\"arithmatex\"\u003E||(z \\in \\mathbf{R}^n||)\u003C/marimo-tex\u003E is the decision variable, and \u003Cmarimo-tex class=\"arithmatex\"\u003E||(x \\in \\mathbf{R}^p||)\u003C/marimo-tex\u003E is the parameter.\nThe method is\u003C/span\u003E\n\u003Cmarimo-tex class=\"arithmatex\"\u003E||[\nz^{k+1} =\n\\mathbf{soft}_{\\lambda\\eta}\\left(z^k - \\eta D^T(Dz^k - x)\\right),\n||]\u003C/marimo-tex\u003E\u003Cspan class=\"paragraph\"\u003Ewhere \u003Cmarimo-tex class=\"arithmatex\"\u003E||(\\mathbf{soft}_\\kappa(v)_i = \\mathbf{sign}(v_i)\\max\\{|v_i| - \\kappa, 0\\}||)\u003C/marimo-tex\u003E is the soft-thresholding operator, applied element-wise.\u003C/span\u003E\n\u003Cspan class=\"paragraph\"\u003EWe compare a direct NumPy implementation with the verified generated C solver.\nThe problem construction, ISTA step, and NumPy reference solver are shared with the \u003Ca href=\"../verification/lasso.html\"\u003ELasso verification tutorial\u003C/a\u003E.\nThe generated C is timed after code generation, then timed again after the C-editing optimization pass.\u003C/span\u003E\u003C/span\u003E"}, "type": "data"}]}, {"code_hash": "9aa30e74991504a2c539edc6a11fbdfc", "console": [], "id": "vblA", "outputs": [{"data": {"text/markdown": "\u003Cspan class=\"markdown prose dark:prose-invert contents\"\u003E\u003Cspan class=\"paragraph\"\u003EWe generate a small sparse dictionary \u003Cmarimo-tex class=\"arithmatex\"\u003E||(D||)\u003C/marimo-tex\u003E, sample sparse signals, and use those samples to define the range of possible inputs \u003Cmarimo-tex class=\"arithmatex\"\u003E||(x||)\u003C/marimo-tex\u003E.\nBoth implementations run the same update rule for the same number of iterations.\u003C/span\u003E\u003C/span\u003E"}, "type": "data"}]}, {"code_hash": "374cb31dcd271467e09fd4c249539a8b", "console": [], "id": "bkHC", "outputs": [{"data": {"text/plain": ""}, "type": "data"}]}, {"code_hash": "afb4c6d6a8d133b5f4cf260be1a72188", "console": [], "id": "lEQa", "outputs": [{"data": {"text/plain": ""}, "type": "data"}]}, {"code_hash": "672f8bb91b2c3275832eacfc9b1aff5c", "console": [], "id": "PKri", "outputs": [{"data": {"text/plain": ""}, "type": "data"}]}, {"code_hash": "29fb2217be164ca6d1f18f57bd705536", "console": [], "id": "Xref", "outputs": [{"data": {"text/plain": ""}, "type": "data"}]}, {"code_hash": "36406398345017cbb9a635c17e985db9", "console": [], "id": "SFPL", "outputs": [{"data": {"text/markdown": "\u003Cspan class=\"markdown prose dark:prose-invert contents\"\u003E\u003Ch2 id=\"timing-summary\"\u003ETiming summary\u003C/h2\u003E\n\u003Cspan class=\"paragraph\"\u003EOne complete solve runs \u003Ccode\u003E200\u003C/code\u003E iterations.\u003C/span\u003E\n\u003Ctable\u003E\n\u003Cthead\u003E\n\u003Ctr\u003E\n\u003Cth\u003Eimplementation\u003C/th\u003E\n\u003Cth style=\"text-align: right;\"\u003Emedian / mean per solve\u003C/th\u003E\n\u003C/tr\u003E\n\u003C/thead\u003E\n\u003Ctbody\u003E\n\u003Ctr\u003E\n\u003Ctd\u003Edirect NumPy Python\u003C/td\u003E\n\u003Ctd style=\"text-align: right;\"\u003E\u003Ccode\u003E1053.063 \u00b5s\u003C/code\u003E\u003C/td\u003E\n\u003C/tr\u003E\n\u003Ctr\u003E\n\u003Ctd\u003Egenerated C after code generation\u003C/td\u003E\n\u003Ctd style=\"text-align: right;\"\u003E\u003Ccode\u003E7.335 \u00b5s\u003C/code\u003E\u003C/td\u003E\n\u003C/tr\u003E\n\u003Ctr\u003E\n\u003Ctd\u003Egenerated C after optimization iteration\u003C/td\u003E\n\u003Ctd style=\"text-align: right;\"\u003E\u003Ccode\u003E1.546 \u00b5s\u003C/code\u003E\u003C/td\u003E\n\u003C/tr\u003E\n\u003C/tbody\u003E\n\u003C/table\u003E\n\u003Cspan class=\"paragraph\"\u003EThe speedup from code generation is \u003Ccode\u003E143.6x\u003C/code\u003E, while the speedup from the optimization iteration is \u003Ccode\u003E4.75x\u003C/code\u003E, totaling a speedup of \u003Ccode\u003E681.3x\u003C/code\u003E.\u003C/span\u003E\u003C/span\u003E"}, "type": "data"}]}], "metadata": {"marimo_version": "0.25.2", "script_metadata_hash": null}, "version": "1"},
+            "runtimeConfig": null
+        }),
+        writable: false,
+        configurable: false,
+      });
+    </script>
+  
+<marimo-code hidden="">
+    import%20marimo%0A%0A__generated_with%20%3D%20%220.25.2%22%0Aapp%20%3D%20marimo.App(width%3D%22medium%22)%0A%0A%0A%40app.cell(hide_code%3DTrue)%0Adef%20_()%3A%0A%20%20%20%20import%20statistics%0A%20%20%20%20import%20sys%0A%20%20%20%20import%20time%0A%20%20%20%20from%20pathlib%20import%20Path%0A%0A%20%20%20%20import%20marimo%20as%20mo%0A%20%20%20%20import%20numpy%20as%20np%0A%0A%20%20%20%20start%20%3D%20Path(__file__).resolve().parent%20if%20%22__file__%22%20in%20globals()%20else%20Path.cwd().resolve()%0A%20%20%20%20for%20candidate%20in%20(start%2C%20*start.parents)%3A%0A%20%20%20%20%20%20%20%20if%20(candidate%20%2F%20%22fomtools%22).is_dir()%3A%0A%20%20%20%20%20%20%20%20%20%20%20%20repo_root%20%3D%20candidate%0A%20%20%20%20%20%20%20%20%20%20%20%20break%0A%20%20%20%20else%3A%0A%20%20%20%20%20%20%20%20repo_root%20%3D%20start%0A%0A%20%20%20%20if%20str(repo_root)%20not%20in%20sys.path%3A%0A%20%20%20%20%20%20%20%20sys.path.insert(0%2C%20str(repo_root))%0A%0A%20%20%20%20examples_dir%20%3D%20repo_root%20%2F%20%22examples%22%0A%0A%20%20%20%20from%20docs.tutorials.helper_functions.lasso%20import%20(%0A%20%20%20%20%20%20%20%20ista_step%2C%0A%20%20%20%20%20%20%20%20make_lasso_data%2C%0A%20%20%20%20%20%20%20%20solve_ista_numpy%2C%0A%20%20%20%20)%0A%20%20%20%20from%20docs.tutorials.helper_functions.codegen_benchmarks%20import%20(%0A%20%20%20%20%20%20%20%20run_lasso_codegen_benchmark%2C%0A%20%20%20%20)%0A%20%20%20%20from%20fomtools.codegen%20import%20CodegenConfig%2C%20TerminationSpec%0A%20%20%20%20import%20fomtools%20as%20ft%0A%0A%20%20%20%20timing_file%20%3D%20start%20%2F%20%22_recorded_timings.json%22%0A%0A%20%20%20%20np.set_printoptions(precision%3D5)%0A%20%20%20%20np.set_printoptions(suppress%3DTrue)%0A%20%20%20%20return%20(%0A%20%20%20%20%20%20%20%20CodegenConfig%2C%0A%20%20%20%20%20%20%20%20TerminationSpec%2C%0A%20%20%20%20%20%20%20%20examples_dir%2C%0A%20%20%20%20%20%20%20%20ft%2C%0A%20%20%20%20%20%20%20%20ista_step%2C%0A%20%20%20%20%20%20%20%20make_lasso_data%2C%0A%20%20%20%20%20%20%20%20mo%2C%0A%20%20%20%20%20%20%20%20np%2C%0A%20%20%20%20%20%20%20%20run_lasso_codegen_benchmark%2C%0A%20%20%20%20%20%20%20%20solve_ista_numpy%2C%0A%20%20%20%20%20%20%20%20statistics%2C%0A%20%20%20%20%20%20%20%20time%2C%0A%20%20%20%20%20%20%20%20timing_file%2C%0A%20%20%20%20)%0A%0A%0A%40app.cell(hide_code%3DTrue)%0Adef%20_(mo)%3A%0A%20%20%20%20mo.md(r%22%22%22%0A%20%20%20%20%23%20Lasso%3A%20Python%20vs%20Codegen%0A%0A%20%20%20%20%5BBack%20to%20the%20code%20generation%20tutorials%5D(.%2F)%0A%0A%20%20%20%20In%20this%20tutorial%20we%20benchmark%20iterative%20soft-thresholding%20for%20the%20Lasso%20problem%3A%0A%0A%20%20%20%20%5Cbegin%7Barray%7D%7Bll%7D%0A%20%20%20%20%20%20%20%20%5Ctext%7Bminimize%7D%20%26%20(1%2F2)%5C%7CDz%20-%20x%5C%7C_2%5E2%20%2B%20%5Clambda%20%5C%7Cz%5C%7C_1%2C%0A%20%20%20%20%5Cend%7Barray%7D%0A%0A%20%20%20%20where%20%24D%20%5Cin%20%5Cmathbf%7BR%7D%5E%7Bp%20%5Ctimes%20n%7D%24%2C%20%24z%20%5Cin%20%5Cmathbf%7BR%7D%5En%24%20is%20the%20decision%20variable%2C%20and%20%24x%20%5Cin%20%5Cmathbf%7BR%7D%5Ep%24%20is%20the%20parameter.%0A%20%20%20%20The%20method%20is%0A%0A%20%20%20%20%24%24%0A%20%20%20%20z%5E%7Bk%2B1%7D%20%3D%0A%20%20%20%20%5Cmathbf%7Bsoft%7D_%7B%5Clambda%5Ceta%7D%5Cleft(z%5Ek%20-%20%5Ceta%20D%5ET(Dz%5Ek%20-%20x)%5Cright)%2C%0A%20%20%20%20%24%24%0A%0A%20%20%20%20where%20%24%5Cmathbf%7Bsoft%7D_%5Ckappa(v)_i%20%3D%20%5Cmathbf%7Bsign%7D(v_i)%5Cmax%5C%7B%7Cv_i%7C%20-%20%5Ckappa%2C%200%5C%7D%24%20is%20the%20soft-thresholding%20operator%2C%20applied%20element-wise.%0A%0A%20%20%20%20We%20compare%20a%20direct%20NumPy%20implementation%20with%20the%20verified%20generated%20C%20solver.%0A%20%20%20%20The%20problem%20construction%2C%20ISTA%20step%2C%20and%20NumPy%20reference%20solver%20are%20shared%20with%20the%20%5BLasso%20verification%20tutorial%5D(..%2Fverification%2Flasso.html).%0A%20%20%20%20The%20generated%20C%20is%20timed%20after%20code%20generation%2C%20then%20timed%20again%20after%20the%20C-editing%20optimization%20pass.%0A%20%20%20%20%22%22%22)%0A%20%20%20%20return%0A%0A%0A%40app.cell(hide_code%3DTrue)%0Adef%20_(mo)%3A%0A%20%20%20%20mo.md(r%22%22%22%0A%20%20%20%20We%20generate%20a%20small%20sparse%20dictionary%20%24D%24%2C%20sample%20sparse%20signals%2C%20and%20use%20those%20samples%20to%20define%20the%20range%20of%20possible%20inputs%20%24x%24.%0A%20%20%20%20Both%20implementations%20run%20the%20same%20update%20rule%20for%20the%20same%20number%20of%20iterations.%0A%20%20%20%20%22%22%22)%0A%20%20%20%20return%0A%0A%0A%40app.cell%0Adef%20_(examples_dir%2C%20make_lasso_data%2C%20np)%3A%0A%20%20%20%20p%2C%20n%2C%20lambd%20%3D%203%2C%204%2C%201e-1%0A%20%20%20%20num_star%20%3D%20200%0A%20%20%20%20D%2C%20x_lb%2C%20x_ub%2C%20_%2C%20eta%2C%20lambd%20%3D%20make_lasso_data(%0A%20%20%20%20%20%20%20%20p%3Dp%2C%20n%3Dn%2C%20lambd%3Dlambd%2C%20num_signals%3Dnum_star%2C%20seed%3D0%0A%20%20%20%20)%0A%20%20%20%20x_mid%20%3D%200.5%20*%20(x_lb%20%2B%20x_ub)%0A%0A%20%20%20%20K%20%3D%20200%0A%20%20%20%20s0%20%3D%20np.zeros(n)%0A%0A%20%20%20%20out_dir%20%3D%20examples_dir%20%2F%20%22_codegen_speedups%22%20%2F%20%22lasso_codegen_speedup%22%0A%20%20%20%20return%20D%2C%20K%2C%20eta%2C%20lambd%2C%20n%2C%20out_dir%2C%20p%2C%20s0%2C%20x_lb%2C%20x_mid%2C%20x_ub%0A%0A%0A%40app.cell%0Adef%20_(%0A%20%20%20%20CodegenConfig%2C%0A%20%20%20%20D%2C%0A%20%20%20%20K%2C%0A%20%20%20%20TerminationSpec%2C%0A%20%20%20%20eta%2C%0A%20%20%20%20ft%2C%0A%20%20%20%20ista_step%2C%0A%20%20%20%20lambd%2C%0A%20%20%20%20n%2C%0A%20%20%20%20p%2C%0A%20%20%20%20s0%2C%0A%20%20%20%20x_lb%2C%0A%20%20%20%20x_ub%2C%0A)%3A%0A%20%20%20%20verifier%20%3D%20ft.Verifier(%0A%20%20%20%20%20%20%20%20method%3D%22mip%22%2C%0A%20%20%20%20%20%20%20%20solver%3D%22highs%22%2C%0A%20%20%20%20%20%20%20%20obbt_solver%3DNone%2C%0A%20%20%20%20)%0A%0A%20%20%20%20x_param%20%3D%20verifier.parameter(p%2C%20lb%3Dx_lb%2C%20ub%3Dx_ub)%0A%20%20%20%20s%20%3D%20verifier.iterate(n%2C%20lb%3Ds0%2C%20ub%3Ds0)%0A%20%20%20%20next_s%2C%20_%2C%20_%2C%20_%20%3D%20ista_step(%0A%20%20%20%20%20%20%20%20verifier%2C%20D%2C%20eta%2C%20lambd%2C%20s%2C%20s%2C%20x_param%2C%201.0%2C%20k%3D1%2C%20momentum%3DFalse%0A%20%20%20%20)%0A%0A%20%20%20%20config%20%3D%20CodegenConfig(%0A%20%20%20%20%20%20%20%20termination%3DTerminationSpec(max_iters%3DK)%2C%0A%20%20%20%20%20%20%20%20num_verify_samples%3D4%2C%0A%20%20%20%20)%0A%20%20%20%20return%20config%2C%20next_s%2C%20s%2C%20verifier%2C%20x_param%0A%0A%0A%40app.cell(hide_code%3DTrue)%0Adef%20_(D%2C%20K%2C%20eta%2C%20lambd%2C%20s0%2C%20solve_ista_numpy%2C%20statistics%2C%20time%2C%20x_mid)%3A%0A%20%20%20%20def%20python_lasso_solve()%3A%0A%20%20%20%20%20%20%20%20return%20solve_ista_numpy(D%2C%20eta%2C%20lambd%2C%20s0%2C%20x_mid%2C%20max_iters%3DK)%0A%0A%20%20%20%20for%20_%20in%20range(3)%3A%0A%20%20%20%20%20%20%20%20python_lasso_solve()%0A%0A%20%20%20%20python_times%20%3D%20%5B%5D%0A%20%20%20%20for%20_%20in%20range(40)%3A%0A%20%20%20%20%20%20%20%20t0%20%3D%20time.perf_counter()%0A%20%20%20%20%20%20%20%20python_lasso_solve()%0A%20%20%20%20%20%20%20%20python_times.append((time.perf_counter()%20-%20t0)%20*%201.0e6)%0A%0A%20%20%20%20python_us%20%3D%20statistics.median(python_times)%0A%20%20%20%20return%20(python_us%2C)%0A%0A%0A%40app.cell(hide_code%3DTrue)%0Adef%20_(%0A%20%20%20%20config%2C%0A%20%20%20%20next_s%2C%0A%20%20%20%20out_dir%2C%0A%20%20%20%20python_us%2C%0A%20%20%20%20run_lasso_codegen_benchmark%2C%0A%20%20%20%20s%2C%0A%20%20%20%20timing_file%2C%0A%20%20%20%20verifier%2C%0A%20%20%20%20x_param%2C%0A)%3A%0A%20%20%20%20timings%20%3D%20run_lasso_codegen_benchmark(%0A%20%20%20%20%20%20%20%20config%3Dconfig%2C%0A%20%20%20%20%20%20%20%20next_state%3Dnext_s%2C%0A%20%20%20%20%20%20%20%20out_dir%3Dout_dir%2C%0A%20%20%20%20%20%20%20%20python_us%3Dpython_us%2C%0A%20%20%20%20%20%20%20%20state%3Ds%2C%0A%20%20%20%20%20%20%20%20timing_file%3Dtiming_file%2C%0A%20%20%20%20%20%20%20%20verifier%3Dverifier%2C%0A%20%20%20%20%20%20%20%20x_param%3Dx_param%2C%0A%20%20%20%20)%0A%20%20%20%20return%20(timings%2C)%0A%0A%0A%40app.cell(hide_code%3DTrue)%0Adef%20_(K%2C%20mo%2C%20out_dir%2C%20timings)%3A%0A%20%20%20%20if%20timings%5B%22live%22%5D%3A%0A%20%20%20%20%20%20%20%20_footer%20%3D%20f%22%22%22%0A%20%20%20%20Generated%20solver%20directory%3A%20%60%7Bout_dir%7D%60%0A%0A%20%20%20%20Generated%20solver%20source%3A%20%60%7Btimings%5B%22solver_path%22%5D%7D%60%0A%20%20%20%20%22%22%22%0A%20%20%20%20else%3A%0A%20%20%20%20%20%20%20%20_footer%20%3D%20%22%22%0A%20%20%20%20summary%20%3D%20mo.md(f%22%22%22%0A%20%20%20%20%23%23%20Timing%20summary%0A%0A%20%20%20%20One%20complete%20solve%20runs%20%60%7BK%7D%60%20iterations.%0A%0A%20%20%20%20%7C%20implementation%20%7C%20median%20%2F%20mean%20per%20solve%20%7C%0A%20%20%20%20%7C---%7C---%3A%7C%0A%20%20%20%20%7C%20direct%20NumPy%20Python%20%7C%20%60%7Btimings%5B%22python_us%22%5D%3A.3f%7D%20%C2%B5s%60%20%7C%0A%20%20%20%20%7C%20generated%20C%20after%20code%20generation%20%7C%20%60%7Btimings%5B%22codegen_us%22%5D%3A.3f%7D%20%C2%B5s%60%20%7C%0A%20%20%20%20%7C%20generated%20C%20after%20optimization%20iteration%20%7C%20%60%7Btimings%5B%22iteration_us%22%5D%3A.3f%7D%20%C2%B5s%60%20%7C%0A%0A%20%20%20%20The%20speedup%20from%20code%20generation%20is%20%60%7Btimings%5B%22codegen_speedup%22%5D%3A.1f%7Dx%60%2C%20while%20the%20speedup%20from%20the%20optimization%20iteration%20is%20%60%7Btimings%5B%22iteration_speedup%22%5D%3A.2f%7Dx%60%2C%20totaling%20a%20speedup%20of%20%60%7Btimings%5B%22total_speedup%22%5D%3A.1f%7Dx%60.%0A%0A%20%20%20%20%7B_footer%7D%22%22%22%0A%20%20%20%20)%0A%20%20%20%20summary%0A%20%20%20%20return%0A%0A%0Aif%20__name__%20%3D%3D%20%22__main__%22%3A%0A%20%20%20%20app.run()%0A
+</marimo-code>
+
+<marimo-code-hash hidden="">63766239ea05f8185a1f07176d9e7255</marimo-code-hash>
+</body>
+</html>

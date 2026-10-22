@@ -1,0 +1,84 @@
+{
+  "_comment": [
+    "Recorded timings for the code generation speedup notebooks, used when a docs",
+    "build has no coding-agent backend (FOMTOOLS_CODEGEN_AGENT != 1) and therefore",
+    "cannot generate, verify and time a solver itself.",
+    "",
+    "Timings AND ratios are both stored verbatim as published, and are rendered",
+    "as-is rather than recomputed. The published ratios were computed from full-",
+    "precision timings, while the published timings are rounded to 3 decimals, so",
+    "re-deriving a ratio from the stored timings does NOT reproduce it (e.g. lasso",
+    "7.335/1.546 = 4.74, but the recorded ratio is 4.75). The lost precision is not",
+    "recoverable, so these rows are treated as a record to reproduce exactly, which",
+    "also keeps every notebook page consistent with speedup_results.md.",
+    "",
+    "To refresh: run each notebook with FOMTOOLS_CODEGEN_AGENT=1 on the benchmark",
+    "machine and copy the reported timings here, updating provenance below.",
+    "docs/tutorials/codegen/speedup_results.md presents the same numbers."
+  ],
+  "provenance": {
+    "recorded_by": "Daniel Deza",
+    "recorded_commit": "afe8c9c",
+    "recorded_date": "2026-07-05",
+    "iterations": 200,
+    "hardware": null,
+    "compiler": null,
+    "_provenance_note": [
+      "hardware and compiler are null because they were never recorded alongside",
+      "the original measurements and cannot be recovered from the repository.",
+      "Whoever re-runs the benchmark should fill them in."
+    ]
+  },
+  "examples": {
+    "lasso": {
+      "python_us": 1053.063,
+      "c_initial_us": 7.335,
+      "c_final_us": 1.546,
+      "optimization_status": "kept",
+      "verify_max_abs_err": "0.000e+00",
+      "codegen_speedup": 143.6,
+      "iteration_speedup": 4.75,
+      "total_speedup": 681.3
+    },
+    "control": {
+      "python_us": 2817.667,
+      "c_initial_us": 153.596,
+      "c_final_us": 29.704,
+      "optimization_status": "kept",
+      "verify_max_abs_err": "5.031e-16",
+      "codegen_speedup": 18.3,
+      "iteration_speedup": 5.17,
+      "total_speedup": 94.9
+    },
+    "network": {
+      "python_us": 2358.812,
+      "c_initial_us": 10.613,
+      "c_final_us": 2.593,
+      "optimization_status": "kept",
+      "verify_max_abs_err": "1.443e-14",
+      "codegen_speedup": 222.3,
+      "iteration_speedup": 4.09,
+      "total_speedup": 909.8
+    },
+    "nnls": {
+      "python_us": 690.375,
+      "c_initial_us": 9.352,
+      "c_final_us": 1.459,
+      "optimization_status": "kept",
+      "verify_max_abs_err": "1.388e-17",
+      "codegen_speedup": 73.8,
+      "iteration_speedup": 6.41,
+      "total_speedup": 473.3
+    },
+    "portfolio": {
+      "python_us": 2017.354,
+      "c_initial_us": 14.831,
+      "c_final_us": 6.351,
+      "optimization_status": "kept",
+      "verify_max_abs_err": "2.220e-16",
+      "codegen_speedup": 136.0,
+      "iteration_speedup": 2.34,
+      "total_speedup": 317.6
+    }
+  }
+}
