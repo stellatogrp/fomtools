@@ -23,11 +23,35 @@ FOMTools is a Python toolbox for **performance analysis of first-order optimizat
 ## Quick Start
 
 Follow the executable example in `docs/index.md`, which is tested directly.
-Use `Verifier()` for the default HiGHS backend, `ndim=` for variables,
-`set_objective_norm(expr, ord=np.inf)`, and `solve(convex_hull_cuts=True)`.
+
+```python
+import numpy as np
+import fomtools as ft
+
+K, n, eta = 5, 3, 0.01
+A = np.random.default_rng(0).normal(size=(n, n))
+P = A @ A.T
+
+vp = ft.Verifier()                      # HiGHS by default
+q = vp.parameter(n, lb=-1, ub=1)        # problem parameter
+z = vp.iterate(n, lb=0, ub=0)           # z^0 = 0
+for k in range(K):
+    z_prev, z = z, vp.relu(z - eta * (P @ z + q))
+vp.maximize(ft.norm(z - z_prev, np.inf))
+bound = vp.solve()                      # q.value is the worst case
+```
+
+Use `vp.iterate`/`vp.parameter` (`add_iterate`/`add_param` are deprecated aliases),
+`vp.maximize(ft.norm(expr, 1 | np.inf))` or `vp.maximize(ft.sum_squares(expr))` for the
+squared two-norm (an MIQP with `method="mip"`, so it needs `solver="gurobi"`;
+`ft.norm(expr, 2)` raises), `expr.value` for the worst case found by a MIP solve, and
+`solve(convex_hull_cuts=True)` for MIP hull cuts. Solvers are silent by default. Pass `verbose=True` to
+`Verifier` or `solve` for solver logs.
 MIP returns a finite best upper bound and raises when none is available.
 SDP accepts only accurate optimal termination. Numerical tolerances still apply.
-Use `post_process` only with certified bounds for all successive infinity-norm
+With `method="mip"`, each solve of `ft.norm(a - b, np.inf)` automatically tightens `a`
+from the chained certified residual bounds (`tighten_residuals=True`, the default), so
+solving at every iteration makes later solves easier. Use `post_process` only with certified bounds for all successive infinity-norm
 residuals from reference to target; a final-step bound alone is insufficient.
 
 ## Architecture Overview
@@ -44,14 +68,14 @@ The verification pipeline follows: **Step -> StepDecomposer -> Canonicalizer -> 
 
 ### Step Operators
 
-Access via `vp.step.<name>(arg, ...)`:
+Call as `vp.<name>(arg, ...)` (`vp.step.<name>` is deprecated). Options after `arg` are keyword-only:
 
 | Step | Method | Description |
 |------|--------|-------------|
-| `relu` | `vp.step.relu(x)` | ReLU activation / projection onto non-negative orthant |
-| `soft_threshold` | `vp.step.soft_threshold(x, lambd=t)` | Soft thresholding (proximal of L1 norm) |
-| `satlin` | `vp.step.satlin(x, l=l, u=u)` | Box projection / clipping |
-| `implicit_linear` | `vp.step.implicit_linear(x, output_mat=M)` | Implicit linear solve (used in ADMM/KKT) |
+| `relu` | `vp.relu(x)` | ReLU activation / projection onto non-negative orthant |
+| `soft_threshold` | `vp.soft_threshold(x, lambd=t)` | Soft thresholding (proximal of L1 norm) |
+| `satlin` | `vp.satlin(x, l=l, u=u)` | Box projection / clipping |
+| `implicit_linear` | `vp.implicit_linear(x, output_mat=M)` | Implicit linear solve (used in ADMM/KKT) |
 
 ### Key Classes
 
@@ -68,12 +92,12 @@ FOMTools generates OSQP-style embedded C solvers from verified FOMs. An LLM codi
 ### Basic Codegen
 
 ```python
-vp = Verifier(method="simulator", obbt_solver=None)
-b_param = vp.add_param(m, lb=b - 1.0, ub=b + 1.0)
+vp = ft.Verifier(method="simulator", obbt_solver=None)
+b_param = vp.parameter(m, lb=b - 1.0, ub=b + 1.0)
 z = vp.iterate_trajectory(K + 1)
-z[0] = vp.add_iterate(n, lb=2, ub=2)
+z[0] = vp.iterate(n, lb=2, ub=2)
 for k in range(1, K + 1):
-    z[k] = vp.step.soft_threshold(At @ z[k - 1] + Bt @ b_param, lambd=t)
+    z[k] = vp.soft_threshold(At @ z[k - 1] + Bt @ b_param, lambd=t)
 
 result = vp.codegen("out/ista", iterates=z, name="ista")
 ```
@@ -111,7 +135,7 @@ To stop on the verified metric itself, set the objective on the recording and us
 last one; `ord=2` is the squared norm, as in verification):
 
 ```python
-vp.set_objective_norm(z[K] - z[K - 1], ord=np.inf)
+vp.maximize(ft.norm(z[K] - z[K - 1], np.inf))
 config = CodegenConfig(
     termination=TerminationSpec(kind=TerminationKind.OBJECTIVE, max_iters=K, tol=1e-6),
 )
@@ -225,24 +249,24 @@ fomtools-codegen --module mymodule.py --out out/custom --driver agent
 
 ### Projected Gradient Descent
 ```python
-z[k] = vp.step.relu(z[k-1] - step_size * (P @ z[k-1] + q))
+z[k] = vp.relu(z[k-1] - step_size * (P @ z[k-1] + q))
 ```
 
 ### ADMM / Douglas-Rachford
 ```python
-u = vp.step.implicit_linear(z[k-1] - q, output_mat=kkt)
-ut = vp.step.relu(2*u - z[k-1], proj_ranges=(n, dim))
+u = vp.implicit_linear(z[k-1] - q, output_mat=kkt)
+ut = vp.relu(2*u - z[k-1], proj_ranges=(n, dim))
 z[k] = z[k-1] + ut - u
 ```
 
 ### Soft Thresholding (ISTA/Lasso)
 ```python
-z[k] = vp.step.soft_threshold(At @ z[k-1] + Bt @ b_param, lambd=t)
+z[k] = vp.soft_threshold(At @ z[k-1] + Bt @ b_param, lambd=t)
 ```
 
 ### Box-Constrained QP
 ```python
-z[k] = vp.step.satlin(z[k-1] - step_size * grad, l=lb, u=ub)
+z[k] = vp.satlin(z[k-1] - step_size * grad, l=lb, u=ub)
 ```
 
 ## Source Code

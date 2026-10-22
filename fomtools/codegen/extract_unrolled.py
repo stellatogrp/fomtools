@@ -6,7 +6,7 @@ iteration that a generated loop repeats, and
 `extract_scheduled_ir` wants the recording as a
 *build function* of the coefficients that vary, whose dependence must be affine.
 Neither accepts the program the user already wrote to verify with: a plain Python
-loop over ``verifier.step.*``.
+loop over steps such as ``verifier.relu``.
 
 This path does. It reads the finished tape and emits the run as a single pass, so
 every iteration carries its own coefficient blocks. That buys three things the
@@ -149,7 +149,7 @@ def _check_no_blowup(ir: FomIR, n_iterations: int) -> None:
         "its default 'auto' policy notices the accumulation and keeps each iterate as "
         "its own variable.\n\n"
         "    z = verifier.iterate_trajectory(K + 1)\n"
-        "    z[0] = verifier.add_iterate(n, lb=z0, ub=z0)\n"
+        "    z[0] = verifier.iterate(n, lb=z0, ub=z0)\n"
         "    for k in range(1, K + 1):\n"
         "        ...\n"
         "        z[k] = <the iterate>\n\n"

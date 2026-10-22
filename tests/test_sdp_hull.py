@@ -11,6 +11,7 @@ two-norm MIP on small instances that were loose before.
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
 
@@ -32,10 +33,10 @@ def _lasso_data(seed=0, p=3, n=5, lambd=0.1):
 def _build_ista(vp, K):
     """ISTA on the lasso; returns the KKT residual expression at u^K."""
     D, eta, lambd, x_lb, x_ub, s0 = _lasso_data()
-    x = vp.add_param(D.shape[0], lb=x_lb, ub=x_ub)
-    u = [vp.add_iterate(D.shape[1], lb=s0, ub=s0)]
+    x = vp.parameter(D.shape[0], lb=x_lb, ub=x_ub)
+    u = [vp.iterate(D.shape[1], lb=s0, ub=s0)]
     for _ in range(K):
-        u.append(vp.step.soft_threshold(u[-1] - eta * D.T @ (D @ u[-1] - x), lambd=lambd * eta))
+        u.append(vp.soft_threshold(u[-1] - eta * D.T @ (D @ u[-1] - x), lambd=lambd * eta))
     G = D.T @ D - np.eye(D.shape[1]) / eta
     return G @ (u[K] - u[K - 1])
 
@@ -45,11 +46,11 @@ def _build_boxpgd(vp, K):
     rng = np.random.default_rng(0)
     A = rng.normal(size=(5, 3))
     t = 1.0 / float(np.linalg.eigvalsh(A.T @ A)[-1])
-    x = vp.add_param(5, lb=-2.0, ub=2.0)
-    z = [vp.add_iterate(3, lb=np.zeros(3), ub=np.zeros(3))]
+    x = vp.parameter(5, lb=-2.0, ub=2.0)
+    z = [vp.iterate(3, lb=np.zeros(3), ub=np.zeros(3))]
     for _ in range(K):
         z.append(
-            vp.step.satlin(z[-1] - t * A.T @ (A @ z[-1] - x), l=np.full(3, -0.5), u=np.full(3, 0.5))
+            vp.satlin(z[-1] - t * A.T @ (A @ z[-1] - x), l=np.full(3, -0.5), u=np.full(3, 0.5))
         )
     return (1 / t) * (z[K] - z[K - 1])
 
@@ -69,7 +70,7 @@ def _sdp(build, K, **flags):
         subgrad_mono_cut=True,
         **flags,
     )
-    vp.set_objective_norm(build(vp, K), 2)
+    vp.maximize(ft.sum_squares(build(vp, K)))
     return vp
 
 
@@ -130,7 +131,7 @@ def _mip(build, K):
         obbt_solver=None,
         params={**_GUROBI, "NonConvex": 2, "MIPGap": 1e-6},
     )
-    vp.set_objective_norm(build(vp, K), 2)
+    vp.maximize(ft.sum_squares(build(vp, K)))
     vp.solve()
     return float(vp.canonicalizer._solved_copy["ObjBound"])
 

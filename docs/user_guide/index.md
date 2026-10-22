@@ -28,10 +28,10 @@ support addition, scalar multiplication, and left multiplication by numpy arrays
 sparse matrices, so the package tracks arbitrary affine combinations symbolically.
 
 ```python
-# reuse the imports and dimensions from the workflow above
+# reuse the imports and data (D, eta, lambd, m, n, K) from the Quick start
 demo = ft.Verifier(method="mip")
-x_demo = demo.add_param(m, lb=0, ub=1)
-z0 = demo.add_iterate(n, lb=0, ub=0)
+x_demo = demo.parameter(m, lb=0, ub=1)
+z0 = demo.iterate(n, lb=0, ub=0)
 
 # arbitrary combinations
 A = np.random.normal(size=(n, n))
@@ -49,7 +49,11 @@ never introduce new variables into the verification problem. Interval arithmetic
 elementwise bounds on each expression through affine operations. Arbitrary polyhedral
 constraints can also be imposed on any expression through the `==`, `<=`, and `>=`
 operators, as above, which is useful for encoding structure in the parameter set such as a
-probability simplex.
+probability simplex. `add_constraint` takes effect immediately: optimization-based bound
+tightening (OBBT) shrinks the boxes of the variables it involves, and every step built
+afterwards encodes its big-M constants from those boxes. Constrain parameters and initial
+iterates before building the algorithm steps. The worst case is the same either way, but the
+formulation is tighter.
 
 ## Choosing a backend
 
@@ -70,17 +74,17 @@ directly. The SDP backend represents the latter two through equivalent ReLU deco
 
 ```python
 # MIP: exact worst case analysis (HiGHS by default; solver="gurobi" for Gurobi)
-demo = ft.Verifier(method="mip")
+vp_mip = ft.Verifier(method="mip")
 ```
 
 ```python
 # SDP (experimental): upper bound from a semidefinite relaxation
-demo = ft.Verifier(method="sdp", solver="clarabel", obbt_solver=None)
+vp_sdp = ft.Verifier(method="sdp", solver="clarabel", obbt_solver=None)
 ```
 
 ```python
 # Simulator: empirical analysis at larger scale
-demo = ft.Verifier(method="simulator", solver="numpy")
+vp_sim = ft.Verifier(method="simulator", solver="numpy")
 ```
 
 The SDP backend is experimental; its options, such as cuts that tighten the relaxation,
@@ -100,9 +104,9 @@ canonicalizer needs.
 ```python
 grad_demo = D.T @ (D @ z0 - x_demo)
 l, u = -np.ones(n), np.ones(n)
-s_relu = demo.step.relu(z0 - eta * grad_demo)
-s_soft = demo.step.soft_threshold(z0 - eta * grad_demo, lambd=lambd * eta)
-s_box = demo.step.satlin(z0 - eta * grad_demo, l=l, u=u)
+s_relu = demo.relu(z0 - eta * grad_demo)
+s_soft = demo.soft_threshold(z0 - eta * grad_demo, lambd=lambd * eta)
+s_box = demo.satlin(z0 - eta * grad_demo, l=l, u=u)
 ```
 
 ## Proxable functions
@@ -137,15 +141,17 @@ code and the decomposition into steps stays hidden.
 
 ## Objectives
 
-API reference: [`set_objective_norm`](../api/verifier.md#fomtools.Verifier.set_objective_norm).
+API reference: [`maximize`](../api/verifier.md#fomtools.Verifier.maximize).
 
 The verification problem maximizes a norm of an arbitrary expression, so custom performance
 metrics can go beyond the standard fixed point residual $\|s^{k+1} - s^k\|_\infty$, including scaled
 residuals, residuals involving the problem parameters, and distances to a reference
-expression. The package supports four objectives: the $\ell_1$ norm, the squared $\ell_2$ norm, the
-$\ell_\infty$ norm, and a zero objective for feasibility checks. The objective is set with
-`set_objective_norm(expr, ord)`, where `expr` is an expression and `ord` selects the norm.
-The objective also accepts a list of expressions, which the package stacks into a single
+expression. The package supports four objectives: the $\ell_1$ norm `ft.norm(expr, 1)`, the
+$\ell_\infty$ norm `ft.norm(expr, np.inf)`, the squared $\ell_2$ norm `ft.sum_squares(expr)`, and a
+zero objective for feasibility checks (`vp.maximize(0)`). The objective is set with
+`vp.maximize(...)`. The two-norm objective is always squared. With the MIP backend it makes
+the problem a mixed-integer QP, which needs `solver="gurobi"`.
+`ft.norm` also accepts a list of expressions, which the package stacks into a single
 vector before applying the norm, useful for composite metrics such as the OSQP convergence
 check, which monitors both the primal and the dual residual.
 
@@ -153,10 +159,10 @@ check, which monitors both the primal and the dual residual.
 # illustrative OSQP residuals with bounded primal and dual variables
 M, P = np.eye(n), D.T @ D
 q = -D.T @ x_demo
-zk = demo.add_iterate(n, lb=-1, ub=1)
-wk = demo.add_iterate(n, lb=-1, ub=1)
-yk = demo.add_iterate(n, lb=-1, ub=1)
-demo.set_objective_norm([M @ zk - wk, P @ zk + q + M.T @ yk], np.inf)
+zk = demo.iterate(n, lb=-1, ub=1)
+wk = demo.iterate(n, lb=-1, ub=1)
+yk = demo.iterate(n, lb=-1, ub=1)
+demo.maximize(ft.norm([M @ zk - wk, P @ zk + q + M.T @ yk], np.inf))
 ```
 
 The list interface stacks both residual vectors and maximizes the $\ell_\infty$ norm of the result. The
@@ -177,15 +183,14 @@ Python function, together with bounds on $z^\star$.
 # fixed point for ista
 zk = z0
 for _ in range(K):
-    zk = demo.step.soft_threshold(
-        zk - eta * D.T @ (D @ zk - x_demo), lambd=lambd * eta)
+    zk = demo.soft_threshold(zk - eta * D.T @ (D @ zk - x_demo), lambd=lambd * eta)
 z_star = demo.fixed_point(
-    n_dim=n,
-    operator=lambda z: demo.step.soft_threshold(
-        z - eta * D.T @ (D @ z - x_demo), lambd=lambd * eta),
-    lb=-100, ub=100,
+    ndim=n,
+    operator=lambda z: demo.soft_threshold(z - eta * D.T @ (D @ z - x_demo), lambd=lambd * eta),
+    lb=-100,
+    ub=100,
 )
-demo.set_objective_norm(zk - z_star, 2)
+demo.maximize(ft.norm(zk - z_star, np.inf))
 ```
 
 Internally, `fixed_point` creates a new iterate $z^\star$ with the given bounds, applies the
@@ -202,7 +207,7 @@ API reference: [Code generation](../api/codegen.md).
 The same specification that drives verification also drives code generation, so a method
 that has been verified needs no restructuring to be compiled: the program generated from is
 the program verified. The user records the algorithm exactly as above, keeps the iterate
-sequence, and passes it to
+sequence in a list, and passes it to
 [`codegen`](../api/verifier.md#fomtools.Verifier.codegen), which extracts an
 intermediate representation of the run, hands the resulting specification to an LLM coding
 agent, and iterates the generated code against a Python reference oracle until it is
@@ -214,8 +219,17 @@ Set `FOMTOOLS_CODEGEN_AGENT=1` or pass an explicit `driver=`. See the
 [code generation guide](codegen.md#generating-the-solver).
 
 ```python
-# the same trajectory that was verified, now compiled
-result = VP.codegen("out/fista", iterates=s, name="fista")
+# the FISTA iteration from the quick start, keeping every iterate
+gen = ft.Verifier()
+x_gen = gen.parameter(m, lb=0, ub=1)
+s_hist = [gen.iterate(n, lb=0, ub=0)]
+w, t = s_hist[0], 1.0
+for k in range(K):
+    s_hist.append(gen.soft_threshold(w - eta * D.T @ (D @ w - x_gen), lambd=lambd * eta))
+    t_next = 0.5 * (1 + np.sqrt(1 + 4 * t**2))
+    w, t = s_hist[-1] + (t - 1) / t_next * (s_hist[-1] - s_hist[-2]), t_next
+
+result = gen.codegen("out/fista", iterates=s_hist, name="fista")
 assert result.success
 ```
 
@@ -229,6 +243,39 @@ generation time rather than inverted, and structured matrices are emitted as spa
 operations, so the generated solver is fast before any optimization pass runs. The
 [code generation guide](codegen.md) covers rolling, tabulated coefficient schedules,
 termination criteria, and the emitted project layout in full.
+
+## Returned bounds and numerical checks
+
+`solve()` returns a finite MIP best bound, including after a time limit when one
+is available. It raises `RuntimeError` for unusable termination states or missing
+bounds. An incumbent is a feasible example that attains a lower bound on the worst case.
+With the MIP backend, `expr.value` evaluates an expression at the incumbent. It raises
+`RuntimeError` when the solver found none, or when the expression uses steps added after the
+last solve. The SDP and simulator backends have no incumbent, and `expr.value` raises
+`NotImplementedError` there.
+
+SDP solves ([experimental](sdp.md)) require an accurate optimal termination and return the dual objective.
+Inaccurate, infeasible, unbounded, and early terminations raise `RuntimeError`.
+The solved copy retains `last_solver.solution` for native Clarabel and
+`last_problem` for CVXPY. These are numerical bounds subject to solver tolerances,
+not exact-arithmetic proofs. OBBT also uses numerical LP solves; outward padding
+reduces sensitivity to small solver errors but is not a rigorous certificate.
+
+The simulator returns sampled residuals. Its default infinity-norm differences
+follow public step/prox outputs, excluding internal KKT and prox variables.
+For algorithms with several state blocks or intermediate operations, set an
+explicit objective at each iteration. Statistical risk bounds require independent
+evaluation samples from the specified distribution and a fixed tolerance.
+
+With the MIP backend, every solve of `vp.maximize(ft.norm(a - b, np.inf))` chains its bound with
+the earlier ones and tightens `a` (`tighten_residuals=True`, the default). This uses only
+certified MIP bounds, and constraints added later only shrink the family, so the bounds stay
+valid. The manual `Verifier.post_process`, which does the same for a caller-supplied list, is
+valid only when its list contains upper bounds on **every**
+successive infinity-norm difference from the reference to the target over the same
+family. Do not pass a final-step bound alone, an incumbent, or a sample maximum.
+Generated-code checks likewise compare sampled numerical executions and do not
+prove floating-point equivalence for all inputs.
 
 ## Implementation notes
 

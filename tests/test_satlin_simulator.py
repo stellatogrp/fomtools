@@ -27,17 +27,17 @@ def test_saturated_linear_simulator():
     vp = Verifier(method="simulator", obbt_solver=None)
 
     z = [None] * (K + 1)
-    z[0] = vp.add_iterate(ndim=n, lb=lb, ub=ub, init=np.full(n, 1))
+    z[0] = vp.iterate(ndim=n, lb=lb, ub=ub, init=np.full(n, 1))
 
     X = np.random.normal(size=(n, n))
     P = X.T @ X
 
     rng = np.random.default_rng(0)
     q_samples = rng.uniform(low=-1.0, high=1.0, size=(10000, n))
-    q_param = vp.add_param(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
+    q_param = vp.parameter(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
 
     for k in range(1, K + 1):
-        z[k] = vp.step.satlin(z[k - 1] - step_size * (P @ z[k - 1] + q_param), l=lb, u=ub)
+        z[k] = vp.satlin(z[k - 1] - step_size * (P @ z[k - 1] + q_param), l=lb, u=ub)
 
     residuals = vp.solve()
 

@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.verifier import Verifier
 
 
@@ -13,11 +14,11 @@ class TestMIPCopyIsolation:
     def test_objective_does_not_accumulate(self, solver):
         """Verify that solving multiple times doesn't accumulate objective constraints."""
         vp = Verifier(method="mip", solver=solver, obbt_solver=None)
-        x = vp.add_iterate(3, lb=0, ub=10)
-        z = vp.step.relu(x)
+        x = vp.iterate(3, lb=0, ub=10)
+        z = vp.relu(x)
 
         # Solve twice with same objective
-        vp.set_objective_norm([z], np.inf)
+        vp.maximize(ft.norm([z], np.inf))
         result1 = vp.solve()
         result2 = vp.solve()
 
@@ -28,22 +29,22 @@ class TestMIPCopyIsolation:
     def test_objective_change_works(self, solver):
         """Verify that changing objective works correctly."""
         vp = Verifier(method="mip", solver=solver, obbt_solver=None)
-        x = vp.add_iterate(3, lb=0, ub=10)
-        z = vp.step.relu(x)
+        x = vp.iterate(3, lb=0, ub=10)
+        z = vp.relu(x)
 
         # Solve with first objective
-        vp.set_objective_norm([z], np.inf)
+        vp.maximize(ft.norm([z], np.inf))
         result1 = vp.solve()
 
         # Change objective (shifted expression)
-        vp.set_objective_norm([z - 5], np.inf)
+        vp.maximize(ft.norm([z - 5], np.inf))
         result2 = vp.solve()
 
         # Results should be different
         assert result1 != result2
 
         # Solve again with original objective to verify no corruption
-        vp.set_objective_norm([z], np.inf)
+        vp.maximize(ft.norm([z], np.inf))
         result3 = vp.solve()
 
         # Should match first result
@@ -53,8 +54,8 @@ class TestMIPCopyIsolation:
     def test_canonicalizer_copy_independence(self, solver):
         """Verify that canonicalizer copy is independent from original."""
         vp = Verifier(method="mip", solver=solver, obbt_solver=None)
-        x = vp.add_iterate(3, lb=0, ub=10)
-        z = vp.step.relu(x)
+        x = vp.iterate(3, lb=0, ub=10)
+        z = vp.relu(x)
 
         original_canon = vp.canonicalizer
         copy_canon = original_canon.copy()
@@ -77,11 +78,11 @@ class TestSDPCopyIsolation:
     def test_objective_does_not_accumulate(self, solver):
         """Verify that solving multiple times doesn't accumulate constraints."""
         vp = Verifier(method="sdp", solver=solver, obbt_solver=None)
-        x = vp.add_iterate(3, lb=0, ub=10)
-        z = vp.step.relu(x)
+        x = vp.iterate(3, lb=0, ub=10)
+        z = vp.relu(x)
 
         # Solve twice with same objective
-        vp.set_objective_norm(z, 2)
+        vp.maximize(ft.sum_squares(z))
         result1 = vp.solve()
         result2 = vp.solve()
 
@@ -93,10 +94,10 @@ class TestSDPCopyIsolation:
     def test_psd_cone_not_accumulated(self, solver):
         """Verify that PSD cone indices don't accumulate across solves."""
         vp = Verifier(method="sdp", solver=solver, obbt_solver=None)
-        x = vp.add_iterate(3, lb=0, ub=10)
-        z = vp.step.relu(x)
+        x = vp.iterate(3, lb=0, ub=10)
+        z = vp.relu(x)
 
-        vp.set_objective_norm(z, 2)
+        vp.maximize(ft.sum_squares(z))
 
         # Get initial psd cone count
         initial_psd_count = len(vp.canonicalizer.psd_cone_indices)
@@ -113,8 +114,8 @@ class TestSDPCopyIsolation:
     def test_canonicalizer_copy_independence(self, solver):
         """Verify that SDP canonicalizer copy is independent from original."""
         vp = Verifier(method="sdp", solver=solver, obbt_solver=None)
-        x = vp.add_iterate(3, lb=0, ub=10)
-        _ = vp.step.relu(x)
+        x = vp.iterate(3, lb=0, ub=10)
+        _ = vp.relu(x)
 
         original_canon = vp.canonicalizer
         copy_canon = original_canon.copy()

@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import IndPolyhedral
 from fomtools.verifier import Verifier
@@ -64,7 +65,7 @@ def test_constructor_dim_mismatch():
 def test_returns_linear_expression_on_mip():
     """prox_indpolyhedral returns the primal u as a LinearExpression of dim n."""
     v = _make_verifier("mip", obbt="gurobi")
-    arg = v.add_param(2, lb=-1.0, ub=1.0)
+    arg = v.parameter(2, lb=-1.0, ub=1.0)
     A = np.array([[1.0, 1.0]])
     out = v.prox(IndPolyhedral(A, np.array([0.5]), dual_ub=10.0), arg)
     assert isinstance(out, LinearExpression)
@@ -87,11 +88,11 @@ def test_returns_linear_expression_on_mip():
 def test_mip_projection_matches_numeric(A, b, x0, dual_ub):
     """The MIP KKT encoding reproduces the true projection at a fixed arg."""
     v = _make_verifier("mip", obbt="gurobi")
-    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed arg
+    x = v.parameter(len(x0), lb=x0, ub=x0)  # fixed arg
     u = v.prox(IndPolyhedral(A, b, dual_ub=dual_ub), x)
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
-    got = v.get_solution_value(u)
+    got = u.value
     np.testing.assert_allclose(got, IndPolyhedral(A, b).prox(x0), atol=PROX_ATOL)
 
 
@@ -104,7 +105,7 @@ def test_without_dual_ub_raises(method):
     """
     A, b = _box(2, -np.ones(2), np.ones(2))
     v = _make_verifier(method, obbt="gurobi" if method == "mip" else None)
-    x = v.add_param(2, lb=np.array([2.0, -3.0]), ub=np.array([2.0, -3.0]))
+    x = v.parameter(2, lb=np.array([2.0, -3.0]), ub=np.array([2.0, -3.0]))
     with pytest.raises(ValueError, match="dual_ub"):
         v.prox(IndPolyhedral(A, b), x)  # dual_ub=None
 
@@ -113,7 +114,7 @@ def test_simulator_supported():
     """Simulator now evaluates the polyhedral projection with a per-sample cvxpy
     solve, returning a LinearExpression of the input dimension."""
     v = _make_verifier("simulator")
-    arg = v.add_param(2, lb=-1.0, ub=1.0)
+    arg = v.parameter(2, lb=-1.0, ub=1.0)
     out = v.prox(IndPolyhedral(np.array([[1.0, 1.0]]), np.array([0.5]), dual_ub=10.0), arg)
     assert out.ndim == 2
 
@@ -136,9 +137,9 @@ _SDP_CASES = [
 def test_sdp_complementarity_solves():
     """IndPolyhedral now solves on the SDP backend (no NotImplementedError)."""
     v = _make_verifier("sdp")
-    arg = v.add_param(2, lb=-1.0, ub=1.0)
+    arg = v.parameter(2, lb=-1.0, ub=1.0)
     u = v.prox(IndPolyhedral(np.array([[1.0, 1.0]]), np.array([0.5]), dual_ub=10.0), arg)
-    v.set_objective_norm(u, 2)
+    v.maximize(ft.sum_squares(u))
     assert np.isfinite(v.solve())
 
 
@@ -150,9 +151,9 @@ def test_sdp_projection_tight_at_fixed_point(A, b, x0, dual_ub):
     relaxation is empirically tight for these projection instances.
     """
     v = _make_verifier("sdp")
-    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed arg
+    x = v.parameter(len(x0), lb=x0, ub=x0)  # fixed arg
     u = v.prox(IndPolyhedral(A, b, dual_ub=dual_ub), x)
-    v.set_objective_norm(u, 2)
+    v.maximize(ft.sum_squares(u))
     obj = v.solve()
     proj = IndPolyhedral(A, b).prox(x0)
     np.testing.assert_allclose(obj, float(proj @ proj), atol=1e-3)
@@ -168,15 +169,15 @@ def test_sdp_bound_vs_mip_over_box():
     arg_lb, arg_ub = -np.ones(2), np.ones(2)
 
     vm = _make_verifier("mip", obbt="gurobi")
-    xm = vm.add_param(2, lb=arg_lb, ub=arg_ub)
+    xm = vm.parameter(2, lb=arg_lb, ub=arg_ub)
     um = vm.prox(IndPolyhedral(A, b, dual_ub=10.0), xm)
-    vm.set_objective_norm([um], np.inf)
+    vm.maximize(ft.norm([um], np.inf))
     mip_inf = vm.solve()
 
     vs = _make_verifier("sdp")
-    xs = vs.add_param(2, lb=arg_lb, ub=arg_ub)
+    xs = vs.parameter(2, lb=arg_lb, ub=arg_ub)
     us = vs.prox(IndPolyhedral(A, b, dual_ub=10.0), xs)
-    vs.set_objective_norm(us, 2)
+    vs.maximize(ft.sum_squares(us))
     sdp_two = np.sqrt(vs.solve())
 
     assert np.isfinite(mip_inf)
@@ -186,19 +187,19 @@ def test_sdp_bound_vs_mip_over_box():
 def test_sdp_disjoint_guard():
     """Complementarity between expressions sharing variables raises on SDP."""
     v = _make_verifier("sdp")
-    x = v.add_iterate(2, lb=0.0, ub=1.0)
+    x = v.iterate(2, lb=0.0, ub=1.0)
     with pytest.raises(NotImplementedError, match="sharing variables"):
-        v.add_constraint(v.complementarity(x, x))
+        v.add_constraint(ft.complementarity(x, x))
 
 
 def test_complementarity_composite_slack_bound():
     """Regression: complementarity big-M reads bound_propagation, so a composite
     second argument (b - A@u) yields finite M and does not spuriously raise."""
     v = _make_verifier("mip", obbt="gurobi")
-    x = v.add_param(2, lb=np.array([0.0, 0.0]), ub=np.array([0.0, 0.0]))  # arg=0, inside box
+    x = v.parameter(2, lb=np.array([0.0, 0.0]), ub=np.array([0.0, 0.0]))  # arg=0, inside box
     A, b = _box(2, -np.ones(2), np.ones(2))
     u = v.prox(IndPolyhedral(A, b, dual_ub=5.0), x)
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
     # arg=0 is interior; projection is the identity.
-    np.testing.assert_allclose(v.get_solution_value(u), np.zeros(2), atol=TEST_EPS)
+    np.testing.assert_allclose(u.value, np.zeros(2), atol=TEST_EPS)

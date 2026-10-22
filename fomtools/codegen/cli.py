@@ -127,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--objective",
         action="store_true",
         help="with --tol, stop on the verification objective set on the recording "
-        "(set_objective_norm) instead of the inf-norm change",
+        "(Verifier.maximize) instead of the inf-norm change",
     )
     p.add_argument(
         "--check-termination",

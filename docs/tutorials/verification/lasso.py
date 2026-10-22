@@ -6,8 +6,6 @@ app = marimo.App(width="medium")
 
 @app.cell(hide_code=True)
 def _():
-    import contextlib
-    import io
     import sys
     from pathlib import Path
 
@@ -35,23 +33,6 @@ def _():
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
 
-    solver_params = {
-        'OutputFlag': 0,
-        'LogToConsole': 0,
-    }
-
-    # Gurobi prints a license banner through sys.stdout the first time its
-    # default environment starts, before any OutputFlag can apply. Start the
-    # environment here, in this hidden cell, with stdout swallowed so the
-    # banner never lands in a visible cell.
-    try:
-        import gurobipy as _gp
-    except ImportError:
-        pass
-    else:
-        with contextlib.redirect_stdout(io.StringIO()):
-            _gp.Model()
-
     return (
         certify_lasso_pepit_radius,
         ista_step,
@@ -59,7 +40,6 @@ def _():
         mo,
         np,
         plt,
-        solver_params,
     )
 
 
@@ -183,7 +163,7 @@ def _(n, np, p, s0_lb, s0_ub, x_lb, x_ub):
 def _(mo):
     mo.md(r"""
     The simulation is run through the following function. The output of
-    `_VP.solve()` is an array of size `(n_samples, K)` whose $i$-th row lists
+    `_vp.solve()` is an array of size `(n_samples, K)` whose $i$-th row lists
     the residual norms $\|r^k\|_\infty$ for $k=1,\ldots,K$ of the $i$-th
     problem instance.
     """)
@@ -192,49 +172,53 @@ def _(mo):
 
 @app.cell
 def _(D, eta, ista_step, lambd, n, np, p):
-    from fomtools.verifier import Verifier
+    import fomtools as ft
+
+    def maximize_residual(vp, residual, ord):
+        """Maximize ``||residual||_ord``, squared for ``ord=2`` (``ft.sum_squares``)."""
+        vp.maximize(ft.sum_squares(residual) if ord == 2 else ft.norm(residual, ord))
 
     def ista_simulation(x_samples, s0_samples, K, momentum=False, ord=np.inf):
         """Simulate ISTA on sampled instances.
 
         Builds a simulator-mode :class:`Verifier`, registers the parameter
         ``x`` and initial iterate ``s0`` as sampled parameters, rolls out the
-        recurrence with ``ista_step``, and simulates via ``VP.solve()``. Each
+        recurrence with ``ista_step``, and simulates via ``vp.solve()``. Each
         ``*_samples`` array has shape ``(n_samples, dim)`` (a single-row array
         replays one instance), and the returned ``residuals`` has shape
         ``(n_samples, K)``. ``ord`` defaults to ``inf``, matching
-        :func:`ista_verification`; ``set_objective_norm(..., 2)`` would maximize
-        the *squared* Euclidean norm, so with ``ord=2`` the returned residuals
-        are in squared units. Summary statistics (``mean``, ``min``, ``max``,
-        ...) are available on the returned instance ``VP`` via ``VP[...]``.
+        :func:`ista_verification`; with ``ord=2`` the objective is
+        ``ft.sum_squares``, the *squared* Euclidean norm, so the returned
+        residuals are in squared units. Summary statistics (``mean``, ``min``, ``max``,
+        ...) are available on the returned instance ``vp`` via ``vp[...]``.
         """
-        VP = Verifier(method='simulator', obbt_solver=None)
-        x_param = VP.add_param(ndim=p, samples=x_samples)
-        s0 = VP.add_param(n, samples=s0_samples)
+        vp = ft.Verifier(method='simulator', obbt_solver=None)
+        x_param = vp.parameter(ndim=p, samples=x_samples)
+        s0 = vp.parameter(n, samples=s0_samples)
 
         z, y, t = s0, s0, 1.0
         for k in range(1, K + 1):
             z, y, t, residual = ista_step(
-                VP, D, eta, lambd, z, y, x_param, t, k=k, momentum=momentum
+                vp, D, eta, lambd, z, y, x_param, t, k=k, momentum=momentum
             )
-            VP.set_objective_norm(residual, ord)
+            maximize_residual(vp, residual, ord)
 
-        residuals = VP.solve()
-        return VP, residuals
+        residuals = vp.solve()
+        return vp, residuals
 
-    return Verifier, ista_simulation
+    return ista_simulation, ft, maximize_residual
 
 
 @app.cell
 def _(K, ista_simulation, np, s0_samples, x_samples):
-    _VP, _residuals = ista_simulation(x_samples, s0_samples, K, momentum=False, ord=np.inf)
+    _vp, _residuals = ista_simulation(x_samples, s0_samples, K, momentum=False, ord=np.inf)
 
     print(
         f"Summary statistics (at K={K}):\n"
-        f"mean: {_VP['mean']:.6e}\n"
-        f"min: {_VP['min']:.6e}\n"
-        f"max: {_VP['max']:.6e}\n"
-        f"median: {_VP['median']:.6e}\n"
+        f"mean: {_vp['mean']:.6e}\n"
+        f"min: {_vp['min']:.6e}\n"
+        f"max: {_vp['max']:.6e}\n"
+        f"median: {_vp['median']:.6e}\n"
     )
 
     simulation_residuals_ista = np.mean(_residuals, axis=0)
@@ -274,13 +258,27 @@ def _(mo):
 
 
 @app.cell
-def _(D, Verifier, eta, ista_step, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
+def _(
+    D,
+    eta,
+    ft,
+    ista_step,
+    lambd,
+    maximize_residual,
+    n,
+    np,
+    p,
+    s0_lb,
+    s0_ub,
+    x_lb,
+    x_ub,
+):
     def ista_verification(K, method, momentum=False, ord=np.inf, **verifier_kwargs):
         """Solve the ISTA/FISTA verification problem for one backend.
 
         Builds a ``Verifier`` in ``method`` mode, registers the parameter box
         ``[x_lb, x_ub]`` and the initial iterate box ``[s0_lb, s0_ub]``, rolls
-        out ``ista_step`` over the horizon ``K``, and returns ``(VP, residuals)``
+        out ``ista_step`` over the horizon ``K``, and returns ``(vp, residuals)``
         with one worst-case residual per iteration. Extra ``verifier_kwargs``
         (``solver``, ``params``, ...) are forwarded to the ``Verifier``
         constructor.
@@ -288,20 +286,20 @@ def _(D, Verifier, eta, ista_step, lambd, n, np, p, s0_lb, s0_ub, x_lb, x_ub):
         ``ord`` defaults to ``inf``, which keeps the MIP a MILP. A 2-norm
         objective is squared, so its value is square-rooted on return.
         """
-        VP = Verifier(method=method, **verifier_kwargs)
-        x_param = VP.add_param(p, lb=x_lb, ub=x_ub)
-        z = VP.iterate_trajectory(K + 1, collapse_expr='auto')
-        z[0] = VP.add_iterate(n, lb=s0_lb, ub=s0_ub)
+        vp = ft.Verifier(method=method, **verifier_kwargs)
+        x_param = vp.parameter(p, lb=x_lb, ub=x_ub)
+        z = vp.iterate_trajectory(K + 1, collapse_expr='auto')
+        z[0] = vp.iterate(n, lb=s0_lb, ub=s0_ub)
         y, t = z[0], 1.0
         residuals = []
         for k in range(1, K + 1):
             z, y, t, residual = ista_step(
-                VP, D, eta, lambd, z, y, x_param, t, k=k, momentum=momentum
+                vp, D, eta, lambd, z, y, x_param, t, k=k, momentum=momentum
             )
-            VP.set_objective_norm(residual, ord)
-            val = VP.solve()
+            maximize_residual(vp, residual, ord)
+            val = vp.solve()
             residuals.append(np.sqrt(val) if ord == 2 else val)
-        return VP, residuals
+        return vp, residuals
 
     return (ista_verification,)
 
@@ -319,12 +317,12 @@ def _(mo):
 
 
 @app.cell
-def _(K, ista_verification, np, solver_params):
+def _(K, ista_verification, np):
     _, all_residuals = ista_verification(
-        K, 'mip', momentum=False, ord=np.inf, solver='gurobi', params=solver_params,
+        K, 'mip', momentum=False, ord=np.inf, solver='gurobi',
     )
     _, all_residuals_fista = ista_verification(
-        K, 'mip', momentum=True, ord=np.inf, solver='gurobi', params=solver_params,
+        K, 'mip', momentum=True, ord=np.inf, solver='gurobi',
     )
     return all_residuals, all_residuals_fista
 

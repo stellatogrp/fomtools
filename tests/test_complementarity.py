@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.constraint import ComplementarityConstraint
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
@@ -20,14 +21,14 @@ def test_complementarity_constructor_dim_mismatch(vp):
     ``ComplementarityConstraint`` flagged ``is_linear is False`` (so the router
     keeps it out of the OBBT LP).
     """
-    x = vp.add_iterate(3, lb=0, ub=10)
-    y = vp.add_iterate(2, lb=0, ub=10)
+    x = vp.iterate(3, lb=0, ub=10)
+    y = vp.iterate(2, lb=0, ub=10)
 
     with pytest.raises(ValueError):
-        vp.complementarity(x, y)
+        ft.complementarity(x, y)
 
-    z = vp.add_iterate(3, lb=0, ub=10)
-    comp = vp.complementarity(x, z)
+    z = vp.iterate(3, lb=0, ub=10)
+    comp = ft.complementarity(x, z)
     assert isinstance(comp, ComplementarityConstraint)
     assert comp.is_linear is False
     assert comp.ndim == 3
@@ -42,18 +43,18 @@ def test_complementarity_enforced_in_solution(vp):
     have ``min(a_i, b_i) == 0``.
     """
     n = 3
-    a = vp.add_iterate(n, lb=0, ub=10)
-    b = vp.add_iterate(n, lb=0, ub=10)
+    a = vp.iterate(n, lb=0, ub=10)
+    b = vp.iterate(n, lb=0, ub=10)
 
-    vp.add_constraint(vp.complementarity(a, b))
-    vp.set_objective_norm([a + b], np.inf)
+    vp.add_constraint(ft.complementarity(a, b))
+    vp.maximize(ft.norm([a + b], np.inf))
     result = vp.solve()
 
     assert result is not None
     assert np.isfinite(result)
 
-    a_val = vp.get_solution_value(a)
-    b_val = vp.get_solution_value(b)
+    a_val = a.value
+    b_val = b.value
     assert np.all(np.minimum(a_val, b_val) < TEST_EPS), (
         f"Complementarity violated: a={a_val}, b={b_val}"
     )
@@ -68,13 +69,13 @@ def test_complementarity_blocks_both_positive(vp):
     objVal access, HiGHS returns a non-finite objective; accept either.
     """
     n = 2
-    a = vp.add_iterate(n, lb=0, ub=5)
-    b = vp.add_iterate(n, lb=0, ub=5)
+    a = vp.iterate(n, lb=0, ub=5)
+    b = vp.iterate(n, lb=0, ub=5)
 
-    vp.add_constraint(vp.complementarity(a, b))
+    vp.add_constraint(ft.complementarity(a, b))
     vp.add_constraint(a >= 1)
     vp.add_constraint(b >= 1)
-    vp.set_objective_norm([a + b], np.inf)
+    vp.maximize(ft.norm([a + b], np.inf))
 
     raised = False
     result = None
@@ -93,11 +94,11 @@ def test_complementarity_infinite_bound_raises():
     Big-M encoding requires finite upper bounds; otherwise a clear ``ValueError``.
     """
     vp = Verifier(method="mip", solver="highs", obbt_solver=None, params={"output_flag": False})
-    a = vp.add_iterate(2, lb=0, ub=np.inf)
-    b = vp.add_iterate(2, lb=0, ub=5)
+    a = vp.iterate(2, lb=0, ub=np.inf)
+    b = vp.iterate(2, lb=0, ub=5)
 
     with pytest.raises(ValueError, match="finite upper bounds"):
-        vp.add_constraint(vp.complementarity(a, b))
+        vp.add_constraint(ft.complementarity(a, b))
 
 
 def test_router_skips_obbt_for_complementarity(vp):
@@ -109,17 +110,17 @@ def test_router_skips_obbt_for_complementarity(vp):
     and the problem must still solve correctly with complementarity enforced.
     """
     n = 2
-    a = vp.add_iterate(n, lb=0, ub=10)
-    b = vp.add_iterate(n, lb=0, ub=10)
+    a = vp.iterate(n, lb=0, ub=10)
+    b = vp.iterate(n, lb=0, ub=10)
 
     # Should not raise (would AttributeError if routed into _tighten_constraint_bounds).
-    vp.add_constraint(vp.complementarity(a, b))
-    vp.set_objective_norm([a + b], np.inf)
+    vp.add_constraint(ft.complementarity(a, b))
+    vp.maximize(ft.norm([a + b], np.inf))
     result = vp.solve()
 
     assert np.isfinite(result)
-    a_val = vp.get_solution_value(a)
-    b_val = vp.get_solution_value(b)
+    a_val = a.value
+    b_val = b.value
     assert np.all(np.minimum(a_val, b_val) < TEST_EPS)
 
 
@@ -131,12 +132,12 @@ def test_linear_constraint_still_tightens_with_obbt(vp):
     should bound ``relu(x)`` to at most 10 even though ``x`` starts at ``[-100, 100]``.
     """
     n = 2
-    p = vp.add_param(n, lb=0, ub=10)
-    x = vp.add_iterate(n, lb=-100, ub=100)
+    p = vp.parameter(n, lb=0, ub=10)
+    x = vp.iterate(n, lb=-100, ub=100)
 
     vp.add_constraint(x == p)
-    z = vp.step.relu(x)
-    vp.set_objective_norm([z], np.inf)
+    z = vp.relu(x)
+    vp.maximize(ft.norm([z], np.inf))
     result = vp.solve()
 
     assert np.isfinite(result)
@@ -159,17 +160,17 @@ def test_complementarity_sdp_valid_bound_vs_mip(vp_sdp):
     sdp_solver = vp_sdp.canonicalizer.solver_name
 
     vm = Verifier(method="mip", solver="gurobi", obbt_solver=None, params={"OutputFlag": 0})
-    am = vm.add_iterate(n, lb=0, ub=2)
-    bm = vm.add_iterate(n, lb=0, ub=2)
-    vm.add_constraint(vm.complementarity(am, bm))
-    vm.set_objective_norm([am + bm], np.inf)
+    am = vm.iterate(n, lb=0, ub=2)
+    bm = vm.iterate(n, lb=0, ub=2)
+    vm.add_constraint(ft.complementarity(am, bm))
+    vm.maximize(ft.norm([am + bm], np.inf))
     mip_inf = vm.solve()
 
     vs = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
-    a = vs.add_iterate(n, lb=0, ub=2)
-    b = vs.add_iterate(n, lb=0, ub=2)
-    vs.add_constraint(vs.complementarity(a, b))
-    vs.set_objective_norm(a + b, 2)
+    a = vs.iterate(n, lb=0, ub=2)
+    b = vs.iterate(n, lb=0, ub=2)
+    vs.add_constraint(ft.complementarity(a, b))
+    vs.maximize(ft.sum_squares(a + b))
     sdp_two = np.sqrt(vs.solve())
 
     assert np.isfinite(mip_inf)
@@ -183,6 +184,6 @@ def test_complementarity_sdp_disjoint_guard(vp_sdp):
     Tests the guard at the primitive level: ``x ⊥ x`` shares the leaf ``x``, which the
     lifted outer-product scatter cannot encode.
     """
-    x = vp_sdp.add_iterate(2, lb=0, ub=1)
+    x = vp_sdp.iterate(2, lb=0, ub=1)
     with pytest.raises(NotImplementedError, match="sharing variables"):
-        vp_sdp.add_constraint(vp_sdp.complementarity(x, x))
+        vp_sdp.add_constraint(ft.complementarity(x, x))

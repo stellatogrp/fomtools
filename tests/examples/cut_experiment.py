@@ -13,7 +13,7 @@ under four cut configurations layered on a fixed light base:
   base + subgrad      = + subgrad_mono_cut   (<s^i/tau_i - s^j/tau_j, z^i> >= 0, eq 4)
   base + both
 
-Both backends use the squared two-norm objective (``set_objective_norm(expr, 2)``),
+Both backends use the squared two-norm objective (``vp.maximize(ft.sum_squares(expr))``),
 so they are directly comparable: the MIP value is exact and lower-bounds the SDP
 relaxation, and ``gap = sdp - mip`` measures looseness. A cut "helps" when it
 reduces that gap. We deliberately do NOT use ``full_psd_cone`` (slow, dense) — the
@@ -43,14 +43,12 @@ import time
 
 import numpy as np
 
-from fomtools.verifier import Verifier
+import fomtools as ft
 
 SDP_SOLVER = "clarabel"
 MIP_SOLVER = "gurobi"
 MIP_TIME_LIMIT = 60.0
 GUROBI_PARAMS = {
-    "OutputFlag": 0,
-    "LogToConsole": 0,
     "TimeLimit": MIP_TIME_LIMIT,
     "MIPGap": 1e-6,
 }
@@ -77,10 +75,10 @@ CONFIGS = [
 def build_nnls(vp, K, A, t, z0_lo, z0_hi, x_lo, x_hi):
     """Projected-gradient NNLS: z_{k+1} = relu(z_k - t A^T (A z_k - x))."""
     m, n = A.shape
-    x = vp.add_param(m, lb=x_lo, ub=x_hi)
-    z = [vp.add_iterate(n, lb=z0_lo, ub=z0_hi)]
+    x = vp.parameter(m, lb=x_lo, ub=x_hi)
+    z = [vp.iterate(n, lb=z0_lo, ub=z0_hi)]
     for k in range(K):
-        z.append(vp.step.relu(z[k] - t * A.T @ (A @ z[k] - x)))
+        z.append(vp.relu(z[k] - t * A.T @ (A @ z[k] - x)))
     return z[K] - z[K - 1]
 
 
@@ -88,20 +86,20 @@ def build_ista(vp, K, At, Bt, lambda_t, b, b_hw, z0_lo, z0_hi):
     """ISTA: z_{k+1} = soft_threshold(At z_k + Bt b, lambda_t)."""
     n = At.shape[0]
     m = Bt.shape[1]
-    b_p = vp.add_param(m, lb=b - b_hw, ub=b + b_hw)
-    z = [vp.add_iterate(n, lb=z0_lo, ub=z0_hi)]
+    b_p = vp.parameter(m, lb=b - b_hw, ub=b + b_hw)
+    z = [vp.iterate(n, lb=z0_lo, ub=z0_hi)]
     for k in range(K):
-        z.append(vp.step.soft_threshold(At @ z[k] + Bt @ b_p, lambd=lambda_t))
+        z.append(vp.soft_threshold(At @ z[k] + Bt @ b_p, lambd=lambda_t))
     return z[K] - z[K - 1]
 
 
 def build_boxpgd(vp, K, P, q, lo, hi, t, q_hw, z0_lo, z0_hi):
     """Box-PGD: z_{k+1} = satlin(z_k - t (P z_k + q), l, u) (box projection)."""
     n = P.shape[0]
-    q_p = vp.add_param(n, lb=q - q_hw, ub=q + q_hw)
-    z = [vp.add_iterate(n, lb=z0_lo, ub=z0_hi)]
+    q_p = vp.parameter(n, lb=q - q_hw, ub=q + q_hw)
+    z = [vp.iterate(n, lb=z0_lo, ub=z0_hi)]
     for k in range(K):
-        z.append(vp.step.satlin(z[k] - t * (P @ z[k] + q_p), l=lo, u=hi))
+        z.append(vp.satlin(z[k] - t * (P @ z[k] + q_p), l=lo, u=hi))
     return z[K] - z[K - 1]
 
 
@@ -157,7 +155,7 @@ def _cut_cone_counts(vp):
 
 def solve_sdp(build, K, build_args, cut_kwargs):
     """Build + solve one SDP config; return (value, wall_seconds, n_cones, n_cuts)."""
-    vp = Verifier(
+    vp = ft.Verifier(
         method="sdp",
         solver=SDP_SOLVER,
         obbt_solver=None,
@@ -165,7 +163,7 @@ def solve_sdp(build, K, build_args, cut_kwargs):
         **cut_kwargs,
     )
     expr = build(vp, K, *build_args)
-    vp.set_objective_norm(expr, 2)
+    vp.maximize(ft.sum_squares(expr))
     t0 = time.perf_counter()
     val = vp.solve()
     secs = time.perf_counter() - t0
@@ -176,14 +174,14 @@ def solve_sdp(build, K, build_args, cut_kwargs):
 def solve_mip_exact(build, K, build_args):
     """Build + solve the exact MIP (squared two-norm). Return (value|None, secs)."""
     try:
-        vp = Verifier(
+        vp = ft.Verifier(
             method="mip",
             solver=MIP_SOLVER,
             obbt_solver=None,
             params=dict(GUROBI_PARAMS),
         )
         expr = build(vp, K, *build_args)
-        vp.set_objective_norm(expr, 2)
+        vp.maximize(ft.sum_squares(expr))
         t0 = time.perf_counter()
         val = float(vp.solve())
         return val, time.perf_counter() - t0

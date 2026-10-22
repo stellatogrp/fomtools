@@ -48,6 +48,10 @@ q.value = np.array([0.5, -0.2, 0.1])
 problem.solve(method="CPG")
 ```
 
+Other `generate_solver` keywords: `fom_options`, `driver`, `bound_margin`,
+`allow_unrolled`, `prefix`, `wrapper`, `enable_settings`, `code_optimization`,
+`auto_equilibrate` (default `True`).
+
 Use a *relative* `code_dir` -- CVXPYgen imports `<code_dir>.cpg_solver`.
 
 ## First-Order Methods

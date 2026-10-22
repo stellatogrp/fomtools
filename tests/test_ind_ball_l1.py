@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import IndBallL1
 from fomtools.verifier import Verifier
@@ -63,7 +64,7 @@ def test_constructor_rejects_negative_r():
 
 def test_returns_linear_expression_on_mip():
     v = _make_verifier("mip", obbt="gurobi")
-    arg = v.add_param(3, lb=-2.0, ub=2.0)
+    arg = v.parameter(3, lb=-2.0, ub=2.0)
     out = v.prox(IndBallL1(1.0), arg)
     assert isinstance(out, LinearExpression)
     assert out.ndim == 3
@@ -79,11 +80,11 @@ def test_returns_linear_expression_on_mip():
 )
 def test_mip_projection_matches_numeric(x0, r):
     v = _make_verifier("mip", obbt="gurobi")
-    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed arg
+    x = v.parameter(len(x0), lb=x0, ub=x0)  # fixed arg
     u = v.prox(IndBallL1(r), x)  # dual_ub auto-derived
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), IndBallL1(r).prox(x0), atol=PROX_ATOL)
+    np.testing.assert_allclose(u.value, IndBallL1(r).prox(x0), atol=PROX_ATOL)
 
 
 def test_param_radius():
@@ -91,12 +92,12 @@ def test_param_radius():
     x0 = np.array([3.0, 0.0, 0.0])
     r0 = 1.0
     v = _make_verifier("mip", obbt="gurobi")
-    x = v.add_param(3, lb=x0, ub=x0)
-    r_param = v.add_param(1, lb=np.array([r0]), ub=np.array([r0]))
+    x = v.parameter(3, lb=x0, ub=x0)
+    r_param = v.parameter(1, lb=np.array([r0]), ub=np.array([r0]))
     u = v.prox(IndBallL1(r_param), x)
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), IndBallL1(r0).prox(x0), atol=PROX_ATOL)
+    np.testing.assert_allclose(u.value, IndBallL1(r0).prox(x0), atol=PROX_ATOL)
 
 
 @pytest.mark.parametrize(
@@ -106,9 +107,9 @@ def test_param_radius():
 def test_sdp_tight_at_fixed_point(x0, r):
     """At a fixed arg, max ||u||^2 over the relaxed KKT equals ||proj(x0)||^2."""
     v = _make_verifier("sdp")
-    x = v.add_param(len(x0), lb=x0, ub=x0)
+    x = v.parameter(len(x0), lb=x0, ub=x0)
     u = v.prox(IndBallL1(r), x)
-    v.set_objective_norm(u, 2)
+    v.maximize(ft.sum_squares(u))
     obj = v.solve()
     proj = IndBallL1(r).prox(x0)
     np.testing.assert_allclose(obj, float(proj @ proj), atol=1e-3)
@@ -120,15 +121,15 @@ def test_sdp_bound_vs_mip_over_box():
     r = 1.0
 
     vm = _make_verifier("mip", obbt="gurobi")
-    xm = vm.add_param(3, lb=arg_lb, ub=arg_ub)
+    xm = vm.parameter(3, lb=arg_lb, ub=arg_ub)
     um = vm.prox(IndBallL1(r), xm)
-    vm.set_objective_norm([um], np.inf)
+    vm.maximize(ft.norm([um], np.inf))
     mip_inf = vm.solve()
 
     vs = _make_verifier("sdp")
-    xs = vs.add_param(3, lb=arg_lb, ub=arg_ub)
+    xs = vs.parameter(3, lb=arg_lb, ub=arg_ub)
     us = vs.prox(IndBallL1(r), xs)
-    vs.set_objective_norm(us, 2)
+    vs.maximize(ft.sum_squares(us))
     sdp_two = np.sqrt(vs.solve())
 
     assert np.isfinite(mip_inf)
@@ -139,6 +140,6 @@ def test_simulator_supported():
     """Simulator now evaluates the ℓ1-ball projection with a batched solver-free
     algorithm, returning a LinearExpression of the input dimension."""
     v = _make_verifier("simulator")
-    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.parameter(3, lb=-1.0, ub=1.0)
     out = v.prox(IndBallL1(1.0), arg)
     assert out.ndim == 3

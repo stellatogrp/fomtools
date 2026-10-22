@@ -1,5 +1,6 @@
 import numpy as np
 
+import fomtools as ft
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
 
@@ -18,12 +19,12 @@ def test_one_norm_simple(vp):
     Expected result: 15 (each |x_i| = 5).
     """
     n = 3
-    x = vp.add_iterate(n, lb=-5, ub=5)
+    x = vp.iterate(n, lb=-5, ub=5)
 
-    vp.set_objective_norm(x, 1)
+    vp.maximize(ft.norm(x, 1))
     result = vp.solve()
 
-    x_val = vp.get_solution_value(x)
+    x_val = x.value
     manual_norm = np.sum(np.abs(x_val))
 
     assert abs(result - 15.0) < TEST_EPS, f"Expected 15.0, got {result}"
@@ -38,13 +39,13 @@ def test_one_norm_after_relu(vp):
     Expected result: 15 (relu(5) = 5 for each component).
     """
     n = 3
-    x = vp.add_iterate(n, lb=-5, ub=5)
-    z = vp.step.relu(x)
+    x = vp.iterate(n, lb=-5, ub=5)
+    z = vp.relu(x)
 
-    vp.set_objective_norm(z, 1)
+    vp.maximize(ft.norm(z, 1))
     result = vp.solve()
 
-    z_val = vp.get_solution_value(z)
+    z_val = z.value
     manual_norm = np.sum(np.abs(z_val))
 
     assert abs(result - 15.0) < TEST_EPS, f"Expected 15.0, got {result}"
@@ -59,12 +60,12 @@ def test_one_norm_asymmetric_bounds(vp):
     Expected result: 20 (each |x_i| = 10).
     """
     n = 2
-    x = vp.add_iterate(n, lb=-2, ub=10)
+    x = vp.iterate(n, lb=-2, ub=10)
 
-    vp.set_objective_norm(x, 1)
+    vp.maximize(ft.norm(x, 1))
     result = vp.solve()
 
-    x_val = vp.get_solution_value(x)
+    x_val = x.value
     manual_norm = np.sum(np.abs(x_val))
 
     assert abs(result - 20.0) < TEST_EPS, f"Expected 20.0, got {result}"
@@ -79,12 +80,12 @@ def test_one_norm_negative_bounds(vp):
     Expected result: 20 (each |x_i| = 10 at x_i = -10).
     """
     n = 2
-    x = vp.add_iterate(n, lb=-10, ub=-2)
+    x = vp.iterate(n, lb=-10, ub=-2)
 
-    vp.set_objective_norm(x, 1)
+    vp.maximize(ft.norm(x, 1))
     result = vp.solve()
 
-    x_val = vp.get_solution_value(x)
+    x_val = x.value
     manual_norm = np.sum(np.abs(x_val))
 
     assert abs(result - 20.0) < TEST_EPS, f"Expected 20.0, got {result}"
@@ -102,14 +103,14 @@ def test_one_norm_mixed_sign_optimal(vp):
     mip_solver_name = MIP_SOLVER_NAMES[type(vp.canonicalizer.solver).__name__]
 
     vp_test = Verifier(method="mip", solver=mip_solver_name, obbt_solver="highs")
-    x = vp_test.add_param(1, lb=2, ub=5)
-    y = vp_test.add_param(1, lb=-8, ub=-3)
+    x = vp_test.parameter(1, lb=2, ub=5)
+    y = vp_test.parameter(1, lb=-8, ub=-3)
 
-    vp_test.set_objective_norm([x, y], 1)
+    vp_test.maximize(ft.norm([x, y], 1))
     result = vp_test.solve()
 
-    x_val = vp_test.get_solution_value(x)
-    y_val = vp_test.get_solution_value(y)
+    x_val = x.value
+    y_val = y.value
     manual_norm = np.abs(x_val[0]) + np.abs(y_val[0])
 
     assert abs(result - 13.0) < TEST_EPS, f"Expected 13.0, got {result}"
@@ -124,13 +125,13 @@ def test_one_norm_with_constraint(vp):
     Expected: 10 (both at 5 or both at -5).
     """
     n = 2
-    x = vp.add_iterate(n, lb=-5, ub=5)
+    x = vp.iterate(n, lb=-5, ub=5)
     vp.add_constraint(x[0] == x[1])
 
-    vp.set_objective_norm(x, 1)
+    vp.maximize(ft.norm(x, 1))
     result = vp.solve()
 
-    x_val = vp.get_solution_value(x)
+    x_val = x.value
     manual_norm = np.sum(np.abs(x_val))
 
     assert abs(result - 10.0) < TEST_EPS, f"Expected 10.0, got {result}"
@@ -146,14 +147,14 @@ def test_one_norm_expression_difference(vp):
     Expected: 10 (x = [5,5], y = [0,0] or vice versa).
     """
     n = 2
-    x = vp.add_iterate(n, lb=0, ub=5)
-    y = vp.add_iterate(n, lb=0, ub=5)
+    x = vp.iterate(n, lb=0, ub=5)
+    y = vp.iterate(n, lb=0, ub=5)
 
-    vp.set_objective_norm(x - y, 1)
+    vp.maximize(ft.norm(x - y, 1))
     result = vp.solve()
 
-    x_val = vp.get_solution_value(x)
-    y_val = vp.get_solution_value(y)
+    x_val = x.value
+    y_val = y.value
     diff = x_val - y_val
     manual_norm = np.sum(np.abs(diff))
 
@@ -174,12 +175,12 @@ def test_one_norm_linear_transform(vp):
     """
     n = 2
     A = np.array([[1, 1], [1, -1]])
-    x = vp.add_iterate(n, lb=-1, ub=1)
+    x = vp.iterate(n, lb=-1, ub=1)
 
-    vp.set_objective_norm(A @ x, 1)
+    vp.maximize(ft.norm(A @ x, 1))
     result = vp.solve()
 
-    x_val = vp.get_solution_value(x)
+    x_val = x.value
     Ax_val = A @ x_val
     manual_norm = np.sum(np.abs(Ax_val))
 
@@ -192,9 +193,9 @@ def test_one_norm_multiple_solves(vp):
     Test that solving multiple times with one-norm doesn't accumulate constraints.
     """
     n = 2
-    x = vp.add_iterate(n, lb=-5, ub=5)
+    x = vp.iterate(n, lb=-5, ub=5)
 
-    vp.set_objective_norm(x, 1)
+    vp.maximize(ft.norm(x, 1))
     result1 = vp.solve()
     result2 = vp.solve()
 
@@ -216,14 +217,14 @@ def test_one_norm_vs_infinity_norm(vp):
 
     # One-norm
     vp1 = Verifier(method="mip", solver=mip_solver_name, obbt_solver="highs")
-    x1 = vp1.add_iterate(n, lb=0, ub=5)
-    vp1.set_objective_norm(x1, 1)
+    x1 = vp1.iterate(n, lb=0, ub=5)
+    vp1.maximize(ft.norm(x1, 1))
     one_norm_result = vp1.solve()
 
     # Infinity-norm
     vp2 = Verifier(method="mip", solver=mip_solver_name, obbt_solver="highs")
-    x2 = vp2.add_iterate(n, lb=0, ub=5)
-    vp2.set_objective_norm(x2, np.inf)
+    x2 = vp2.iterate(n, lb=0, ub=5)
+    vp2.maximize(ft.norm(x2, np.inf))
     inf_norm_result = vp2.solve()
 
     assert one_norm_result >= inf_norm_result - TEST_EPS, (
@@ -246,9 +247,9 @@ def test_one_norm_sdp_simple(vp_sdp):
     Expected result: 15 (each |x_i| = 5).
     """
     n = 3
-    x = vp_sdp.add_iterate(n, lb=-5, ub=5)
+    x = vp_sdp.iterate(n, lb=-5, ub=5)
 
-    vp_sdp.set_objective_norm(x, 1)
+    vp_sdp.maximize(ft.norm(x, 1))
     result = vp_sdp.solve()
 
     assert abs(result - 15.0) < TEST_EPS, f"Expected 15.0, got {result}"
@@ -262,10 +263,10 @@ def test_one_norm_sdp_after_relu(vp_sdp):
     Expected result: 15 (relu(5) = 5 for each component).
     """
     n = 3
-    x = vp_sdp.add_iterate(n, lb=-5, ub=5)
-    z = vp_sdp.step.relu(x)
+    x = vp_sdp.iterate(n, lb=-5, ub=5)
+    z = vp_sdp.relu(x)
 
-    vp_sdp.set_objective_norm(z, 1)
+    vp_sdp.maximize(ft.norm(z, 1))
     result = vp_sdp.solve()
 
     assert abs(result - 15.0) < TEST_EPS, f"Expected 15.0, got {result}"
@@ -279,9 +280,9 @@ def test_one_norm_sdp_asymmetric_bounds(vp_sdp):
     Expected result: 20 (each |x_i| = 10).
     """
     n = 2
-    x = vp_sdp.add_iterate(n, lb=-2, ub=10)
+    x = vp_sdp.iterate(n, lb=-2, ub=10)
 
-    vp_sdp.set_objective_norm(x, 1)
+    vp_sdp.maximize(ft.norm(x, 1))
     result = vp_sdp.solve()
 
     assert abs(result - 20.0) < TEST_EPS, f"Expected 20.0, got {result}"
@@ -295,9 +296,9 @@ def test_one_norm_sdp_negative_bounds(vp_sdp):
     Expected result: 20 (each |x_i| = 10 at x_i = -10).
     """
     n = 2
-    x = vp_sdp.add_iterate(n, lb=-10, ub=-2)
+    x = vp_sdp.iterate(n, lb=-10, ub=-2)
 
-    vp_sdp.set_objective_norm(x, 1)
+    vp_sdp.maximize(ft.norm(x, 1))
     result = vp_sdp.solve()
 
     assert abs(result - 20.0) < TEST_EPS, f"Expected 20.0, got {result}"
@@ -311,10 +312,10 @@ def test_one_norm_sdp_expression_difference(vp_sdp):
     Expected: 10 (x = [5,5], y = [0,0] or vice versa).
     """
     n = 2
-    x = vp_sdp.add_iterate(n, lb=0, ub=5)
-    y = vp_sdp.add_iterate(n, lb=0, ub=5)
+    x = vp_sdp.iterate(n, lb=0, ub=5)
+    y = vp_sdp.iterate(n, lb=0, ub=5)
 
-    vp_sdp.set_objective_norm(x - y, 1)
+    vp_sdp.maximize(ft.norm(x - y, 1))
     result = vp_sdp.solve()
 
     assert abs(result - 10.0) < TEST_EPS, f"Expected 10.0, got {result}"
@@ -325,9 +326,9 @@ def test_one_norm_sdp_multiple_solves(vp_sdp):
     Test that solving multiple times with SDP one-norm doesn't accumulate constraints.
     """
     n = 2
-    x = vp_sdp.add_iterate(n, lb=-5, ub=5)
+    x = vp_sdp.iterate(n, lb=-5, ub=5)
 
-    vp_sdp.set_objective_norm(x, 1)
+    vp_sdp.maximize(ft.norm(x, 1))
     result1 = vp_sdp.solve()
     result2 = vp_sdp.solve()
 
@@ -343,13 +344,13 @@ def test_one_norm_sdp_vs_mip(vp, vp_sdp):
     n = 3
 
     # MIP
-    x_mip = vp.add_iterate(n, lb=-5, ub=5)
-    vp.set_objective_norm(x_mip, 1)
+    x_mip = vp.iterate(n, lb=-5, ub=5)
+    vp.maximize(ft.norm(x_mip, 1))
     mip_result = vp.solve()
 
     # SDP
-    x_sdp = vp_sdp.add_iterate(n, lb=-5, ub=5)
-    vp_sdp.set_objective_norm(x_sdp, 1)
+    x_sdp = vp_sdp.iterate(n, lb=-5, ub=5)
+    vp_sdp.maximize(ft.norm(x_sdp, 1))
     sdp_result = vp_sdp.solve()
 
     assert abs(mip_result - sdp_result) < TEST_EPS, (
@@ -372,14 +373,14 @@ def test_one_norm_sdp_vs_two_norm(vp_sdp):
 
     # One-norm
     vp1 = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
-    x1 = vp1.add_iterate(n, lb=0, ub=5)
-    vp1.set_objective_norm(x1, 1)
+    x1 = vp1.iterate(n, lb=0, ub=5)
+    vp1.maximize(ft.norm(x1, 1))
     one_norm_result = vp1.solve()
 
     # Two-norm (returns squared norm)
     vp2 = Verifier(method="sdp", solver=sdp_solver, obbt_solver=None)
-    x2 = vp2.add_iterate(n, lb=0, ub=5)
-    vp2.set_objective_norm(x2, 2)
+    x2 = vp2.iterate(n, lb=0, ub=5)
+    vp2.maximize(ft.sum_squares(x2))
     two_norm_sq_result = vp2.solve()
     two_norm_result = np.sqrt(two_norm_sq_result)
 
@@ -405,15 +406,15 @@ def test_one_norm_sdp_mip_after_relu(vp, vp_sdp):
     n = 3
 
     # MIP
-    x_mip = vp.add_iterate(n, lb=-5, ub=5)
-    z_mip = vp.step.relu(x_mip)
-    vp.set_objective_norm(z_mip, 1)
+    x_mip = vp.iterate(n, lb=-5, ub=5)
+    z_mip = vp.relu(x_mip)
+    vp.maximize(ft.norm(z_mip, 1))
     mip_result = vp.solve()
 
     # SDP
-    x_sdp = vp_sdp.add_iterate(n, lb=-5, ub=5)
-    z_sdp = vp_sdp.step.relu(x_sdp)
-    vp_sdp.set_objective_norm(z_sdp, 1)
+    x_sdp = vp_sdp.iterate(n, lb=-5, ub=5)
+    z_sdp = vp_sdp.relu(x_sdp)
+    vp_sdp.maximize(ft.norm(z_sdp, 1))
     sdp_result = vp_sdp.solve()
 
     assert abs(mip_result - sdp_result) < TEST_EPS, (
@@ -432,15 +433,15 @@ def test_one_norm_sdp_mip_expression_difference(vp, vp_sdp):
     n = 2
 
     # MIP
-    x_mip = vp.add_iterate(n, lb=0, ub=5)
-    y_mip = vp.add_iterate(n, lb=0, ub=5)
-    vp.set_objective_norm(x_mip - y_mip, 1)
+    x_mip = vp.iterate(n, lb=0, ub=5)
+    y_mip = vp.iterate(n, lb=0, ub=5)
+    vp.maximize(ft.norm(x_mip - y_mip, 1))
     mip_result = vp.solve()
 
     # SDP
-    x_sdp = vp_sdp.add_iterate(n, lb=0, ub=5)
-    y_sdp = vp_sdp.add_iterate(n, lb=0, ub=5)
-    vp_sdp.set_objective_norm(x_sdp - y_sdp, 1)
+    x_sdp = vp_sdp.iterate(n, lb=0, ub=5)
+    y_sdp = vp_sdp.iterate(n, lb=0, ub=5)
+    vp_sdp.maximize(ft.norm(x_sdp - y_sdp, 1))
     sdp_result = vp_sdp.solve()
 
     assert abs(mip_result - sdp_result) < TEST_EPS, (
@@ -460,13 +461,13 @@ def test_one_norm_sdp_mip_linear_transform(vp, vp_sdp):
     A = np.array([[1, 1], [1, -1]])
 
     # MIP
-    x_mip = vp.add_iterate(n, lb=-1, ub=1)
-    vp.set_objective_norm(A @ x_mip, 1)
+    x_mip = vp.iterate(n, lb=-1, ub=1)
+    vp.maximize(ft.norm(A @ x_mip, 1))
     mip_result = vp.solve()
 
     # SDP
-    x_sdp = vp_sdp.add_iterate(n, lb=-1, ub=1)
-    vp_sdp.set_objective_norm(A @ x_sdp, 1)
+    x_sdp = vp_sdp.iterate(n, lb=-1, ub=1)
+    vp_sdp.maximize(ft.norm(A @ x_sdp, 1))
     sdp_result = vp_sdp.solve()
 
     # SDP is a relaxation, so it should upper bound the MIP result
@@ -486,13 +487,13 @@ def test_one_norm_sdp_mip_negative_bounds(vp, vp_sdp):
     n = 2
 
     # MIP
-    x_mip = vp.add_iterate(n, lb=-10, ub=-2)
-    vp.set_objective_norm(x_mip, 1)
+    x_mip = vp.iterate(n, lb=-10, ub=-2)
+    vp.maximize(ft.norm(x_mip, 1))
     mip_result = vp.solve()
 
     # SDP
-    x_sdp = vp_sdp.add_iterate(n, lb=-10, ub=-2)
-    vp_sdp.set_objective_norm(x_sdp, 1)
+    x_sdp = vp_sdp.iterate(n, lb=-10, ub=-2)
+    vp_sdp.maximize(ft.norm(x_sdp, 1))
     sdp_result = vp_sdp.solve()
 
     assert abs(mip_result - sdp_result) < TEST_EPS, (
@@ -511,13 +512,13 @@ def test_one_norm_sdp_mip_asymmetric_bounds(vp, vp_sdp):
     n = 2
 
     # MIP
-    x_mip = vp.add_iterate(n, lb=-2, ub=10)
-    vp.set_objective_norm(x_mip, 1)
+    x_mip = vp.iterate(n, lb=-2, ub=10)
+    vp.maximize(ft.norm(x_mip, 1))
     mip_result = vp.solve()
 
     # SDP
-    x_sdp = vp_sdp.add_iterate(n, lb=-2, ub=10)
-    vp_sdp.set_objective_norm(x_sdp, 1)
+    x_sdp = vp_sdp.iterate(n, lb=-2, ub=10)
+    vp_sdp.maximize(ft.norm(x_sdp, 1))
     sdp_result = vp_sdp.solve()
 
     assert abs(mip_result - sdp_result) < TEST_EPS, (
@@ -536,15 +537,15 @@ def test_one_norm_sdp_mip_with_constraint(vp, vp_sdp):
     n = 2
 
     # MIP
-    x_mip = vp.add_iterate(n, lb=-5, ub=5)
+    x_mip = vp.iterate(n, lb=-5, ub=5)
     vp.add_constraint(x_mip[0] == x_mip[1])
-    vp.set_objective_norm(x_mip, 1)
+    vp.maximize(ft.norm(x_mip, 1))
     mip_result = vp.solve()
 
     # SDP
-    x_sdp = vp_sdp.add_iterate(n, lb=-5, ub=5)
+    x_sdp = vp_sdp.iterate(n, lb=-5, ub=5)
     vp_sdp.add_constraint(x_sdp[0] == x_sdp[1])
-    vp_sdp.set_objective_norm(x_sdp, 1)
+    vp_sdp.maximize(ft.norm(x_sdp, 1))
     sdp_result = vp_sdp.solve()
 
     assert abs(mip_result - sdp_result) < TEST_EPS, (
@@ -562,17 +563,17 @@ def test_one_norm_sdp_mip_two_relu_steps(vp, vp_sdp):
     n = 2
 
     # MIP
-    x_mip = vp.add_iterate(n, lb=-5, ub=5)
-    z1_mip = vp.step.relu(x_mip)
-    z2_mip = vp.step.relu(z1_mip - 2)
-    vp.set_objective_norm(z2_mip, 1)
+    x_mip = vp.iterate(n, lb=-5, ub=5)
+    z1_mip = vp.relu(x_mip)
+    z2_mip = vp.relu(z1_mip - 2)
+    vp.maximize(ft.norm(z2_mip, 1))
     mip_result = vp.solve()
 
     # SDP
-    x_sdp = vp_sdp.add_iterate(n, lb=-5, ub=5)
-    z1_sdp = vp_sdp.step.relu(x_sdp)
-    z2_sdp = vp_sdp.step.relu(z1_sdp - 2)
-    vp_sdp.set_objective_norm(z2_sdp, 1)
+    x_sdp = vp_sdp.iterate(n, lb=-5, ub=5)
+    z1_sdp = vp_sdp.relu(x_sdp)
+    z2_sdp = vp_sdp.relu(z1_sdp - 2)
+    vp_sdp.maximize(ft.norm(z2_sdp, 1))
     sdp_result = vp_sdp.solve()
 
     # relu(relu(5) - 2) = relu(5 - 2) = relu(3) = 3, so ||z2||_1 = 6

@@ -93,10 +93,10 @@ def test_identity_affine_is_a_copy_not_a_solve():
     iteration for what is a copy.
     """
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(3, lb=-np.ones(3), ub=np.ones(3))
-    z = v.add_iterate(3, lb=np.zeros(3), ub=np.zeros(3))
-    w = v.step.implicit_linear(z + x, output_mat=spa.eye(3))
-    out = v.step.relu(w)
+    x = v.parameter(3, lb=-np.ones(3), ub=np.ones(3))
+    z = v.iterate(3, lb=np.zeros(3), ub=np.zeros(3))
+    w = v.implicit_linear(z + x, output_mat=spa.eye(3))
+    out = v.relu(w)
 
     ir = extract_ir(v, out, config=ONE_PASS)
 
@@ -115,8 +115,8 @@ def test_a_nearly_identity_operator_is_still_solved():
     almost = np.eye(3)
     almost[1, 1] = 1.0 + 1e-9
     v = Verifier(method="simulator", obbt_solver=None)
-    z = v.add_iterate(3, lb=np.zeros(3), ub=np.zeros(3))
-    out = v.step.implicit_linear(z, output_mat=almost)
+    z = v.iterate(3, lb=np.zeros(3), ub=np.zeros(3))
+    out = v.implicit_linear(z, output_mat=almost)
 
     ir = extract_ir(v, out, config=ONE_PASS)
 
@@ -128,10 +128,10 @@ def test_repeated_affine_operator_shares_one_factorization():
     """Two solves against the same operator share a factorization, dense or sparse."""
     mat = np.array([[2.0, 1.0], [1.0, 3.0]])
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(2, lb=-np.ones(2), ub=np.ones(2))
-    z = v.add_iterate(2, lb=np.zeros(2), ub=np.zeros(2))
-    a = v.step.implicit_linear(z + x, output_mat=mat)
-    b = v.step.implicit_linear(a + x, output_mat=spa.csr_matrix(mat))
+    x = v.parameter(2, lb=-np.ones(2), ub=np.ones(2))
+    z = v.iterate(2, lb=np.zeros(2), ub=np.zeros(2))
+    a = v.implicit_linear(z + x, output_mat=mat)
+    b = v.implicit_linear(a + x, output_mat=spa.csr_matrix(mat))
 
     ir = extract_ir(v, b, config=ONE_PASS)
 
@@ -146,9 +146,9 @@ def test_repeated_affine_operator_shares_one_factorization():
 
 def test_distinct_affine_operators_keep_separate_factorizations():
     v = Verifier(method="simulator", obbt_solver=None)
-    z = v.add_iterate(2, lb=np.zeros(2), ub=np.zeros(2))
-    a = v.step.implicit_linear(z, output_mat=np.array([[2.0, 1.0], [1.0, 3.0]]))
-    b = v.step.implicit_linear(a, output_mat=np.array([[4.0, 0.0], [0.0, 5.0]]))
+    z = v.iterate(2, lb=np.zeros(2), ub=np.zeros(2))
+    a = v.implicit_linear(z, output_mat=np.array([[2.0, 1.0], [1.0, 3.0]]))
+    b = v.implicit_linear(a, output_mat=np.array([[4.0, 0.0], [0.0, 5.0]]))
 
     ir = extract_ir(v, b, config=ONE_PASS)
 

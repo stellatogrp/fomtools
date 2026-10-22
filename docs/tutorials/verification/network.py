@@ -6,8 +6,6 @@ app = marimo.App(width="medium")
 
 @app.cell(hide_code=True)
 def _():
-    import contextlib
-    import io
     import sys
     from pathlib import Path
 
@@ -35,23 +33,6 @@ def _():
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
 
-    solver_params = {
-        'OutputFlag': 0,
-        'LogToConsole': 0,
-    }
-
-    # Gurobi prints a license banner through sys.stdout the first time its
-    # default environment starts, before any OutputFlag can apply. Start the
-    # environment here, in this hidden cell, with stdout swallowed so the
-    # banner never lands in a visible cell.
-    try:
-        import gurobipy as _gp
-    except ImportError:
-        pass
-    else:
-        with contextlib.redirect_stdout(io.StringIO()):
-            _gp.Model()
-
     return (
         cp,
         make_network_data,
@@ -59,7 +40,6 @@ def _():
         np,
         pdhg_step,
         plt,
-        solver_params,
     )
 
 
@@ -253,7 +233,11 @@ def _(mo):
 
 @app.cell
 def _(A_d, A_s, b_s, c, eta, mu, n_d, n_e, n_s, np, pdhg_step):
-    from fomtools.verifier import Verifier
+    import fomtools as ft
+
+    def maximize_residual(vp, residual, ord):
+        """Maximize ``||residual||_ord``, squared for ``ord=2`` (``ft.sum_squares``)."""
+        vp.maximize(ft.sum_squares(residual) if ord == 2 else ft.norm(residual, ord))
 
     def pdhg_simulation(
         x_samples, z0_samples, v0_samples, w0_samples, K,
@@ -264,57 +248,57 @@ def _(A_d, A_s, b_s, c, eta, mu, n_d, n_e, n_s, np, pdhg_step):
         Builds a simulator-mode :class:`Verifier`, registers the demand
         parameter and the initial iterates ``(z0, v0, w0)`` as sampled
         parameters, rolls out the PDHG recurrence with ``pdhg_step``,
-        and simulates via ``VP.solve()``. Each of the four ``*_samples`` arrays has shape
+        and simulates via ``vp.solve()``. Each of the four ``*_samples`` arrays has shape
         ``(n_samples, dim)`` (a single-row array replays one instance), and the
         returned ``residuals`` has shape ``(n_samples, K)``. Summary statistics
         (``mean``, ``min``, ``max``, ``final_residuals``, ...) are available on
-        the returned instance ``VP`` via ``VP[...]``.
+        the returned instance ``vp`` via ``vp[...]``.
 
         ``ord`` defaults to ``inf``, matching :func:`pdhg_verification`; see
         the note there on why this example is plotted in the infinity norm
         rather than the 2-norm.
         """
-        VP = Verifier(method='simulator', obbt_solver=None)
-        x_param = VP.add_param(ndim=n_d, samples=x_samples)
-        z0 = VP.add_param(ndim=n_e, samples=z0_samples)
-        v0 = VP.add_param(ndim=n_s, samples=v0_samples)
-        w0 = VP.add_param(ndim=n_d, samples=w0_samples)
+        vp = ft.Verifier(method='simulator', obbt_solver=None)
+        x_param = vp.parameter(ndim=n_d, samples=x_samples)
+        z0 = vp.parameter(ndim=n_e, samples=z0_samples)
+        v0 = vp.parameter(ndim=n_s, samples=v0_samples)
+        w0 = vp.parameter(ndim=n_d, samples=w0_samples)
 
         z, v, w = z0, v0, w0
         for k in range(1, K + 1):
             z, v, w, residual = pdhg_step(
-                VP, A_s, A_d, eta, z, v, w, x_param, c, mu, b_s,
+                vp, A_s, A_d, eta, z, v, w, x_param, c, mu, b_s,
                 k=k, momentum=momentum,
             )
-            VP.set_objective_norm(residual, ord)
+            maximize_residual(vp, residual, ord)
 
-        residuals = VP.solve()
-        return VP, residuals
+        residuals = vp.solve()
+        return vp, residuals
 
-    return Verifier, pdhg_simulation
+    return pdhg_simulation, ft, maximize_residual
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Running `_VP.solve()` returns one residual history per sampled instance, which we summarize by averages and empirical quantiles. After calling `solve()`, summary statistics are also available directly on `_VP`, including `mean`, `std`, `min`, `max`, `median`, `empirical_risk`, `risk_bound`, `n_samples`, `n_iterations`, `runtime`, `time_per_sample`, and `throughput`.
+    Running `_vp.solve()` returns one residual history per sampled instance, which we summarize by averages and empirical quantiles. After calling `solve()`, summary statistics are also available directly on `_vp`, including `mean`, `std`, `min`, `max`, `median`, `empirical_risk`, `risk_bound`, `n_samples`, `n_iterations`, `runtime`, `time_per_sample`, and `throughput`.
     """)
     return
 
 
 @app.cell
 def _(K, np, pdhg_simulation, v0_samples, w0_samples, x_samples, z0_samples):
-    _VP, _residuals = pdhg_simulation(
+    _vp, _residuals = pdhg_simulation(
         x_samples, z0_samples, v0_samples, w0_samples, K,
         momentum=False, ord=np.inf,
     )
 
     print(
         f"Summary statistics:\n"
-        f"mean: {_VP['mean']:.6e}\n"
-        f"min: {_VP['min']:.6e}\n"
-        f"max: {_VP['max']:.6e}\n"
-        f"median: {_VP['median']:.6e}\n"
+        f"mean: {_vp['mean']:.6e}\n"
+        f"min: {_vp['min']:.6e}\n"
+        f"max: {_vp['max']:.6e}\n"
+        f"median: {_vp['median']:.6e}\n"
     )
 
     simulation_residuals_pdhg = np.mean(_residuals, axis=0)
@@ -419,11 +403,12 @@ def _(mo):
 def _(
     A_d,
     A_s,
-    Verifier,
     b_s,
     c_lb,
     c_ub,
     eta,
+    ft,
+    maximize_residual,
     mu,
     n_d,
     n_e,
@@ -445,7 +430,7 @@ def _(
         Builds a ``Verifier`` in ``method`` mode, registers the demand parameter,
         the capacity, cost, and supply parameters, and the ``(z0, v0, w0)``
         iterate boxes, rolls out ``pdhg_step`` over the horizon ``K``, and
-        returns ``(VP, residuals)`` with one worst-case residual per iteration.
+        returns ``(vp, residuals)`` with one worst-case residual per iteration.
 
         Every curve in this notebook reports $\\|r^k\\|_\\infty$, so ``ord``
         defaults to ``inf``; the resulting MIP is a MILP and solves in well under
@@ -453,37 +438,37 @@ def _(
         return. Extra ``verifier_kwargs`` (``solver``, ``obbt_solver``,
         ``params``, ...) are forwarded to the ``Verifier`` constructor.
         """
-        VP = Verifier(method=method, **verifier_kwargs)
-        x_param = VP.add_param(n_d, lb=x_lb, ub=x_ub)
-        capacity = VP.add_param(n_e, lb=c_lb * np.ones(n_e), ub=c_ub * np.ones(n_e))
-        supply = VP.add_param(n_s, lb=b_s, ub=b_s)
-        cost = VP.add_param(n_e, lb=mu, ub=mu)
+        vp = ft.Verifier(method=method, **verifier_kwargs)
+        x_param = vp.parameter(n_d, lb=x_lb, ub=x_ub)
+        capacity = vp.parameter(n_e, lb=c_lb * np.ones(n_e), ub=c_ub * np.ones(n_e))
+        supply = vp.parameter(n_s, lb=b_s, ub=b_s)
+        cost = vp.parameter(n_e, lb=mu, ub=mu)
 
-        z = VP.iterate_trajectory(K + 1, collapse_expr='auto')
-        v = VP.iterate_trajectory(K + 1, collapse_expr='auto')
-        w = VP.iterate_trajectory(K + 1, collapse_expr='auto')
-        z[0] = VP.add_iterate(n_e, lb=z0_lb, ub=z0_ub)
-        v[0] = VP.add_iterate(n_s, lb=v0_lb, ub=v0_ub)
-        w[0] = VP.add_iterate(n_d, lb=w0_lb, ub=w0_ub)
+        z = vp.iterate_trajectory(K + 1, collapse_expr='auto')
+        v = vp.iterate_trajectory(K + 1, collapse_expr='auto')
+        w = vp.iterate_trajectory(K + 1, collapse_expr='auto')
+        z[0] = vp.iterate(n_e, lb=z0_lb, ub=z0_ub)
+        v[0] = vp.iterate(n_s, lb=v0_lb, ub=v0_ub)
+        w[0] = vp.iterate(n_d, lb=w0_lb, ub=w0_ub)
 
         residuals = []
         for k in range(1, K + 1):
             z, v, w, residual = pdhg_step(
-                VP, A_s, A_d, eta, z, v, w, x_param, capacity, cost, supply,
+                vp, A_s, A_d, eta, z, v, w, x_param, capacity, cost, supply,
                 k=k, momentum=momentum,
             )
-            VP.set_objective_norm(residual, ord)
-            val = VP.solve()
+            maximize_residual(vp, residual, ord)
+            val = vp.solve()
             residuals.append(np.sqrt(val) if ord == 2 else val)
-        return VP, residuals
+        return vp, residuals
 
     return (pdhg_verification,)
 
 
 @app.cell
-def _(K, pdhg_verification, solver_params):
+def _(K, pdhg_verification):
     _, all_residuals = pdhg_verification(
-        K, 'mip', solver='gurobi', params=solver_params,
+        K, 'mip', solver='gurobi',
     )
     print(all_residuals)
     return (all_residuals,)
@@ -498,10 +483,10 @@ def _(mo):
 
 
 @app.cell
-def _(K, pdhg_verification, solver_params):
+def _(K, pdhg_verification):
     # Solve verification problem for momentum PDHG
     _, all_residuals_momentum = pdhg_verification(
-        K, 'mip', momentum=True, solver='gurobi', params=solver_params,
+        K, 'mip', momentum=True, solver='gurobi',
     )
     print(all_residuals_momentum)
     return (all_residuals_momentum,)

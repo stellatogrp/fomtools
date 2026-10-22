@@ -164,13 +164,13 @@ def _decaying_step_spec(qp, decay: bool, with_next_state: bool = True):
     lb, ub = qp.bounds["q"]
 
     v = Verifier(method="simulator", obbt_solver=None)
-    q_e = v.add_param(n, lb=lb, ub=ub)
-    x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    q_e = v.parameter(n, lb=lb, ub=ub)
+    x = v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
 
     groups, xk = [], x
     for k in range(_GATE_ITERS):
         step = t / (k + 1.0) if decay else t
-        xk = v.step.relu(W @ xk - step * q_e)
+        xk = v.relu(W @ xk - step * q_e)
         groups.append([xk])
 
     iterates = tuple(groups)
@@ -230,9 +230,9 @@ def _scheduled_builder(qp, **_):
         from fomtools.codegen.extract_scheduled import Recording
 
         v = Verifier(method="simulator", obbt_solver=None)
-        q_e = v.add_param(n, lb=lb, ub=ub)
-        x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
-        x_next = v.step.relu(theta * (W @ x - t * q_e))
+        q_e = v.parameter(n, lb=lb, ub=ub)
+        x = v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+        x_next = v.relu(theta * (W @ x - t * q_e))
         return Recording(v, next_state=x_next, state=[x], params=[q_e])
 
     return ScheduledFomSpec(

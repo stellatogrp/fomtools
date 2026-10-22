@@ -6,8 +6,6 @@ app = marimo.App(width="medium")
 
 @app.cell(hide_code=True)
 def _():
-    import contextlib
-    import io
     import sys
     from pathlib import Path
 
@@ -35,23 +33,6 @@ def _():
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
 
-    solver_params = {
-        'OutputFlag': 0,
-        'LogToConsole': 0,
-    }
-
-    # Gurobi prints a license banner through sys.stdout the first time its
-    # default environment starts, before any OutputFlag can apply. Start the
-    # environment here, in this hidden cell, with stdout swallowed so the
-    # banner never lands in a visible cell.
-    try:
-        import gurobipy as _gp
-    except ImportError:
-        pass
-    else:
-        with contextlib.redirect_stdout(io.StringIO()):
-            _gp.Model()
-
     return (
         certify_nnls_pepit_radius,
         make_nnls_matrix,
@@ -59,7 +40,6 @@ def _():
         np,
         pgd_step,
         plt,
-        solver_params,
     )
 
 
@@ -148,8 +128,8 @@ def _(mo):
     The shared implementation used throughout this tutorial is:
 
     ```python
-    def pgd_step(VP, A, eta, z_prev, w_prev, x_param, k, momentum=False):
-        w_next = VP.step.relu(
+    def pgd_step(vp, A, eta, z_prev, w_prev, x_param, k, momentum=False):
+        w_next = vp.relu(
             z_prev - eta * A.T @ (A @ z_prev - x_param)
         )
         if momentum:
@@ -233,59 +213,63 @@ def _(mo):
 
 @app.cell
 def _(A, eta, m, n, np, pgd_step):
-    from fomtools.verifier import Verifier
+    import fomtools as ft
+
+    def maximize_residual(vp, residual, ord):
+        """Maximize ``||residual||_ord``, squared for ``ord=2`` (``ft.sum_squares``)."""
+        vp.maximize(ft.sum_squares(residual) if ord == 2 else ft.norm(residual, ord))
 
     def pgd_simulation(x_samples, z0_samples, K, momentum=False, ord=np.inf):
         """Simulate projected gradient descent``.
 
         Builds a simulator-mode :class:`Verifier`, registers the parameter ``x`` and
         initial iterate ``z0`` as sampled parameters, rolls out the recurrence with
-        ``pgd_step``, and simulates via ``VP.solve()``. Each ``*_samples`` array
+        ``pgd_step``, and simulates via ``vp.solve()``. Each ``*_samples`` array
         has shape ``(n_samples, dim)`` (a single-row array replays one instance),
         and the returned ``residuals`` has shape ``(n_samples, K)``. Summary statistics
         (``mean``, ``min``, ``max``, ...) are available on the returned instance
-        ``VP`` via ``VP[...]``.
+        ``vp`` via ``vp[...]``.
 
-        ``ord`` defaults to ``inf``, matching :func:`pgd_verification`. Note that
-        ``set_objective_norm(..., 2)`` would maximize the *squared* Euclidean norm,
-        so with ``ord=2`` the returned residuals are in squared units.
+        ``ord`` defaults to ``inf``, matching :func:`pgd_verification`. With
+        ``ord=2`` the objective is ``ft.sum_squares``, the *squared* Euclidean norm,
+        so the returned residuals are in squared units.
         """
-        VP = Verifier(method='simulator', obbt_solver=None)
-        x_param = VP.add_param(ndim=m, samples=x_samples)
-        z0 = VP.add_param(ndim=n, samples=z0_samples)
+        vp = ft.Verifier(method='simulator', obbt_solver=None)
+        x_param = vp.parameter(ndim=m, samples=x_samples)
+        z0 = vp.parameter(ndim=n, samples=z0_samples)
 
         z, w = z0, z0
         for k in range(1, K + 1):
             z, w, residual = pgd_step(
-                VP, A, eta, z, w, x_param, k=k, momentum=momentum,
+                vp, A, eta, z, w, x_param, k=k, momentum=momentum,
             )
-            VP.set_objective_norm(residual, ord)
+            maximize_residual(vp, residual, ord)
 
-        residuals = VP.solve()
-        return VP, residuals
+        residuals = vp.solve()
+        return vp, residuals
 
-    return Verifier, pgd_simulation
+    return pgd_simulation, ft, maximize_residual
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     Given the parameter sample `x_samples` and the initial iterate sample `z0_samples`, simulator mode runs the algorithm on each problem instance `x_samples[i]` starting from `z0_samples[i]`.
-    Running the solve method `_VP.solve()` outputs the history of residuals at objective (fixed-point residual). After calling `solve()`, summary statistics are also available directly on `_VP`, including `mean`, `std`, `min`, `max`, `median`, `empirical_risk`, `risk_bound`, `n_samples`, `n_iterations`, `runtime`, `time_per_sample`, and `throughput`.
+    Running the solve method `_vp.solve()` outputs the history of residuals at objective (fixed-point residual). After calling `solve()`, summary statistics are also available directly on `_vp`, including `mean`, `std`, `min`, `max`, `median`, `empirical_risk`, `risk_bound`, `n_samples`, `n_iterations`, `runtime`, `time_per_sample`, and `throughput`.
     """)
     return
 
 
 @app.cell
 def _(K, np, pgd_simulation, x_samples, z0_samples):
-    _VP, _residuals = pgd_simulation(x_samples, z0_samples, K, momentum=False, ord=np.inf)
+    _vp, _residuals = pgd_simulation(x_samples, z0_samples, K, momentum=False, ord=np.inf)
 
     print(
         f"Summary statistics (at K={K}):\n"
-        f"mean: {_VP['mean']:.6e}\n"
-        f"min: {_VP['min']:.6e}\n"
-        f"max: {_VP['max']:.6e}\n"
-        f"median: {_VP['median']:.6e}\n"
+        f"mean: {_vp['mean']:.6e}\n"
+        f"min: {_vp['min']:.6e}\n"
+        f"max: {_vp['max']:.6e}\n"
+        f"median: {_vp['median']:.6e}\n"
     )
 
     # Take average of residuals for iterate K=1 to K=K
@@ -331,34 +315,47 @@ def _(mo):
 
 
 @app.cell
-def _(A, Verifier, eta, m, n, np, pgd_step, x_lb, x_ub, z0_lb, z0_ub):
+def _(
+    A,
+    eta,
+    ft,
+    m,
+    maximize_residual,
+    n,
+    np,
+    pgd_step,
+    x_lb,
+    x_ub,
+    z0_lb,
+    z0_ub,
+):
     def pgd_verification(K, method, momentum=False, ord=np.inf, **verifier_kwargs):
         """Solve the projected-gradient verification problem for one backend.
 
         Builds a ``Verifier`` in ``method`` mode, registers the parameter box
         ``[x_lb, x_ub]`` and the initial iterate box ``[z0_lb, z0_ub]``,
-        rolls out ``pgd_step`` over the horizon ``K``, and returns ``(VP, residuals)``
+        rolls out ``pgd_step`` over the horizon ``K``, and returns ``(vp, residuals)``
         with one worst-case residual per iteration. Extra ``verifier_kwargs``
         (``solver``, ``params``, ...) are forwarded to the ``Verifier`` constructor.
 
         ``ord`` defaults to ``inf``, which keeps the MIP a MILP. A 2-norm
         objective is squared, so its value is square-rooted on return.
         """
-        VP = Verifier(method=method, **verifier_kwargs)
-        x_param = VP.add_param(m, lb=x_lb, ub=x_ub)
-        z = VP.iterate_trajectory(K+1, collapse_expr='auto')
-        z[0] = VP.add_iterate(n, lb=z0_lb, ub=z0_ub)
+        vp = ft.Verifier(method=method, **verifier_kwargs)
+        x_param = vp.parameter(m, lb=x_lb, ub=x_ub)
+        z = vp.iterate_trajectory(K+1, collapse_expr='auto')
+        z[0] = vp.iterate(n, lb=z0_lb, ub=z0_ub)
         w = z[0]
 
         residuals = []
         for k in range(1, K + 1):
             z, w, residual = pgd_step(
-                VP, A, eta, z, w, x_param, k=k, momentum=momentum,
+                vp, A, eta, z, w, x_param, k=k, momentum=momentum,
             )
-            VP.set_objective_norm(residual, ord)
-            val = VP.solve()
+            maximize_residual(vp, residual, ord)
+            val = vp.solve()
             residuals.append(np.sqrt(val) if ord == 2 else val)
-        return VP, residuals
+        return vp, residuals
 
     return (pgd_verification,)
 
@@ -374,12 +371,12 @@ def _(mo):
 
 
 @app.cell
-def _(K, np, pgd_verification, solver_params):
+def _(K, np, pgd_verification):
     _, all_residuals = pgd_verification(
-        K, 'mip', momentum=False, ord=np.inf, solver='gurobi', params=solver_params,
+        K, 'mip', momentum=False, ord=np.inf, solver='gurobi',
     )
     _, all_residuals_momentum = pgd_verification(
-        K, 'mip', momentum=True, ord=np.inf, solver='gurobi', params=solver_params,
+        K, 'mip', momentum=True, ord=np.inf, solver='gurobi',
     )
     return all_residuals, all_residuals_momentum
 

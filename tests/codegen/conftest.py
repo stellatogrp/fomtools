@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 import scipy.sparse as spa
 
+import fomtools as ft
 from fomtools.codegen.config import (
     Backend,
     CodegenConfig,
@@ -82,11 +83,11 @@ def build_ista(*, K=5, seed=0, n=2, m=4, max_iters=200, tol=None, dtype="float64
     Bt = t * A.T
 
     v = Verifier(method="simulator", obbt_solver=None)
-    b_param = v.add_param(m, lb=b - 1.0, ub=b + 1.0)
-    z = v.add_iterate(n, lb=2, ub=2)
+    b_param = v.parameter(m, lb=b - 1.0, ub=b + 1.0)
+    z = v.iterate(n, lb=2, ub=2)
     iterates = [z]
     for _ in range(K):
-        z = v.step.soft_threshold(At @ z + Bt @ b_param, lambd=lambd * t)
+        z = v.soft_threshold(At @ z + Bt @ b_param, lambd=lambd * t)
         iterates.append(z)
 
     kind = TerminationKind.INF_NORM_CHANGE if tol is not None else TerminationKind.MAX_ITERS
@@ -225,12 +226,12 @@ def build_dr(*, K=5, seed=5, n=4, m=3, max_iters=200, tol=None, dtype="float64")
     q_u = np.hstack([c + c_off, b])
 
     v = Verifier(method="simulator", obbt_solver=None)
-    q_param = v.add_param(n + m, lb=q_l, ub=q_u)
-    z0 = v.add_iterate(m + n, lb=np.zeros(n + m), ub=np.zeros(n + m))
+    q_param = v.parameter(n + m, lb=q_l, ub=q_u)
+    z0 = v.iterate(m + n, lb=np.zeros(n + m), ub=np.zeros(n + m))
     z = [z0]
     for _ in range(K):
-        u = v.step.implicit_linear(z[-1] - q_param, output_mat=lhs.todense())
-        utilde = v.step.relu(2 * u - z[-1], proj_ranges=(n, n + m))
+        u = v.implicit_linear(z[-1] - q_param, output_mat=lhs.todense())
+        utilde = v.relu(2 * u - z[-1], proj_ranges=(n, n + m))
         z.append(z[-1] + utilde - u)
 
     kind = TerminationKind.INF_NORM_CHANGE if tol is not None else TerminationKind.MAX_ITERS
@@ -265,11 +266,11 @@ def build_boxqp(*, n=3, seed=2, max_iters=200, tol=None, dtype="float64"):
     W = np.eye(n) - t * P
 
     v = Verifier(method="simulator", obbt_solver=None)
-    q = v.add_param(n, lb=q0 - 0.5, ub=q0 + 0.5)
-    x = v.add_iterate(n, lb=0, ub=0)
+    q = v.parameter(n, lb=q0 - 0.5, ub=q0 + 0.5)
+    x = v.iterate(n, lb=0, ub=0)
     iterates = [x]
     for _ in range(3):
-        x = v.step.satlin(W @ x - t * q, l=lo, u=hi)
+        x = v.satlin(W @ x - t * q, l=lo, u=hi)
         iterates.append(x)
 
     kind = TerminationKind.INF_NORM_CHANGE if tol is not None else TerminationKind.MAX_ITERS
@@ -308,11 +309,11 @@ def build_indefinite_kkt(*, n=3, seed=4, max_iters=60, tol=None, dtype="float64"
     K = np.block([[np.zeros((n, n)), A.T], [A, np.zeros((n, n))]])
 
     v = Verifier(method="simulator", obbt_solver=None)
-    q = v.add_param(2 * n, lb=-np.ones(2 * n), ub=np.ones(2 * n))
-    x = v.add_iterate(2 * n, lb=np.zeros(2 * n), ub=np.zeros(2 * n))
+    q = v.parameter(2 * n, lb=-np.ones(2 * n), ub=np.ones(2 * n))
+    x = v.iterate(2 * n, lb=np.zeros(2 * n), ub=np.zeros(2 * n))
     iterates = [x]
     for _ in range(3):
-        x = v.step.implicit_linear(x + q, output_mat=K)
+        x = v.implicit_linear(x + q, output_mat=K)
         iterates.append(x)
 
     kind = TerminationKind.INF_NORM_CHANGE if tol is not None else TerminationKind.MAX_ITERS
@@ -357,14 +358,14 @@ def build_pdhg_lp(*, n=3, m=2, seed=7, max_iters=200, tol=None, dtype="float64")
     tau = sigma = 0.9 / normA  # tau*sigma*||A||^2 < 1 (PDHG step-size condition)
 
     v = Verifier(method="simulator", obbt_solver=None)
-    c = v.add_param(n, lb=c_nom - 0.1, ub=c_nom + 0.1)
-    x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
-    y = v.add_iterate(m, lb=np.zeros(m), ub=np.zeros(m))
+    c = v.parameter(n, lb=c_nom - 0.1, ub=c_nom + 0.1)
+    x = v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    y = v.iterate(m, lb=np.zeros(m), ub=np.zeros(m))
     iterates = [stack([x, y])]
     for _ in range(3):
-        x_next = v.step.satlin(x - tau * c + tau * (A.T @ y), l=lo, u=hi)
+        x_next = v.satlin(x - tau * c + tau * (A.T @ y), l=lo, u=hi)
         xbar = 2 * x_next - x
-        y_next = v.step.relu(y + sigma * b - sigma * (A @ xbar))
+        y_next = v.relu(y + sigma * b - sigma * (A @ xbar))
         x, y = x_next, y_next
         iterates.append(stack([x, y]))
 
@@ -434,11 +435,11 @@ def build_spd_cg(*, n=5, seed=3, max_iters=100, dtype="float64"):
     M = half @ half.T + 2.0 * np.eye(n)  # SPD, eigenvalues >= 2
 
     v = Verifier(method="simulator", obbt_solver=None)
-    q = v.add_param(n, lb=-np.ones(n), ub=np.ones(n))
-    x = v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    q = v.parameter(n, lb=-np.ones(n), ub=np.ones(n))
+    x = v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
     iterates = [x]
     for _ in range(3):
-        x = v.step.implicit_linear(x + q, output_mat=M)
+        x = v.implicit_linear(x + q, output_mat=M)
         iterates.append(x)
 
     config = CodegenConfig(
@@ -511,19 +512,19 @@ def build_ista_loop(steps=8, trajectory=False, include_initial=False):
     """A stationary loop, written as a loop rather than as one iteration."""
     d = _lasso_data()
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
-    z0 = v.add_iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
+    x = v.parameter(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
+    z0 = v.iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
 
     if trajectory:
         traj = v.iterate_trajectory(steps + 1)
         traj[0] = z0
         for k in range(1, steps + 1):
-            traj[k] = v.step.soft_threshold(d["at"] @ traj[k - 1] + d["bt"] @ x, lambd=d["lambd"])
+            traj[k] = v.soft_threshold(d["at"] @ traj[k - 1] + d["bt"] @ x, lambd=d["lambd"])
         return v, traj, x, d
 
     z, iterates = z0, [z0] if include_initial else []
     for _ in range(steps):
-        z = v.step.soft_threshold(d["at"] @ z + d["bt"] @ x, lambd=d["lambd"])
+        z = v.soft_threshold(d["at"] @ z + d["bt"] @ x, lambd=d["lambd"])
         iterates.append(z)
     return v, iterates, x, d
 
@@ -537,15 +538,15 @@ def build_fista_loop(steps=8, momentum=True):
     """
     d = _lasso_data()
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
-    s = v.add_iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
+    x = v.parameter(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
+    s = v.iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
 
     y_prev, y_curr, beta, iterates = s, s, 1.0, []
     for _ in range(steps):
         beta_next = (1.0 + np.sqrt(1.0 + 4.0 * beta * beta)) / 2.0
         gamma = (beta - 1.0) / beta_next if momentum else 0.0
         extrap = y_curr + gamma * (y_curr - y_prev)
-        y_next = v.step.soft_threshold(d["at"] @ extrap + d["bt"] @ x, lambd=d["lambd"])
+        y_next = v.soft_threshold(d["at"] @ extrap + d["bt"] @ x, lambd=d["lambd"])
         y_prev, y_curr, beta = y_curr, y_next, beta_next
         iterates.append(y_next)
     return v, iterates, x, d
@@ -555,13 +556,13 @@ def build_halpern_loop(steps=8):
     """An anchored method: every iteration refers back to ``z_0``."""
     d = _lasso_data()
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
-    z0 = v.add_iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
+    x = v.parameter(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
+    z0 = v.iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
 
     z, iterates = z0, []
     for k in range(steps):
         alpha = 1.0 / (k + 2.0)
-        tz = v.step.soft_threshold(d["at"] @ z + d["bt"] @ x, lambd=d["lambd"])
+        tz = v.soft_threshold(d["at"] @ z + d["bt"] @ x, lambd=d["lambd"])
         z = alpha * z0 + (1.0 - alpha) * tz
         iterates.append(z)
     return v, iterates, x, d
@@ -571,13 +572,13 @@ def build_mixed_step_loop(steps=8):
     """The step *type* changes with the iteration index."""
     d = _lasso_data()
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_param(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
-    z = v.add_iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
+    x = v.parameter(d["m"], lb=-np.ones(d["m"]), ub=np.ones(d["m"]))
+    z = v.iterate(d["n"], lb=np.zeros(d["n"]), ub=np.zeros(d["n"]))
 
     iterates = []
     for k in range(steps):
         arg = d["at"] @ z + d["bt"] @ x
-        z = v.step.relu(arg) if k % 2 else v.step.soft_threshold(arg, lambd=0.01 * (k + 1))
+        z = v.relu(arg) if k % 2 else v.soft_threshold(arg, lambd=0.01 * (k + 1))
         iterates.append(z)
     return v, iterates, x, d
 
@@ -596,12 +597,12 @@ def build_dr_loop(steps=20, collapse_expr="auto", relaxation=None):
     dim = n + m
 
     v = Verifier(method="simulator", obbt_solver=None)
-    q = v.add_param(dim, lb=-np.ones(dim), ub=np.ones(dim))
+    q = v.parameter(dim, lb=-np.ones(dim), ub=np.ones(dim))
     z = v.iterate_trajectory(steps + 1, collapse_expr=collapse_expr)
-    z[0] = v.add_iterate(dim, lb=np.zeros(dim), ub=np.zeros(dim))
+    z[0] = v.iterate(dim, lb=np.zeros(dim), ub=np.zeros(dim))
     for k in range(1, steps + 1):
-        u = v.step.implicit_linear(z[k - 1] - q, output_mat=kkt)
-        ut = v.step.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
+        u = v.implicit_linear(z[k - 1] - q, output_mat=kkt)
+        ut = v.relu(2 * u - z[k - 1], proj_ranges=(n, dim))
         theta = 1.0 if relaxation is None else relaxation(k - 1)
         z[k] = z[k - 1] + theta * (ut - u)
     return v, z, q
@@ -634,7 +635,7 @@ def build_ista_objective(*, K=3, max_iters=200, tol=1e-6, check_termination=None
     dtype = kw.pop("dtype", "float64")
     case = build_ista(K=K, max_iters=max_iters, dtype=dtype)
     its = case["iterates"]
-    case["verifier"].set_objective_norm(its[-1] - its[-2], np.inf)
+    case["verifier"].maximize(ft.norm(its[-1] - its[-2], np.inf))
     case["config"] = objective_config(
         max_iters=max_iters, tol=tol, check_termination=check_termination, dtype=dtype, **kw
     )
@@ -658,12 +659,13 @@ def build_scheduled_objective(*, extrapolated=True, ord=np.inf, max_iters=300, t
         from fomtools.codegen.extract_scheduled import Recording
 
         v = Verifier(method="simulator", obbt_solver=None)
-        b = v.add_param(m, lb=d["b"] - 1.0, ub=d["b"] + 1.0)
-        y_prev = v.add_iterate(n, lb=z0, ub=z0)
-        y_curr = v.add_iterate(n, lb=z0, ub=z0)
+        b = v.parameter(m, lb=d["b"] - 1.0, ub=d["b"] + 1.0)
+        y_prev = v.iterate(n, lb=z0, ub=z0)
+        y_curr = v.iterate(n, lb=z0, ub=z0)
         extrap = y_curr + gamma * (y_curr - y_prev)
-        y_next = v.step.soft_threshold(d["At"] @ extrap + d["Bt"] @ b, lambd=threshold)
-        v.set_objective_norm(y_next - (extrap if extrapolated else y_curr), ord)
+        y_next = v.soft_threshold(d["At"] @ extrap + d["Bt"] @ b, lambd=threshold)
+        residual = y_next - (extrap if extrapolated else y_curr)
+        v.maximize(ft.sum_squares(residual) if ord == 2 else ft.norm(residual, ord))
         return Recording(v, next_state=[y_curr, y_next], state=[y_prev, y_curr])
 
     return dict(

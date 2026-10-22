@@ -18,7 +18,7 @@ def _require_finite_bounds(kind: str, i: int, lb: float, ub: float) -> None:
         raise ValueError(
             f"{kind} input {i} has bounds [{lb}, {ub}]: the exact MIP encoding needs finite "
             f"bounds on every {kind} input that crosses a breakpoint. Bound the iterates or "
-            "parameters that feed it (for example with add_iterate/add_param bounds or OBBT)."
+            "parameters that feed it (for example with iterate/parameter bounds or OBBT)."
         )
 
 
@@ -757,7 +757,15 @@ class MIP(Canonicalizer):
             If no solution is available (solve_model() not called).
         """
         if self._solved_copy is None or not self._solved_copy.has_solution():
-            raise RuntimeError("No feasible incumbent available. Call solve_model() first.")
+            raise RuntimeError("No feasible incumbent available. Call solve() first.")
+        for leaf in expression.decomposition_dict:
+            if leaf not in self._solved_copy.vector_var_map:
+                if leaf in self.solver.vector_var_map:
+                    raise RuntimeError(
+                        "The expression uses variables added after the last solve; "
+                        "call solve() again."
+                    )
+                raise RuntimeError("The expression has variables not registered with this model.")
         return self._solved_copy.get_solution_value(expression)
 
     def canonicalize_affine(self, step: Affine) -> None:

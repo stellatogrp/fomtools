@@ -51,6 +51,11 @@ class LinearExpression:
     counter = 0
     # this is necessary else numpy will not even look at the @ operator due to precedence
     __array_priority__ = 1000
+    # The Verifier a leaf is registered with; set by ``Verifier._register_var``.
+    _verifier = None
+    # ``(a, b)`` when this expression was built as ``a - b``; lets the Verifier
+    # recognize a successive-residual objective (see ``Verifier.maximize``).
+    _difference = None
 
     def __init__(self, decomposition_dict: dict, const: np.ndarray = None, is_binary: bool = False):
         """
@@ -159,6 +164,13 @@ class LinearExpression:
         obj.ub = np.ones(ndim) if is_binary else np.full(ndim, ub, dtype=float)
         cls.counter += 1
         return obj
+
+    def __getstate__(self):
+        # The Verifier back-reference is not part of the expression: copies and
+        # pickles would otherwise drag in the whole Verifier and its solver models.
+        state = self.__dict__.copy()
+        state.pop("_verifier", None)
+        return state
 
     def __str__(self):
         return f"Var{self.counter}"
@@ -433,7 +445,10 @@ class LinearExpression:
             `np.ndarray`, or `list`.
 
         """
-        return self + (-other)
+        result = self + (-other)
+        if isinstance(other, LinearExpression):
+            result._difference = (self, other)
+        return result
 
     def __rsub__(self, other: Self) -> Self:
         """
@@ -693,9 +708,37 @@ class LinearExpression:
 
         return out_lb, out_ub
 
-    def eval(self):
-        # TODO
-        raise NotImplementedError("LinExpr.eval() needs to be implemented.")
+    @property
+    def value(self) -> np.ndarray:
+        """
+        Value of the expression at the worst case found by the last ``solve``.
+
+        For the MIP backend this is the solver's incumbent, a feasible point whose
+        objective is a lower bound on the worst case returned by ``solve``.
+
+        Raises
+        ------
+        RuntimeError
+            If the expression is not registered with a ``Verifier``, no incumbent
+            is available, or the expression has leaves added after the last solve.
+        ValueError
+            If the expression mixes leaves of different ``Verifier`` instances.
+        NotImplementedError
+            With ``method="sdp"`` or ``method="simulator"``, which have no incumbent.
+        """
+        if not self.decomposition_dict:
+            return self.const.copy()
+        # Leaves the canonicalizer creates internally (e.g. binaries) have no Verifier.
+        verifiers = {
+            id(leaf._verifier): leaf._verifier
+            for leaf in self.decomposition_dict
+            if leaf._verifier is not None
+        }
+        if not verifiers:
+            raise RuntimeError("The expression is not registered with a Verifier.")
+        if len(verifiers) > 1:
+            raise ValueError("The expression mixes variables of different Verifier instances.")
+        return next(iter(verifiers.values()))._solution_value(self)
 
 
 def stack(exprs: list[LinearExpression]) -> LinearExpression:

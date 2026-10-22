@@ -1,7 +1,7 @@
 """
 Tests for the ``sum_squares`` quadratic constraint atom.
 
-``vp.sum_squares(expr) <op> r**2`` (for ``<op>`` in ``<=`` / ``>=`` / ``==``) builds a
+``ft.sum_squares(expr) <op> r**2`` (for ``<op>`` in ``<=`` / ``>=`` / ``==``) builds a
 :class:`QuadraticConstraint` encoding ``sum_i (a_i^T x + b_i)^2 <op> r^2``:
 
 - **SDP**: linear in the lifted matrix (``tr(C X) <op> r^2`` with ``C = [b;A]^T[b;A]``),
@@ -17,6 +17,7 @@ relaxation, so we compare bounds, never read solution values).
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.constraint import QuadraticConstraint, SumSquares, sum_squares
 from fomtools.verifier import Verifier
 from tests.conftest import SDP_SOLVERS, TEST_EPS
@@ -36,15 +37,15 @@ def _ss(expr, sense, bound):
 
 def test_sum_squares_returns_atom():
     vp = Verifier(method="sdp", solver="clarabel")
-    x = vp.add_iterate(3, lb=-2, ub=2)
-    assert isinstance(vp.sum_squares(x), SumSquares)
+    x = vp.iterate(3, lb=-2, ub=2)
+    assert isinstance(ft.sum_squares(x), SumSquares)
     assert isinstance(sum_squares(x), SumSquares)  # free function matches the method
 
 
 @pytest.mark.parametrize("sense", ["<=", ">=", "=="])
 def test_comparison_builds_quadratic_constraint(sense):
     vp = Verifier(method="sdp", solver="clarabel")
-    x = vp.add_iterate(3, lb=-2, ub=2)
+    x = vp.iterate(3, lb=-2, ub=2)
     c = _ss(x, sense, 1.5**2)
     assert isinstance(c, QuadraticConstraint)
     assert c.operator == "sum_squares"
@@ -57,7 +58,7 @@ def test_comparison_builds_quadratic_constraint(sense):
 
 def test_negative_radius_raises():
     vp = Verifier(method="sdp", solver="clarabel")
-    x = vp.add_iterate(2, lb=-1, ub=1)
+    x = vp.iterate(2, lb=-1, ub=1)
     with pytest.raises(ValueError, match="nonnegative"):
         sum_squares(x) <= -1.0
 
@@ -70,7 +71,7 @@ def test_negative_radius_raises():
 @pytest.mark.parametrize("sense", ["<=", ">=", "=="])
 def test_highs_rejects_sum_squares(sense):
     vp = Verifier(method="mip", solver="highs", obbt_solver=None)
-    x = vp.add_iterate(3, lb=-2, ub=2)
+    x = vp.iterate(3, lb=-2, ub=2)
     with pytest.raises(ValueError, match="MIQCP|Gurobi"):
         vp.add_constraint(_ss(x, sense, 1.0))
 
@@ -84,7 +85,7 @@ def test_highs_rejects_sum_squares(sense):
 @pytest.mark.parametrize("sense", ["<=", ">=", "=="])
 def test_sdp_build_appends_expected_block(sdp_solver, sense):
     vp = Verifier(method="sdp", solver=sdp_solver)
-    x = vp.add_iterate(3, lb=-2, ub=2)
+    x = vp.iterate(3, lb=-2, ub=2)
     canon = vp.canonicalizer
 
     n_ineq, n_eq = len(canon.Aineq_matrices), len(canon.Aeq_matrices)
@@ -116,7 +117,7 @@ def test_sdp_build_appends_expected_block(sdp_solver, sense):
 def test_sdp_rank1_lift_not_cut(sdp_solver, sense):
     """The rank-1 lift of a genuinely feasible point satisfies the appended row."""
     vp = Verifier(method="sdp", solver=sdp_solver)
-    x = vp.add_iterate(3, lb=-3, ub=3)
+    x = vp.iterate(3, lb=-3, ub=3)
     canon = vp.canonicalizer
     r_sq = 1.7**2
     vp.add_constraint(_ss(x, sense, r_sq))
@@ -170,9 +171,9 @@ def test_gurobi_miqcp_solve(sense, expected):
     """
     R = 1.5
     vp = Verifier(method="mip", solver="gurobi", obbt_solver=None, params={"OutputFlag": 0})
-    x = vp.add_iterate(3, lb=-5, ub=5)
+    x = vp.iterate(3, lb=-5, ub=5)
     vp.add_constraint(_ss(x, sense, R**2))
-    vp.set_objective_norm(x, "inf")
+    vp.maximize(ft.norm(x, np.inf))
     assert abs(vp.solve() - expected) < 1e-4
 
 
@@ -189,15 +190,15 @@ def test_mip_bound_preserved(sdp_solver, sense):
     R = 1.2
 
     vs = Verifier(method="sdp", solver=sdp_solver)
-    xs = vs.add_iterate(3, lb=-3, ub=3)
+    xs = vs.iterate(3, lb=-3, ub=3)
     vs.add_constraint(_ss(xs, sense, R**2))
-    vs.set_objective_norm(xs, 2)
+    vs.maximize(ft.sum_squares(xs))
     sdp_two_sq = vs.solve()
 
     vm = Verifier(method="mip", solver="gurobi", obbt_solver=None, params={"OutputFlag": 0})
-    xm = vm.add_iterate(3, lb=-3, ub=3)
+    xm = vm.iterate(3, lb=-3, ub=3)
     vm.add_constraint(_ss(xm, sense, R**2))
-    vm.set_objective_norm(xm, "inf")
+    vm.maximize(ft.norm(xm, np.inf))
     mip_inf = vm.solve()
 
     assert mip_inf <= np.sqrt(sdp_two_sq) + TEST_EPS

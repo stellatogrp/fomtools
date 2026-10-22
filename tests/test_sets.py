@@ -10,6 +10,7 @@ rejection, (6) SDP behavior, and (7) the simulator support split.
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.linearexpression import LinearExpression
 from fomtools.proxable_functions import NormL1
 from fomtools.sets import (
@@ -199,13 +200,13 @@ def test_halfspace_uses_polyhedron_attribute_meaning():
 def test_mip_projection_matches_numeric(name, make, x0, _sim, _ind):
     """At a fixed arg, the MIP encoding of project reproduces the numeric projection."""
     v = _make_verifier("mip", obbt="gurobi")
-    x = v.add_param(len(x0), lb=x0, ub=x0)  # fixed arg
+    x = v.parameter(len(x0), lb=x0, ub=x0)  # fixed arg
     u = v.project(make(), x)
     assert isinstance(u, LinearExpression)
     assert u.ndim == len(x0)
-    v.set_objective_norm([u], np.inf)
+    v.maximize(ft.norm([u], np.inf))
     v.solve()
-    np.testing.assert_allclose(v.get_solution_value(u), make().project(x0), atol=PROX_ATOL)
+    np.testing.assert_allclose(u.value, make().project(x0), atol=PROX_ATOL)
 
 
 # --- class shorthand --------------------------------------------------------
@@ -216,21 +217,17 @@ def test_class_shorthand_matches_instance():
     x0 = np.array([-1.0, 2.0, -3.0])
 
     v_cls = _make_verifier("mip", obbt="gurobi")
-    u_cls = v_cls.project(NonNegative, v_cls.add_param(3, lb=x0, ub=x0))
-    v_cls.set_objective_norm([u_cls], np.inf)
+    u_cls = v_cls.project(NonNegative, v_cls.parameter(3, lb=x0, ub=x0))
+    v_cls.maximize(ft.norm([u_cls], np.inf))
     v_cls.solve()
 
     v_inst = _make_verifier("mip", obbt="gurobi")
-    u_inst = v_inst.project(NonNegative(), v_inst.add_param(3, lb=x0, ub=x0))
-    v_inst.set_objective_norm([u_inst], np.inf)
+    u_inst = v_inst.project(NonNegative(), v_inst.parameter(3, lb=x0, ub=x0))
+    v_inst.maximize(ft.norm([u_inst], np.inf))
     v_inst.solve()
 
-    np.testing.assert_allclose(
-        v_cls.get_solution_value(u_cls), v_inst.get_solution_value(u_inst), atol=PROX_ATOL
-    )
-    np.testing.assert_allclose(
-        v_cls.get_solution_value(u_cls), NonNegative().project(x0), atol=PROX_ATOL
-    )
+    np.testing.assert_allclose(u_cls.value, u_inst.value, atol=PROX_ATOL)
+    np.testing.assert_allclose(u_cls.value, NonNegative().project(x0), atol=PROX_ATOL)
 
 
 # --- input rejection --------------------------------------------------------
@@ -244,7 +241,7 @@ def test_class_shorthand_matches_instance():
 def test_project_rejects_non_set(bad):
     """project only accepts Sets; penalties/losses (and junk) raise TypeError."""
     v = _make_verifier("mip", obbt="gurobi")
-    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.parameter(3, lb=-1.0, ub=1.0)
     with pytest.raises(TypeError, match="Set"):
         v.project(bad, arg)
 
@@ -253,7 +250,7 @@ def test_project_parameterized_bare_class_helpful_error():
     """Passing a parameterized Set *class* (not instance) gives a project-aware error,
     not a bare 'missing required arguments' TypeError from the constructor."""
     v = _make_verifier("mip", obbt="gurobi")
-    arg = v.add_param(3, lb=-1.0, ub=1.0)
+    arg = v.parameter(3, lb=-1.0, ub=1.0)
     with pytest.raises(TypeError, match="parameterless|instantiate it explicitly"):
         v.project(Box, arg)  # Box needs l, u
 
@@ -272,9 +269,9 @@ def test_project_parameterized_bare_class_helpful_error():
 def test_sdp_projection_tight_at_fixed_point(make, x0):
     """At a fixed arg, max ||u||^2 over the SDP relaxation equals ||proj(x0)||^2."""
     v = _make_verifier("sdp")
-    x = v.add_param(len(x0), lb=x0, ub=x0)
+    x = v.parameter(len(x0), lb=x0, ub=x0)
     u = v.project(make(), x)
-    v.set_objective_norm(u, 2)
+    v.maximize(ft.sum_squares(u))
     obj = v.solve()
     proj = make().project(x0)
     # With lb == ub the lifted feasible set collapses to a single rank-one point (no
@@ -293,7 +290,7 @@ def test_simulator_support_matches_prox(name, make, x0, sim_supported, _ind):
     simplex/ℓ1-ball/polyhedral projections via batched / per-sample evaluators. The
     ``sim_supported`` flag is retained (all True) so a future deferral is caught."""
     v = _make_verifier("simulator")
-    arg = v.add_param(len(x0), lb=x0, ub=x0)
+    arg = v.parameter(len(x0), lb=x0, ub=x0)
     if sim_supported:
         out = v.project(make(), arg)
         assert isinstance(out, LinearExpression)

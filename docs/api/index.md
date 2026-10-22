@@ -28,7 +28,8 @@ The source code of every module is in the
   performance measures.
 * **[Constraints](constraint.md)** are equalities and inequalities over
   linear expressions, used to encode assumptions on the problem data and the
-  initial conditions.
+  initial conditions. The same page documents the objective atoms `ft.norm`
+  and `ft.sum_squares` used with `vp.maximize`.
 * **[Step operators](steps.md)** are the building blocks of a first-order
   method, covering affine steps, ReLU, saturated linear, and soft thresholding.
 * **[Canonicalizers](canonicalizer.md)** translate a verification problem

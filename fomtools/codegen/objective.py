@@ -1,7 +1,7 @@
 """Lower the verification objective onto the generated loop's vectors.
 
 The verification problem measures performance with an objective set by
-`set_objective_norm`: a norm of linear
+`Verifier.maximize`: a norm of linear
 expressions in the iterates, written at iteration ``K`` in terms of ``w^K`` and
 ``w^{K-1}`` (a fixed-point residual ``||w^K - w^{K-1}||``, a KKT residual, ...).
 `OBJECTIVE` stops the generated
@@ -395,8 +395,8 @@ def extract_objective(
     if verifier.objective is None:
         raise ObjectiveExtractionError(
             "termination kind 'objective' stops on the verification objective, but none "
-            "is set on this recording. Call verifier.set_objective_norm(expr, ord) (e.g. "
-            "the fixed-point residual x_K - x_{K-1}, ord=np.inf) before generating code, "
+            "is set on this recording. Call verifier.maximize(ft.norm(expr, np.inf)) (e.g. "
+            "for the fixed-point residual x_K - x_{K-1}) before generating code, "
             "or use TerminationKind.INF_NORM_CHANGE / MAX_ITERS."
         )
     exprs, ord = verifier.objective

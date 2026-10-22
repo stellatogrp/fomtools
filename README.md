@@ -47,51 +47,51 @@ import numpy as np
 import fomtools as ft
 
 # Problem data
-m, n, lambd, K = 10, 15, 0.1, 10
-D = np.random.normal(size=(m, n))
+m, n, lambd, K = 5, 8, 0.1, 5
+D = np.random.default_rng(0).normal(size=(m, n))
 eta = 1 / np.linalg.norm(D, 2) ** 2
 
-VP = ft.Verifier()  # MIP verification with HiGHS; use solver="gurobi" for Gurobi
+vp = ft.Verifier()  # MIP verification with HiGHS; use solver="gurobi" for Gurobi
 
 # Parameter set and initial iterate
-x = VP.add_param(m, lb=0, ub=1)
-s = [VP.add_iterate(n, lb=0, ub=0)]
+x = vp.parameter(m, lb=0, ub=1)
+s = [vp.iterate(n, lb=0, ub=0)]
 w, beta = s[0], 1.0
 
 results = []
 for k in range(K):
     # FISTA iteration
-    s.append(VP.step.soft_threshold(w - eta * D.T @ (D @ w - x), lambd=lambd * eta))
+    s.append(vp.soft_threshold(w - eta * D.T @ (D @ w - x), lambd=lambd * eta))
     beta_old, beta = beta, 0.5 * (1 + np.sqrt(1 + 4 * beta**2))
     w = s[k + 1] + (beta_old - 1) / beta * (s[k + 1] - s[k])
 
     # Worst-case residual after k + 1 iterations
-    VP.set_objective_norm(s[k + 1] - s[k], np.inf)
-    results.append(VP.solve())
+    vp.maximize(ft.norm(s[k + 1] - s[k], np.inf))
+    results.append(vp.solve())
 ```
 
 Steps can also be written with proximal operators and projections, e.g.,
-`VP.prox(NormL1(lambd), v, eta)` or `VP.project(Box(l, u), v)`. See the
+`vp.prox(NormL1(lambd), v, eta)` or `vp.project(Box(l, u), v)`. See the
 [documentation](https://stellatogrp.github.io/fomtools/) for the full list of proxable functions and sets.
 
 ## Beyond worst-case verification
 
 **Simulation.** Write the same loop with `ft.Verifier(method="simulator")`, and give
-parameters sample arrays of shape `(N, d)` (or let them be sampled from their bounds). The
+parameters sample arrays of shape `(N, d)`, as in `vp.parameter(d, samples=X)`. The
 simulator runs all samples as batched operations, on a GPU through CuPy when one is
 available. It then reports summary statistics and a KL-inverse bound on the probability that
 the residual exceeds a tolerance `epsilon`:
 
 ```python3
-VP.solve(epsilon=1e-3)
-VP["quantiles"][0.95], VP["risk_bound"], VP["throughput"]
+vp.solve(epsilon=1e-3)
+vp["quantiles"][0.95], vp["risk_bound"], vp["throughput"]
 ```
 
 **Code generation.** Pass the recorded iterates, unchanged, to `codegen`. It produces a
 specialized solver together with a Python wrapper:
 
 ```python3
-result = VP.codegen("out/fista", iterates=s, code_optimization=True)
+result = vp.codegen("out/fista", iterates=s, code_optimization=True)
 ```
 
 Targets include embedded C, multicore CPUs (OpenMP), and GPUs (CUDA). The package works with

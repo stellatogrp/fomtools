@@ -31,7 +31,7 @@ def make_lasso_data(
 
 
 def ista_step(
-    VP,
+    vp,
     dictionary,
     eta,
     lambd,
@@ -61,7 +61,7 @@ def ista_step(
             f"{type(z_prev).__name__}."
         )
 
-    y_next = VP.step.soft_threshold(
+    y_next = vp.soft_threshold(
         current - eta * dictionary.T @ (dictionary @ current - x_param),
         lambd=lambd * eta,
     )

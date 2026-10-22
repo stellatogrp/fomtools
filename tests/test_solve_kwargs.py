@@ -10,6 +10,7 @@ SDP backends (Clarabel, cvxpy) via the ``vp`` / ``vp_sdp`` fixtures.
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
 
@@ -26,9 +27,9 @@ VALID_SDP_OPTIONS = {"max_iter": 10000}
 def _build_mip_problem(vp):
     """Small ReLU problem with an inf-norm objective (works for both MIP solvers)."""
     n = 3
-    x = vp.add_iterate(n, lb=0, ub=10)
-    z = vp.step.relu(x - 2)
-    vp.set_objective_norm([z], np.inf)
+    x = vp.iterate(n, lb=0, ub=10)
+    z = vp.relu(x - 2)
+    vp.maximize(ft.norm([z], np.inf))
     return z
 
 
@@ -39,11 +40,11 @@ def _build_sdp_problem(vp_sdp):
     A = np.random.normal(size=(m, n))
     t = 0.01
 
-    x = vp_sdp.add_param(m, lb=0, ub=0.1)
-    z0 = vp_sdp.add_iterate(n, lb=5, ub=5.1)
-    z1 = vp_sdp.step.relu(z0 - t * A.T @ (A @ z0 - x))
-    z2 = vp_sdp.step.relu(z1 - t * A.T @ (A @ z1 - x))
-    vp_sdp.set_objective_norm(z2 - z1, 2)
+    x = vp_sdp.parameter(m, lb=0, ub=0.1)
+    z0 = vp_sdp.iterate(n, lb=5, ub=5.1)
+    z1 = vp_sdp.relu(z0 - t * A.T @ (A @ z0 - x))
+    z2 = vp_sdp.relu(z1 - t * A.T @ (A @ z1 - x))
+    vp_sdp.maximize(ft.sum_squares(z2 - z1))
 
 
 # ---------------------------------------------------------------------------

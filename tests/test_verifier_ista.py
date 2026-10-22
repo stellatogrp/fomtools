@@ -1,5 +1,6 @@
 import numpy as np
 
+import fomtools as ft
 from tests.conftest import TEST_EPS
 from tests.cvxpy import ista
 
@@ -35,9 +36,9 @@ def test_ista(vp_theory):
     print(xk)
     assert np.linalg.norm(x - xk) <= TEST_EPS
     b_offset = 1.0
-    b_param = vp_theory.add_param(m, lb=b - b_offset, ub=b + b_offset)
+    b_param = vp_theory.parameter(m, lb=b - b_offset, ub=b + b_offset)
 
-    z0 = vp_theory.add_iterate(n, lb=2, ub=2)
+    z0 = vp_theory.iterate(n, lb=2, ub=2)
 
     K = 5
     z = [None for _ in range(K + 1)]
@@ -49,18 +50,18 @@ def test_ista(vp_theory):
     for k in range(1, K + 1):
         print(k)
 
-        z[k] = vp_theory.step.soft_threshold(At @ z[k - 1] + Bt @ b_param, lambd=lambda_t)
+        z[k] = vp_theory.soft_threshold(At @ z[k - 1] + Bt @ b_param, lambd=lambda_t)
         vp_theory.theory_bound(k, z[k], z[k - 1])
 
-        vp_theory.set_objective_norm(z[k] - z[k - 1], np.inf)
+        vp_theory.maximize(ft.norm(z[k] - z[k - 1], np.inf))
         res = vp_theory.solve(convex_hull_cuts=True)
         all_res.append(res)
 
-    print(f"opt b_param at last K: {vp_theory.get_solution_value(b_param)}")
+    print(f"opt b_param at last K: {b_param.value}")
     print(f"VP resids: {all_res}")
 
     zk = 2 * np.ones(n)
-    b = vp_theory.get_solution_value(b_param)
+    b = b_param.value
     ISTA_resids = []
 
     for k in range(K):

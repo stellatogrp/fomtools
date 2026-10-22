@@ -1,5 +1,6 @@
 import numpy as np
 
+import fomtools as ft
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
 
@@ -36,13 +37,13 @@ def test_nnls_sdp_mip_comparison(vp, vp_sdp):
             obbt_solver="highs",
         )
 
-        x_sdp = vp_sdp_local.add_param(m, lb=0, ub=0.1)
-        z_sdp = [vp_sdp_local.add_iterate(n, lb=5, ub=5.1)]
+        x_sdp = vp_sdp_local.parameter(m, lb=0, ub=0.1)
+        z_sdp = [vp_sdp_local.iterate(n, lb=5, ub=5.1)]
 
         for k in range(K):
-            z_sdp.append(vp_sdp_local.step.relu(z_sdp[k] - t * A.T @ (A @ z_sdp[k] - x_sdp)))
+            z_sdp.append(vp_sdp_local.relu(z_sdp[k] - t * A.T @ (A @ z_sdp[k] - x_sdp)))
 
-        vp_sdp_local.set_objective_norm(z_sdp[K] - z_sdp[K - 1], 2)
+        vp_sdp_local.maximize(ft.sum_squares(z_sdp[K] - z_sdp[K - 1]))
         sdp_two_norm_sq = vp_sdp_local.solve()
 
         # MIP with infinity-norm objective
@@ -52,13 +53,13 @@ def test_nnls_sdp_mip_comparison(vp, vp_sdp):
             obbt_solver="highs",
         )
 
-        x_mip = vp_mip.add_param(m, lb=0, ub=0.1)
-        z_mip = [vp_mip.add_iterate(n, lb=5, ub=5.1)]
+        x_mip = vp_mip.parameter(m, lb=0, ub=0.1)
+        z_mip = [vp_mip.iterate(n, lb=5, ub=5.1)]
 
         for k in range(K):
-            z_mip.append(vp_mip.step.relu(z_mip[k] - t * A.T @ (A @ z_mip[k] - x_mip)))
+            z_mip.append(vp_mip.relu(z_mip[k] - t * A.T @ (A @ z_mip[k] - x_mip)))
 
-        vp_mip.set_objective_norm([z_mip[K] - z_mip[K - 1]], np.inf)
+        vp_mip.maximize(ft.norm([z_mip[K] - z_mip[K - 1]], np.inf))
         mip_inf_norm = vp_mip.solve()
 
         sdp_two_norm = np.sqrt(sdp_two_norm_sq)

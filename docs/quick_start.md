@@ -57,63 +57,57 @@ with variables $x$ and $s^0, \dots, s^K$.
 The sections below unpack this example.
 
 ```python
-import fomtools as ft
 import numpy as np
+import fomtools as ft
 
-# problem parameters and setup
-lambd, eta, K = 0.1, 0.01, 10
-m, n = 10, 15
-D = np.random.normal(size=(m, n))
-VP = ft.Verifier(method="mip")  # HiGHS by default
+# problem data
+m, n, lambd, K = 5, 8, 0.1, 5
+D = np.random.default_rng(0).normal(size=(m, n))
+eta = 1 / np.linalg.norm(D, 2) ** 2  # step size 1 / L
+vp = ft.Verifier()  # MIP with HiGHS by default
 
-# initialize VP parameters + iterates
-x = VP.add_param(m, lb=0, ub=1)
-s = [None for _ in range(K + 1)]
-s[0] = VP.add_iterate(n, lb=0, ub=0)
-wk = s[0]
-t_k = 1
+# parameter and initial iterate
+x = vp.parameter(m, lb=0, ub=1)
+s = w = vp.iterate(n, lb=0, ub=0)
+t = 1.0
 results = []
 
 for k in range(K):
-    # core algorithm logic
-    grad = D.T @ (D @ wk - x)
-    s[k + 1] = VP.step.soft_threshold(wk - eta * grad, lambd=lambd * eta)
-    t_kplus1 = 0.5 * (1 + np.sqrt(1 + 4 * t_k ** 2))
-    w_kplus1 = s[k + 1] + (t_k - 1) / t_kplus1 * (s[k + 1] - s[k])
+    # FISTA update
+    s_prev, s = s, vp.soft_threshold(w - eta * D.T @ (D @ w - x), lambd=lambd * eta)
+    t_next = 0.5 * (1 + np.sqrt(1 + 4 * t**2))
+    w, t = s + (t - 1) / t_next * (s - s_prev), t_next
 
-    # solving the VP
-    VP.set_objective_norm(s[k + 1] - s[k], np.inf)
-    results.append(VP.solve())
-
-    # setting up for next loop iteration
-    wk, t_k = w_kplus1, t_kplus1
+    # worst-case residual after k + 1 iterations
+    vp.maximize(ft.norm(s - s_prev, np.inf))
+    results.append(vp.solve())
 ```
 
 ## Setting up the problem
 
-`VP.add_param(m, lb=0, ub=1)` creates the parameter $x$ and its uncertainty set. `VP.add_iterate(n, lb=0, ub=0)` creates
-the first iterate $s^0$ and its uncertainty set. Here the equal lower and upper bounds fix $s^0=0$. The list
-`s` stores every FISTA iterate, so the residual between consecutive iterates can later be used
-as an objective. Meanwhile, `wk` and `t_k` are ordinary Python variables for the
-extrapolated point $w^k$ and the momentum coefficient $t_k$. See the
-[`Verifier` API](api/verifier.md) for all the ways to declare parameters and iterates.
+`vp.parameter(m, lb=0, ub=1)` creates the parameter $x$ and its uncertainty set $[0, 1]^m$.
+`vp.iterate(n, lb=0, ub=0)` creates the initial iterate $s^0$ and its uncertainty set. Here the
+equal lower and upper bounds fix $s^0 = 0$, and $w^0 = s^0$. Scalar bounds apply to every
+entry; pass arrays for entry-wise bounds. See the [`Verifier` API](api/verifier.md) for all the
+options.
 
 ```python
-# initialize VP parameters + iterates
-x = VP.add_param(m, lb=0, ub=1)
-s = [None for _ in range(K + 1)]
-s[0] = VP.add_iterate(n, lb=0, ub=0)
-wk = s[0]
-t_k = 1
-results = []
+x = vp.parameter(m, lb=0, ub=1)
+s = w = vp.iterate(n, lb=0, ub=0)
+t = 1.0
 ```
+
+`s`, `w`, and `t` are ordinary Python variables. The `Verifier` records every step, so the
+loop only keeps the iterates the next update and the objective need: $s^{k+1}$, $s^k$, and
+$w^k$. The momentum coefficient $t_k$ is a plain number. Keep the iterates in a list only when
+you need the whole trajectory, for example for [code generation](user_guide/index.md#code-generation).
 
 ## Choosing a backend
 
-The verifier is created with the MIP backend in the complete example:
+The complete example uses the default MIP backend:
 
 ```python
-VP = ft.Verifier(method="mip")
+vp = ft.Verifier()  # same as ft.Verifier(method="mip", solver="highs")
 ```
 
 `method="mip"` selects the exact mixed-integer encoding, solved with the open-source HiGHS
@@ -121,21 +115,24 @@ solver by default. If you have a Gurobi license, pass `solver="gurobi"` to use G
 (see [Get started](get_started.md#optional-dependencies)). MIP encodes the verification problem exactly and returns the true
 worst-case value. Change `method` to `"simulator"` for a fast empirical analysis without a formal
 worst-case guarantee, or to `"sdp"` for an [experimental semidefinite relaxation](user_guide/sdp.md). The subsequent algorithm code and objective are unchanged when you switch backends.
+The solvers are silent by default; pass `verbose=True` to `ft.Verifier` or to `vp.solve` to see their logs.
 
 ## Steps and proxable functions
 
-One FISTA iteration consists of the gradient, the soft-thresholding step, and the momentum
+One FISTA iteration consists of the gradient step, the soft-thresholding step, and the momentum
 update:
 
 ```python
-grad = D.T @ (D @ wk - x)
-s[k + 1] = VP.step.soft_threshold(wk - eta * grad, lambd=lambd * eta)
-t_kplus1 = 0.5 * (1 + np.sqrt(1 + 4 * t_k ** 2))
-w_kplus1 = s[k + 1] + (t_k - 1) / t_kplus1 * (s[k + 1] - s[k])
+s_prev, s = s, vp.soft_threshold(w - eta * D.T @ (D @ w - x), lambd=lambd * eta)
+t_next = 0.5 * (1 + np.sqrt(1 + 4 * t**2))
+w, t = s + (t - 1) / t_next * (s - s_prev), t_next
 ```
-Simply write out these steps as in the [original FISTA updates](#fista-updates). Here $\eta$ is the gradient step size. The `soft_threshold` call in the FISTA update is a specialized proximal operator: `lambd=lambd * eta` supplies the threshold used by soft-thresholding, and the method returns a
-new expression for `s[k + 1]`. This is a convenient spelling of the proximal operator of
-$\lambda\|\cdot\|_1$. FOMTools also supports many other convex functions. To explore the other native steps of FOMTools, check out the [User guide](user_guide/index.md) and the [step API](api/steps.md).
+
+Simply write out these steps as in the [original FISTA updates](#fista-updates). Here $\eta$ is the gradient step size.
+`vp.soft_threshold` is the proximal operator of $\lambda\eta\|\cdot\|_1$: `lambd=lambd * eta` supplies the
+threshold, and the method returns a new expression for $s^{k+1}$. Affine operations such as the
+gradient step and the momentum update need no special call. FOMTools also supports many other
+convex functions. To explore the other native steps of FOMTools, check out the [User guide](user_guide/index.md) and the [step API](api/steps.md).
 
 ## Objectives
 
@@ -143,26 +140,41 @@ After each update, the example asks for the worst-case fixed-point residual and 
 resulting verification problem:
 
 ```python
-VP.set_objective_norm(s[k + 1] - s[k], np.inf)
-results.append(VP.solve())
+vp.maximize(ft.norm(s - s_prev, np.inf))
+results.append(vp.solve())
 ```
 
-`s[k + 1] - s[k]` is the symbolic residual to maximize, and `np.inf` tells
-[`set_objective_norm`](api/verifier.md#fomtools.Verifier.set_objective_norm) to use its $\ell_\infty$ norm. You can also use `1` for the $\ell_1$ norm
-or `2` for the squared $\ell_2$ norm. `VP.solve()` then creates and solves the backend-specific
-optimization problem, returning the worst-case value.
+`s - s_prev` is the symbolic residual $s^{k+1} - s^k$, and `ft.norm(..., np.inf)` its
+$\ell_\infty$ norm. Use `ft.norm(..., 1)` for the $\ell_1$ norm, or `ft.sum_squares(...)` for the
+squared $\ell_2$ norm, which makes the MIP quadratic and needs `solver="gurobi"`. `vp.solve()` creates and solves the backend-specific optimization problem
+and returns the worst-case value. After a MIP solve, `x.value` is the worst-case parameter.
 
-For a distance-to-solution metric $\|s^{k+1} - s^\star\|_2^2$, use the fixed point
+Solving at every iteration gives the worst-case residual as a function of $k$, and it makes the
+later solves easier. Each solve warm-starts the next one. After the solve at iteration $k$,
+FOMTools also chains the certified bounds $r_j$ on $\|s^j - s^{j-1}\|_\infty$ through the
+triangle inequality,
+
+$$
+\|s^k - s^0\|_\infty \leq \sum_{j=1}^k r_j,
+$$
+
+and tightens the bounds of $s^k$ with it before the next step is added. The worst case is
+unchanged, but the mixed-integer problems at larger $k$ get smaller big-M constants. This happens
+whenever the objective is `ft.norm(a - b, np.inf)`; pass `tighten_residuals=False` to
+`ft.Verifier` to turn it off. If you only need the bound at $K$, set the objective and solve once
+after the loop.
+
+For a distance-to-solution metric $\|s^{k+1} - s^\star\|_\infty$, use the fixed point
 of FISTA. At a fixed point, the momentum term vanishes, so it is encoded by the following
 proximal-gradient map
 $$
 T(s, x) = \mathbf{prox}_{\eta\lambda\|\cdot\|_1}\left(s - \eta D^T(Ds - x)\right):
+$$
 
 ```python
-s_star = VP.fixed_point(
-    n_dim=n,
-    operator=lambda s: VP.step.soft_threshold(
-        s - eta * D.T @ (D @ s - x), lambd=lambd * eta),
+s_star = vp.fixed_point(
+    ndim=n,
+    operator=lambda s: vp.soft_threshold(s - eta * D.T @ (D @ s - x), lambd=lambd * eta),
     lb=-100,
     ub=100,
 )
@@ -171,7 +183,7 @@ s_star = VP.fixed_point(
 Then use it in the objective:
 
 ```python
-VP.set_objective_norm(s[k + 1] - s_star, 2)
+vp.maximize(ft.norm(s - s_star, np.inf))
 ```
 
 This creates a new iterate $s^\star$ constrained to satisfy $s^\star = T(s^\star, x)$.

@@ -6,8 +6,6 @@ app = marimo.App(width="medium")
 
 @app.cell(hide_code=True)
 def _():
-    import contextlib
-    import io
     import sys
     from pathlib import Path
 
@@ -39,23 +37,6 @@ def _():
     np.set_printoptions(precision=5)  # Print few decimal places
     np.set_printoptions(suppress=True)  # Suppress scientific notation
 
-    solver_params = {
-        'OutputFlag': 0,
-        'LogToConsole': 0,
-    }
-
-    # Gurobi prints a license banner through sys.stdout the first time its
-    # default environment starts, before any OutputFlag can apply. Start the
-    # environment here, in this hidden cell, with stdout swallowed so the
-    # banner never lands in a visible cell.
-    try:
-        import gurobipy as _gp
-    except ImportError:
-        pass
-    else:
-        with contextlib.redirect_stdout(io.StringIO()):
-            _gp.Model()
-
     return (
         IndBox,
         admm_step,
@@ -66,7 +47,6 @@ def _():
         mo,
         np,
         plt,
-        solver_params,
         spa,
     )
 
@@ -291,7 +271,11 @@ def _(
     u_stack_max,
     u_stack_min,
 ):
-    from fomtools.verifier import Verifier
+    import fomtools as ft
+
+    def maximize_residual(vp, residual, ord):
+        """Maximize ``||residual||_ord``, squared for ``ord=2`` (``ft.sum_squares``)."""
+        vp.maximize(ft.sum_squares(residual) if ord == 2 else ft.norm(residual, ord))
 
     def admm_simulation(x_samples, z0_samples, v0_samples, P, K, ord=2):
         """Simulate ADMM on sampled instances.
@@ -299,46 +283,46 @@ def _(
         Builds a simulator-mode :class:`Verifier`, registers the initial-state
         parameter ``x`` and the initial iterates ``(z0, v0)`` as sampled
         parameters, rolls out the recurrence with ``admm_step``, and simulates
-        via ``VP.solve()``.
+        via ``vp.solve()``.
         The projection clips the input block with ``satlin`` and stacks ``x``
         on top. Each ``*_samples`` array has shape ``(n_samples, dim)`` (a
         single-row array replays one instance), and the returned ``residuals``
         has shape ``(n_samples, K)``. Summary statistics (``mean``, ``min``,
-        ``max``, ...) are available on the returned instance ``VP`` via
-        ``VP[...]``.
+        ``max``, ...) are available on the returned instance ``vp`` via
+        ``vp[...]``.
         """
-        VP = Verifier(method='simulator', obbt_solver=None)
-        x_param = VP.add_param(ndim=n_s, samples=x_samples)
-        z = VP.add_param(n_xz, samples=z0_samples)
-        v = VP.add_param(n_xz, samples=v0_samples)
+        vp = ft.Verifier(method='simulator', obbt_solver=None)
+        x_param = vp.parameter(ndim=n_s, samples=x_samples)
+        z = vp.parameter(n_xz, samples=z0_samples)
+        v = vp.parameter(n_xz, samples=v0_samples)
 
-        def project(VP, v_prev):
-            w_control = VP.step.satlin(v_prev[n_s:], l=u_stack_min, u=u_stack_max)
-            return VP.add_param_stack([x_param, w_control])
+        def project(vp, v_prev):
+            w_control = vp.satlin(v_prev[n_s:], l=u_stack_min, u=u_stack_max)
+            return ft.stack([x_param, w_control])
 
         lhs_mat = build_lhs(P).toarray()
         for _ in range(K):
             z, v, residual = admm_step(
-                VP, M, q, rho, sigma, z, v, project, lhs_mat
+                vp, M, q, rho, sigma, z, v, project, lhs_mat
             )
-            VP.set_objective_norm(residual, ord)
+            maximize_residual(vp, residual, ord)
 
-        residuals = VP.solve()
-        return VP, residuals
+        residuals = vp.solve()
+        return vp, residuals
 
-    return Verifier, admm_simulation
+    return admm_simulation, ft, maximize_residual
 
 
 @app.cell
 def _(K, P, admm_simulation, np, v0_samples, x_samples, z0_samples):
-    _VP, _residuals = admm_simulation(x_samples, z0_samples, v0_samples, P, K, ord=2)
+    _vp, _residuals = admm_simulation(x_samples, z0_samples, v0_samples, P, K, ord=2)
 
     print(
         f"Summary statistics:\n"
-        f"mean: {_VP['mean']:.6e}\n"
-        f"min: {_VP['min']:.6e}\n"
-        f"max: {_VP['max']:.6e}\n"
-        f"median: {_VP['median']:.6e}\n"
+        f"mean: {_vp['mean']:.6e}\n"
+        f"min: {_vp['min']:.6e}\n"
+        f"max: {_vp['max']:.6e}\n"
+        f"median: {_vp['median']:.6e}\n"
     )
 
     simulation_residuals_admm = np.mean(_residuals, axis=0)
@@ -376,10 +360,11 @@ def _(
     IndBox,
     M,
     T,
-    Verifier,
     admm_step,
     build_lhs,
     fix_initial_x,
+    ft,
+    maximize_residual,
     n_s,
     n_u,
     n_xz,
@@ -404,50 +389,50 @@ def _(
         parameter (fixed at ``x_init`` or searched over ``[x_lb, x_ub]`` per
         ``fix_initial_x``) and the initial iterate boxes, and rolls out
         ``admm_step`` projecting onto the stacked ``IndBox``. Returns
-        ``(VP, residuals)`` with one worst-case residual per iteration; the MIP
+        ``(vp, residuals)`` with one worst-case residual per iteration; the MIP
         uses the infinity-norm objective, so the caller converts it to squared
         Euclidean units.
         """
-        VP = Verifier(method=method, **verifier_kwargs)
+        vp = ft.Verifier(method=method, **verifier_kwargs)
 
         if fix_initial_x:
-            x_param = VP.add_param(n_s, lb=x_init, ub=x_init)
+            x_param = vp.parameter(n_s, lb=x_init, ub=x_init)
         else:
-            x_param = VP.add_param(n_s, lb=x_lb, ub=x_ub)
+            x_param = vp.parameter(n_s, lb=x_lb, ub=x_ub)
 
         # l(x) <= M@z <= u(x): pin the state block to x, clip the input block.
-        l_param = VP.add_param((T-1)*n_u, lb=u_stack_min, ub=u_stack_min)
-        u_param = VP.add_param((T-1)*n_u, lb=u_stack_max, ub=u_stack_max)
-        l_x = VP.add_param_stack([x_param, l_param])
-        u_x = VP.add_param_stack([x_param, u_param])
+        l_param = vp.parameter((T-1)*n_u, lb=u_stack_min, ub=u_stack_min)
+        u_param = vp.parameter((T-1)*n_u, lb=u_stack_max, ub=u_stack_max)
+        l_x = ft.stack([x_param, l_param])
+        u_x = ft.stack([x_param, u_param])
         indbox = IndBox(l=l_x, u=u_x)
 
-        def project(VP, v_prev):
-            return VP.prox(indbox, v_prev)
+        def project(vp, v_prev):
+            return vp.prox(indbox, v_prev)
 
-        z = VP.iterate_trajectory(K + 1, collapse_expr='auto')
-        v = VP.iterate_trajectory(K + 1, collapse_expr='auto')
-        z[0] = VP.add_iterate(n_xz, lb=z0_lb, ub=z0_ub)
-        v[0] = VP.add_iterate(n_xz, lb=v0_lb, ub=v0_ub)
+        z = vp.iterate_trajectory(K + 1, collapse_expr='auto')
+        v = vp.iterate_trajectory(K + 1, collapse_expr='auto')
+        z[0] = vp.iterate(n_xz, lb=z0_lb, ub=z0_ub)
+        v[0] = vp.iterate(n_xz, lb=v0_lb, ub=v0_ub)
         lhs_mat = build_lhs(P)
 
         residuals = []
         for k in range(1, K + 1):
             z, v, residual = admm_step(
-                VP, M, q, rho, sigma, z, v, project, lhs_mat, k=k
+                vp, M, q, rho, sigma, z, v, project, lhs_mat, k=k
             )
-            VP.set_objective_norm(residual, ord)
-            residuals.append(VP.solve())
-        return VP, residuals
+            maximize_residual(vp, residual, ord)
+            residuals.append(vp.solve())
+        return vp, residuals
 
     return (admm_verification,)
 
 
 @app.cell
-def _(K, P, admm_verification, n_xz, np, solver_params):
+def _(K, P, admm_verification, n_xz, np):
     # Solve VP for optimal control example (infinity-norm objective).
     _, all_residuals_inf = admm_verification(
-        K, 'mip', P, ord=np.inf, solver='gurobi', params=solver_params,
+        K, 'mip', P, ord=np.inf, solver='gurobi',
     )
 
     # Convert the infinity-norm guarantee to squared Euclidean units.

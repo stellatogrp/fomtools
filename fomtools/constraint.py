@@ -228,8 +228,8 @@ class ComplementarityConstraint(Constraint):
     not reducible to a single ``lhs op 0`` expression, so it stores both expressions
     verbatim (it does **not** invoke ``Constraint.__init__``). It is non-convex and is
     lowered to a backend-specific encoding (big-M + binaries in the MIP canonicalizer).
-    Instances are typically created via `complementarity` or
-    ``Verifier.complementarity`` rather than by the constructor directly.
+    Instances are typically created via ``ft.complementarity`` rather than by the
+    constructor directly.
 
     Attributes
     ----------
@@ -373,8 +373,7 @@ class SumSquares:
 
     This object is not a `LinearExpression` (it is quadratic). Its only purpose
     is to build a `QuadraticConstraint` via a comparison operator, e.g.
-    ``sum_squares(expr) <= r**2``. Created via `sum_squares` or
-    ``Verifier.sum_squares``.
+    ``ft.sum_squares(expr) <= r**2``. Created via ``ft.sum_squares``.
 
     Attributes
     ----------
@@ -408,9 +407,9 @@ def sum_squares(expr: "LinearExpression") -> SumSquares:
     Compare the returned object against a nonnegative scalar to form a
     `QuadraticConstraint`::
 
-        vp.add_constraint(sum_squares(expr) <= r**2)   # ||A x + b||_2^2 <= r^2
-        vp.add_constraint(sum_squares(expr) >= r**2)   # nonconvex shell
-        vp.add_constraint(sum_squares(expr) == r**2)   # nonconvex sphere
+        vp.add_constraint(ft.sum_squares(expr) <= r**2)   # ||A x + b||_2^2 <= r^2
+        vp.add_constraint(ft.sum_squares(expr) >= r**2)   # nonconvex shell
+        vp.add_constraint(ft.sum_squares(expr) == r**2)   # nonconvex sphere
 
     Parameters
     ----------
@@ -423,3 +422,71 @@ def sum_squares(expr: "LinearExpression") -> SumSquares:
         The atom; compare it with ``<=`` / ``>=`` / ``==`` to obtain a constraint.
     """
     return SumSquares(expr)
+
+
+class Norm:
+    r"""
+    Symbolic norm atom ``\|expr\|_p`` used as an objective in `Verifier.maximize`.
+
+    A list of expressions stands for the norm of their stacked vector. Created via
+    `norm`.
+
+    Attributes
+    ----------
+    exprs : tuple[LinearExpression, ...]
+        The wrapped linear expressions.
+    p : int or float
+        The norm order, ``1`` or ``np.inf``.
+    """
+
+    def __init__(self, exprs: tuple, p: int | float):
+        self.exprs = exprs
+        self.p = p
+
+    def __repr__(self):
+        return f"<Norm, p={self.p}, dim={sum(e.ndim for e in self.exprs)}>"
+
+    def _not_a_constraint(self, other):
+        raise TypeError(
+            "ft.norm is an objective for Verifier.maximize, not a constraint. "
+            "Constrain the expression itself (expr <= u, expr >= l) or use "
+            "ft.sum_squares(expr) <= r**2."
+        )
+
+    __le__ = __ge__ = __lt__ = __gt__ = _not_a_constraint
+
+
+def norm(expr, p) -> Norm:
+    r"""
+    Build a norm atom ``\|expr\|_p`` to maximize with `Verifier.maximize`::
+
+        vp.maximize(ft.norm(z - z_prev, np.inf))
+
+    Parameters
+    ----------
+    expr : LinearExpression or Sequence[LinearExpression]
+        The expression, or a list of expressions whose stacked vector is taken.
+    p : {1, np.inf, 'inf'}
+        The norm order. For the squared two-norm, maximize ``ft.sum_squares(expr)``.
+
+    Returns
+    -------
+    Norm
+        The atom.
+
+    Raises
+    ------
+    ValueError
+        If ``p`` is not ``1`` or infinity.
+    """
+    if p == 2:
+        raise ValueError(
+            "The two-norm objective is squared: maximize ft.sum_squares(expr) instead "
+            "(with method='mip' it is an MIQP and needs solver='gurobi')."
+        )
+    if p == "inf":
+        p = np.inf
+    if p not in (1, np.inf):
+        raise ValueError(f"Unsupported norm order: {p}. Use 1 or np.inf.")
+    exprs = tuple(expr) if isinstance(expr, (list, tuple)) else (expr,)
+    return Norm(exprs, p)

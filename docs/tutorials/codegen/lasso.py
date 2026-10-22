@@ -36,7 +36,7 @@ def _():
         run_lasso_codegen_benchmark,
     )
     from fomtools.codegen import CodegenConfig, TerminationSpec
-    from fomtools.verifier import Verifier
+    import fomtools as ft
 
     timing_file = start / "_recorded_timings.json"
 
@@ -45,7 +45,7 @@ def _():
     return (
         CodegenConfig,
         TerminationSpec,
-        Verifier,
+        ft,
         examples_dir,
         ista_step,
         make_lasso_data,
@@ -120,8 +120,8 @@ def _(
     D,
     K,
     TerminationSpec,
-    Verifier,
     eta,
+    ft,
     ista_step,
     lambd,
     n,
@@ -130,15 +130,14 @@ def _(
     x_lb,
     x_ub,
 ):
-    verifier = Verifier(
+    verifier = ft.Verifier(
         method="mip",
         solver="highs",
         obbt_solver=None,
-        params={"output_flag": False},
     )
 
-    x_param = verifier.add_param(p, lb=x_lb, ub=x_ub)
-    s = verifier.add_iterate(n, lb=s0, ub=s0)
+    x_param = verifier.parameter(p, lb=x_lb, ub=x_ub)
+    s = verifier.iterate(n, lb=s0, ub=s0)
     next_s, _, _, _ = ista_step(
         verifier, D, eta, lambd, s, s, x_param, 1.0, k=1, momentum=False
     )

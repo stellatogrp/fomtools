@@ -1,5 +1,6 @@
 import numpy as np
 
+import fomtools as ft
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
 
@@ -23,9 +24,9 @@ def test_sdp_inequality_no_longer_raises(vp_sdp):
 
     Previously ``_add_inequality_constraint_impl`` was ``NotImplementedError``.
     """
-    x = vp_sdp.add_iterate(2, lb=-1, ub=1)
+    x = vp_sdp.iterate(2, lb=-1, ub=1)
     vp_sdp.add_constraint(x[0] + x[1] <= 0.5)
-    vp_sdp.set_objective_norm(x, 2)
+    vp_sdp.maximize(ft.sum_squares(x))
     result = vp_sdp.solve()
 
     assert result is not None
@@ -47,18 +48,18 @@ def test_sdp_inequality_valid_bound_vs_mip(vp_sdp):
 
     # MIP with infinity-norm objective
     vp_mip = Verifier(method="mip", solver="gurobi", obbt_solver=None, params={"OutputFlag": 0})
-    x_mip = vp_mip.add_iterate(n, lb=-1, ub=1)
+    x_mip = vp_mip.iterate(n, lb=-1, ub=1)
     vp_mip.add_constraint(x_mip[0] + x_mip[1] <= 0.5)
-    z_mip = vp_mip.step.relu(x_mip)
-    vp_mip.set_objective_norm([z_mip], np.inf)
+    z_mip = vp_mip.relu(x_mip)
+    vp_mip.maximize(ft.norm([z_mip], np.inf))
     mip_inf = vp_mip.solve()
 
     # SDP with two-norm objective (default cuts on)
     vp_sdp_local = Verifier(method="sdp", solver=sdp_solver_name, obbt_solver=None)
-    x_sdp = vp_sdp_local.add_iterate(n, lb=-1, ub=1)
+    x_sdp = vp_sdp_local.iterate(n, lb=-1, ub=1)
     vp_sdp_local.add_constraint(x_sdp[0] + x_sdp[1] <= 0.5)
-    z_sdp = vp_sdp_local.step.relu(x_sdp)
-    vp_sdp_local.set_objective_norm(z_sdp, 2)
+    z_sdp = vp_sdp_local.relu(x_sdp)
+    vp_sdp_local.maximize(ft.sum_squares(z_sdp))
     sdp_two = np.sqrt(vp_sdp_local.solve())
 
     assert np.isfinite(mip_inf)
@@ -82,9 +83,9 @@ def test_ineq_product_cut_tightens(vp_sdp):
 
     def run(flags):
         vp = Verifier(method="sdp", solver=sdp_solver_name, obbt_solver=None, **flags)
-        x = vp.add_iterate(2, lb=-1, ub=1)
+        x = vp.iterate(2, lb=-1, ub=1)
         vp.add_constraint(A @ x <= b)
-        vp.set_objective_norm([x[0] + x[1]], 2)
+        vp.maximize(ft.sum_squares([x[0] + x[1]]))
         return vp.solve()
 
     obj_off = run(CUTS_OFF)
@@ -107,9 +108,9 @@ def test_each_ineq_flag_adds_cuts(vp_sdp):
 
     def ncuts(flags):
         vp = Verifier(method="sdp", solver=sdp_solver_name, obbt_solver=None, **flags)
-        x = vp.add_iterate(2, lb=-1, ub=1)
+        x = vp.iterate(2, lb=-1, ub=1)
         vp.add_constraint(A @ x <= b)
-        vp.set_objective_norm([x[0] + x[1]], 2)
+        vp.maximize(ft.sum_squares([x[0] + x[1]]))
         vp.solve()
         return len(vp.canonicalizer._solved_copy._cut_ineq_matrices)
 
@@ -127,10 +128,10 @@ def test_cuts_track_bound_tightening(vp_sdp_obbt):
     The lazy cut rebuild must pick up tightened bounds (``_cuts_dirty`` is set on
     ``update_bounds``) and rebuild cut matrices at the current SDP dimension.
     """
-    x = vp_sdp_obbt.add_iterate(3, lb=-1, ub=1)
+    x = vp_sdp_obbt.iterate(3, lb=-1, ub=1)
     vp_sdp_obbt.add_constraint(x[0] + x[1] + x[2] <= -0.5)
-    z = vp_sdp_obbt.step.relu(x)
-    vp_sdp_obbt.set_objective_norm(z, 2)
+    z = vp_sdp_obbt.relu(x)
+    vp_sdp_obbt.maximize(ft.sum_squares(z))
     result = vp_sdp_obbt.solve()
 
     assert np.isfinite(result)

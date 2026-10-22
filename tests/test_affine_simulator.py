@@ -31,14 +31,14 @@ def test_affine_simulator():
 
     vp = Verifier(method="simulator", obbt_solver=None)
     z = [None] * (K + 1)
-    z[0] = vp.add_iterate(ndim=n, init=np.full(n, 1))
+    z[0] = vp.iterate(ndim=n, init=np.full(n, 1))
 
     rng = np.random.default_rng(0)
     q_samples = rng.uniform(low=-1.0, high=1.0, size=(10000, n))
-    q_param = vp.add_param(ndim=n, samples=q_samples)
+    q_param = vp.parameter(ndim=n, samples=q_samples)
 
     for k in range(1, K + 1):
-        z[k] = vp.step.implicit_linear(z[k - 1] - q_param, output_mat=output_mat)
+        z[k] = vp.implicit_linear(z[k - 1] - q_param, output_mat=output_mat)
 
     residuals = vp.solve()
 
@@ -91,14 +91,14 @@ def test_affine_sparse_simulator():
 
     vp = Verifier(method="simulator", obbt_solver=None)
     z = [None] * (K + 1)
-    z[0] = vp.add_iterate(ndim=n, init=np.full(n, 1))
+    z[0] = vp.iterate(ndim=n, init=np.full(n, 1))
 
     rng = np.random.default_rng(0)
     q_samples = rng.uniform(low=-1.0, high=1.0, size=(10000, n))
-    q_param = vp.add_param(ndim=n, samples=q_samples)
+    q_param = vp.parameter(ndim=n, samples=q_samples)
 
     for k in range(1, K + 1):
-        z[k] = vp.step.implicit_linear(z[k - 1] - step_size * q_param, output_mat=output_mat)
+        z[k] = vp.implicit_linear(z[k - 1] - step_size * q_param, output_mat=output_mat)
 
     residuals = vp.solve()
 

@@ -30,6 +30,23 @@ def is_mip_solver(name: str) -> bool:
     return name.lower() in _MIP_SOLVERS
 
 
+def verbosity_flag(params: dict | None) -> bool | None:
+    """
+    The log setting in ``params`` under any MIP backend's verbosity key, or ``None``.
+
+    Keys match case-insensitively, as Gurobi parameter names do. Used to carry the
+    main solver's setting over to an OBBT solver of a different backend.
+    """
+    keys = set()
+    for loader in _MIP_SOLVERS.values():
+        try:
+            keys.add(loader().VERBOSITY_KEY.lower())
+        except ImportError:
+            pass
+    flags = [v for k, v in (params or {}).items() if k.lower() in keys]
+    return bool(flags[-1]) if flags else None
+
+
 def solver_class(name: str) -> type[Solver] | None:
     """
     The MIP solver class for ``name``, or ``None`` for an SDP or unknown backend.

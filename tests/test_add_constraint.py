@@ -1,5 +1,6 @@
 import numpy as np
 
+import fomtools as ft
 from fomtools.verifier import Verifier
 from tests.conftest import TEST_EPS
 
@@ -21,17 +22,17 @@ def test_add_constraint_equality(vp):
     n = 3
 
     # Create two iterates
-    x = vp.add_iterate(n, lb=0, ub=10)
-    y = vp.add_iterate(n, lb=0, ub=10)
+    x = vp.iterate(n, lb=0, ub=10)
+    y = vp.iterate(n, lb=0, ub=10)
 
     # Add equality constraint: x[0] == y[0]
     vp.add_constraint(x[0] == y[0])
 
     # Add a ReLU step to make the problem non-trivial
-    z = vp.step.relu(x + y)
+    z = vp.relu(x + y)
 
     # Set objective and solve
-    vp.set_objective_norm([z], np.inf)
+    vp.maximize(ft.norm([z], np.inf))
     result = vp.solve()
 
     # Verify the problem is solvable
@@ -39,8 +40,8 @@ def test_add_constraint_equality(vp):
     assert np.isfinite(result)
 
     # Verify the constraint is respected
-    x_val = vp.get_solution_value(x)
-    y_val = vp.get_solution_value(y)
+    x_val = x.value
+    y_val = y.value
     assert np.abs(x_val[0] - y_val[0]) < TEST_EPS, "Equality constraint not satisfied"
 
 
@@ -57,18 +58,18 @@ def test_add_constraint_inequality(vp):
 
     # Unconstrained baseline
     vp_unc = Verifier(method="mip", solver=mip_solver_name, obbt_solver=None)
-    x_unc = vp_unc.add_iterate(n, lb=0, ub=10)
-    z_unc = vp_unc.step.relu(x_unc - 3)
-    vp_unc.set_objective_norm([z_unc], np.inf)
+    x_unc = vp_unc.iterate(n, lb=0, ub=10)
+    z_unc = vp_unc.relu(x_unc - 3)
+    vp_unc.maximize(ft.norm([z_unc], np.inf))
     result_unc = vp_unc.solve()
 
     # Constrained: x[i] <= 5 for all i
     vp_con = Verifier(method="mip", solver=mip_solver_name, obbt_solver=None)
-    x_con = vp_con.add_iterate(n, lb=0, ub=10)
+    x_con = vp_con.iterate(n, lb=0, ub=10)
     for i in range(n):
         vp_con.add_constraint(x_con[i] <= 5)
-    z_con = vp_con.step.relu(x_con - 3)
-    vp_con.set_objective_norm([z_con], np.inf)
+    z_con = vp_con.relu(x_con - 3)
+    vp_con.maximize(ft.norm([z_con], np.inf))
     result_con = vp_con.solve()
 
     assert np.isfinite(result_unc)
@@ -88,17 +89,17 @@ def test_add_constraint_tightens_bounds(vp):
     n = 2
 
     # Create a parameter and iterate
-    p = vp.add_param(n, lb=0, ub=10)
-    x = vp.add_iterate(n, lb=-100, ub=100)
+    p = vp.parameter(n, lb=0, ub=10)
+    x = vp.iterate(n, lb=-100, ub=100)
 
     # Add constraint that restricts x: x == p (so x should be in [0, 10])
     vp.add_constraint(x == p)
 
     # Add a ReLU step
-    z = vp.step.relu(x)
+    z = vp.relu(x)
 
     # Set objective and solve
-    vp.set_objective_norm([z], np.inf)
+    vp.maximize(ft.norm([z], np.inf))
     result = vp.solve()
 
     # Verify the problem is solvable
@@ -125,17 +126,17 @@ def test_affine_step_solves(vp):
     output_mat = spa.csc_matrix(M)
 
     # Create parameter and iterate
-    p = vp.add_param(n, lb=1, ub=2)
-    z0 = vp.add_iterate(n, lb=0, ub=0)
+    p = vp.parameter(n, lb=1, ub=2)
+    z0 = vp.iterate(n, lb=0, ub=0)
 
     # Apply implicit_linear (Affine) step
-    z1 = vp.step.implicit_linear(z0 + p, output_mat=output_mat.todense())
+    z1 = vp.implicit_linear(z0 + p, output_mat=output_mat.todense())
 
     # Add another step
-    z2 = vp.step.relu(z1)
+    z2 = vp.relu(z1)
 
     # Set objective and solve
-    vp.set_objective_norm([z2], np.inf)
+    vp.maximize(ft.norm([z2], np.inf))
     result = vp.solve()
 
     # Verify the problem is solvable
@@ -160,27 +161,27 @@ def test_add_constraint_equality_sdp_mip_comparison(vp, vp_sdp):
     # MIP with infinity-norm objective
     vp_mip = Verifier(method="mip", solver=mip_solver_name, obbt_solver=None)
 
-    x_mip = vp_mip.add_iterate(n, lb=0, ub=10)
-    y_mip = vp_mip.add_iterate(n, lb=0, ub=10)
+    x_mip = vp_mip.iterate(n, lb=0, ub=10)
+    y_mip = vp_mip.iterate(n, lb=0, ub=10)
 
     # Add equality constraint: x[0] == y[0]
     vp_mip.add_constraint(x_mip[0] == y_mip[0])
 
-    z_mip = vp_mip.step.relu(x_mip + y_mip)
-    vp_mip.set_objective_norm([z_mip], np.inf)
+    z_mip = vp_mip.relu(x_mip + y_mip)
+    vp_mip.maximize(ft.norm([z_mip], np.inf))
     mip_inf_norm = vp_mip.solve()
 
     # SDP with two-norm objective
     vp_sdp_local = Verifier(method="sdp", solver=sdp_solver_name, obbt_solver=None)
 
-    x_sdp = vp_sdp_local.add_iterate(n, lb=0, ub=10)
-    y_sdp = vp_sdp_local.add_iterate(n, lb=0, ub=10)
+    x_sdp = vp_sdp_local.iterate(n, lb=0, ub=10)
+    y_sdp = vp_sdp_local.iterate(n, lb=0, ub=10)
 
     # Add equality constraint: x[0] == y[0]
     vp_sdp_local.add_constraint(x_sdp[0] == y_sdp[0])
 
-    z_sdp = vp_sdp_local.step.relu(x_sdp + y_sdp)
-    vp_sdp_local.set_objective_norm(z_sdp, 2)
+    z_sdp = vp_sdp_local.relu(x_sdp + y_sdp)
+    vp_sdp_local.maximize(ft.sum_squares(z_sdp))
     sdp_two_norm_sq = vp_sdp_local.solve()
     sdp_two_norm = np.sqrt(sdp_two_norm_sq)
 

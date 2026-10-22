@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 import scipy.sparse as spa
 
+import fomtools as ft
 from fomtools.canonicalizers.sdp import SDP
 from fomtools.steps import Affine
 from fomtools.utils.math_utils import repair_crossed_bounds
@@ -43,11 +44,11 @@ def build_relu_chain(obbt, solver, *, method="mip", K=3, seed=1, n=3, m=3, t=0.1
     G = t * A.T
     params = mip_params(solver) if method == "mip" else None
     v = Verifier(method=method, solver=solver, obbt_solver=obbt, params=params)
-    z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
-    b = v.add_param(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
+    z = v.iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
+    b = v.parameter(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
     iterates = [z]
     for _ in range(K):
-        z = v.step.relu(arg=W @ z + G @ b)
+        z = v.relu(arg=W @ z + G @ b)
         iterates.append(z)
     return v, iterates
 
@@ -61,11 +62,11 @@ def build_satlin_chain(obbt, solver, *, method="mip", K=3, seed=2, n=3, m=3, t=0
     u = 0.3 * np.ones(n)
     params = mip_params(solver) if method == "mip" else None
     v = Verifier(method=method, solver=solver, obbt_solver=obbt, params=params)
-    z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
-    b = v.add_param(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
+    z = v.iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
+    b = v.parameter(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
     iterates = [z]
     for _ in range(K):
-        z = v.step.satlin(arg=W @ z + G @ b, l=l, u=u)
+        z = v.satlin(arg=W @ z + G @ b, l=l, u=u)
         iterates.append(z)
     return v, iterates
 
@@ -79,7 +80,7 @@ BUILDERS = {
 
 def _mip_optimum(v, iterates):
     """Maximize the inf-norm of the last step residual and solve (MILP)."""
-    v.set_objective_norm(iterates[-1] - iterates[-2], np.inf)
+    v.maximize(ft.norm(iterates[-1] - iterates[-2], np.inf))
     return v.solve()
 
 
@@ -136,8 +137,8 @@ def test_obbt_preserves_mip_optimum_with_convex_hull_cuts(solver, op):
     v_no, it_no = build(obbt=None, solver=solver)
     v_ob, it_ob = build(obbt=solver, solver=solver)
 
-    v_no.set_objective_norm(it_no[-1] - it_no[-2], np.inf)
-    v_ob.set_objective_norm(it_ob[-1] - it_ob[-2], np.inf)
+    v_no.maximize(ft.norm(it_no[-1] - it_no[-2], np.inf))
+    v_ob.maximize(ft.norm(it_ob[-1] - it_ob[-2], np.inf))
     opt_no = v_no.solve(convex_hull_cuts=True)
     opt_ob = v_ob.solve(convex_hull_cuts=True)
     assert abs(opt_ob - opt_no) <= 1e-4
@@ -153,8 +154,8 @@ def test_obbt_decreases_or_equal_sdp_optimum(sdp_solver):
     v_no, it_no = build_lasso_ista(obbt=None, solver=sdp_solver, method="sdp", K=2)
     v_ob, it_ob = build_lasso_ista(obbt="highs", solver=sdp_solver, method="sdp", K=2)
 
-    v_no.set_objective_norm(it_no[-1] - it_no[-2], 2)
-    v_ob.set_objective_norm(it_ob[-1] - it_ob[-2], 2)
+    v_no.maximize(ft.sum_squares(it_no[-1] - it_no[-2]))
+    v_ob.maximize(ft.sum_squares(it_ob[-1] - it_ob[-2]))
     opt_no = v_no.solve()
     opt_ob = v_ob.solve()
 
@@ -254,7 +255,7 @@ def test_affine_obbt_input_tightening(solver):
     n = 3
     W = np.random.normal(size=(n, n))
     v = Verifier(solver=solver, obbt_solver=solver, params=mip_params(solver))
-    z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
+    z = v.iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
     y = v.run_step(z, Affine, weight=W)
 
     affine_step = v.steps[-1]
@@ -269,7 +270,7 @@ def test_affine_obbt_input_tightening(solver):
 
     # The affine equality is in the OBBT LP: a downstream ReLU's input can be
     # tightened against it (otherwise OBBT would be a no-op).
-    v.step.relu(arg=y)
+    v.relu(arg=y)
     relu_step = v.steps[-1]
     relu_lb, relu_ub = relu_step.arg.bound_propagation()
     assert np.all(relu_step.lb >= relu_lb - TEST_EPS)
@@ -298,7 +299,7 @@ def test_affine_obbt_tightens_when_constrained(solver):
     W1 = np.random.normal(size=(n, n))
     W2 = np.random.normal(size=(n, n))
     v = Verifier(solver=solver, obbt_solver=solver, params=mip_params(solver))
-    z = v.add_iterate(n, lb=-1.0 * np.ones(n), ub=1.0 * np.ones(n))
+    z = v.iterate(n, lb=-1.0 * np.ones(n), ub=1.0 * np.ones(n))
     y = v.run_step(z, Affine, weight=W1)  # Affine_1 equality into OBBT LP
     _ = v.run_step(y, Affine, weight=W2)  # Affine_2 input is what we check
 
@@ -337,12 +338,12 @@ def build_relu_linsolve_chain(
     M = np.eye(n) if identity else np.eye(n) + t * A.T @ A
     params = mip_params(solver) if method == "mip" else None
     v = Verifier(method=method, solver=solver, obbt_solver=obbt, params=params, **kwargs)
-    z = v.add_iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
-    b = v.add_param(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
+    z = v.iterate(n, lb=-0.5 * np.ones(n), ub=0.5 * np.ones(n))
+    b = v.parameter(m, lb=-1.0 * np.ones(m), ub=1.0 * np.ones(m))
     iterates = [z]
     for _ in range(K):
-        y = v.step.relu(arg=W @ z + G @ b)
-        z = v.step.implicit_linear(arg=y - z, output_mat=M)
+        y = v.relu(arg=W @ z + G @ b)
+        z = v.implicit_linear(arg=y - z, output_mat=M)
         iterates.append(z)
     return v, iterates
 
@@ -518,12 +519,12 @@ def test_obbt_tightens_sdp_with_relu_cuts(sdp_solver):
     # so it always runs on native Clarabel.
     for obbt, solver in [(None, "clarabel"), ("highs", sdp_solver)]:
         v, it = build_relu_linsolve_chain(obbt, solver, method="sdp", **inst, **cuts)
-        v.set_objective_norm(it[-1] - it[-2], 2)
+        v.maximize(ft.sum_squares(it[-1] - it[-2]))
         opts.append(v.solve())
     opt_no, opt_ob = opts
 
     v_mip, it_mip = build_relu_linsolve_chain("gurobi", "gurobi", **inst)
-    v_mip.set_objective_norm(it_mip[-1] - it_mip[-2], 2)
+    v_mip.maximize(ft.sum_squares(it_mip[-1] - it_mip[-2]))
     opt_mip = v_mip.solve()
 
     assert opt_ob < opt_no - 1.0
@@ -565,6 +566,9 @@ def test_obbt_params_override():
 
 
 def test_obbt_params_from_highs_key():
-    assert Verifier._obbt_params_from({"output_flag": False}, "highs") == {"output_flag": False}
-    assert Verifier._obbt_params_from({"OutputFlag": 0}, "highs") is None
-    assert Verifier._obbt_params_from(None, "gurobi") is None
+    assert Verifier._obbt_params_from({"output_flag": True}, "highs") == {"output_flag": True}
+    # The other backend's verbosity key is translated; without any, ``verbose`` applies.
+    assert Verifier._obbt_params_from({"OutputFlag": 1}, "highs") == {"output_flag": True}
+    assert Verifier._obbt_params_from({"TimeLimit": 5}, "highs") == {"output_flag": False}
+    assert Verifier._obbt_params_from(None, "gurobi") == {"OutputFlag": False}
+    assert Verifier._obbt_params_from(None, "highs", verbose=True) == {"output_flag": True}

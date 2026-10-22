@@ -22,7 +22,7 @@ def test_relu_simulator():
     vp = Verifier(method="simulator", obbt_solver=None)
 
     z = [None] * (K + 1)
-    z[0] = vp.add_iterate(ndim=n, lb=-10, ub=10, init=np.full(n, 1))
+    z[0] = vp.iterate(ndim=n, lb=-10, ub=10, init=np.full(n, 1))
 
     P = np.random.normal(size=(n, n))
     P = P @ P.T
@@ -31,10 +31,10 @@ def test_relu_simulator():
     rng = np.random.default_rng(0)
 
     q_samples = rng.uniform(low=-1.0, high=1.0, size=(10000, n))
-    q_param = vp.add_param(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
+    q_param = vp.parameter(ndim=n, lb=-1.0, ub=1.0, samples=q_samples)
 
     for k in range(1, K + 1):
-        z[k] = vp.step.relu(z[k - 1] - step_size * (P @ z[k - 1] + q_param))
+        z[k] = vp.relu(z[k - 1] - step_size * (P @ z[k - 1] + q_param))
 
     residuals = vp.solve()
     assert vp["n_samples"] == len(q_samples)

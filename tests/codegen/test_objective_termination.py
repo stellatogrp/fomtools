@@ -2,7 +2,7 @@
 
 The generated solver stops at the first checked iteration ``k`` (every
 ``check_termination``-th, and the last) with ``r^k <= tol``, where ``r^k`` is the
-objective set with ``Verifier.set_objective_norm``. These tests cover the
+objective set with ``Verifier.maximize``. These tests cover the
 configuration, the mapping of the objective onto the loop's vectors (and its
 errors), the oracle against brute force, the spec round trip, the emitted
 artifacts, and compiled end-to-end runs on the rolled, scheduled and unrolled
@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import fomtools as ft
 from fomtools.codegen import StubAgentDriver, generate_code
 from fomtools.codegen import spec as spec_mod
 from fomtools.codegen.agent.prompts import code_optimization_instructions, translation_instructions
@@ -111,10 +112,10 @@ def build_nnls(*, K=3, seed=1, n=4, m=6):
     b0 = rng.normal(size=m)
     t = 1.0 / np.linalg.norm(A, 2) ** 2
     v = Verifier(method="simulator", obbt_solver=None)
-    b = v.add_param(m, lb=b0 - 0.5, ub=b0 + 0.5)
-    xs = [v.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))]
+    b = v.parameter(m, lb=b0 - 0.5, ub=b0 + 0.5)
+    xs = [v.iterate(n, lb=np.zeros(n), ub=np.zeros(n))]
     for _ in range(K):
-        xs.append(v.step.relu(xs[-1] - t * (A.T @ (A @ xs[-1] - b))))
+        xs.append(v.relu(xs[-1] - t * (A.T @ (A @ xs[-1] - b))))
     return dict(verifier=v, iterates=xs, param=b, data=dict(A=A, b0=b0, t=t, n=n, m=m))
 
 
@@ -122,7 +123,7 @@ def nnls_kkt(case):
     """Set the KKT-type objective [x_K - x_{K-1}; max(-A'(A x_K - b), 0)]."""
     v, xs, b = case["verifier"], case["iterates"], case["param"]
     A = case["data"]["A"]
-    dual_infeas = v.step.relu(-1.0 * (A.T @ (A @ xs[-1] - b)))
+    dual_infeas = v.relu(-1.0 * (A.T @ (A @ xs[-1] - b)))
     return xs[-1] - xs[-2], dual_infeas
 
 
@@ -166,15 +167,15 @@ def test_check_iterations_include_the_last():
 
 def test_verifier_records_the_objective():
     v = Verifier(method="simulator", obbt_solver=None)
-    x = v.add_iterate(2, lb=0, ub=1)
+    x = v.iterate(2, lb=0, ub=1)
     assert v.objective is None
     for ord, label in ((1, "1"), (2, "2"), (np.inf, "inf"), ("inf", "inf")):
-        v.set_objective_norm(x, ord)
+        v.maximize(ft.sum_squares(x) if ord == 2 else ft.norm(x, ord))
         exprs, recorded = v.objective
         assert exprs == (x,) and norm_label(recorded) == label
-    v.set_objective_norm([x, 2 * x], 2)
+    v.maximize(ft.sum_squares([x, 2 * x]))
     assert len(v.objective[0]) == 2
-    v.set_zero_objective()
+    v.maximize(0)
     assert v.objective is None
 
 
@@ -207,7 +208,7 @@ def test_objective_at_the_last_iteration_needs_the_tape():
 def test_objective_on_the_extracted_iteration_needs_no_tape():
     case = build_ista(K=3)
     its = case["iterates"]
-    case["verifier"].set_objective_norm(its[1] - its[0], 1)
+    case["verifier"].maximize(ft.norm(its[1] - its[0], 1))
     ir = extract_ir(case["verifier"], case["next_state"], config=objective_config())
     assert ir.objective.norm == "1"
     sources = {t.source for t in ir.objective.blocks[0].linear_op.terms}
@@ -238,7 +239,7 @@ def test_scheduled_objective_reads_the_schedule():
 def test_kkt_residual_with_a_relu_block():
     case = build_nnls()
     linear, relu = nnls_kkt(case)
-    case["verifier"].set_objective_norm([linear, relu], np.inf)
+    case["verifier"].maximize(ft.norm([linear, relu], np.inf))
     ir = extract_fom_ir(
         case["verifier"],
         case["iterates"][1],
@@ -260,7 +261,7 @@ def test_mixed_rows_in_one_expression_and_scaled_relu():
 
     case = build_nnls()
     linear, relu = nnls_kkt(case)
-    case["verifier"].set_objective_norm(stack([linear, -2.0 * relu]), 1)
+    case["verifier"].maximize(ft.norm(stack([linear, -2.0 * relu]), 1))
     ir = extract_fom_ir(
         case["verifier"],
         case["iterates"][1],
@@ -296,8 +297,8 @@ def test_mixed_rows_in_one_expression_and_scaled_relu():
 def test_objective_rows_the_loop_cannot_evaluate(objective, match):
     case = build_nnls()
     _, relu = nnls_kkt(case)
-    relu2 = case["verifier"].step.relu(case["iterates"][-1] - 1.0)
-    case["verifier"].set_objective_norm(objective(case["iterates"], relu, relu2), np.inf)
+    relu2 = case["verifier"].relu(case["iterates"][-1] - 1.0)
+    case["verifier"].maximize(ft.norm(objective(case["iterates"], relu, relu2), np.inf))
     with pytest.raises(ObjectiveExtractionError, match=match):
         extract_ir(
             case["verifier"],
@@ -310,8 +311,8 @@ def test_objective_rows_the_loop_cannot_evaluate(objective, match):
 def test_nested_relu_is_rejected():
     case = build_nnls()
     _, relu = nnls_kkt(case)
-    nested = case["verifier"].step.relu(relu - 1.0)
-    case["verifier"].set_objective_norm(nested, np.inf)
+    nested = case["verifier"].relu(relu - 1.0)
+    case["verifier"].maximize(ft.norm(nested, np.inf))
     with pytest.raises(ObjectiveExtractionError, match="nested"):
         extract_ir(
             case["verifier"],
@@ -324,7 +325,7 @@ def test_nested_relu_is_rejected():
 def test_other_steps_outside_the_loop_are_rejected():
     case = build_ista(K=3)
     v, its = case["verifier"], case["iterates"]
-    v.set_objective_norm(v.step.soft_threshold(its[-1], lambd=0.1), np.inf)
+    v.maximize(ft.norm(v.soft_threshold(its[-1], lambd=0.1), np.inf))
     with pytest.raises(ObjectiveExtractionError, match="does not carry"):
         extract_fom_ir(v, case["next_state"], config=objective_config(), **gate(case))
 
@@ -332,8 +333,8 @@ def test_other_steps_outside_the_loop_are_rejected():
 def test_parameters_the_iteration_does_not_read_are_rejected():
     case = build_ista(K=3)
     v, its = case["verifier"], case["iterates"]
-    extra = v.add_param(case["data"]["n"], lb=-1.0, ub=1.0)
-    v.set_objective_norm(its[-1] - its[-2] + extra, np.inf)
+    extra = v.parameter(case["data"]["n"], lb=-1.0, ub=1.0)
+    v.maximize(ft.norm(its[-1] - its[-2] + extra, np.inf))
     with pytest.raises(ObjectiveExtractionError, match="parameter that the iteration does not"):
         extract_fom_ir(v, case["next_state"], config=objective_config(), **gate(case))
 
@@ -358,7 +359,7 @@ def test_accumulated_iterate_maps_on_the_extracted_iteration_through_temporaries
     step outputs; written at the last recorded iteration it cannot be read."""
     case = build_dr(K=3)
     z = case["iterates"]
-    case["verifier"].set_objective_norm(z[1] - z[0], np.inf)
+    case["verifier"].maximize(ft.norm(z[1] - z[0], np.inf))
     ir = extract_ir(case["verifier"], case["next_state"], config=objective_config())
     assert ir.objective_inputs() == ["tmp:t0", "tmp:t1"]
 
@@ -373,7 +374,7 @@ def test_accumulated_iterate_maps_on_the_extracted_iteration_through_temporaries
 
     late = build_dr(K=3)
     zz = late["iterates"]
-    late["verifier"].set_objective_norm(zz[-1] - zz[-2], np.inf)
+    late["verifier"].maximize(ft.norm(zz[-1] - zz[-2], np.inf))
     with pytest.raises(ObjectiveExtractionError, match="iterate_trajectory"):
         extract_fom_ir(
             late["verifier"], late["next_state"], config=objective_config(), **gate(late)
@@ -384,7 +385,7 @@ def test_trajectory_iterates_map_at_the_last_iteration():
     from tests.codegen.conftest import build_dr_loop
 
     v, z, q = build_dr_loop(steps=6)
-    v.set_objective_norm(z[-1] - z[-2], np.inf)
+    v.maximize(ft.norm(z[-1] - z[-2], np.inf))
     ir = extract_unrolled_ir(v, z, config=objective_config(tol=1e-4))
     assert not ir.unrolled and ir.termination.max_iters == 6
     assert ir.termination.uses_objective
@@ -414,7 +415,9 @@ def test_oracle_stop_matches_brute_force_ista(check, shift):
 def test_oracle_stop_matches_brute_force_kkt(norm):
     case = build_nnls()
     linear, relu = nnls_kkt(case)
-    case["verifier"].set_objective_norm([linear, relu], {"inf": np.inf, "1": 1, "2": 2}[norm])
+    exprs = [linear, relu]
+    objective = ft.sum_squares(ft.stack(exprs)) if norm == "2" else ft.norm(exprs, float(norm))
+    case["verifier"].maximize(objective)
     ir = extract_fom_ir(
         case["verifier"],
         case["iterates"][1],
@@ -459,7 +462,7 @@ def test_oracle_stop_matches_brute_force_scheduled():
 def test_unrolled_objective_is_evaluated_once_at_the_end():
     ex = fista_example()
     v, its = ex["verifier"], ex["iterates"]
-    v.set_objective_norm(its[-1] - its[-2], np.inf)
+    v.maximize(ft.norm(its[-1] - its[-2], np.inf))
     ir = extract_unrolled_ir(v, its, config=objective_config(tol=1e-3))
     assert ir.unrolled and ir.termination.max_iters == 1
     assert ir.objective_inputs() == ["tmp:t4"]
@@ -518,7 +521,7 @@ def test_spec_round_trip_keeps_the_objective(tmp_path):
 
 def test_spec_round_trip_relu_block(tmp_path):
     case = build_nnls()
-    case["verifier"].set_objective_norm(list(nnls_kkt(case)), 2)
+    case["verifier"].maximize(ft.sum_squares(list(nnls_kkt(case))))
     ir = extract_fom_ir(
         case["verifier"],
         case["iterates"][1],
@@ -565,7 +568,7 @@ def test_emitted_artifacts(tmp_path):
 
 def test_objective_source_is_division_and_allocation_free():
     case = build_nnls()
-    case["verifier"].set_objective_norm(list(nnls_kkt(case)), 2)
+    case["verifier"].maximize(ft.sum_squares(list(nnls_kkt(case))))
     config = objective_config()
     ir = extract_fom_ir(
         case["verifier"],
@@ -604,7 +607,7 @@ def _dr_objective_ir(config):
     """Douglas-Rachford (a factorized affine solve) stopping on its residual."""
     case = build_dr(K=3)
     z = case["iterates"]
-    case["verifier"].set_objective_norm(z[1] - z[0], np.inf)
+    case["verifier"].maximize(ft.norm(z[1] - z[0], np.inf))
     return extract_ir(case["verifier"], case["next_state"], config=config)
 
 
@@ -783,7 +786,7 @@ def test_scheduled_objective_verifies(tmp_path, requires_compiler, version, back
 def test_unrolled_objective_verifies(tmp_path, requires_compiler, version, backend):
     ex = fista_example()
     v, its = ex["verifier"], ex["iterates"]
-    v.set_objective_norm(its[-1] - its[-2], np.inf)
+    v.maximize(ft.norm(its[-1] - its[-2], np.inf))
     result = generate_code(
         v,
         None,
@@ -802,7 +805,7 @@ def test_tape_that_rolls_stops_within_the_recorded_horizon(tmp_path, requires_co
     recorded horizon as max_iter: the certified worst-case stopping time."""
     case = build_ista(K=30)
     its = case["iterates"]
-    case["verifier"].set_objective_norm(its[-1] - its[-2], np.inf)
+    case["verifier"].maximize(ft.norm(its[-1] - its[-2], np.inf))
     config = objective_config(tol=1e-6, check_termination=4)
     result = generate_code(
         case["verifier"],
@@ -938,7 +941,7 @@ def _hw_cases(backend):
     large = build_ista_objective(**hw)
     large_ista = build_ista(K=3, n=300, m=600, seed=3)
     its = large_ista["iterates"]
-    large_ista["verifier"].set_objective_norm(its[-1] - its[-2], np.inf)
+    large_ista["verifier"].maximize(ft.norm(its[-1] - its[-2], np.inf))
     large.update(
         {k: large_ista[k] for k in ("verifier", "next_state", "iterates", "param", "data")}
     )

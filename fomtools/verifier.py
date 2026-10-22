@@ -1,6 +1,7 @@
 import logging
 import time
 import warnings
+from contextlib import contextmanager
 from typing import List, Sequence
 
 import numpy as np
@@ -12,6 +13,7 @@ from fomtools.canonicalizers.simulator import Simulator
 from fomtools.constraint import (
     ComplementarityConstraint,
     Constraint,
+    Norm,
     SumSquares,
     complementarity,
     is_binary_free,
@@ -21,7 +23,7 @@ from fomtools.linearexpression import LinearExpression, stack
 from fomtools.nn.layers import LinearLayer, ReLULayer
 from fomtools.proxable_functions import ProxableFunction
 from fomtools.sets import Set
-from fomtools.solvers.factory import is_mip_solver, solver_class
+from fomtools.solvers.factory import is_mip_solver, solver_class, verbosity_flag
 from fomtools.stepdecomposers import MIPStepDecomposer, SDPStepDecomposer
 from fomtools.stepdecomposers.simulator_step_decomposer import SimulatorStepDecomposer
 from fomtools.steps import (
@@ -35,6 +37,12 @@ from fomtools.steps import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _deprecated(old: str, new: str) -> None:
+    """Warn that ``old`` is deprecated, pointing at the user's call two frames up."""
+    warnings.warn(f"{old} is deprecated; use {new}.", DeprecationWarning, stacklevel=3)
+
 
 STEP_CLASSES = {
     "implicit_linear": Affine,
@@ -63,6 +71,8 @@ class Verifier(object):
         cross_cut=False,
         subgrad_mono_cut=False,
         obbt_params=None,
+        verbose=False,
+        tighten_residuals=True,
     ):
         """
         Initialize a Verifier instance.
@@ -83,7 +93,8 @@ class Verifier(object):
         params : dict, optional
             Solver-specific parameters forwarded to the canonicalizer. Only the
             verbosity key (``OutputFlag`` for Gurobi, ``output_flag`` for HiGHS)
-            is inherited by the OBBT solver, unless ``obbt_params`` is given.
+            is inherited by the OBBT solver, unless ``obbt_params`` is given. A
+            verbosity key here overrides ``verbose``.
         rlt_cuts : bool, default False
             SDP-only: when True, add RLT cuts between cone-mate index
             pairs (paper §4.5 eq 18). No effect for ``method != "sdp"``.
@@ -126,8 +137,17 @@ class Verifier(object):
             ``cross_cut``; on soft-thresholding it is a distinct coupling. No effect
             for ``method != "sdp"``.
         obbt_params : dict, optional
-            Parameters passed verbatim to the OBBT solver. When ``None``, the
-            OBBT solver inherits only the verbosity key from ``params``.
+            Parameters passed verbatim to the OBBT solver. The OBBT solver also
+            inherits the verbosity setting of ``params`` (translated between
+            backends) or ``verbose``, unless ``obbt_params`` sets its own.
+        verbose : bool, default False
+            Print the solver logs, for the main solves and for the OBBT LPs.
+        tighten_residuals : bool, default True
+            MIP only. After each solve whose objective is ``ft.norm(a - b, np.inf)``,
+            chain the certified bound with the earlier ones, ``||a - z^0||_inf <= sum
+            of the bounds from z^0 to a``, and tighten ``a`` with it (the triangle
+            inequality behind `post_process`). Later steps then start from tighter
+            boxes. The worst case is unchanged; only the MIPs get easier.
         """
         self.theory_func = theory_func
         self.method = method.lower()
@@ -141,7 +161,19 @@ class Verifier(object):
         # for none / the zero objective. Code generation reads it to stop the
         # generated solver on the verified metric (TerminationKind.OBJECTIVE).
         self.objective: tuple[tuple[LinearExpression, ...], int | float] | None = None
+        # Successive-residual bounds for ``tighten_residuals``: ``(a, b)`` of the current
+        # objective ``||a - b||_inf``, and, per expression counter, ``(root, radius)``
+        # with a certified ``||expr - root||_inf <= radius``.
+        self.tighten_residuals = tighten_residuals and self.method == "mip"
+        self._residual = None
+        self._residual_chain = {}
 
+        # An explicit verbosity key in ``params`` (any case, as in Gurobi) overrides ``verbose``.
+        option = self._verbosity_option(method, solver, verbose)
+        if any(k.lower() == key.lower() for k in params or {} for key in option):
+            option = {}
+        params = {**option, **(params or {})} or None
+        self._solver_name = solver
         self.canonicalizer = self._get_canonicalizer(
             method,
             params,
@@ -159,8 +191,10 @@ class Verifier(object):
         )
         if obbt_solver == "auto":
             obbt_solver = solver if is_mip_solver(solver) else None
-        if obbt_solver and obbt_params is None:
-            obbt_params = self._obbt_params_from(params, obbt_solver)
+        if obbt_solver:
+            # Explicit ``obbt_params`` keys win over the inherited verbosity.
+            inherited = self._obbt_params_from(params, obbt_solver, verbose) or {}
+            obbt_params = {**inherited, **(obbt_params or {})} or None
         self.obbt_handler = (
             OBBTHandler(solver=obbt_solver, solver_params=obbt_params) if obbt_solver else None
         )
@@ -313,15 +347,42 @@ class Verifier(object):
                 raise ValueError(f"Method must be 'mip', 'sdp' or 'simulator', got {method}")
 
     @staticmethod
-    def _obbt_params_from(params: dict | None, obbt_solver: str) -> dict | None:
+    def _verbosity_option(method: str, solver: str, verbose: bool, explicit: bool = False) -> dict:
+        """
+        The native solver option that turns the log on or off, if the backend has one.
+
+        Clarabel and CVXPY are silent by default, so for the constructor (``explicit``
+        False) their option is only added to turn the log on; a solve-time ``verbose``
+        always sets it. CuClarabel takes no options.
+        """
+        if method.lower() == "mip":
+            cls = solver_class(solver)
+            if cls is not None and cls.VERBOSITY_KEY is not None:
+                return {cls.VERBOSITY_KEY: verbose}
+        elif method.lower() == "sdp" and (verbose or explicit) and solver.lower() != "cuclarabel":
+            return {"verbose": verbose}
+        return {}
+
+    @staticmethod
+    def _obbt_params_from(
+        params: dict | None, obbt_solver: str, verbose: bool = False
+    ) -> dict | None:
         """
         Extract the verbosity setting from the main solver ``params`` for the OBBT solver.
 
         The rest of ``params`` (time limits, gaps, SDP-solver options) is not forwarded:
-        it targets the main solve and may be invalid for the OBBT backend.
+        it targets the main solve and may be invalid for the OBBT backend. Without a
+        verbosity key in ``params``, the OBBT solver follows ``verbose``.
         """
         cls = solver_class(obbt_solver)
-        return cls.verbosity_params(params) if cls is not None else None
+        if cls is None:
+            return None
+        own = cls.verbosity_params(params)
+        if own:
+            return own
+        # Translate the other MIP backend's verbosity key.
+        flag = verbosity_flag(params)
+        return {cls.VERBOSITY_KEY: verbose if flag is None else flag}
 
     @staticmethod
     def _get_step_decomposer(method: str):
@@ -414,17 +475,18 @@ class Verifier(object):
 
         """
         self.canonicalizer.add_var(var, **kwargs)
+        var._verifier = self
         if self.use_obbt_handler:
             self.obbt_handler.add_var(var)
 
-    def add_iterate(
+    def iterate(
         self, ndim: int, lb: float = -np.inf, ub: float = np.inf, **kwargs
     ) -> LinearExpression:
         """
-        Create and register an iterate to the Problem instance. This
-        method creates a new `LinearExpression` of dimension `ndim`
-        and registers it with the underlying canonicalizer and OBBT
-        Handler instance.
+        Create an iterate, typically the initial iterate, in the box ``[lb, ub]``.
+
+        Equal bounds fix the iterate. The iterate is a new `LinearExpression` of
+        dimension ``ndim``, registered with the canonicalizer and the OBBT handler.
 
         Parameters
         ----------
@@ -454,6 +516,11 @@ class Verifier(object):
             self.canonicalizer.record_iterate(iterate)
         return iterate
 
+    def add_iterate(self, *args, **kwargs) -> LinearExpression:
+        """Deprecated alias of `iterate`."""
+        _deprecated("add_iterate", "Verifier.iterate")
+        return self.iterate(*args, **kwargs)
+
     def _add_aux_iterate(self, ndim, lb=-np.inf, ub=np.inf, **kwargs):
         """Register a leaf without making an internal KKT variable a user iterate."""
         self.iterates.append(iterate := self._create_var(ndim, lb, ub))
@@ -467,13 +534,15 @@ class Verifier(object):
             self.canonicalizer.record_iterate(output)
         return output
 
-    def add_param(
+    def parameter(
         self, ndim: int, lb: float = -np.inf, ub: float = np.inf, **kwargs
     ) -> LinearExpression:
         """
-        Create and register a new parameter. This method creates a new
-        `LinearExpression` of dimension `ndim` and registers it with
-        the underlying canonicalizer and OBBT Handler instance.
+        Create a problem parameter in the box ``[lb, ub]``.
+
+        The parameter is a new `LinearExpression` of dimension ``ndim``, registered
+        with the canonicalizer and the OBBT handler. With ``method="simulator"``,
+        pass ``samples`` of shape ``(num_samples, ndim)``.
 
         Parameters
         ----------
@@ -508,7 +577,7 @@ class Verifier(object):
                 shape = np.shape(samples)
                 if len(shape) != 2 or shape[1] != ndim:
                     raise ValueError(
-                        f"add_param(ndim={ndim}): samples must have shape "
+                        f"parameter(ndim={ndim}): samples must have shape "
                         f"(num_samples, {ndim}), got {shape}."
                     )
             elif not (np.all(np.isfinite(var.lb)) and np.array_equal(var.lb, var.ub)):
@@ -516,28 +585,14 @@ class Verifier(object):
         self._register_var(var, var_type="param", **kwargs)
         return var
 
+    def add_param(self, *args, **kwargs) -> LinearExpression:
+        """Deprecated alias of `parameter`."""
+        _deprecated("add_param", "Verifier.parameter")
+        return self.parameter(*args, **kwargs)
+
     def add_param_stack(self, param_list: List[LinearExpression]) -> LinearExpression:
-        """
-        Stack multiple parameters into a single composite LinearExpression.
-
-        Equivalent to `fomtools.stack`; preserved for API consistency
-        with ``add_param`` / ``add_iterate``. Does not create a new leaf or
-        any solver-side equality constraints — the result is a view sharing
-        storage with the input parameters via sparse block-selection matrices.
-
-        The constituent parameters must already be registered (via ``add_param``).
-
-        Parameters
-        ----------
-        param_list: list[LinearExpression]
-            List of `LinearExpression` parameters to stack.
-
-        Returns
-        -------
-        LinearExpression
-            A composite expression of dimension ``sum(p.ndim for p in param_list)``
-            whose decomposition references the leaves of the input parameters.
-        """
+        """Deprecated: use ``ft.stack(param_list)``."""
+        _deprecated("add_param_stack", "ft.stack")
         return stack(param_list)
 
     def iterate_trajectory(self, length: int, collapse_expr="auto"):
@@ -575,9 +630,9 @@ class Verifier(object):
         Examples
         --------
         >>> z = verifier.iterate_trajectory(K + 1)
-        >>> z[0] = verifier.add_iterate(n, lb=z0, ub=z0)
+        >>> z[0] = verifier.iterate(n, lb=z0, ub=z0)
         >>> for k in range(1, K + 1):
-        ...     z[k] = verifier.step.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x))
+        ...     z[k] = verifier.relu(z[k - 1] - eta * A.T @ (A @ z[k - 1] - x))
         """
         from fomtools.iteratetrajectory import IterateTrajectory
 
@@ -641,50 +696,13 @@ class Verifier(object):
     def complementarity(
         self, expr1: LinearExpression, expr2: LinearExpression
     ) -> ComplementarityConstraint:
-        """
-        Build an elementwise complementarity constraint between two expressions.
-
-        Asserts ``expr1 >= 0``, ``expr2 >= 0`` and ``expr1[i] * expr2[i] == 0`` for
-        all ``i`` (at most one side nonzero per coordinate). Pass the returned object
-        to `add_constraint`.
-
-        Parameters
-        ----------
-        expr1, expr2 : LinearExpression
-            The two expressions to place in complementarity. Must have equal ``ndim``.
-
-        Returns
-        -------
-        ComplementarityConstraint
-            The constraint object.
-        """
+        """Deprecated: use ``ft.complementarity(expr1, expr2)``."""
+        _deprecated("vp.complementarity", "ft.complementarity")
         return complementarity(expr1, expr2)
 
     def sum_squares(self, expr: LinearExpression) -> SumSquares:
-        r"""
-        Build a sum-of-squares atom ``\sum_i (a_i^\top x + b_i)^2`` for ``expr``.
-
-        Compare the returned object against a nonnegative scalar to form a quadratic
-        constraint, then pass it to `add_constraint`::
-
-            vp.add_constraint(vp.sum_squares(expr) <= r**2)   # ||A x + b||_2^2 <= r^2
-            vp.add_constraint(vp.sum_squares(expr) >= r**2)   # nonconvex shell
-            vp.add_constraint(vp.sum_squares(expr) == r**2)   # nonconvex sphere
-
-        The ``<=`` sense is convex; ``>=`` / ``==`` are nonconvex but still representable
-        on the SDP backend (linear in the lifted matrix) and on Gurobi (``NonConvex=2``).
-        Quadratic constraints are unsupported on HiGHS and raise at ``add_constraint``.
-
-        Parameters
-        ----------
-        expr : LinearExpression
-            The expression whose squared two-norm is taken.
-
-        Returns
-        -------
-        SumSquares
-            The atom; compare it with ``<=`` / ``>=`` / ``==`` to obtain a constraint.
-        """
+        """Deprecated: use ``ft.sum_squares(expr)``."""
+        _deprecated("vp.sum_squares", "ft.sum_squares")
         return sum_squares(expr)
 
     def _tighten_constraint_bounds(self, constr: Constraint) -> None:
@@ -889,7 +907,7 @@ class Verifier(object):
             arg=arg,
             relax_binary_vars=relax_binary_vars,
         )
-        # Composite step: the decomposer creates the primal x via add_iterate (already
+        # Composite step: the decomposer creates the primal x via iterate (already
         # tracked in self.iterates) and returns it; just record the step itself.
         x = self.step_decomposer.process_step(step)
         self.steps.append(step)
@@ -976,19 +994,9 @@ class Verifier(object):
     @property
     def step(self) -> "_StepProxy":
         """
-        Interface for constructing and executing steps.
+        Deprecated: call the step directly, e.g. ``verifier.relu(expr)``.
 
-        This property exposes an interface for building
-        steps on the ``Verifier``. Attribute access on ``step``
-        (e.g. ``verifier.step.relu``) resolves to a callable
-        that runs the corresponding step.
-
-        Examples
-        -------
-        >>> verifier = Verifier()
-        >>> expr = verifier.add_param(2)
-        >>> x = verifier.step.relu(arg=expr, relax_binary_vars=True)
-
+        ``verifier.step.<name>(arg, **kwargs)`` runs the step of that name and warns.
         """
         return self._step_proxy
 
@@ -1028,19 +1036,55 @@ class Verifier(object):
 
         return self._record_output(output)
 
-    def fixed_point(self, n_dim, operator, lb=-np.inf, ub=np.inf):
+    def relu(self, arg, *, proj_ranges=None, relax_binary_vars=False) -> LinearExpression:
+        r"""
+        Projection onto the nonnegative orthant, $\Pi_{\mathbf{R}^n_+}(\text{arg})$.
+
+        See `Relu` for the parameters.
+        """
+        return self.run_step(arg, Relu, relax_binary_vars, proj_ranges=proj_ranges)
+
+    def satlin(self, arg, *, l, u, relax_binary_vars=False) -> LinearExpression:
+        r"""
+        Projection onto the box $[l, u]$, $\Pi_{[l,u]}(\text{arg})$.
+
+        See `SaturatedLinear` for the parameters.
+        """
+        return self.run_step(arg, SaturatedLinear, relax_binary_vars, l=l, u=u)
+
+    def soft_threshold(self, arg, *, lambd, relax_binary_vars=False) -> LinearExpression:
+        r"""
+        Soft-thresholding $\mathbf{soft}_\lambda(\text{arg})$, the prox of $\lambda\|\cdot\|_1$.
+
+        See `SoftThreshold` for the parameters.
+        """
+        return self.run_step(arg, SoftThreshold, relax_binary_vars, lambd=lambd)
+
+    def implicit_linear(
+        self, arg, *, output_mat=None, weight=None, bias=None, relax_binary_vars=False
+    ) -> LinearExpression:
+        """
+        Implicit affine step ``output_mat @ w = weight @ arg + bias``.
+
+        See `Affine` for the parameters.
+        """
+        return self.run_step(
+            arg, Affine, relax_binary_vars, output_mat=output_mat, weight=weight, bias=bias
+        )
+
+    def fixed_point(self, ndim=None, operator=None, lb=-np.inf, ub=np.inf, *, n_dim=None):
         """
         Encode a fixed point of an operator as a new iterate.
 
-        Creates a new iterate ``z_star`` of dimension `n_dim`, applies
+        Creates a new iterate ``z_star`` of dimension `ndim`, applies
         `operator` to it, and constrains ``z_star == operator(z_star)``.
         Used to encode distance-to-optimality objectives, where `z_star`
         represents an optimal solution of the parametric problem.
 
         Parameters
         ----------
-        n_dim: int
-            Dimension of the fixed-point iterate.
+        ndim: int
+            Dimension of the fixed-point iterate. (``n_dim`` is a deprecated alias.)
 
         operator: Callable[[LinearExpression], LinearExpression]
             The algorithm operator `T`, applied to the new iterate to
@@ -1059,7 +1103,12 @@ class Verifier(object):
         LinearExpression
             The fixed-point iterate ``z_star``.
         """
-        z_star = self.add_iterate(n_dim, lb=lb, ub=ub)
+        if n_dim is not None:
+            _deprecated("fixed_point(n_dim=...)", "fixed_point(ndim=...)")
+            ndim = n_dim
+        if ndim is None or operator is None:
+            raise TypeError("fixed_point needs ndim and operator.")
+        z_star = self.iterate(ndim, lb=lb, ub=ub)
         s_star = operator(z_star)
         self.add_constraint(z_star == s_star)
 
@@ -1121,110 +1170,99 @@ class Verifier(object):
             / (2 * target_expr.ndim)
         )
 
-    def set_zero_objective(self):
-        """
-        Set the optimization objective to zero.
-
-        This method replaces the current objective with a constant
-        zero objective, turning it into a feasibility problem.
-        """
+    def _set_zero_objective(self) -> None:
+        """Feasibility problem: a constant zero objective."""
         self.objective = None
+        self._residual = None
         self.canonicalizer.set_zero_objective()
 
-    def set_infinity_norm_objective(self, expr_list: Sequence[LinearExpression] | LinearExpression):
-        """
-        Create an infinity-norm objective over the set of ``LinearExpression``
-        objects.
+    def set_zero_objective(self):
+        """Deprecated: use ``vp.maximize(0)``."""
+        _deprecated("set_zero_objective", "vp.maximize(0)")
+        self._set_zero_objective()
 
-        Parameters
-        ----------
-        expr_list: Sequence[LinearExpression] | LinearExpression
-            A single LinearExpression or a list of LinearExpression objects for
-            which the infinity-norm objective will be constructed.
-
-        """
-        try:
-            len(expr_list)
-        except TypeError:
-            expr_list = [expr_list]
-
-        lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
-        self.canonicalizer.set_infinity_norm_objective(expr_list, list(lb), list(ub))
-        self.objective = (tuple(expr_list), np.inf)
-
-    def set_two_norm_objective(self, expr_list: Sequence[LinearExpression] | LinearExpression):
-        """
-        Create a 2-norm objective over the set of ``LinearExpression``
-        objects.
-
-        Parameters
-        ----------
-        expr_list: Sequence[LinearExpression] | LinearExpression
-            A single LinearExpression or a list of LinearExpression objects for
-            which the 2-norm objective will be constructed.
-
-        """
-        try:
-            len(expr_list)
-        except TypeError:
-            expr_list = [expr_list]
-
-        lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
-        self.canonicalizer.set_two_norm_objective(expr_list, list(lb), list(ub))
-        self.objective = (tuple(expr_list), 2)
-
-    def set_one_norm_objective(
-        self, expr_list: Sequence[LinearExpression] | LinearExpression
+    def _set_norm_objective(
+        self, expr_list: Sequence[LinearExpression] | LinearExpression, ord: int | float
     ) -> None:
-        """
-        Create a 1-norm objective over the set of ``LinearExpression`` objects.
-
-        Parameters
-        ----------
-        expr_list : Sequence[LinearExpression] | LinearExpression
-            A single LinearExpression or a list of LinearExpression objects for
-            which the 1-norm objective will be constructed.
-        """
+        """Maximize ``||expr_list||_ord`` (``ord=2`` is the squared two-norm)."""
+        self._residual = None
         try:
             len(expr_list)
         except TypeError:
             expr_list = [expr_list]
+        if ord == 1:
+            self.canonicalizer.set_one_norm_objective(expr_list)
+        else:
+            lb, ub = zip(*(expr.bound_propagation() for expr in expr_list))
+            setter = (
+                self.canonicalizer.set_two_norm_objective
+                if ord == 2
+                else self.canonicalizer.set_infinity_norm_objective
+            )
+            setter(expr_list, list(lb), list(ub))
+        self.objective = (tuple(expr_list), ord)
 
-        self.canonicalizer.set_one_norm_objective(expr_list)
-        self.objective = (tuple(expr_list), 1)
+    def set_infinity_norm_objective(self, expr_list):
+        """Deprecated: use ``vp.maximize(ft.norm(expr, np.inf))``."""
+        _deprecated("set_infinity_norm_objective", "vp.maximize(ft.norm(expr, np.inf))")
+        self._set_norm_objective(expr_list, np.inf)
 
-    def set_objective_norm(
-        self,
-        expr: Sequence[LinearExpression] | LinearExpression,
-        ord: int | float | str,
-    ) -> None:
+    def set_two_norm_objective(self, expr_list):
+        """Deprecated: use ``vp.maximize(ft.sum_squares(expr))``."""
+        _deprecated("set_two_norm_objective", "vp.maximize(ft.sum_squares(expr))")
+        self._set_norm_objective(expr_list, 2)
+
+    def set_one_norm_objective(self, expr_list):
+        """Deprecated: use ``vp.maximize(ft.norm(expr, 1))``."""
+        _deprecated("set_one_norm_objective", "vp.maximize(ft.norm(expr, 1))")
+        self._set_norm_objective(expr_list, 1)
+
+    def set_objective_norm(self, expr, ord) -> None:
         """
-        Set the optimization objective to maximize a norm of the expression(s).
+        Deprecated: use ``vp.maximize(ft.norm(expr, ord))``, or
+        ``vp.maximize(ft.sum_squares(expr))`` for ``ord=2`` (the squared two-norm).
+        """
+        _deprecated("set_objective_norm", "vp.maximize(ft.norm(expr, ord)) or ft.sum_squares")
+        if ord == "inf":
+            ord = np.inf
+        if ord not in (1, 2, np.inf):
+            raise ValueError(f"Unsupported norm order: {ord}. Use 1, 2, np.inf, or 'inf'.")
+        self._set_norm_objective(expr, ord)
+
+    def maximize(self, objective: Norm | SumSquares | int) -> None:
+        """
+        Set the objective to maximize, the worst case that ``solve`` bounds.
 
         Parameters
         ----------
-        expr : LinearExpression or Sequence[LinearExpression]
-            Expression(s) whose norm will be maximized.
-        ord : {1, 2, np.inf, 'inf'}
-            The norm order:
-            - 1: One-norm (sum of absolute values)
-            - 2: Two-norm (Euclidean norm squared)
-            - np.inf or 'inf': Infinity-norm (maximum absolute value)
+        objective : Norm, SumSquares, or 0
+            ``ft.norm(expr, 1)``, ``ft.norm(expr, np.inf)``, ``0`` for a
+            feasibility problem, or
+            ``ft.sum_squares(expr)`` for the squared two-norm. With
+            ``method="mip"``, the squared two-norm is an MIQP and needs
+            ``solver="gurobi"``; ``solve`` then returns a bound on the squared norm.
 
-        Raises
-        ------
-        ValueError
-            If ord is not one of the supported values.
+        Examples
+        --------
+        >>> vp.maximize(ft.norm(z - z_prev, np.inf))
         """
-        match ord:
-            case 1:
-                self.set_one_norm_objective(expr)
-            case 2:
-                self.set_two_norm_objective(expr)
-            case _ if ord == np.inf or ord == "inf":
-                self.set_infinity_norm_objective(expr)
-            case _:
-                raise ValueError(f"Unsupported norm order: {ord}. Use 1, 2, np.inf, or 'inf'.")
+        if isinstance(objective, Norm):
+            self._set_norm_objective(list(objective.exprs), objective.p)
+            if objective.p == np.inf and len(objective.exprs) == 1:
+                self._residual = objective.exprs[0]._difference
+        elif isinstance(objective, SumSquares):
+            self._set_norm_objective(objective.expr, 2)
+        elif (
+            isinstance(objective, (int, float))
+            and not isinstance(objective, bool)
+            and objective == 0
+        ):
+            self._set_zero_objective()
+        else:
+            raise TypeError(
+                "maximize takes ft.norm(expr, p), ft.sum_squares(expr), or 0, "
+                f"got {type(objective).__name__}."
+            )
 
     def solve(
         self,
@@ -1232,6 +1270,7 @@ class Verifier(object):
         cut_rounds: int = 1,
         tighten_objective_bounds: bool | None = None,
         warm_start: bool = True,
+        verbose: bool | None = None,
         **kwargs,
     ) -> float:
         """
@@ -1270,6 +1309,10 @@ class Verifier(object):
             and the worst of the samples given to ``set_start_samples``.
             Solvers without MIP starts ignore them. Statistics are stored on
             ``canonicalizer.warm_start_stats``.
+        verbose : bool or None, default None
+            Print the log of this solve, including the cut separation and OBBT LPs
+            it runs. ``None`` keeps the ``verbose`` setting of the constructor. The
+            OBBT LPs that run while the steps are added follow the constructor.
         **kwargs
             Keyword arguments forwarded to the canonicalizer's
             ``solve_model``. Any keyword is passed **verbatim** to the active
@@ -1291,6 +1334,21 @@ class Verifier(object):
             Simulator: an array of sampled residuals, with summary statistics
             available through ``vp["max"]`` and related keys.
         """
+        if verbose is not None and self.method == "mip":
+            # Cut separation and objective-bound OBBT also run in this solve.
+            with self._mip_verbosity(verbose):
+                return self.solve(
+                    convex_hull_cuts=convex_hull_cuts,
+                    cut_rounds=cut_rounds,
+                    tighten_objective_bounds=tighten_objective_bounds,
+                    warm_start=warm_start,
+                    **{**self._verbosity_option(self.method, self._solver_name, verbose), **kwargs},
+                )
+        if verbose is not None:
+            kwargs = {
+                **self._verbosity_option(self.method, self._solver_name, verbose, explicit=True),
+                **kwargs,
+            }
         # ``cut_stats`` has one entry per round that added cuts; ``separation_stats``
         # one per round that ran, including a final round that found nothing.
         self.cut_stats = []
@@ -1326,17 +1384,55 @@ class Verifier(object):
             else:
                 self.objective_bound_stats = self.canonicalizer.tighten_objective_bounds()
         if self.method == "mip":
-            return self.canonicalizer.solve_model(warm_start=warm_start, **kwargs)
+            bound = self.canonicalizer.solve_model(warm_start=warm_start, **kwargs)
+            self._chain_residual(bound)
+            return bound
         if self.method == "simulator" and self._unsampled_params:
             dims = ", ".join(str(var.ndim) for var in self._unsampled_params)
             raise ValueError(
                 f"{len(self._unsampled_params)} parameter(s) (ndim {dims}) have no samples. "
                 "The simulator does not sample from bounds: pass "
-                "add_param(ndim, samples=<array of shape (num_samples, ndim)>), drawn "
+                "parameter(ndim, samples=<array of shape (num_samples, ndim)>), drawn "
                 "from the distribution the probabilistic bound should hold for "
                 "(equal finite bounds fix a constant and need no samples)."
             )
         return self.canonicalizer.solve_model(**kwargs)
+
+    def _chain_residual(self, bound: float) -> None:
+        """
+        Tighten ``a`` after a solve certified ``||a - b||_inf <= bound``.
+
+        With ``||b - root||_inf <= r_b`` from earlier solves, the triangle inequality
+        gives ``||a - root||_inf <= r_b + bound``. The bound holds over the current
+        family; constraints added later only shrink it, so it stays valid.
+        """
+        if not self.tighten_residuals or self._residual is None:
+            return
+        a, b = self._residual
+        root, radius_b = self._residual_chain.get(b.counter, (b, 0.0))
+        # Pad outward a little for solver tolerances.
+        radius = (radius_b + bound) * (1 + 1e-9) + 1e-9
+        known = self._residual_chain.get(a.counter)
+        if known is not None and (known[0] is not root or known[1] <= radius):
+            return
+        self._residual_chain[a.counter] = (root, radius)
+        self._apply_reference_bound(a, root, radius)
+
+    @contextmanager
+    def _mip_verbosity(self, verbose: bool):
+        """Set the log of the main and OBBT MIP solvers to ``verbose``, then restore it."""
+        owners = [self.canonicalizer] + ([self.obbt_handler] if self.use_obbt_handler else [])
+        for owner in owners:
+            owner.solver.set_param(owner.solver.VERBOSITY_KEY, verbose)
+        try:
+            yield
+        finally:
+            for owner in owners:
+                key = owner.solver.VERBOSITY_KEY
+                flags = [
+                    v for k, v in (owner.solver_params or {}).items() if k.lower() == key.lower()
+                ]
+                owner.solver.set_param(key, bool(flags[-1]) if flags else False)
 
     def set_start_samples(self, samples: dict) -> None:
         """
@@ -1439,9 +1535,9 @@ class Verifier(object):
         verified with, no restructuring:
 
         >>> z = verifier.iterate_trajectory(K + 1)
-        >>> z[0] = verifier.add_iterate(n, lb=z0, ub=z0)
+        >>> z[0] = verifier.iterate(n, lb=z0, ub=z0)
         >>> for k in range(1, K + 1):
-        ...     z[k] = verifier.step.soft_threshold(...)
+        ...     z[k] = verifier.soft_threshold(...)
         >>> verifier.solve()
         >>> verifier.codegen("out/", iterates=z)
 
@@ -1542,29 +1638,18 @@ class Verifier(object):
             param_values=param_values,
         )
 
+    def _solution_value(self, expr: LinearExpression) -> np.ndarray:
+        """Value of ``expr`` at the incumbent of the last solve (see `LinearExpression.value`)."""
+        if not hasattr(self.canonicalizer, "get_solution_value"):
+            raise NotImplementedError(
+                f"Solution values are not available with method={self.method!r}."
+            )
+        return self.canonicalizer.get_solution_value(expr)
+
     def get_solution_value(self, iterate: LinearExpression) -> np.ndarray:
-        """
-        Get the solution value for the given iterate.
-
-        For each leaf expression in the decomposition of the
-        given ``LinearExpression`` object, this method retrieves
-        corresponding solution value and computes the dot product
-        between the coefficient matrix and the vector of variable values
-        associated with that leaf.
-
-        Parameters
-        ----------
-        iterate: LinearExpression
-            A ``LinearExpression`` object to retrieve solution value for.
-
-        Returns
-        -------
-        np.ndarray[float]
-            A 1-D array of shape ``(iterate.ndim,)`` containing the
-            evaluated values of the iterate at the current model
-            solution.
-        """
-        return self.canonicalizer.get_solution_value(iterate)
+        """Deprecated: use ``expr.value``."""
+        _deprecated("get_solution_value", "expr.value")
+        return self._solution_value(iterate)
 
 
 class _StepProxy:
@@ -1617,6 +1702,7 @@ class _StepProxy:
 
         def wrapper(arg, relax_binary_vars=False, **kwargs):
             """Execute the specified thresholding or activation step."""
+            _deprecated(f"vp.step.{name}", f"vp.{name}")
             return self._verifier.run_step(arg, step_cls, relax_binary_vars, **kwargs)
 
         return wrapper

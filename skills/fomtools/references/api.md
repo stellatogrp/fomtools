@@ -12,7 +12,7 @@ Verifier(
     theory_func=None,
     method="mip",          # "mip", "sdp", or "simulator"
     solver="highs",       # "gurobi", "highs", "clarabel", "cuclarabel"
-    obbt_solver="highs",  # solver for bound tightening; None to disable
+    obbt_solver="auto",   # "auto" follows solver if Gurobi/HiGHS, else off; None disables
     params=None,           # solver-specific parameters dict
     # SDP-only cut flags (no effect for method != "sdp"):
     rlt_cuts=False,
@@ -25,21 +25,25 @@ Verifier(
     full_psd_cone=False,
     cross_cut=False,
     subgrad_mono_cut=False,
+    obbt_params=None,      # solver parameters for OBBT (default: inherit verbosity)
+    verbose=False,         # print solver logs
+    tighten_residuals=True,  # MIP only: chain certified norm(a - b, inf) bounds, tighten a
 )
 ```
 
 ### Core Methods
 
-#### `add_iterate(ndim, lb, ub) -> LinearExpression`
+#### `iterate(ndim, lb, ub) -> LinearExpression`
 Create an iterate variable with dimension `ndim` and bounds `[lb, ub]`.
-Bounds can be scalars (broadcast) or arrays.
+Bounds can be scalars (broadcast) or arrays. `add_iterate` is a deprecated alias.
 
-#### `add_param(ndim, lb, ub) -> LinearExpression`
+#### `parameter(ndim, lb, ub) -> LinearExpression`
 Create a parameter variable with dimension `ndim` and bounds `[lb, ub]`.
-Parameters represent uncertain problem data.
+Parameters represent uncertain problem data. With `method="simulator"`, pass
+`samples` of shape `(num_samples, ndim)`. `add_param` is a deprecated alias.
 
-#### `add_param_stack(param_list) -> LinearExpression`
-Stack a list of `LinearExpression` parameters into one.
+#### `ft.stack(exprs) -> LinearExpression`
+Stack a list of expressions (e.g. parameters) into one. `vp.add_param_stack` is deprecated.
 
 #### `iterate_trajectory(length, collapse_expr="auto")`
 Create a list of `length` slots for iterates. `collapse_expr="auto"` detects
@@ -47,22 +51,25 @@ accumulating methods (like Douglas-Rachford) where expression support grows
 and collapses them to keep linear growth.
 
 #### `add_constraint(constr)`
-Add a `Constraint` to the verification problem.
+Add a `Constraint` to the verification problem. It takes effect immediately: OBBT
+tightens the variables involved, so constrain parameters and initial iterates before
+building the steps.
 
-#### `complementarity(expr_a, expr_b)`
-Add a complementarity constraint: `expr_a >= 0, expr_b >= 0, expr_a * expr_b == 0`.
+#### `ft.complementarity(expr_a, expr_b)`
+Build a complementarity constraint (pass it to `add_constraint`): `expr_a >= 0, expr_b >= 0, expr_a * expr_b == 0`.
 
-#### `sum_squares(expr) -> SumSquares`
-Create a sum-of-squares expression for use in constraints.
+#### `ft.sum_squares(expr) -> SumSquares`
+The squared two-norm, for constraints (`ft.sum_squares(e) <= r**2`) or as the objective of
+`vp.maximize`.
 
 ### Step Operators
 
-Accessed via `vp.step.<name>(arg, **kwargs)`:
+Called as `vp.<name>(arg, ...)` (`vp.step.<name>` is deprecated); options after `arg` are keyword-only:
 
-- `vp.step.relu(arg)` -- ReLU / projection onto non-negative orthant
-- `vp.step.soft_threshold(arg, lambd=t)` -- soft thresholding
-- `vp.step.satlin(arg, l=l, u=u)` -- box projection
-- `vp.step.implicit_linear(arg, output_mat=M)` -- implicit linear solve
+- `vp.relu(arg, proj_ranges=None)` -- ReLU / projection onto non-negative orthant
+- `vp.soft_threshold(arg, lambd=t)` -- soft thresholding
+- `vp.satlin(arg, l=l, u=u)` -- box projection
+- `vp.implicit_linear(arg, output_mat=M, weight=None, bias=None)` -- implicit affine solve `M w = weight @ arg + bias`
 
 All step operators return a `LinearExpression`.
 
@@ -100,18 +107,28 @@ vp.standard_form_linear_program(c, A=None, b=None,
 ### Objectives and solving
 
 ```python
-vp.set_objective_norm(expr, ord=np.inf)  # infinity norm; 1 for one-norm, 2 for squared two-norm
-vp.set_zero_objective()
-result = vp.solve(convex_hull_cuts=True)  # MIP hull cuts; native solver options also accepted
+vp.maximize(ft.norm(expr, np.inf))       # or ft.norm(expr, 1); a list of expressions is stacked
+vp.maximize(ft.sum_squares(expr))        # squared two-norm; MIQP, needs solver="gurobi" for MIP
+vp.maximize(0)
+vp.fixed_point(ndim, operator, lb, ub)   # new iterate z_star == operator(z_star)
+result = vp.solve(convex_hull_cuts=False, cut_rounds=1, tighten_objective_bounds=None,
+                  warm_start=True, verbose=None)  # native solver options also accepted
+vp.set_start_samples({param: samples})   # MIP start from sampled worst case
 ```
 
 MIP returns a finite best upper bound even at a time limit when available, and
 raises `RuntimeError` otherwise. The solved copy retains the native status and
 incumbent separately. SDP returns a dual objective only after an accurate optimal
-termination. Simulator returns sampled residual arrays. See `docs/index.md` for
-numerical limitations and result inspection.
+termination. Simulator returns sampled residual arrays. See "Returned bounds and numerical
+checks" in `docs/user_guide/index.md` for numerical limitations and result inspection.
 
 ### Post-processing
+
+With `method="mip"`, every solve of `vp.maximize(ft.norm(a - b, np.inf))` automatically
+chains its certified bound with the earlier ones (triangle inequality) and tightens `a`
+before the next step is added (`tighten_residuals=True`, the default; pass
+`tighten_residuals=False` to `Verifier` to disable). The worst case is unchanged; later
+MIPs get smaller big-M constants. The manual `post_process` below is for caller-supplied bounds.
 
 `vp.post_process(target_expr, ref_expr, residuals)` uses the triangle inequality.
 Supply upper bounds on every successive infinity-norm difference along the path
@@ -121,8 +138,12 @@ incumbents, squared norms, or a bound only for the last step.
 ### Solution Values
 
 ```python
-vp.get_solution_value(iterate) -> np.ndarray
+expr.value -> np.ndarray   # any expression at the MIP incumbent
 ```
+
+Raises `RuntimeError` without an incumbent or for steps added after the last solve,
+`ValueError` for expressions mixing Verifiers, and `NotImplementedError` for SDP and
+the simulator.
 
 ### Code Generation
 

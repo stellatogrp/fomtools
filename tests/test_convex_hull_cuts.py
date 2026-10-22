@@ -5,7 +5,7 @@ Tests for the root-node convex hull cuts of ReLU and saturated linear steps.
    is valid on the box, and whenever the relaxed point lies above the concave
    envelope (or below the convex envelope) by more than the formulation's own rows
    allow, the most violated cut is tight at that point.
-2. In a VP, the cuts are valid for the actual step graphs, including argument
+2. In a vp, the cuts are valid for the actual step graphs, including argument
    constants and arguments spanning several leaves.
 3. Cuts never change the MIP optimum, persist across solves (sequential ``K``),
    respect ``cut_rounds``, and reach the OBBT LP with one tightening pass per round.
@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 from scipy.optimize import linprog
 
+import fomtools as ft
 import fomtools.solvers.mip_solver as mip_solver
 from fomtools.utils.convex_hull_cuts import separate_relu, separate_satlin, separate_soft_threshold
 from fomtools.verifier import Verifier
@@ -217,7 +218,7 @@ def record_cuts(monkeypatch):
     return records
 
 
-def _pgd_chain(kind, K, *, const, obbt=None, seed=3, n=3):
+def _pgd_chain(kind, K, *, const, obbt=None, seed=3, n=3, tighten_residuals=True):
     """Projected gradient on a box/orthant QP with a parametric linear term."""
     rng = np.random.default_rng(seed)
     M = rng.normal(size=(n, n))
@@ -225,17 +226,23 @@ def _pgd_chain(kind, K, *, const, obbt=None, seed=3, n=3):
     t = 0.5 / np.linalg.norm(P, 2)
     l, u = -0.3 * np.ones(n), 0.4 * np.ones(n)
     lambd = 0.05
-    vp = Verifier(method="mip", solver="gurobi", obbt_solver=obbt, params=MIP_EXACT)
-    q = vp.add_param(n, lb=-np.ones(n), ub=np.ones(n))
-    z = [vp.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))]
+    vp = Verifier(
+        method="mip",
+        solver="gurobi",
+        obbt_solver=obbt,
+        params=MIP_EXACT,
+        tighten_residuals=tighten_residuals,
+    )
+    q = vp.parameter(n, lb=-np.ones(n), ub=np.ones(n))
+    z = [vp.iterate(n, lb=np.zeros(n), ub=np.zeros(n))]
     for _ in range(K):
         arg = z[-1] - t * (P @ z[-1] + q) + const
         if kind == "relu":
-            z.append(vp.step.relu(arg))
+            z.append(vp.relu(arg))
         elif kind == "satlin":
-            z.append(vp.step.satlin(arg, l=l, u=u))
+            z.append(vp.satlin(arg, l=l, u=u))
         else:
-            z.append(vp.step.soft_threshold(arg, lambd=lambd))
+            z.append(vp.soft_threshold(arg, lambd=lambd))
 
     def simulate(Q):
         Z = [np.zeros_like(Q)]
@@ -259,7 +266,7 @@ def test_vp_cuts_valid_on_trajectories(kind, const, record_cuts):
     # Seed chosen so that both constants produce cuts for both step types.
     vp, q, z, simulate = _pgd_chain(kind, K, const=const, seed=5)
     for k in range(1, K + 1):
-        vp.set_objective_norm(z[k] - z[k - 1], np.inf)
+        vp.maximize(ft.norm(z[k] - z[k - 1], np.inf))
         vp.solve(convex_hull_cuts=True, cut_rounds=2)
     assert record_cuts, "expected at least one cut"
 
@@ -280,8 +287,8 @@ def test_cuts_preserve_mip_optimum(kind, obbt):
     vp_no, _, z_no, _ = _pgd_chain(kind, K, const=0.1, obbt=obbt)
     vp_cut, _, z_cut, _ = _pgd_chain(kind, K, const=0.1, obbt=obbt)
     for k in range(1, K + 1):
-        vp_no.set_objective_norm(z_no[k] - z_no[k - 1], np.inf)
-        vp_cut.set_objective_norm(z_cut[k] - z_cut[k - 1], np.inf)
+        vp_no.maximize(ft.norm(z_no[k] - z_no[k - 1], np.inf))
+        vp_cut.maximize(ft.norm(z_cut[k] - z_cut[k - 1], np.inf))
         # The encoding lets q exceed |r_j| by up to M * IntFeasTol, so incumbents can
         # differ at the 1e-6 level between otherwise identical solves.
         assert vp_cut.solve(convex_hull_cuts=True, cut_rounds=2) == pytest.approx(
@@ -301,10 +308,11 @@ def _num_constrs(vp):
 
 def test_cuts_persist_across_K():
     K = 3
-    vp, _, z, _ = _pgd_chain("satlin", K, const=0.0)
+    # Residual tightening adds its own rows; count only the cuts here.
+    vp, _, z, _ = _pgd_chain("satlin", K, const=0.0, tighten_residuals=False)
     total_cuts = 0
     for k in range(1, K + 1):
-        vp.set_objective_norm(z[k] - z[k - 1], np.inf)
+        vp.maximize(ft.norm(z[k] - z[k - 1], np.inf))
         before = _num_constrs(vp)
         vp.solve(convex_hull_cuts=True)
         added = sum(s["cuts"] for s in vp.cut_stats)
@@ -321,7 +329,7 @@ def test_cut_rounds():
         vp, _, z, _ = _pgd_chain("satlin", K, const=0.0)
         n = 0
         for k in range(1, K + 1):
-            vp.set_objective_norm(z[k] - z[k - 1], np.inf)
+            vp.maximize(ft.norm(z[k] - z[k - 1], np.inf))
             vp.solve(convex_hull_cuts=True, cut_rounds=rounds)
             assert len(vp.cut_stats) <= rounds
             n += sum(s["cuts"] for s in vp.cut_stats)
@@ -331,7 +339,7 @@ def test_cut_rounds():
 
 def test_cuts_reach_obbt_with_one_pass_per_round(monkeypatch):
     K = 3
-    vp, _, z, _ = _pgd_chain("satlin", K, const=0.0, obbt="gurobi")
+    vp, _, z, _ = _pgd_chain("satlin", K, const=0.0, obbt="gurobi", tighten_residuals=False)
     passes = []
     original = vp._tighten_leaf_bounds
 
@@ -341,7 +349,7 @@ def test_cuts_reach_obbt_with_one_pass_per_round(monkeypatch):
         return original(leaves)
 
     for k in range(1, K + 1):
-        vp.set_objective_norm(z[k] - z[k - 1], np.inf)
+        vp.maximize(ft.norm(z[k] - z[k - 1], np.inf))
         obbt_model = vp.obbt_handler.solver.model
         obbt_model.update()
         before = obbt_model.NumConstrs
@@ -361,10 +369,10 @@ def test_portfolio_like_steps_do_not_crash():
     """Affine (implicit linear) steps are skipped instead of raising."""
     n = 3
     vp = Verifier(method="mip", solver="gurobi", obbt_solver="gurobi", params=MIP_EXACT)
-    x = vp.add_param(n, lb=np.zeros(n), ub=0.6 * np.ones(n))
-    y0 = vp.add_iterate(n, lb=np.zeros(n), ub=np.zeros(n))
-    y1 = vp.step.implicit_linear(y0 + x, output_mat=2.0 * np.eye(n))
-    w = vp.step.satlin(y1 - 0.1, l=np.zeros(n), u=0.25 * np.ones(n))
-    s = x - vp.step.relu(x - w)
-    vp.set_objective_norm(s - y0, np.inf)
+    x = vp.parameter(n, lb=np.zeros(n), ub=0.6 * np.ones(n))
+    y0 = vp.iterate(n, lb=np.zeros(n), ub=np.zeros(n))
+    y1 = vp.implicit_linear(y0 + x, output_mat=2.0 * np.eye(n))
+    w = vp.satlin(y1 - 0.1, l=np.zeros(n), u=0.25 * np.ones(n))
+    s = x - vp.relu(x - w)
+    vp.maximize(ft.norm(s - y0, np.inf))
     assert vp.solve(convex_hull_cuts=True) == pytest.approx(vp.solve(), abs=1e-6)

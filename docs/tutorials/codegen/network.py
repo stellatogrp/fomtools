@@ -35,7 +35,7 @@ def _():
     )
     from docs.tutorials.helper_functions.codegen_benchmarks import run_codegen_benchmark
     from fomtools.codegen import CodegenConfig, TerminationSpec
-    from fomtools.verifier import Verifier
+    import fomtools as ft
 
     timing_file = start / "_recorded_timings.json"
 
@@ -44,7 +44,7 @@ def _():
     return (
         CodegenConfig,
         TerminationSpec,
-        Verifier,
+        ft,
         examples_dir,
         linprog,
         make_network_data,
@@ -144,10 +144,10 @@ def _(
     CodegenConfig,
     K,
     TerminationSpec,
-    Verifier,
     edge_capacity,
     edge_cost,
     eta,
+    ft,
     n_demand,
     n_edges,
     n_supply,
@@ -159,17 +159,16 @@ def _(
     x_ub,
     z0,
 ):
-    verifier = Verifier(
+    verifier = ft.Verifier(
         method="mip",
         solver="highs",
         obbt_solver=None,
-        params={"output_flag": False},
     )
 
-    x_param = verifier.add_param(n_demand, lb=x_lb, ub=x_ub)
-    z = verifier.add_iterate(n_edges, lb=z0, ub=z0)
-    v = verifier.add_iterate(n_supply, lb=v0, ub=v0)
-    w = verifier.add_iterate(n_demand, lb=w0, ub=w0)
+    x_param = verifier.parameter(n_demand, lb=x_lb, ub=x_ub)
+    z = verifier.iterate(n_edges, lb=z0, ub=z0)
+    v = verifier.iterate(n_supply, lb=v0, ub=v0)
+    w = verifier.iterate(n_demand, lb=w0, ub=w0)
     z_next, v_next, w_next, _ = pdhg_step(
         verifier,
         A_supply,

@@ -77,7 +77,7 @@ class TerminationKind(str, Enum):
     additionally stops early once ``||x_k - x_{k-1}||_inf <= tol``.
 
     ``OBJECTIVE`` stops early once the *verification objective* ``r^k`` -- the
-    performance metric set with `set_objective_norm`,
+    performance metric set with `Verifier.maximize`,
     e.g. a fixed-point or KKT residual, in the norm it was set with -- is at most
     ``tol``. The stopping test is then exactly the certified quantity: if
     verification shows ``r^K <= tol`` over the whole parameter set, the generated
