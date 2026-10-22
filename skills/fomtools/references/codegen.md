@@ -25,7 +25,7 @@ config = CodegenConfig(
         check_termination=1,   # check every N iters; 0 disables early exit
     ),                         # (default 1; 25 for OBJECTIVE)
     tol_verify=1e-6,           # float64 verification tolerance
-    float_type="float64",      # "float64" or "float32" (tol_verify=1e-4)
+    dtype="float64",           # "float64" or "float32" (tol_verify defaults to 1e-4)
 )
 ```
 
@@ -180,7 +180,6 @@ fomtools-codegen --help
 fomtools-codegen --example ista      --out out/ista  --driver agent
 fomtools-codegen --example dr        --out out/dr    --scaffold-only
 fomtools-codegen --example mpc       --out out/mpc   --driver agent
-fomtools-codegen --example boxqp     --out out/boxqp --scaffold-only
 fomtools-codegen --example cgqp      --out out/cgqp  --scaffold-only
 fomtools-codegen --example pdhg_lp   --out out/pdhg  --scaffold-only
 fomtools-codegen --example fista     --out out/fista  --scaffold-only
@@ -193,6 +192,10 @@ fomtools-codegen --module mymodule.py --out out/custom --driver agent
 # Options:
 #   --scaffold-only    Emit everything except the solver body
 #   --no-roll          Keep a recorded run unrolled
+#   --tol T            Stop on the inf-norm change (add --objective to stop on the
+#                      verified objective; --check-termination N sets the period)
+#   --dtype float32    Emit float32 instead of float64
+#   --no-code-optimization / --no-profile   Skip the optimization phase / timing
 #   --driver stub      No model; pair with --golden <solver source>
 #   --agent NAME       Select the agent backend
 ```
