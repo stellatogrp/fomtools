@@ -71,6 +71,7 @@ def _build_config(args) -> CodegenConfig:
                 ("agent_optimize_max_turns", args.optimize_max_turns),
                 ("agent_optimize_rounds", args.optimize_rounds),
                 ("agent_optimize_min_gain", args.optimize_min_gain),
+                ("agent_optimize_patience", args.optimize_patience),
             )
             if value is not None  # unset: the CodegenConfig default
         },
@@ -181,7 +182,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--optimize-min-gain",
         type=float,
         metavar="FRACTION",
-        help="stop when a round gains less than this, relative (default: 0.02)",
+        help="the least relative speedup a round must make to be kept (default: 0.02)",
+    )
+    p.add_argument(
+        "--optimize-patience",
+        type=int,
+        metavar="N",
+        help="stop after N rounds in a row without that gain (default: 2)",
     )
     p.add_argument("--scaffold-only", action="store_true", help="emit files but skip the agent")
     p.add_argument(

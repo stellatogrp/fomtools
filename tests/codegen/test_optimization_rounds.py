@@ -3,7 +3,8 @@
 A scripted driver writes a different solver each round (the golden ISTA loop
 with a marker comment, or a broken one), and the benchmark is faked from the
 marker, so the round logic is tested without timing noise: keep a faster round,
-stop on too small a gain, revert a failing or slower round, stop at the last one.
+revert a failing, slower or too-little-gain round and tell the next round why,
+stop after agent_optimize_patience such rounds in a row or at the last one.
 """
 
 from dataclasses import replace
@@ -21,6 +22,7 @@ from fomtools.codegen.agent.prompts import (
     SUMMARY_END,
     code_optimization_continuation,
 )
+from fomtools.codegen.harness import VerifyResult
 from fomtools.codegen.postprocess import extract_applied_optimizations, extract_rule_friction
 from tests.codegen.conftest import build_ista
 
@@ -96,32 +98,151 @@ def test_rounds_continue_until_the_last(tmp_path, monkeypatch, requires_compiler
 
 
 @pytest.mark.requires_compiler
-def test_a_small_gain_ends_the_phase(tmp_path, monkeypatch, requires_compiler):
+def test_a_small_gain_is_reverted_and_uses_patience(tmp_path, monkeypatch, requires_compiler):
     times = {"translated": 100.0, "r1": 50.0, "r2": 49.5, "r3": 10.0}
     result, driver, solver = _run(
-        tmp_path, monkeypatch, ["r1", "r2", "r3"], times, agent_optimize_min_gain=0.02
+        tmp_path,
+        monkeypatch,
+        ["r1", "r2", "r3"],
+        times,
+        agent_optimize_min_gain=0.02,
+        agent_optimize_rounds=3,
     )
-    assert len(driver.prompts) == 2
-    assert "/* r2 */" in solver  # kept: it is faster, just not by enough to go on
-    assert result.timing.c_final_us == 49.5
+    assert len(driver.prompts) == 3
+    assert "/* r3 */" in solver and "/* r2 */" not in solver
+    assert result.timing.c_final_us == 10.0
+    assert (
+        "Round 2: reverted (not enough gain: 49.500 us vs 50.000 us best (+1.0%))"
+        in driver.prompts[2]
+    )
 
 
 @pytest.mark.requires_compiler
 def test_a_failing_round_is_reverted(tmp_path, monkeypatch, requires_compiler):
+    # r3 (not in times) runs at the translated 100 us: a second miss in a row.
     times = {"translated": 100.0, "r1": 50.0}
     result, driver, solver = _run(tmp_path, monkeypatch, ["r1", "broken", "r3"], times)
-    assert len(driver.prompts) == 2
+    assert len(driver.prompts) == 3
     assert "/* r1 */" in solver and BROKEN not in solver
     assert result.optimization_kept
     assert result.timing.c_final_us == 50.0
+    # The next round is told the failed one was reverted, and why.
+    assert "Round 2: reverted (failed verification: " in driver.prompts[2]
+    assert "The previous round made it" not in driver.prompts[2]
+    report = (tmp_path / "OPTIMIZATIONS.md").read_text()
+    assert "reverted: failed verification: " in report and gen.STOP_PATIENCE in report
+
+
+class StaleFailureDriver(ScriptedDriver):
+    """A scripted driver whose logs open with a failure the agent fixed in an
+    earlier attempt, as a real agent's do; only its last verify is current."""
+
+    def run(self, task):
+        result = super().run(task)
+        if task.phase == "translation":
+            return result
+        stale = "VERIFY FAILED: stale failure from an earlier attempt\n"
+        return replace(result, log=stale + result.log, agent_log=stale + result.agent_log)
+
+
+@pytest.mark.requires_compiler
+def test_the_reason_is_the_last_verify_not_a_stale_one(tmp_path, monkeypatch, requires_compiler):
+    _fake_timing(monkeypatch, {"translated": 100.0, "r1": 50.0, "r3": 25.0})
+    case = build_ista(max_iters=50)
+    driver = StaleFailureDriver(["r1", "broken", "r3"])
+    generate_code(
+        case["verifier"],
+        case["next_state"],
+        tmp_path,
+        config=case["config"].model_copy(update=dict(agent_optimize_rounds=3)),
+        driver=driver,
+        name="ista",
+        code_optimization=True,
+        profile=True,
+    )
+    line = next(ln for ln in driver.prompts[2].splitlines() if ln.startswith("Round 2:"))
+    assert line.startswith("Round 2: reverted (failed verification: ")
+    assert "stale" not in line
 
 
 @pytest.mark.requires_compiler
 def test_a_slower_round_is_reverted(tmp_path, monkeypatch, requires_compiler):
-    times = {"translated": 100.0, "r1": 50.0, "r2": 50.5}  # within 2%, but later rounds
+    times = {"translated": 100.0, "r1": 50.0, "r2": 50.5}
+    result, driver, solver = _run(tmp_path, monkeypatch, ["r1", "r2", "r3"], times)
+    assert len(driver.prompts) == 3
+    assert "/* r1 */" in solver and "/* r2 */" not in solver
+    assert (
+        "Round 2: reverted (not enough gain: 50.500 us vs 50.000 us best (-1.0%))"
+        in driver.prompts[2]
+    )
+    assert gen.STOP_PATIENCE in (tmp_path / "OPTIMIZATIONS.md").read_text()
+
+
+@pytest.mark.requires_compiler
+def test_patience_one_stops_at_the_first_miss(tmp_path, monkeypatch, requires_compiler):
+    times = {"translated": 100.0, "r1": 50.0}
+    result, driver, solver = _run(
+        tmp_path, monkeypatch, ["r1", "broken", "r3"], times, agent_optimize_patience=1
+    )
+    assert len(driver.prompts) == 2
+    assert "/* r1 */" in solver
+    assert gen.STOP_PATIENCE in (tmp_path / "OPTIMIZATIONS.md").read_text()
+
+
+@pytest.mark.requires_compiler
+def test_a_gain_resets_patience(tmp_path, monkeypatch, requires_compiler):
+    # miss (r2), gain (r3), miss (r4), miss (r5): without the reset r4 would stop.
+    times = {"translated": 100.0, "r1": 50.0, "r2": 50.5, "r3": 25.0}
+    result, driver, solver = _run(
+        tmp_path, monkeypatch, ["r1", "r2", "r3", "r4", "r5", "r6"], times, agent_optimize_rounds=6
+    )
+    assert len(driver.prompts) == 5
+    assert "/* r3 */" in solver
+    assert result.timing.c_final_us == 25.0
+    assert gen.STOP_PATIENCE in (tmp_path / "OPTIMIZATIONS.md").read_text()
+
+
+@pytest.mark.requires_compiler
+def test_a_first_round_kept_within_noise_uses_patience(tmp_path, monkeypatch, requires_compiler):
+    times = {"translated": 100.0, "r1": 101.0, "r2": 101.0}
     result, driver, solver = _run(tmp_path, monkeypatch, ["r1", "r2", "r3"], times)
     assert len(driver.prompts) == 2
-    assert "/* r1 */" in solver and "/* r2 */" not in solver
+    assert "/* r1 */" in solver  # kept: the first round's 2% tolerance
+    assert (
+        "Round 1: kept, -1.0% faster (not enough gain: 101.000 us vs 100.000 us best (-1.0%))"
+        in driver.prompts[1]
+    )
+
+
+@pytest.mark.requires_compiler
+def test_a_long_verify_log_gives_one_short_line(tmp_path, monkeypatch, requires_compiler):
+    real = gen.build_and_verify
+
+    def verify(out_dir, target):
+        if "/* r2 */" in (Path(out_dir) / "src" / "fom_solver.c").read_text():
+            out = "noise\n" * 10000 + "VERIFY FAILED: " + "x" * 5000 + "\n" + "tail\n" * 1000
+            return VerifyResult(success=False, returncode=1, stdout=out, stderr="")
+        return real(out_dir, target)
+
+    monkeypatch.setattr(gen, "build_and_verify", verify)
+    times = {"translated": 100.0, "r1": 50.0, "r3": 25.0}
+    result, driver, solver = _run(
+        tmp_path, monkeypatch, ["r1", "r2", "r3"], times, agent_optimize_rounds=3
+    )
+    assert "/* r3 */" in solver
+    line = next(ln for ln in driver.prompts[2].splitlines() if ln.startswith("Round 2:"))
+    assert line.startswith("Round 2: reverted (failed verification: VERIFY FAILED: xxx")
+    assert len(line) <= 360 and "noise" not in line and "tail" not in line
+
+
+def test_failure_line():
+    assert gen._failure_line("cc -O2 a.c\nVERIFY FAILED: 3/8 samples\nmake: Error 1") == (
+        "VERIFY FAILED: 3/8 samples"
+    )
+    assert gen._failure_line("cc a.c\na.c:1:1: error: bad\n") == "a.c:1:1: error: bad"
+    assert gen._failure_line("one\n  last   line \n\n") == "last line"
+    assert gen._failure_line("") == ""
+    assert len(gen._failure_line("VERIFY FAILED: " + "x" * 1000, limit=50)) == 50
 
 
 @pytest.mark.requires_compiler

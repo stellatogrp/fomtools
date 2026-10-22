@@ -264,7 +264,11 @@ def _round_lines(rounds: list[dict]) -> list[str]:
     ]
     for r in rounds:
         gain = f"{100 * r['gain']:.1f}%" if r.get("gain") is not None else "-"
-        outcome = r.get("stop_reason") or "continued"
+        reason = r.get("reason")
+        if reason:
+            reason = ("" if r.get("kept") else "reverted: ") + reason
+        outcome = "; ".join(x for x in (reason, r.get("stop_reason")) if x) or "continued"
+        outcome = outcome.replace("|", "/")
         if r.get("truncated"):
             outcome += " (agent stopped at its budget)"
         lines.append(

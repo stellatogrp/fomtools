@@ -101,4 +101,10 @@ class StubAgentDriver(AgentDriver):
             text=True,
         )
         log = proc.stdout + proc.stderr
-        return AgentResult(success=proc.returncode == 0, log=log, turns_used=1, artifacts=[target])
+        return AgentResult(
+            success=proc.returncode == 0,
+            log=log,
+            turns_used=1,
+            artifacts=[target],
+            verify_output=log,
+        )

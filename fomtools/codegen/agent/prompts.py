@@ -376,6 +376,7 @@ def code_optimization_continuation(
     last_gain: float | None,
     profile: list | None = None,
     history: list[dict] | None = None,
+    patience: int | None = None,
 ) -> str:
     """The block appended to `code_optimization_instructions` for a later round.
 
@@ -384,7 +385,8 @@ def code_optimization_continuation(
     has to be told where it stands: which round this is, the current and the
     translated whole-solve times, and what the last round gained. ``history``
     (the earlier rounds, see `fomtools.codegen.generate.OptimizationRound`)
-    adds what each one applied and what a rule blocked (`_history_lines`).
+    adds what each one applied and what a rule blocked, and why a round was
+    reverted (`_history_lines`). ``patience`` is ``agent_optimize_patience``.
     """
     lines = [
         "",
@@ -407,10 +409,17 @@ def code_optimization_continuation(
         lines += [f"  {r.name:<24} {r.total_us:12.1f} us  {r.pct:6.2f}%" for r in profile]
     if history:
         lines += _history_lines(history)
+    stop = (
+        f"after {patience} rounds in a row that fail or gain too little"
+        if patience and patience > 1
+        else "when a round fails or gains too little"
+    )
     lines += [
         "Look for further speedups, including structure the earlier rounds did not "
-        "exploit. If you find nothing that helps, leave the sources unchanged and say "
-        "so in your summary; the pipeline stops when a round gains too little.",
+        "exploit. Do not repeat an approach the earlier rounds show was reverted "
+        "unless you can fix what made it fail. If you find nothing that helps, leave "
+        "the sources unchanged and say so in your summary: that ends the phase. The "
+        "pipeline reverts a round that fails or gains too little, and stops " + stop + ".",
         "",
     ]
     return "\n".join(lines)
@@ -425,8 +434,10 @@ def _clip(text: str, limit: int) -> str:
 def _history_lines(history: list[dict], item_chars: int = 160, max_chars: int = 3000) -> list[str]:
     """The earlier rounds, oldest first, for a later round's prompt.
 
-    Each round is a header (kept or not, and its gain) and what its summary
-    listed under `APPLIED_HEADING` and `BLOCKED_HEADING`. Timings and profiles
+    Each round is a header (kept or reverted, its gain, and the one-line
+    ``reason`` it was reverted or made no gain) and what its summary listed under
+    `APPLIED_HEADING` (for a reverted round, what was tried) and
+    `BLOCKED_HEADING`. Timings and profiles
     are left out: the prompt already gives the current ones. Each item is cut to
     ``item_chars``; past ``max_chars`` in all, the oldest rounds shrink to their
     header, then are dropped, so the newest stays whole.
@@ -436,6 +447,8 @@ def _history_lines(history: list[dict], item_chars: int = 160, max_chars: int = 
         head = f"Round {r['index']}: {'kept' if r.get('kept') else 'reverted'}"
         if r.get("kept") and r.get("gain") is not None:
             head += f", {100 * r['gain']:.1f}% faster"
+        if r.get("reason"):
+            head += f" ({_clip(r['reason'], 2 * item_chars)})"
         applied = [_clip(a, item_chars) for a in r.get("applied") or []]
         blocked = [
             _clip(" | ".join(p for p in (b.get("idea"), b.get("rule")) if p), item_chars)
@@ -462,7 +475,7 @@ def _history_lines(history: list[dict], item_chars: int = 160, max_chars: int = 
         entries.pop(0)
         omitted += 1
 
-    lines = ["Earlier rounds, oldest first (what each applied, and what a rule blocked):"]
+    lines = ["Earlier rounds, oldest first (what each applied or tried, and what a rule blocked):"]
     if omitted:
         lines.append(f"  ({omitted} earlier round{'s' if omitted > 1 else ''} omitted)")
     for head, detail in entries:

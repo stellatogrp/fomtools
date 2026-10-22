@@ -145,3 +145,25 @@ def test_without_a_budget_every_attempt_runs(tmp_path):
     result = run_verify_loop(task, lambda prompt, turns: "attempted", max_attempts=3)
     assert result.turns_used == 3
     assert "budget" not in task.extra
+
+
+def test_verify_output_is_the_last_verify(tmp_path):
+    # Each verify fails with its own attempt number; the agent's words quote an
+    # older failure. verify_output is what decided the result: the last verify.
+    counter = Path(tmp_path) / "n"
+    script = (
+        "import pathlib,sys;p=pathlib.Path(sys.argv[1]);"
+        "n=int(p.read_text()) + 1 if p.exists() else 1;p.write_text(str(n));"
+        "print(f'VERIFY FAILED: attempt {n}');raise SystemExit(1)"
+    )
+    task = AgentTask(
+        workdir=Path(tmp_path),
+        solver_rel_path="src/fom_solver.c",
+        verify_cmd=[sys.executable, "-c", script, str(counter)],
+    )
+    result = run_verify_loop(
+        task, lambda prompt, turns: "VERIFY FAILED: attempt 0 (seen earlier)", max_attempts=3
+    )
+    assert not result.success
+    assert result.verify_output.strip() == "VERIFY FAILED: attempt 3"
+    assert "attempt 1" in result.log and "attempt 0" not in result.verify_output
