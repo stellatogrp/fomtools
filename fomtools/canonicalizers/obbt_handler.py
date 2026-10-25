@@ -34,6 +34,12 @@ class OBBTHandler(Canonicalizer):
         tolerances.
     crossing_repairs : int
         Number of bound entries repaired this way so far.
+    lp_retries : int
+        Number of OBBT LPs not solved to optimality warm-started but solved
+        from scratch (``Solver.optimize_from_scratch``) so far.
+    lp_failures : int
+        Number of OBBT LPs not solved to optimality even from scratch so far;
+        each keeps the input bound of its entry and sense.
     """
 
     def __init__(self, solver: str, solver_params: dict = None, crossing_tol: float = 1e-6):
@@ -56,6 +62,8 @@ class OBBTHandler(Canonicalizer):
         super().__init__(solver_params=solver_params, solver=solver)
         self.crossing_tol = crossing_tol
         self.crossing_repairs = 0
+        self.lp_retries = 0
+        self.lp_failures = 0
 
     def add_var(self, var: LinearExpression) -> None:
         """
@@ -161,11 +169,14 @@ class OBBTHandler(Canonicalizer):
         -------
         tuple[np.ndarray, np.ndarray] | None
             A tuple ``(new_lb, new_ub)`` containing the tightened lower
-            and upper bounds. Returns ``None`` if the optimization failed
-            (e.g., the problem is infeasible or unbounded).
+            and upper bounds. An LP not solved to optimality is solved once
+            more from scratch; if that fails too, its entry keeps the input
+            bound for that sense, and the other entries are still tightened.
+            Returns ``None`` if a bound stays nonfinite.
         """
-        lb_out = np.zeros(linexpr.ndim)
-        ub_out = np.zeros(linexpr.ndim)
+        # An LP that is not solved to optimality leaves the input bound in place.
+        lb_out = np.array(lb, dtype=float, copy=True)
+        ub_out = np.array(ub, dtype=float, copy=True)
 
         for sense in ["minimize", "maximize"]:
             for i, expr in enumerate(linexpr):
@@ -173,9 +184,29 @@ class OBBTHandler(Canonicalizer):
                 self.solver.optimize()
 
                 if not self.solver.is_optimal():
-                    log.info("bound tightening failed: OBBT model not solved to optimality")
-                    log.info(f"i = {i}, sense={sense}")
-                    return
+                    # A warm-started solve can end with a wrong status (on della, a
+                    # feasible LP came back INFEASIBLE); retry once from scratch.
+                    status = self.solver["status"]
+                    self.solver.optimize_from_scratch()
+                    if self.solver.is_optimal():
+                        self.lp_retries += 1
+                        log.info(
+                            "OBBT: LP for entry %d (%s) ended with status %s; solved from scratch",
+                            i,
+                            sense,
+                            status,
+                        )
+                    else:
+                        self.lp_failures += 1
+                        log.info(
+                            "OBBT: LP for entry %d (%s) not solved to optimality (status %s, "
+                            "%s from scratch); keeping its input bound",
+                            i,
+                            sense,
+                            status,
+                            self.solver["status"],
+                        )
+                        continue
 
                 if sense == "maximize":
                     ub_out[i] = self.solver["objVal"]

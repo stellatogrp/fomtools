@@ -490,6 +490,22 @@ class GurobiSolver(MIPSolver):
         """
         self.model.optimize()
 
+    def optimize_from_scratch(self):
+        """
+        Discard the previous solve (basis and solution) and solve with dual simplex.
+
+        A warm-started concurrent LP solve can end with a wrong status, e.g.
+        INFEASIBLE on a feasible OBBT LP; a cold dual simplex solve is the robust
+        retry. The ``Method`` parameter is restored afterwards.
+        """
+        method = self.model.Params.Method
+        self.model.reset(0)
+        self.model.Params.Method = 1
+        try:
+            self.model.optimize()
+        finally:
+            self.model.Params.Method = method
+
     def get_solution_value(self, expression: LinearExpression) -> np.ndarray:
         """
         Compute the solution value for the given ``LinearExpression``

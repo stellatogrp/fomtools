@@ -160,6 +160,15 @@ class Solver(object):
         """
         raise NotImplementedError
 
+    def optimize_from_scratch(self):
+        """
+        Solve the model again without the warm start (basis, solution) of earlier solves.
+
+        The retry for a warm-started solve that did not reach optimality.
+        Defaults to ``optimize``.
+        """
+        self.optimize()
+
     def copy(self) -> "Solver":
         """
         Create an independent copy of this solver.

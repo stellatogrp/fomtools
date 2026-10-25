@@ -329,6 +329,11 @@ class HiGHSSolver(MIPSolver):
         """
         self.model.optimize()
 
+    def optimize_from_scratch(self):
+        """Discard the previous solve (basis and solution) and solve again."""
+        self.model.clearSolver()
+        self.model.optimize()
+
     def get_solution_value(self, expression: LinearExpression) -> np.ndarray:
         """
         Compute the solution value for the given ``LinearExpression``
