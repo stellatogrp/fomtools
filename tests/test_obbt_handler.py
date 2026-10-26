@@ -386,19 +386,25 @@ def test_repair_crossed_bounds_buffers_only_crossed_entries():
 class _StubLPSolver:
     """Returns a fixed optimal value per (sense, entry) for OBBTHandler.obbt."""
 
-    def __init__(self, values):
-        self.values, self.key = values, None
+    def __init__(self, values, cold_only=()):
+        # Keys in ``cold_only`` are solved only by ``optimize_from_scratch``.
+        self.values, self.cold_only, self.key, self.cold = values, set(cold_only), None, False
 
     def set_objective(self, expr, sense=None):
         self.key = (sense, expr)
 
     def optimize(self):
-        pass
+        self.cold = False
+
+    def optimize_from_scratch(self):
+        self.cold = True
 
     def is_optimal(self):
-        return True
+        return self.key in self.values and (self.cold or self.key not in self.cold_only)
 
     def __getitem__(self, item):
+        if item == "status":
+            return "stub"
         assert item == "objVal"
         return self.values[self.key]
 
@@ -409,12 +415,13 @@ class _StubExpr(list):
         return len(self)
 
 
-def _stub_handler(values):
+def _stub_handler(values, cold_only=()):
     from fomtools.canonicalizers.obbt_handler import OBBTHandler
 
     handler = OBBTHandler.__new__(OBBTHandler)
-    handler.solver = _StubLPSolver(values)
+    handler.solver = _StubLPSolver(values, cold_only)
     handler.crossing_tol, handler.crossing_repairs = 1e-6, 0
+    handler.lp_retries, handler.lp_failures = 0, 0
     return handler
 
 
@@ -445,6 +452,47 @@ def test_obbt_buffer_does_not_loosen_input_bounds():
     assert (lb[0], ub[0]) == (0.0, 0.0)
     # The outward LP padding already removes the crossing, so no repair is needed.
     assert handler.crossing_repairs == 0
+
+
+def test_obbt_failed_lp_keeps_input_bound_of_that_entry_only():
+    # The LP maximizing "a" is not solved to optimality (no value): "a" keeps its
+    # input upper bound, its lower bound and both bounds of "b" are still tightened.
+    values = {("minimize", "a"): -1.0, ("minimize", "b"): -2.0, ("maximize", "b"): 2.0}
+    handler = _stub_handler(values)
+    lb, ub = handler.obbt(_StubExpr(["a", "b"]), np.full(2, -5.0), np.full(2, 5.0))
+    assert ub[0] == 5.0
+    assert lb[0] == pytest.approx(-1.0 - 1e-6, abs=1e-12)
+    assert (lb[1], ub[1]) == (pytest.approx(-2.0 - 2e-6), pytest.approx(2.0 + 2e-6))
+    assert (handler.lp_retries, handler.lp_failures) == (0, 1)
+
+
+def test_obbt_retries_failed_lp_from_scratch():
+    # The warm-started LP maximizing "a" fails (as a feasible LP came back
+    # INFEASIBLE on della); the retry from scratch solves it.
+    values = {("minimize", "a"): -1.0, ("maximize", "a"): 1.0}
+    handler = _stub_handler(values, cold_only=[("maximize", "a")])
+    lb, ub = handler.obbt(_StubExpr(["a"]), np.full(1, -5.0), np.full(1, 5.0))
+    assert ub[0] == pytest.approx(1.0 + 1e-6, abs=1e-12)
+    assert (handler.lp_retries, handler.lp_failures) == (1, 0)
+
+
+def test_gurobi_optimize_from_scratch_restores_method():
+    gp = pytest.importorskip("gurobipy")
+
+    from fomtools.solvers.gurobi import GurobiSolver
+
+    solver = GurobiSolver({"OutputFlag": 0, "Method": 2})
+    x = solver.model.addVar(lb=0.0, ub=3.0)
+    solver.model.setObjective(x, gp.GRB.MAXIMIZE)
+    solver.optimize()
+    solver.optimize_from_scratch()
+    assert solver.is_optimal() and solver.model.ObjVal == pytest.approx(3.0)
+    assert solver.model.Params.Method == 2
+
+
+def test_obbt_failed_lp_with_infinite_input_bound_returns_none():
+    handler = _stub_handler({("minimize", "a"): -1.0})
+    assert handler.obbt(_StubExpr(["a"]), np.full(1, -np.inf), np.full(1, np.inf)) is None
 
 
 def test_obbt_still_rejects_large_crossing():
