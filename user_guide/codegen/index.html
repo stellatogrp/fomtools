@@ -1,0 +1,2555 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://stellatogrp.github.io/fomtools/user_guide/codegen/">
+      
+      
+        <link rel="prev" href="../">
+      
+      
+        <link rel="next" href="../sdp/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/logo/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Code generation guide - FOMTools</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  <link rel="icon" type="image/png" sizes="48x48" href="../../assets/logo/favicon-48.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="../../assets/logo/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="../../assets/logo/favicon-16.png">
+  <link rel="icon" type="image/svg+xml" href="../../assets/logo/favicon.svg">
+  <link rel="apple-touch-icon" href="../../assets/logo/icon-512.png">
+
+  <script type="module" src="https://cdn.jsdelivr.net/npm/@marimo-team/islands@0.25.2/dist/main.js"></script>
+<link
+    href="https://cdn.jsdelivr.net/npm/@marimo-team/islands@0.25.2/dist/style.css"
+    rel="stylesheet"
+    title="marimo-islands"
+    crossorigin="anonymous"
+/>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link
+    rel="preconnect"
+    href="https://fonts.gstatic.com"
+    crossorigin
+/>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Mono:wght@400;500;700&amp;family=Lora&amp;family=PT+Sans:wght@400;700&amp;display=swap" rel="stylesheet" />
+<link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/katex@0.18.5/dist/katex.min.css"
+    integrity="sha384-2dNi/m6JtSiviznrOIZ5fTiZ5As0In2QwkuXSgoqcQtCNplvJAbt+jveeN+8en73"
+    crossorigin="anonymous"
+/>
+<marimo-filename hidden></marimo-filename>
+</head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#code-generation-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="FOMTools" class="md-header__button md-logo" aria-label="FOMTools" data-md-component="logo">
+      <img src="../../assets/logo/icon.svg#only-light" alt="FOMTools">
+<img src="../../assets/logo/icon-dark.svg#only-dark" alt="FOMTools">
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FOMTools
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Code generation guide
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m14.3 16-.7-2h-3.2l-.7 2H7.8L11 7h2l3.2 9zM20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12zm-9.15 3.96h2.3L12 9z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/stellatogrp/fomtools" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    stellatogrp/fomtools
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="FOMTools" class="md-nav__button md-logo" aria-label="FOMTools" data-md-component="logo">
+      <img src="../../assets/logo/icon.svg#only-light" alt="FOMTools">
+<img src="../../assets/logo/icon-dark.svg#only-dark" alt="FOMTools">
+    </a>
+    FOMTools
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/stellatogrp/fomtools" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    stellatogrp/fomtools
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../get_started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quick_start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User guide
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code generation guide
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code generation guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#defining-the-fom" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defining the FOM
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Defining the FOM">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rolling-back-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rolling back up
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generating-from-a-single-iteration-instead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generating from a single iteration instead
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#accumulating-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accumulating methods
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#generating-the-solver" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generating the solver
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Generating the solver">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stopping-early-on-a-tolerance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stopping early on a tolerance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stopping-on-the-verification-objective" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stopping on the verification objective
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-the-generated-solver" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using the generated solver
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-timing-profiling-and-the-code-optimization-phase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance: timing, profiling, and the code optimization phase
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Performance: timing, profiling, and the code optimization phase">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#time-and-turn-budgets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Time and turn budgets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-changed-and-a-marker-free-production-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What changed, and a marker-free production build
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-agent-may-rewrite-and-how-it-is-checked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the agent may rewrite, and how it is checked
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#linear-solves-factorized-never-inverted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Linear solves: factorized, never inverted
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#iteration-varying-coefficients" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Iteration-varying coefficients
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Iteration-varying coefficients">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-a-build-function" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why a build function
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#declaring-the-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Declaring the state
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-not-supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is not supported
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Targets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sdp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SDP relaxation (experimental)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API and modules
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API and modules
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/verifier/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verifier
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/linearexpression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Linear expressions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/constraint/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/steps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Step operators
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/canonicalizer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Canonicalizers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/solvers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/proxablefunctions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Proxable functions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/codegen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../tutorials/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/verification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verification
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code generation
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Code generation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/codegen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/codegen/lasso/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lasso
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/codegen/control/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Optimal control
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/codegen/network/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Network flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/codegen/nnls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nonnegative least squares
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/codegen/portfolio/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Portfolio
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/codegen/speedup_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Speedup results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/cvxpygen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CVXPYgen integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#defining-the-fom" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defining the FOM
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Defining the FOM">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rolling-back-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rolling back up
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generating-from-a-single-iteration-instead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generating from a single iteration instead
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#accumulating-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accumulating methods
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#generating-the-solver" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generating the solver
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Generating the solver">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stopping-early-on-a-tolerance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stopping early on a tolerance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stopping-on-the-verification-objective" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stopping on the verification objective
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-the-generated-solver" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using the generated solver
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-timing-profiling-and-the-code-optimization-phase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance: timing, profiling, and the code optimization phase
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Performance: timing, profiling, and the code optimization phase">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#time-and-turn-budgets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Time and turn budgets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-changed-and-a-marker-free-production-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What changed, and a marker-free production build
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-agent-may-rewrite-and-how-it-is-checked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the agent may rewrite, and how it is checked
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#linear-solves-factorized-never-inverted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Linear solves: factorized, never inverted
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#iteration-varying-coefficients" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Iteration-varying coefficients
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Iteration-varying coefficients">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-a-build-function" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why a build function
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#declaring-the-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Declaring the state
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-not-supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is not supported
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Targets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/stellatogrp/fomtools/edit/main/docs/user_guide/codegen.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="code-generation-guide">Code generation guide<a class="headerlink" href="#code-generation-guide" title="Permanent link">&para;</a></h1>
+<p>Once a first-order method has been verified with a
+<a href="../../api/verifier/"><code>Verifier</code></a>, FOMTools can generate a fast, low-level
+implementation of it — in the spirit of
+<a href="https://osqp.org/docs/codegen/index.html">OSQP codegen</a> — together with a tiny
+Python wrapper. The translation is performed by an LLM coding agent that writes
+the target code and iterates against a Python reference oracle until the output
+is numerically verified.</p>
+<p>This page is the reference for that pipeline: how to record a method, when a run
+rolls back up into a loop, how to declare an iteration-varying coefficient, and
+what the emitted project contains. The
+<a href="../#code-generation">user guide</a> introduces the same pipeline in
+brief, the <a href="../../tutorials/codegen/">tutorials</a> work through five complete
+examples, and <a href="../../api/codegen/">the API page</a> documents each symbol.</p>
+<h2 id="defining-the-fom">Defining the FOM<a class="headerlink" href="#defining-the-fom" title="Permanent link">&para;</a></h2>
+<p>The Python snippets below reuse the imports and problem data in the first block.
+Calls to <code>codegen</code>, <code>codegen_rolled</code>, and <code>generate_code</code> require the <code>codegen</code>
+extra and an authenticated coding-agent driver (<code>FOMTOOLS_CODEGEN_AGENT=1</code>),
+or an explicit <code>driver=</code>. Recording the method requires no coding agent.</p>
+<p>Write the algorithm as a loop, exactly as you would to verify it, and keep the
+iterate sequence. An
+<a href="../../api/verifier/#fomtools.Verifier.iterate_trajectory"><code>iterate_trajectory</code></a> is
+the tidiest way to hold it (see <a href="#accumulating-methods">accumulating methods</a>
+for why), but any list works:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">fomtools</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ft</span>
+
+<span class="n">n</span><span class="p">,</span> <span class="n">m</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">4</span>
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">A</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">n</span><span class="p">))</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">m</span><span class="p">,))</span>
+<span class="n">t</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">real</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">eigvals</span><span class="p">(</span><span class="n">A</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">A</span><span class="p">)))</span>
+<span class="n">At</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="o">-</span> <span class="n">t</span> <span class="o">*</span> <span class="n">A</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">A</span>
+<span class="n">Bt</span> <span class="o">=</span> <span class="n">t</span> <span class="o">*</span> <span class="n">A</span><span class="o">.</span><span class="n">T</span>
+<span class="n">K</span> <span class="o">=</span> <span class="mi">200</span>
+
+<span class="n">vp</span> <span class="o">=</span> <span class="n">ft</span><span class="o">.</span><span class="n">Verifier</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">"simulator"</span><span class="p">,</span> <span class="n">obbt_solver</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<span class="n">b_param</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">parameter</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">lb</span><span class="o">=</span><span class="n">b</span> <span class="o">-</span> <span class="mf">1.0</span><span class="p">,</span> <span class="n">ub</span><span class="o">=</span><span class="n">b</span> <span class="o">+</span> <span class="mf">1.0</span><span class="p">)</span>
+
+<span class="n">z</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">iterate_trajectory</span><span class="p">(</span><span class="n">K</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+<span class="n">z</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">iterate</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">lb</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ub</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">K</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+    <span class="n">z</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">soft_threshold</span><span class="p">(</span><span class="n">At</span> <span class="o">@</span> <span class="n">z</span><span class="p">[</span><span class="n">k</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">Bt</span> <span class="o">@</span> <span class="n">b_param</span><span class="p">,</span> <span class="n">lambd</span><span class="o">=</span><span class="n">t</span><span class="p">)</span>
+</code></pre></div>
+<p>Verify it however you normally would, then hand the same object to <code>codegen</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">codegen</span><span class="p">(</span><span class="s2">"out/ista"</span><span class="p">,</span> <span class="n">iterates</span><span class="o">=</span><span class="n">z</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"ista"</span><span class="p">)</span>
+</code></pre></div>
+<p>There is nothing to restructure: the program you generate from is the program you
+verified. Each iteration carries its own coefficients, so the recording may do
+whatever it likes with the iteration index — a decaying step size, momentum, a
+step whose <em>type</em> changes with <code>k</code>, or a reference to an earlier iterate held
+across the whole run, as in a Halpern anchor.</p>
+<h3 id="rolling-back-up">Rolling back up<a class="headerlink" href="#rolling-back-up" title="Permanent link">&para;</a></h3>
+<p>Generating the run literally would emit <code>K</code> blocks, which for a method that does
+the same thing every iteration is wasteful. So before unrolling anything,
+extraction pulls out iteration one on its own and asks whether repeating it
+reproduces the recording. When it does, that compact IR is what gets emitted —
+one block, whatever <code>K</code> was:</p>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">codegen</span><span class="p">(</span><span class="s2">"out/ista"</span><span class="p">,</span> <span class="n">iterates</span><span class="o">=</span><span class="n">z</span><span class="p">)</span>
+<span class="n">result</span><span class="o">.</span><span class="n">ir</span><span class="o">.</span><span class="n">unrolled</span>     <span class="c1"># False: the run rolled back up</span>
+<span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">ir</span><span class="o">.</span><span class="n">body</span><span class="p">)</span>    <span class="c1"># 1</span>
+</code></pre></div>
+<p>Rolling changes the artifact and never the computation. The rolled solver keeps
+the <strong>recorded</strong> horizon rather than any horizon you configure, and the check that
+decides to roll is the proof it was safe: it replays the recorded tape and
+compares it against the rolled loop, iteration by iteration, over several
+parameter draws. Pass <code>roll=False</code> to emit the unrolled body regardless.</p>
+<p><code>result.ir.unrolled</code> tells you which you got.</p>
+<h3 id="generating-from-a-single-iteration-instead">Generating from a single iteration instead<a class="headerlink" href="#generating-from-a-single-iteration-instead" title="Permanent link">&para;</a></h3>
+<p>If you would rather supply one stationary iteration and choose the loop count
+yourself, <code>codegen_rolled</code> does that:</p>
+<div class="highlight"><pre><span></span><code><span class="n">next_state</span> <span class="o">=</span> <span class="n">z</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">codegen_rolled</span><span class="p">(</span>
+    <span class="s2">"out/ista"</span><span class="p">,</span> <span class="n">next_state</span><span class="p">,</span>
+    <span class="n">iterates</span><span class="o">=</span><span class="p">[</span><span class="n">z</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">K</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)],</span>   <span class="c1"># optional, but see below</span>
+    <span class="n">param_values</span><span class="o">=</span><span class="p">{</span><span class="n">b_param</span><span class="p">:</span> <span class="n">b</span><span class="p">},</span>                  <span class="c1"># any value in the parameter set</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Here the iteration <strong>must</strong> be stationary, because extraction reads it once and
+emits a loop that repeats it. A coefficient that changes with the iteration index
+would be frozen at whatever value the recorded iteration happened to use, and the
+generated solver would run a different algorithm than the one you verified.
+Passing <code>iterates</code> and <code>param_values</code> has that checked rather than assumed; omit
+them and you get a warning, because nothing else in the pipeline can catch the
+mistake — the reference oracle is itself a rolled loop, so it agrees with a
+wrongly rolled iteration by construction.</p>
+<p><code>codegen</code> needs no such argument: it generates the recording itself, and gates the
+result against the tape using parameter values it draws from the declared box.</p>
+<h2 id="accumulating-methods">Accumulating methods<a class="headerlink" href="#accumulating-methods" title="Permanent link">&para;</a></h2>
+<p>Douglas–Rachford and ADMM carry their iterate through an expression rather than a
+step output:</p>
+<div class="highlight"><pre><span></span><code><span class="n">dr</span> <span class="o">=</span> <span class="n">ft</span><span class="o">.</span><span class="n">Verifier</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">"simulator"</span><span class="p">,</span> <span class="n">obbt_solver</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<span class="n">q_dr</span> <span class="o">=</span> <span class="n">dr</span><span class="o">.</span><span class="n">parameter</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">lb</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">ub</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">kkt</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="o">+</span> <span class="n">A</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">A</span>
+<span class="n">z_dr</span> <span class="o">=</span> <span class="n">dr</span><span class="o">.</span><span class="n">iterate_trajectory</span><span class="p">(</span><span class="n">K</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+<span class="n">z_dr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">dr</span><span class="o">.</span><span class="n">iterate</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">lb</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ub</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">K</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+    <span class="n">u</span> <span class="o">=</span> <span class="n">dr</span><span class="o">.</span><span class="n">implicit_linear</span><span class="p">(</span><span class="n">z_dr</span><span class="p">[</span><span class="n">k</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">q_dr</span><span class="p">,</span> <span class="n">output_mat</span><span class="o">=</span><span class="n">kkt</span><span class="p">)</span>
+    <span class="n">ut</span> <span class="o">=</span> <span class="n">dr</span><span class="o">.</span><span class="n">relu</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">u</span> <span class="o">-</span> <span class="n">z_dr</span><span class="p">[</span><span class="n">k</span> <span class="o">-</span> <span class="mi">1</span><span class="p">])</span>
+    <span class="n">z_dr</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">z_dr</span><span class="p">[</span><span class="n">k</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">ut</span> <span class="o">-</span> <span class="n">u</span>        <span class="c1"># not a step output</span>
+</code></pre></div>
+<p>Written that way, each iterate references every leaf the previous one did plus the
+new step outputs, so the expression grows down the trajectory — leaf support runs
+3, 5, 7, 9, … — and generating the run would need a number of matrix-vector
+products that grows with the <em>square</em> of the iteration count.</p>
+<p><code>iterate_trajectory</code> handles this for you. Its default <code>collapse_expr="auto"</code>
+notices the growth after two consecutive increases and keeps each subsequent
+iterate as its own variable, which restores linear growth. A method that merely
+<em>refers</em> to an earlier iterate — a Halpern anchor — holds its support flat instead,
+so it is left alone. Nothing to configure either way.</p>
+<p>Forcing <code>collapse_expr=True</code> opts out of that, and generating the resulting
+recording raises <code>UnrolledBlowupError</code> with the measured counts rather than
+emitting a solver nobody wants. (A stationary accumulating method is unaffected
+either way: it rolls back up before size matters.)</p>
+<h2 id="generating-the-solver">Generating the solver<a class="headerlink" href="#generating-the-solver" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">codegen</span><span class="p">(</span><span class="s2">"out/ista"</span><span class="p">,</span> <span class="n">iterates</span><span class="o">=</span><span class="n">z</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"ista"</span><span class="p">)</span>
+<span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">success</span>
+</code></pre></div>
+<h3 id="stopping-early-on-a-tolerance">Stopping early on a tolerance<a class="headerlink" href="#stopping-early-on-a-tolerance" title="Permanent link">&para;</a></h3>
+<p>A solver that exits once the iterate stops moving is a property of the <em>rolled</em>
+form, so it comes from <code>codegen_rolled</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fomtools.codegen</span><span class="w"> </span><span class="kn">import</span> <span class="n">CodegenConfig</span><span class="p">,</span> <span class="n">TerminationKind</span><span class="p">,</span> <span class="n">TerminationSpec</span>
+
+<span class="n">config</span> <span class="o">=</span> <span class="n">CodegenConfig</span><span class="p">(</span>
+    <span class="n">termination</span><span class="o">=</span><span class="n">TerminationSpec</span><span class="p">(</span><span class="n">kind</span><span class="o">=</span><span class="n">TerminationKind</span><span class="o">.</span><span class="n">INF_NORM_CHANGE</span><span class="p">,</span> <span class="n">max_iters</span><span class="o">=</span><span class="mi">2000</span><span class="p">,</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">),</span>
+<span class="p">)</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">codegen_rolled</span><span class="p">(</span><span class="s2">"out/ista"</span><span class="p">,</span> <span class="n">next_state</span><span class="o">=</span><span class="n">next_state</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"ista"</span><span class="p">)</span>
+<span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">success</span>
+</code></pre></div>
+<p>Generating from a recorded run runs that run, so there is no horizon to stop short
+of and <code>codegen</code> rejects the infinity-norm criterion rather than quietly ignoring
+it. Reach for <code>codegen_rolled</code> when you want that stopping rule, or <code>codegen</code> when
+you want the algorithm you recorded. The verification objective (next section) is
+the exception: <code>codegen</code> accepts it.</p>
+<p><code>TerminationSpec</code> also takes <code>check_termination</code> (named after OSQP's setting):
+the residual is computed and tested only every <code>check_termination</code> iterations,
+and <code>0</code> disables early exit entirely. The default is 1 — the generated check is
+an infinity norm fused into the state copy, measured at 1–2.5% of iteration
+time for direct-method FOMs, and checking less often overshoots the stopping
+point by up to <code>check_termination - 1</code> full iterations. Raise it only for
+matrix-free methods on large problems, where a single iteration is cheap
+relative to a pass over the state.</p>
+<h3 id="stopping-on-the-verification-objective">Stopping on the verification objective<a class="headerlink" href="#stopping-on-the-verification-objective" title="Permanent link">&para;</a></h3>
+<p><code>TerminationKind.INF_NORM_CHANGE</code> stops on <code>||x_k - x_{k-1}||_inf</code> over the whole
+state, which is not the quantity you verified when your objective reads a scaled
+or partial iterate, or is a KKT residual. <code>TerminationKind.OBJECTIVE</code> stops on the
+objective itself, the one set with <code>maximize</code>, in the norm it was set
+with (<code>ft.sum_squares</code> is the squared two-norm, as in verification):</p>
+<div class="highlight"><pre><span></span><code><span class="n">H</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">diag</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="n">n</span><span class="p">))</span>  <span class="c1"># e.g. a diagonal scaling of the residual</span>
+<span class="n">vp</span><span class="o">.</span><span class="n">maximize</span><span class="p">(</span><span class="n">ft</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">H</span> <span class="o">@</span> <span class="p">(</span><span class="n">z</span><span class="p">[</span><span class="n">K</span><span class="p">]</span> <span class="o">-</span> <span class="n">z</span><span class="p">[</span><span class="n">K</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]),</span> <span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">))</span>
+
+<span class="n">config</span> <span class="o">=</span> <span class="n">CodegenConfig</span><span class="p">(</span>
+    <span class="n">termination</span><span class="o">=</span><span class="n">TerminationSpec</span><span class="p">(</span><span class="n">kind</span><span class="o">=</span><span class="n">TerminationKind</span><span class="o">.</span><span class="n">OBJECTIVE</span><span class="p">,</span> <span class="n">max_iters</span><span class="o">=</span><span class="n">K</span><span class="p">,</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">),</span>
+<span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">codegen</span><span class="p">(</span><span class="s2">"out/ista"</span><span class="p">,</span> <span class="n">iterates</span><span class="o">=</span><span class="n">z</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">)</span>
+</code></pre></div>
+<p>The solver tests <code>r^k &lt;= tol</code> every <code>check_termination</code> iterations (default 25)
+and always at the last one, and reports <code>r^k</code> in <code>solution.residual</code>. The test is
+then exactly the certified quantity: if verification shows <code>r^K &lt;= tol</code> over the
+whole parameter set, the generated solver is guaranteed to stop by iteration <code>K</code>
+with <code>FOM_SOLVED</code>. It also means experiments can time every solver at the same
+tolerance without searching over iteration counts.</p>
+<p>The objective is written at iteration <code>K</code> in terms of <code>w^K</code> and <code>w^{K-1}</code>, and is
+mapped exactly onto what the loop holds at the end of an iteration: the new and
+current state, the parameters, the step outputs of the iteration (when the
+objective is written on the iteration the solver was extracted from), and ReLU
+steps recorded after the loop for one-sided terms such as <code>max(Ax - u, 0)</code>. A row
+holding a ReLU must hold only that term. An objective written after the loop, as
+above, needs the recorded iterates to locate iteration <code>K</code>; <code>codegen</code> has them,
+and <code>codegen_rolled</code> takes them through <code>iterates=</code>. Anything the loop does not
+carry (an iterate older than <code>w^{K-1}</code>, an iterate accumulated as a non-leaf
+expression, a parameter the iteration never reads) raises
+<code>ObjectiveExtractionError</code> saying what to change: carry the older iterate in the
+state, or record the iterates with <code>iterate_trajectory</code>.</p>
+<p>The metric is generated as <code>fom_objective(...)</code> in its own source,
+<code>src/fom_objective.c</code> (beside the kernels in <code>src/fom_ops.cu</code> on CUDA), which the
+coding agent may never edit, even where it may rewrite the matrix-vector
+products; the agent's loop only decides when to call it. <code>make verify</code> checks the stopping iteration, the
+objective value and the status against the reference oracle, at the default
+settings and at other runtime <code>check_termination</code> and <code>max_iter</code>. An unrolled run
+(one that does not roll back up) evaluates the objective once, after its single
+pass.</p>
+<p>This requires a coding agent. Enable the real Claude Agent SDK driver with
+<code>FOMTOOLS_CODEGEN_AGENT=1</code> (requires authentication), or pass an explicit driver
+(for example a <code>StubAgentDriver</code> wrapping a known-good source) for fully
+deterministic, offline runs.</p>
+<p>The emitted directory (<code>out/ista</code>) contains:</p>
+<div class="highlight"><pre><span></span><code>include/   fom_solver.h, fom_workspace.h, fom_data.h   (ABI + dims + data decls)
+src/       fom_solver.c (the agent's solver), fom_data.c (all numeric data)
+test/      SPEC.md, spec.json, data.npz, verify_main.c, verify_data.h
+python/    fom_solver.py   (ctypes wrapper)
+Makefile   (make verify / make lib)
+</code></pre></div>
+<h2 id="using-the-generated-solver">Using the generated solver<a class="headerlink" href="#using-the-generated-solver" title="Permanent link">&para;</a></h2>
+<p>From C, via the OSQP-style ABI:</p>
+<div class="highlight"><pre><span></span><code><span class="cp">#include</span><span class="w"> </span><span class="cpf">"fom_solver.h"</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">FomWorkspace</span><span class="w"> </span><span class="n">work</span><span class="p">;</span><span class="w"> </span><span class="n">FomSettings</span><span class="w"> </span><span class="n">s</span><span class="p">;</span>
+<span class="w">    </span><span class="n">FomParams</span><span class="w"> </span><span class="n">params</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="mi">0</span><span class="p">};</span><span class="w">             </span><span class="cm">/* example parameter p0 = 0 */</span>
+<span class="w">    </span><span class="n">fom_set_default_settings</span><span class="p">(</span><span class="o">&amp;</span><span class="n">s</span><span class="p">);</span>
+<span class="w">    </span><span class="n">fom_setup</span><span class="p">(</span><span class="o">&amp;</span><span class="n">work</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">s</span><span class="p">);</span>
+<span class="w">    </span><span class="n">fom_update_params</span><span class="p">(</span><span class="o">&amp;</span><span class="n">work</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">params</span><span class="p">);</span><span class="w">   </span><span class="cm">/* set params.p0[...] */</span>
+<span class="w">    </span><span class="n">fom_solve</span><span class="p">(</span><span class="o">&amp;</span><span class="n">work</span><span class="p">);</span><span class="w">                    </span><span class="cm">/* work.solution.x holds the solution */</span>
+<span class="w">    </span><span class="n">fom_cleanup</span><span class="p">(</span><span class="o">&amp;</span><span class="n">work</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Or from Python:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span><span class="o">,</span><span class="w"> </span><span class="nn">sys</span>
+<span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">"make"</span><span class="p">,</span> <span class="s2">"lib"</span><span class="p">],</span> <span class="n">cwd</span><span class="o">=</span><span class="s2">"out/ista"</span><span class="p">,</span> <span class="n">check</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">sys</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="s2">"out/ista/python"</span><span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">fom_solver</span><span class="w"> </span><span class="kn">import</span> <span class="n">Solver</span>
+
+<span class="n">solver</span> <span class="o">=</span> <span class="n">Solver</span><span class="p">()</span>
+<span class="n">out</span> <span class="o">=</span> <span class="n">solver</span><span class="o">.</span><span class="n">solve</span><span class="p">(</span><span class="n">p0</span><span class="o">=</span><span class="n">b</span><span class="p">)</span>          <span class="c1"># {"x", "iter", "residual", "status"}</span>
+<span class="n">solver</span><span class="o">.</span><span class="n">update_settings</span><span class="p">(</span><span class="n">tol</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">check_termination</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">max_iter</span><span class="o">=</span><span class="mi">500</span><span class="p">)</span>  <span class="c1"># runtime</span>
+</code></pre></div>
+<h2 id="performance-timing-profiling-and-the-code-optimization-phase">Performance: timing, profiling, and the code optimization phase<a class="headerlink" href="#performance-timing-profiling-and-the-code-optimization-phase" title="Permanent link">&para;</a></h2>
+<p>Pass <code>code_optimization=True, profile=True</code> (the default for the <code>fomtools-codegen</code>
+CLI with <code>--driver agent</code>) to (a) measure the speed of the generated solver
+against the Python reference, and (b) enter the code optimization phase, an
+iterative, profile-guided rewrite of the solver:</p>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">codegen</span><span class="p">(</span>
+    <span class="s2">"out/ista"</span><span class="p">,</span> <span class="n">iterates</span><span class="o">=</span><span class="n">z</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"ista"</span><span class="p">,</span>
+    <span class="n">code_optimization</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">profile</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">timing</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
+</code></pre></div>
+<p>After the translation phase verifies, the orchestrator records a baseline (Python
+reference time, the translated generated-C time, and a profiling breakdown). Then the agent
+runs a loop: <strong>profile → optimize the hottest region → <code>make verify</code> (correctness
+is re-checked every round) → <code>make bench</code> → repeat</strong> until gains level off. A
+change that breaks verification is never kept, and if the whole phase leaves the
+solver regressed, the verified translated solver is restored automatically. The
+files the agent may rewrite, and how each is checked, are described
+<a href="#what-the-agent-may-rewrite-and-how-it-is-checked">below</a>.</p>
+<p><code>result.timing</code> (a <code>TimingReport</code>) holds <code>python_us</code>, <code>c_initial_us</code>,
+<code>c_final_us</code>, the speedup factors (<code>speedup_codegen</code>, <code>speedup_optimization</code>,
+<code>speedup_total</code>), and the final <code>profile</code> breakdown, and <code>.summary()</code> formats
+them, e.g.:</p>
+<div class="highlight"><pre><span></span><code>Timing summary (per solve):
+  Python reference (before codegen):   1328.250 us
+  Generated C (translated):              1.753 us
+  Generated C (optimized):               1.640 us
+  Speedup from codegen (Py -&gt; C):       757.7x
+  Speedup from code optimization:       1.07x
+  Total speedup (Py -&gt; optimized C):    809.9x
+Profiling breakdown (hottest first):
+  soft_threshold              20.246 us   51.21%  (1000000 calls)
+  state_update                19.288 us   48.79%  (1000000 calls)
+</code></pre></div>
+<p>The generated directory also exposes <code>make bench</code> and <code>make profile</code> directly.
+The portable region profiler (<code>include/fom_profile.h</code>) is compiled in only for
+<code>make profile</code> (<code>-DFOM_PROFILE</code>); its <code>FOM_PROF_BEGIN/END</code> macros are no-ops in
+the shipped <code>make verify</code> / <code>make lib</code> builds, so profiling never affects the
+production solver.</p>
+<h3 id="time-and-turn-budgets">Time and turn budgets<a class="headerlink" href="#time-and-turn-budgets" title="Permanent link">&para;</a></h3>
+<p>Each agent phase runs under a budget, set per run on <code>CodegenConfig</code>:</p>
+<table>
+<thead>
+<tr>
+<th>setting</th>
+<th>default</th>
+<th>bounds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agent_timeout_s</code></td>
+<td>600 s (10 min)</td>
+<td>wall-clock time of the translation phase</td>
+</tr>
+<tr>
+<td><code>agent_optimize_timeout_s</code></td>
+<td>7200 s (2 h)</td>
+<td>wall-clock time of one code optimization round</td>
+</tr>
+<tr>
+<td><code>agent_optimize_max_turns</code></td>
+<td>200</td>
+<td>agent turns of one code optimization round</td>
+</tr>
+<tr>
+<td><code>agent_optimize_rounds</code></td>
+<td>5</td>
+<td>maximum number of code optimization rounds</td>
+</tr>
+<tr>
+<td><code>agent_optimize_min_gain</code></td>
+<td>0.02</td>
+<td>a round gaining less than this (relative) ends the phase</td>
+</tr>
+</tbody>
+</table>
+<p>The code optimization phase runs in rounds. Each round is a fresh agent run on
+the fastest verified solver so far, told its current time and profile. After each
+round the pipeline re-verifies the rewrite (including the kernel rules) and
+benchmarks it head to head against that solver. A round that fails, is not
+faster, or gains less than <code>agent_optimize_min_gain</code> ends the phase; a failing or
+slower one is reverted first. <code>OPTIMIZATIONS.md</code> lists the rounds.</p>
+<p>Each round's summary also lists, under <code>Blocked by rules:</code>, the optimizations
+the agent considered but did not make because a rule forbade them, with the rule
+and an expected gain. They appear as a table in <code>OPTIMIZATIONS.md</code> and as
+<code>rule_friction</code> on the result. Collected across problems, they show which rules
+cost speed, and so which ones are worth replacing by an exact check that admits
+the optimization.
+<code>fomtools.codegen.generate.run_code_optimization</code> runs the phase on any directory
+that holds a verified translated solver, for example a copy, when you want to
+keep the translated solver too.</p>
+<p>Translation is a bounded task and rarely needs more than a few minutes. The code
+optimization phase is open-ended, and on a GPU every round (an <code>nvcc</code> build,
+<code>make verify</code>, <code>make bench</code>) is slow, so it gets two hours and enough turns that
+time, not turns, ends a run. Raise them for larger problems:</p>
+<div class="highlight"><pre><span></span><code><span class="n">config</span> <span class="o">=</span> <span class="n">CodegenConfig</span><span class="p">(</span><span class="n">agent_optimize_timeout_s</span><span class="o">=</span><span class="mi">4</span> <span class="o">*</span> <span class="mi">3600</span><span class="p">,</span> <span class="n">agent_optimize_max_turns</span><span class="o">=</span><span class="mi">400</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">generate_code</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span> <span class="n">code_optimization</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p>or, on the command line, <code>--translate-timeout</code>, <code>--optimize-timeout</code> (seconds),
+<code>--optimize-max-turns</code>, <code>--optimize-rounds</code> and <code>--optimize-min-gain</code>. The
+budgets apply to whichever agent driver runs, a driver you build yourself included: one built without a config takes the run's.
+When a budget runs out the agent is stopped, whatever it wrote is re-verified and
+benchmarked as usual, and the report says so (in that case the agent may not have
+written its own summary). For reference, a CUDA CG solve stopped at 30 minutes
+had already gone from 2.05 s to 0.114 s per solve and was still improving.</p>
+<h3 id="what-changed-and-a-marker-free-production-build">What changed, and a marker-free production build<a class="headerlink" href="#what-changed-and-a-marker-free-production-build" title="Permanent link">&para;</a></h3>
+<p>When the code optimization phase runs, two extra artifacts are written:</p>
+<ul>
+<li><code>OPTIMIZATIONS.md</code> — a durable record of the run: the timing summary, the
+  agent's own notes, a <strong>unified diff of every rewritten source</strong> from the
+  translated version to the optimized one, so you can see exactly what was
+  changed, and a <strong>kernel-check table</strong> (see below). Also available
+  programmatically as <code>result.optimization_diff</code> and <code>result.kernel_checks</code>.</li>
+<li><code>release/fom_solver.c</code> (with <code>release/fom_linsolve.c</code> and <code>release/fom_ops.c</code>)
+  — a <strong>production copy with the profiling markers and the <code>fom_profile.h</code>
+  include stripped</strong>. The markers are already no-ops outside <code>make profile</code>, so
+  this is behaviour- and performance-identical; it is just a clean,
+  dependency-free source for embedding. Build it with <code>make release</code> (which links
+  the shared library from <code>release/</code>), or drop it in for the <code>src/</code> files.</li>
+</ul>
+<h3 id="what-the-agent-may-rewrite-and-how-it-is-checked">What the agent may rewrite, and how it is checked<a class="headerlink" href="#what-the-agent-may-rewrite-and-how-it-is-checked" title="Permanent link">&para;</a></h3>
+<p>The translation phase writes only <code>src/fom_solver.c</code>. The code optimization
+phase may also rewrite the two linear parts of the solver, where most of the time
+goes. The package restores every other file before each check, so the numeric
+data cannot change:</p>
+<table>
+<thead>
+<tr>
+<th>file</th>
+<th>in the code optimization phase</th>
+<th>checked by <code>make verify</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/fom_solver.c</code> (the iteration)</td>
+<td>rewritten by the agent</td>
+<td>end to end, against the Python reference on sampled parameters</td>
+</tr>
+<tr>
+<td><code>src/fom_linsolve.c</code> (linear solves)</td>
+<td>rewritten by the agent</td>
+<td>each <code>fom_lin_solve_&lt;name&gt;</code> against the reference solve of its factorization, on random right-hand sides</td>
+</tr>
+<tr>
+<td><code>src/fom_ops.c</code> (matrix-vector products)</td>
+<td>rewritten by the agent</td>
+<td>each <code>fom_apply_&lt;name&gt;</code> exactly against its matrix, each <code>fom_fused_&lt;block&gt;</code> exactly against its members (below); each <code>fom_step_&lt;block&gt;</code>, <code>__rest</code> routine and <code>fom_iterate</code> exactly against its members and a reference activation</td>
+</tr>
+<tr>
+<td><code>src/fom_data.c</code>, <code>src/fom_objective.c</code>, <code>include/</code>, <code>test/</code>, <code>Makefile</code></td>
+<td>package only</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>A matrix-vector routine is a linear map, so it can be checked for <strong>every</strong>
+input, not just sampled ones. <code>make verify</code> runs each <code>fom_apply_&lt;name&gt;</code> next to a
+package-written reference (<code>test/ops_ref.c</code>) that reads the same <code>fom_data.c</code>
+arrays, starting both from the same nonzero <code>out</code> (so the routine must still
+accumulate, <code>out += M @ x</code>). The tolerance scales with <code>M @ x</code>, not with that
+starting value, so each entry is held to <code>tol_kernel</code> relative to itself. A rewrite
+may only reorder arithmetic, so <code>tol_kernel</code> (1e-10 in double precision) is far
+tighter than the end-to-end <code>tol_verify</code>, and a slightly perturbed coefficient fails
+here even where the sampled solves would absorb it:</p>
+<ul>
+<li>on <strong>every unit vector</strong> when the matrix is small enough
+  (<code>cols × (nnz + rows) ≤ 1e8</code>): this recovers the routine's matrix column by
+  column, and a wrong coefficient is reported by its entry;</li>
+<li>on <strong>two random vectors</strong> always, which also catches a routine that branches
+  on its input; above the budget these are the whole check.</li>
+</ul>
+<p>The check stores no matrix-sized data: the expected values are computed in C from
+<code>fom_data.c</code>, and the only stored data are the random probe vectors.</p>
+<p><strong>Fused products.</strong> Some speedups come from relations <em>between</em> matrices, which
+no single <code>fom_apply_&lt;name&gt;</code> can see. In an accelerated method the slope of the
+momentum term is often a signed rearrangement of the base block
+(<code>D = [-A1, A1]</code> for <code>A = [0, A1]</code>), so <code>A x + gamma D x</code> is one smaller product,
+<code>A1 (x1 + gamma (x1 - x0))</code>. So <code>fom_ops.c</code> also holds one
+<code>fom_fused_&lt;block&gt;(sources..., schedule values..., out)</code> per output block with two
+or more products by the state or a temporary. It adds them all,
+<code>out += sum_k s_k * (M_k @ src_k)</code>. Parameter terms stay out, so the solver can
+still compute them once per solve. A fused routine may read the data of its
+members, and only theirs. <code>make verify</code> checks it against the sum of its members'
+references:</p>
+<ul>
+<li>on every unit vector of each source (the other sources zero), first with every
+  schedule value at 0 and then with each alone at 1. At each setting the routine
+  is linear in the probed source, so this recovers every member exactly, entry by
+  entry;</li>
+<li>on two random choices of all sources and schedule values, which catches a
+  routine that is right only at 0 and 1, or not linear in its inputs.</li>
+</ul>
+<p><code>fom_ops.c</code> may not read the schedule tables or accessors (<code>fom_sched_*</code>,
+<code>FOM_SCHED_*</code>). A routine gets its schedule values as arguments, so it cannot
+special-case the values the solver will pass it; with the no-new-literals rule,
+it has nothing to compare them against.</p>
+<p><strong>Selections.</strong> A matrix with at most one nonzero per row, every nonzero exactly
+1, is a copy: an identity, a shift, or a gather. <code>SPEC.md</code> lists these, and
+<code>fom_data.h</code> carries each index map as <code>FOM_SEL_&lt;name&gt;_SRC</code> (-1 for an empty
+row). The solver may apply them itself (or write a result straight to its
+destination) instead of calling <code>fom_apply_&lt;name&gt;</code>. Such a copy is checked end to
+end only; a wrong index moves whole entries of the state, which the sampled
+comparison sees. CUDA has neither fused routines nor selection maps: its products
+run on the device from <code>fom_ops.cu</code>'s own arrays.</p>
+<p><strong>Step routines.</strong> A fused routine still leaves the activation, the constant
+and the parameter terms to the solver, and it accumulates, so the solver zeroes,
+copies and makes a second pass over every block. <code>fom_ops.c</code> therefore also holds
+one <code>fom_step_&lt;block&gt;(sources..., schedule values..., bias, act, out)</code> per output
+block (each body step without a linear solve, and the state update <code>su</code>). It
+computes the whole block, <code>out = act(bias + sum_k s_k * (M_k @ src_k))</code>, and
+<strong>overwrites</strong> <code>out</code>. <code>bias</code> is what the caller adds (the constant and the
+parameter terms, which it can still hoist), and <code>act</code> points at the activation's
+parameters: a <code>FomAct_&lt;block&gt;</code> with the soft-threshold <code>lambd</code>, or the <code>lo</code> (and
+<code>hi</code>) bound vectors, whose package values are <code>FOM_ACT_&lt;block&gt;</code>. A step routine
+must apply the parameters it is passed, so <code>make verify</code> can choose them:</p>
+<ul>
+<li>with the activation switched off (<code>lambd = 0</code>, bounds at ±1e300), on every
+  unit vector of each source at every schedule setting and with a random bias.
+  The routine is then linear, so this recovers every member and the bias
+  pass-through exactly. <code>out</code> starts from garbage, so a routine that accumulates
+  fails;</li>
+<li>on random sources, schedule values and biases, with the activation off, at
+  the package parameters, and at random parameters drawn around the
+  pre-activation values, which make it active on about half the rows. A routine
+  that hardcodes a bound or threshold, or is wrong only where the activation is
+  active, fails here, even one that recognizes the switched-off probes by their
+  huge bounds.</li>
+</ul>
+<p><code>fom_ops.c</code> may not read <code>FOM_ACT_*</code>, the constant vectors, or the activation
+bounds: they come in only through <code>bias</code> and <code>act</code>.</p>
+<p><strong>The whole iteration.</strong> <code>fom_iterate(state, schedule values..., bias_&lt;block&gt;...,
+act_&lt;block&gt;..., t_&lt;name&gt;..., new_state)</code> chains the step routines of one
+iteration (when no body step has a linear solve): it writes every temporary,
+which the solver and <code>fom_objective</code> still need, and the new state. A rewrite can
+keep values in registers from block to block and share intermediates between
+them. It may read the data of every matrix of the iteration. <code>make verify</code>
+compares every temporary and the new state with the chained reference steps: on
+every unit vector of the state, with the activations off and zero biases, at
+every schedule value alone at 1, all at 0, and one random setting (which catches
+products of schedule values across blocks); then on random states, biases and
+activation parameters as for a step routine.</p>
+<p><strong>Selection rows.</strong> A block whose rows are partly plain copies (exactly one
+unscaled product with exactly one entry equal to 1 in the row, the others none)
+lists those rows in <code>fom_data.h</code> as <code>FOM_SELROWS_&lt;block&gt;_ROW/SRC/COL</code>, described
+in <code>SPEC.md</code>. Its <code>fom_fused_&lt;block&gt;__rest</code> and <code>fom_step_&lt;block&gt;__rest</code> compute
+every other row. <code>make verify</code> holds them to the full reference on their rows
+and checks that they leave every selection row bit for bit untouched. The solver
+may then write the selection rows itself, a step block's as
+<code>out[row] = act(bias[row] + src[col])</code>. Like whole selections, those copies are
+checked end to end only.</p>
+<p>Only code inside <code>fom_apply_&lt;name&gt;</code> goes through this check, so these rules keep
+every coefficient there. A rewrite that breaks one is discarded:</p>
+<ul>
+<li>the solver may not read the <code>FOM_MAT_&lt;name&gt;</code> data of a matrix it multiplies
+  by; it calls <code>fom_apply_&lt;name&gt;</code>. This rule already holds at translation
+  (<code>make verify</code> applies it there too), so the code optimization phase starts
+  from a solver that multiplies only through the checked routines. In
+  <code>fom_ops.c</code>, a routine is <code>fom_apply_&lt;name&gt;</code> with every helper it calls (on
+  CUDA, its <code>__global__</code> kernel); it may read only its own matrix's data, no
+  other code (a macro, static data, an unreached function) may read matrix data,
+  and every function but the <code>fom_apply_&lt;name&gt;</code> and <code>fom_fused_&lt;block&gt;</code> entry
+  points must be <code>static</code>. A fused routine may read its members' data, and
+  nothing in <code>fom_ops.c</code> may read the schedule;</li>
+<li>the solver and <code>fom_ops.c</code> may not add floating-point constants other than
+  <code>0</code>, <code>0.5</code>, <code>1</code> and <code>2</code>: decimal or hexadecimal float literals, or integer
+  literals cast to a floating type (coefficients come from <code>fom_data.c</code>). The
+  exception is a <code>fom_apply_&lt;name&gt;</code>, <code>fom_fused_&lt;block&gt;</code>, step, <code>__rest</code> or
+  iterate routine that <code>make verify</code>
+  probes on every unit vector: those probes recover its matrix exactly, so it may
+  hold its coefficients as literals (an unrolled product over the fixed sparsity,
+  with the values inlined). A routine over the probe budget, checked on random
+  vectors only, and the solver keep the rule;</li>
+<li><code>fom_setup</code> and <code>fom_update_params</code>, and any function of the solver they
+  reach, may not add uses of <code>fom_apply_*</code>, <code>fom_fused_*</code>, <code>fom_step_*</code> or
+  <code>fom_iterate</code>, which is how a matrix would be
+  rebuilt by probing it. This also rules out hoisting a product that depends
+  only on the parameters out of the iteration and into <code>fom_update_params</code>: a
+  syntactic rule cannot tell a parameter vector from a unit vector, and the
+  guarantee is worth more than that speedup;</li>
+<li>every function the rules inspect must be a single plain C definition they can
+  find; one they cannot find, or one defined twice (in <code>#if</code> branches, say), is
+  a violation, not a skipped rule.</li>
+</ul>
+<p>Literals and setup calls the translated file already had are exempt; in
+<code>fom_ops.c</code>, per routine (and outside the routines, only against what the
+translated file had outside them). The literal rule is syntactic: an integer coefficient
+(<code>3 * x[j]</code>) or one computed from allowed constants gets past it, and the
+numerical checks (exact for <code>fom_apply_&lt;name&gt;</code>, sampled for the solver) are what
+catch those. <code>make verify</code> reports these rules while the agent works; the
+pipeline applies them again when it collects the rewrite, and that check
+decides.</p>
+<p><code>OPTIMIZATIONS.md</code> records the outcome for the shipped <code>fom_ops.c</code>:</p>
+<div class="highlight"><pre><span></span><code>| matrix | shape | nnz | rewritten | check | probes | max error |
+|---|---|---|---|---|---|---|
+| `t0_state` | 140x228 | 228 | no | basis | 230 | 0.000e+00 |
+| `su_state` | 228x228 | 228 | yes | basis | 230 | 0.000e+00 |
+</code></pre></div>
+<p>A routine counts as rewritten when its body, a helper it reaches, or the file
+scope (macros, static data) changed. The table is followed by any rule
+violations found in the collected rewrite. <code>result.kernel_checks</code> holds the same
+rows.</p>
+<p>The large-scale CUDA target follows the same policy where <code>make verify</code> runs on
+a GPU (detected with <code>nvidia-smi</code>, or forced with <code>FOMTOOLS_CUDA_RUN=1</code>):
+<code>fom_ops.cu</code> and <code>fom_linsolve.cu</code> are editable, and the direct checks stage
+each probe through device buffers and compare the result with the same host
+reference. The device copies of the matrices live in the package-owned
+<code>include/fom_ops_data.cuh</code>, and the objective in <code>src/fom_objective.cu</code>, so a
+rewrite cannot change either. Without a GPU, verify only compiles, so only
+<code>fom_solver.cu</code> is editable there; its rules still hold from translation on,
+and <code>make compile</code> applies them.</p>
+<h2 id="linear-solves-factorized-never-inverted">Linear solves: factorized, never inverted<a class="headerlink" href="#linear-solves-factorized-never-inverted" title="Permanent link">&para;</a></h2>
+<p>Affine operators (e.g. the KKT solve inside ADMM/OSQP) are <strong>never</strong> turned into
+a matrix inverse. At codegen time each system <code>M w = rhs</code> is factorized once —
+<strong>sparse LDLᵀ</strong> for symmetric systems (the ADMM/OSQP KKT is symmetric
+quasidefinite), <strong>LU</strong> otherwise — and the generated solver applies
+<strong>division-free</strong> triangular solves (the factor diagonals are stored as
+reciprocals). The factors live in <code>src/fom_linsolve.c</code> and are called as
+<code>fom_lin_solve_&lt;name&gt;(rhs, out)</code>; the iteration code assembles the right-hand
+side and calls them. <code>CodegenConfig(solve_method=...)</code> can force <code>LDLT</code>/<code>LU</code>;
+<code>CG</code> (an indirect method for large/GPU problems) is reserved for a future
+backend. The choice can depend on problem type and the CPU/GPU target — but a
+matrix inverse is never formed or stored. The LDLᵀ factorization (by QDLDL)
+uses a fill-reducing approximate-minimum-degree ordering so the factor stays
+sparse (on the MPC KKT, 552 vs 19600 dense entries).</p>
+<p>Likewise, every <code>matrix @ vector</code> product in the iteration is emitted as a
+<strong>sparse CSR</strong> operation (<code>fom_apply_&lt;name&gt;</code> in <code>fom_ops.c</code>, over CSR arrays in
+<code>fom_data.c</code>) when the matrix is
+structured — the OSQP/MPC selection, dynamics, and state-update blocks are highly
+sparse — and dense only when the matrix genuinely is. Together these make the
+<em>initial</em> generated solver fast natively (no reliance on the code optimization phase
+to recover structure): on the MPC example the un-optimized C solver already runs
+~29× faster than the NumPy reference.</p>
+<h2 id="iteration-varying-coefficients">Iteration-varying coefficients<a class="headerlink" href="#iteration-varying-coefficients" title="Permanent link">&para;</a></h2>
+<p>Accelerated methods use a coefficient that changes every iteration: FISTA's
+momentum <code>γ_k = (β_{k-1} - 1)/β_k</code>, Nesterov's <code>(k-1)/(k+2)</code>, a Halpern anchor
+weight. Verification handles these for free — the tape is unrolled, so each
+iteration just gets its own number.</p>
+<p>Generating the recorded run keeps that property, so <strong>nothing special is needed</strong>.
+Write the coefficient in Python, where the rest of your algorithm already lives:</p>
+<div class="highlight"><pre><span></span><code><span class="n">vp</span> <span class="o">=</span> <span class="n">ft</span><span class="o">.</span><span class="n">Verifier</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">"simulator"</span><span class="p">,</span> <span class="n">obbt_solver</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<span class="n">b_param</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">parameter</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">lb</span><span class="o">=</span><span class="n">b</span> <span class="o">-</span> <span class="mf">1.0</span><span class="p">,</span> <span class="n">ub</span><span class="o">=</span><span class="n">b</span> <span class="o">+</span> <span class="mf">1.0</span><span class="p">)</span>
+<span class="n">y0</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">iterate</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">lb</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ub</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+
+<span class="n">y_prev</span><span class="p">,</span> <span class="n">y_curr</span><span class="p">,</span> <span class="n">beta</span> <span class="o">=</span> <span class="n">y0</span><span class="p">,</span> <span class="n">y0</span><span class="p">,</span> <span class="mf">1.0</span>
+<span class="n">iterates</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">K</span><span class="p">):</span>
+    <span class="n">beta_next</span> <span class="o">=</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="mf">4.0</span> <span class="o">*</span> <span class="n">beta</span> <span class="o">*</span> <span class="n">beta</span><span class="p">))</span> <span class="o">/</span> <span class="mf">2.0</span>
+    <span class="n">gamma</span> <span class="o">=</span> <span class="p">(</span><span class="n">beta</span> <span class="o">-</span> <span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">beta_next</span>          <span class="c1"># ordinary Python, evaluated while recording</span>
+    <span class="n">extrap</span> <span class="o">=</span> <span class="n">y_curr</span> <span class="o">+</span> <span class="n">gamma</span> <span class="o">*</span> <span class="p">(</span><span class="n">y_curr</span> <span class="o">-</span> <span class="n">y_prev</span><span class="p">)</span>
+    <span class="n">y_next</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">soft_threshold</span><span class="p">(</span><span class="n">At</span> <span class="o">@</span> <span class="n">extrap</span> <span class="o">+</span> <span class="n">Bt</span> <span class="o">@</span> <span class="n">b_param</span><span class="p">,</span> <span class="n">lambd</span><span class="o">=</span><span class="n">t</span><span class="p">)</span>
+    <span class="n">y_prev</span><span class="p">,</span> <span class="n">y_curr</span><span class="p">,</span> <span class="n">beta</span> <span class="o">=</span> <span class="n">y_curr</span><span class="p">,</span> <span class="n">y_next</span><span class="p">,</span> <span class="n">beta_next</span>
+    <span class="n">iterates</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">y_next</span><span class="p">)</span>
+
+<span class="n">vp</span><span class="o">.</span><span class="n">codegen</span><span class="p">(</span><span class="s2">"out/fista"</span><span class="p">,</span> <span class="n">iterates</span><span class="o">=</span><span class="n">iterates</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"fista"</span><span class="p">)</span>
+</code></pre></div>
+<p>Because the momentum genuinely varies, this run will not roll back up: each
+iteration keeps its own coefficient blocks. The cost is one emitted block per
+iteration, which is fine at a horizon of tens and impractical at a horizon of
+hundreds.</p>
+<p>A <strong>schedule</strong> buys back the compact loop. You declare which scalars vary,
+FOMTools tabulates them at generation time, and the emitted loop reads the table
+at its counter — one block total whatever the horizon, still division-free and
+with no <code>libm</code> call. Two things differ: you supply the recording as a <em>function</em>
+of the schedule scalars rather than a finished tape, and the state carries both
+iterates the method needs:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">fomtools.codegen</span><span class="w"> </span><span class="kn">import</span> <span class="n">CodegenConfig</span><span class="p">,</span> <span class="n">Recording</span><span class="p">,</span> <span class="n">TerminationSpec</span><span class="p">,</span> <span class="n">generate_code</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">fomtools</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ft</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">momentum</span><span class="p">(</span><span class="n">k</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""FISTA's γ in the 0-based index of the emitted loop.</span>
+
+<span class="sd">    Note the `k + 1`: γ_0 is the coefficient the *first* iteration applies, and it</span>
+<span class="sd">    is 0. Stopping one step short is the easy mistake, and it silently shifts the</span>
+<span class="sd">    whole schedule.</span>
+<span class="sd">    """</span>
+    <span class="n">beta</span> <span class="o">=</span> <span class="mf">1.0</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">k</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="n">beta_next</span> <span class="o">=</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="mf">4.0</span> <span class="o">*</span> <span class="n">beta</span> <span class="o">*</span> <span class="n">beta</span><span class="p">))</span> <span class="o">/</span> <span class="mf">2.0</span>
+        <span class="n">gamma</span><span class="p">,</span> <span class="n">beta</span> <span class="o">=</span> <span class="p">(</span><span class="n">beta</span> <span class="o">-</span> <span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">beta_next</span><span class="p">,</span> <span class="n">beta_next</span>
+    <span class="k">return</span> <span class="n">gamma</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build</span><span class="p">(</span><span class="n">gamma</span><span class="p">):</span>
+    <span class="n">vp</span> <span class="o">=</span> <span class="n">ft</span><span class="o">.</span><span class="n">Verifier</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">"simulator"</span><span class="p">,</span> <span class="n">obbt_solver</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+    <span class="n">b_param</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">parameter</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">lb</span><span class="o">=</span><span class="n">b</span> <span class="o">-</span> <span class="mf">1.0</span><span class="p">,</span> <span class="n">ub</span><span class="o">=</span><span class="n">b</span> <span class="o">+</span> <span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">y_prev</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">iterate</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">lb</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ub</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+    <span class="n">y_curr</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">iterate</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">lb</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ub</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+    <span class="n">extrap</span> <span class="o">=</span> <span class="n">y_curr</span> <span class="o">+</span> <span class="n">gamma</span> <span class="o">*</span> <span class="p">(</span><span class="n">y_curr</span> <span class="o">-</span> <span class="n">y_prev</span><span class="p">)</span>
+    <span class="n">y_next</span> <span class="o">=</span> <span class="n">vp</span><span class="o">.</span><span class="n">soft_threshold</span><span class="p">(</span><span class="n">At</span> <span class="o">@</span> <span class="n">extrap</span> <span class="o">+</span> <span class="n">Bt</span> <span class="o">@</span> <span class="n">b_param</span><span class="p">,</span> <span class="n">lambd</span><span class="o">=</span><span class="n">t</span><span class="p">)</span>
+    <span class="c1"># the state shifts: (y_prev, y_curr) &lt;- (y_curr, y_next)</span>
+    <span class="k">return</span> <span class="n">Recording</span><span class="p">(</span><span class="n">vp</span><span class="p">,</span> <span class="n">next_state</span><span class="o">=</span><span class="p">[</span><span class="n">y_curr</span><span class="p">,</span> <span class="n">y_next</span><span class="p">],</span> <span class="n">state</span><span class="o">=</span><span class="p">[</span><span class="n">y_prev</span><span class="p">,</span> <span class="n">y_curr</span><span class="p">])</span>
+
+<span class="n">generate_code</span><span class="p">(</span>
+    <span class="n">build</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="s2">"out/fista"</span><span class="p">,</span>
+    <span class="n">schedules</span><span class="o">=</span><span class="p">{</span><span class="s2">"gamma"</span><span class="p">:</span> <span class="n">momentum</span><span class="p">},</span>
+    <span class="n">config</span><span class="o">=</span><span class="n">CodegenConfig</span><span class="p">(</span><span class="n">termination</span><span class="o">=</span><span class="n">TerminationSpec</span><span class="p">(</span><span class="n">max_iters</span><span class="o">=</span><span class="mi">200</span><span class="p">)),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>A schedule is a callable of the <strong>0-based</strong> loop index, a sequence, or a
+<code>Schedule</code>. Textbook formulas are written in 1-based <code>k</code>, so shifting them is your
+job: what a coefficient <em>is</em> belongs to the method, not to the code generator, and
+nothing in the package knows any particular one. <code>as_schedule</code> calls a callable
+with increasing indices, so a coefficient defined by a recurrence may cache it.</p>
+<h3 id="why-a-build-function">Why a build function<a class="headerlink" href="#why-a-build-function" title="Permanent link">&para;</a></h3>
+<p>A schedule scalar enters the recorded expression linearly, so every extracted
+coefficient block is <em>affine</em> in it: <code>M(γ) = M₀ + γ M₁</code>. FOMTools evaluates
+<code>build</code> at a few values of <code>γ</code>, recovers <code>M₀</code> and <code>M₁</code> by finite differences, and
+holds one probe back to check the fit. The generated code then computes
+<code>M₀ @ state + γ_k * (M₁ @ state)</code>, one extra matrix-vector product per varying
+term.</p>
+<p>That validation is what makes this safe rather than merely convenient. If a
+coefficient does <em>not</em> depend affinely on the scalar — a product of two
+schedules, or a scalar used inside a nonlinearity — the held-out probe fails and
+you get a <code>ScheduleFitError</code> instead of a wrong solver.</p>
+<h3 id="declaring-the-state">Declaring the state<a class="headerlink" href="#declaring-the-state" title="Permanent link">&para;</a></h3>
+<p>Written over a single iterate, the dependency cone of iteration <code>k</code> reaches back
+through every earlier step, so extraction returns the unrolled prefix rather than
+a repeatable body. On the <code>codegen</code> path that is the intended answer. On the
+scheduled and <code>codegen_rolled</code> paths it is not what you asked for, and a longer
+body is still a valid body, so declaring <code>state=[y_prev, y_curr]</code> closes the cone
+after one step. Worth remembering for any method that looks back more than one
+iterate.</p>
+<h3 id="what-is-not-supported">What is not supported<a class="headerlink" href="#what-is-not-supported" title="Permanent link">&para;</a></h3>
+<p>The varying quantity has to be a linear-operator coefficient. These each raise a
+clear error rather than lowering something wrong:</p>
+<ul>
+<li>a <strong>factorized system matrix</strong> that varies (an ADMM <code>ρ</code> that changes with <code>k</code>),
+  since the factorization is computed once at generation time;</li>
+<li>a varying <strong>activation scalar</strong> — a soft-threshold level or a saturated-linear
+  bound that changes with <code>k</code>;</li>
+<li>a varying <strong>constant offset</strong>;</li>
+<li>a scalar the build function ignores, which is nearly always a typo in its
+  keyword name.</li>
+</ul>
+<p>The table is sized to <code>max_iters</code>. Raising <code>settings.max_iter</code> past that at
+runtime holds the last value rather than reading off the end; the generated
+accessor <code>fom_sched_&lt;name&gt;(it)</code> clamps, and the static checker rejects any solver
+body that indexes <code>FOM_SCHED_*</code> directly.</p>
+<h2 id="targets">Targets<a class="headerlink" href="#targets" title="Permanent link">&para;</a></h2>
+<p><code>CodegenConfig</code> selects what to emit:</p>
+<ul>
+<li><strong>Embedded</strong> (<code>version="embedded"</code>, <code>backend="c"</code>): statically sized, no
+  dynamic allocation, division-free (matrix inverses are folded into the
+  coefficients offline). The default.</li>
+<li><strong>Large-scale</strong> (<code>version="large_scale"</code>): multithreaded CPU (<code>backend="openmp"</code>)
+  or GPU (<code>backend="cuda"</code>). These are generated and compile-checked; runtime
+  verification of the CUDA backend requires a GPU.</li>
+</ul>
+<h2 id="cli">CLI<a class="headerlink" href="#cli" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>fomtools-codegen --example ista      --out out/ista  --driver agent
+fomtools-codegen --example dr        --out out/dr    --scaffold-only
+fomtools-codegen --example mpc       --out out/mpc   --driver agent   # OSQP MPC, larger
+fomtools-codegen --example fista     --out out/fista --scaffold-only  # a recorded run
+fomtools-codegen --example scheduled --out out/sched --scaffold-only  # a declared coefficient
+fomtools-codegen --module my_fom.py  --out out/mine  --tol 1e-6 --objective  # stop on the objective
+</code></pre></div>
+<p>The built-in <code>mpc</code> example is a model-predictive-control QP solved with <strong>OSQP's
+ADMM</strong> — a constant KKT solve (the inverse is folded into the coefficients at
+codegen time) followed by a box projection (saturated-linear) and the ADMM
+recombinations. It is the largest built-in example (state dimension in the
+hundreds), so it is a good showcase for the Python-vs-C and the optimization-loop
+speedups.</p>
+<p><code>fista</code> and <code>scheduled</code> are the same accelerated lasso reached the two ways.
+<code>fista</code> records it as an ordinary loop, so scaffolding it shows an unrolled
+<code>SPEC.md</code>: one block per recorded iteration, <code>FOM_UNROLLED 1</code>, and no table.
+<code>scheduled</code> declares the momentum instead, so it shows a single block, the
+<code>FOM_SCHED_gamma</code> table in <code>fom_data.c</code>, and the clamping accessor. Scaffolding
+both side by side is the quickest way to see what declaring a coefficient buys.</p>
+<p><code>--scaffold-only</code> emits everything except the solver body (useful to inspect the
+spec and data before invoking the agent). <code>--no-roll</code> keeps a recorded run
+unrolled even when it could be rolled back up. <code>--translate-timeout</code>,
+<code>--optimize-timeout</code> (seconds), <code>--optimize-max-turns</code>, <code>--optimize-rounds</code> and
+<code>--optimize-min-gain</code> set the agent's budgets for this run (<a href="#time-and-turn-budgets">above</a>). <code>--tol</code> alone stops on the
+infinity-norm change; with <code>--objective</code> it stops on the verification objective
+the module set on its recording, and <code>--check-termination N</code> sets the interval.</p>
+<p>A custom FOM can be supplied with <code>--module mymodule.py</code>, where the module defines
+<code>build_fom()</code> returning a dict. Which key you provide selects the path:</p>
+<table>
+<thead>
+<tr>
+<th>keys</th>
+<th>generates</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>verifier</code>, <code>iterates</code></td>
+<td>the whole recorded run, rolled back up when that is verified to be equivalent</td>
+</tr>
+<tr>
+<td><code>verifier</code>, <code>next_state</code></td>
+<td>a rolled solver from one stationary iteration</td>
+</tr>
+<tr>
+<td><code>build</code>, <code>schedules</code></td>
+<td>a rolled solver with tabulated iteration-varying coefficients</td>
+</tr>
+</tbody>
+</table>
+<p><code>name</code>, <code>state</code> and <code>params</code> are optional in all three.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.indexes", "content.action.edit"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

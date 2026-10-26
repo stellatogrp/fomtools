@@ -1,0 +1,1905 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://stellatogrp.github.io/fomtools/tutorials/cvxpygen/">
+      
+      
+        <link rel="prev" href="../codegen/speedup_results/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/logo/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>CVXPYgen integration - FOMTools</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  <link rel="icon" type="image/png" sizes="48x48" href="../../assets/logo/favicon-48.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="../../assets/logo/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="../../assets/logo/favicon-16.png">
+  <link rel="icon" type="image/svg+xml" href="../../assets/logo/favicon.svg">
+  <link rel="apple-touch-icon" href="../../assets/logo/icon-512.png">
+
+  <script type="module" src="https://cdn.jsdelivr.net/npm/@marimo-team/islands@0.25.2/dist/main.js"></script>
+<link
+    href="https://cdn.jsdelivr.net/npm/@marimo-team/islands@0.25.2/dist/style.css"
+    rel="stylesheet"
+    title="marimo-islands"
+    crossorigin="anonymous"
+/>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link
+    rel="preconnect"
+    href="https://fonts.gstatic.com"
+    crossorigin
+/>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Mono:wght@400;500;700&amp;family=Lora&amp;family=PT+Sans:wght@400;700&amp;display=swap" rel="stylesheet" />
+<link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/katex@0.18.5/dist/katex.min.css"
+    integrity="sha384-2dNi/m6JtSiviznrOIZ5fTiZ5As0In2QwkuXSgoqcQtCNplvJAbt+jveeN+8en73"
+    crossorigin="anonymous"
+/>
+<marimo-filename hidden></marimo-filename>
+</head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#cvxpygen-integration-model-in-cvxpy-solve-with-a-generated-fom" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="FOMTools" class="md-header__button md-logo" aria-label="FOMTools" data-md-component="logo">
+      <img src="../../assets/logo/icon.svg#only-light" alt="FOMTools">
+<img src="../../assets/logo/icon-dark.svg#only-dark" alt="FOMTools">
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FOMTools
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              CVXPYgen integration
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m14.3 16-.7-2h-3.2l-.7 2H7.8L11 7h2l3.2 9zM20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12zm-9.15 3.96h2.3L12 9z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/stellatogrp/fomtools" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    stellatogrp/fomtools
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="FOMTools" class="md-nav__button md-logo" aria-label="FOMTools" data-md-component="logo">
+      <img src="../../assets/logo/icon.svg#only-light" alt="FOMTools">
+<img src="../../assets/logo/icon-dark.svg#only-dark" alt="FOMTools">
+    </a>
+    FOMTools
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/stellatogrp/fomtools" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    stellatogrp/fomtools
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../get_started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quick_start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../user_guide/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User guide
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user_guide/codegen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code generation guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user_guide/sdp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SDP relaxation (experimental)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API and modules
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API and modules
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/verifier/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verifier
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/linearexpression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Linear expressions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/constraint/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/steps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Step operators
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/canonicalizer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Canonicalizers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/solvers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/proxablefunctions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Proxable functions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/codegen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../verification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verification
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code generation
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Code generation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../codegen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../codegen/lasso/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lasso
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../codegen/control/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Optimal control
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../codegen/network/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Network flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../codegen/nnls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nonnegative least squares
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../codegen/portfolio/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Portfolio
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../codegen/speedup_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Speedup results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CVXPYgen integration
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CVXPYgen integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-seamless-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The seamless flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choosing-the-first-order-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing the first-order method
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#equilibration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Equilibration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#code-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code optimization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-three-generation-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The three generation paths
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parameter-bounds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameter bounds
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-gets-generated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What gets generated
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What gets generated">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#runtime-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stopping-on-osqps-residuals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stopping on OSQP's residuals
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-seamless-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The seamless flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choosing-the-first-order-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing the first-order method
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#equilibration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Equilibration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#code-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code optimization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-three-generation-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The three generation paths
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parameter-bounds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameter bounds
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-gets-generated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What gets generated
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What gets generated">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#runtime-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stopping-on-osqps-residuals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stopping on OSQP's residuals
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/stellatogrp/fomtools/edit/main/docs/tutorials/cvxpygen.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="cvxpygen-integration-model-in-cvxpy-solve-with-a-generated-fom">CVXPYgen integration: model in CVXPY, solve with a generated FOM<a class="headerlink" href="#cvxpygen-integration-model-in-cvxpy-solve-with-a-generated-fom" title="Permanent link">&para;</a></h1>
+<p><code>fomtools.cvxpygen</code> connects the FOMTools code generator to
+<a href="https://github.com/cvxgrp/cvxpygen">CVXPYgen</a>: you model a parametric problem
+in CVXPY, pick (or define) a first-order method in FOMTools, and get a single
+embedded C project in which</p>
+<ul>
+<li><strong>CVXPYgen</strong> generates the fast canonicalization code — updating a CVXPY
+  <code>Parameter</code> triggers only the sparse affine update of the canonical QP data
+  (<code>P, q, A, l, u</code>), exactly as it does for its other solver backends, and</li>
+<li><strong>FOMTools</strong> generates the solver — a verified, statically allocated,
+  division-free embedded C implementation of the chosen FOM, produced by the
+  LLM coding agent and checked against the Python reference oracle.</li>
+</ul>
+<p>CVXPYgen is extended from the outside (no fork): the integration registers a
+solver named <code>'FOMTOOLS'</code> in CVXPYgen's dispatch at runtime.</p>
+<p>The <a href="../cvxpygen_mpc.html">CVXPYgen MPC notebook</a> works through the whole flow on a
+model-predictive-control problem, from the CVXPY model to the generated C
+project.</p>
+<h2 id="requirements">Requirements<a class="headerlink" href="#requirements" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s1">'.[cvxpygen,codegen]'</span><span class="w">   </span><span class="c1"># run from the repository root</span>
+</code></pre></div>
+<p>Building the Python wrapper additionally needs <code>cmake</code> on <code>PATH</code> and <code>pip</code> in
+the environment (CVXPYgen builds the extension module with
+<code>python -m pip install</code>); the <code>cvxpygen</code> extra installs <code>pip</code>. With the default
+<code>wrapper=True</code>, <code>generate_solver</code> checks for both before any code generation
+and raises a <code>RuntimeError</code> naming what is missing; pass <code>wrapper=False</code> to emit
+the C code only. Generating the solver body requires a coding-agent driver: set
+<code>FOMTOOLS_CODEGEN_AGENT=1</code> to use the Claude agent, or pass an explicit
+<code>driver=</code>.</p>
+<h2 id="the-seamless-flow">The seamless flow<a class="headerlink" href="#the-seamless-flow" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">cvxpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">cp</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">fomtools.cvxpygen</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">fcpg</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">fomtools.codegen</span><span class="w"> </span><span class="kn">import</span> <span class="n">CodegenConfig</span><span class="p">,</span> <span class="n">TerminationSpec</span>
+
+<span class="c1"># 1. Model a parametric problem in CVXPY (must reduce to a QP).</span>
+<span class="n">n</span><span class="p">,</span> <span class="n">m</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">2</span>
+<span class="n">A</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+<span class="n">q</span> <span class="o">=</span> <span class="n">cp</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"q"</span><span class="p">)</span>
+<span class="n">q</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">cp</span><span class="o">.</span><span class="n">Variable</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+<span class="n">problem</span> <span class="o">=</span> <span class="n">cp</span><span class="o">.</span><span class="n">Problem</span><span class="p">(</span>
+    <span class="n">cp</span><span class="o">.</span><span class="n">Minimize</span><span class="p">(</span><span class="mf">0.5</span> <span class="o">*</span> <span class="n">cp</span><span class="o">.</span><span class="n">sum_squares</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">+</span> <span class="n">q</span> <span class="o">@</span> <span class="n">x</span><span class="p">),</span>
+    <span class="p">[</span><span class="n">A</span> <span class="o">@</span> <span class="n">x</span> <span class="o">==</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">m</span><span class="p">),</span> <span class="n">x</span> <span class="o">&lt;=</span> <span class="mf">1.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span> <span class="o">&lt;=</span> <span class="n">x</span><span class="p">],</span>
+<span class="p">)</span>
+
+<span class="c1"># 2. Generate canonicalization (CVXPYgen) + solver (FOMTools) code.</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">fcpg</span><span class="o">.</span><span class="n">generate_solver</span><span class="p">(</span>
+    <span class="n">problem</span><span class="p">,</span>
+    <span class="s2">"out_qp"</span><span class="p">,</span>                          <span class="c1"># CVXPYgen layout: c/, cpg_solver.py, ...</span>
+    <span class="n">fom</span><span class="o">=</span><span class="s2">"admm"</span><span class="p">,</span>                        <span class="c1"># use "pdhg" for LPs, or a custom builder</span>
+    <span class="n">param_bounds</span><span class="o">=</span><span class="p">{</span><span class="n">q</span><span class="p">:</span> <span class="p">(</span><span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)},</span>     <span class="c1"># verified parameter range</span>
+    <span class="n">config</span><span class="o">=</span><span class="n">CodegenConfig</span><span class="p">(</span><span class="n">termination</span><span class="o">=</span><span class="n">TerminationSpec</span><span class="p">(</span><span class="n">max_iters</span><span class="o">=</span><span class="mi">2000</span><span class="p">)),</span>
+<span class="p">)</span>
+<span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">success</span>
+
+<span class="c1"># 3. Solve through the generated code (registered automatically).</span>
+<span class="n">q</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.5</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">])</span>
+<span class="n">problem</span><span class="o">.</span><span class="n">solve</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">"CPG"</span><span class="p">)</span>
+</code></pre></div>
+<p>Note: use a <em>relative</em> <code>code_dir</code> — CVXPYgen registers the wrapper by importing
+<code>&lt;code_dir&gt;.cpg_solver</code> relative to the working directory.</p>
+<h2 id="choosing-the-first-order-method">Choosing the first-order method<a class="headerlink" href="#choosing-the-first-order-method" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>fom="admm"</code> (default): ADMM. One sparse LDL^T factorization of
+  the KKT matrix is computed at generation time; each iteration is a
+  triangular solve plus a projection. Works for any QP. Options (via
+  <code>fom_options=...</code>): <code>rho</code>, <code>sigma</code>, <code>alpha</code>, <code>rho_eq_scale</code>.</li>
+<li><code>fom="relaxed_admm"</code>: the same operator with an over-relaxation that <em>varies
+  with the iteration index</em>, ramping from <code>alpha_start</code> to <code>alpha_final</code> over
+  <code>ramp_iters</code>. Generated down the scheduled path below. Ramping is a
+  heuristic, not an acceleration guarantee — it helps on some problems and not
+  others — but any sequence inside <code>(0, 2)</code> converges, and the solver is the
+  same size and carries the same state as the plain builder.</li>
+<li><code>fom="pdhg"</code>: PDHG / Chambolle–Pock. Matrix-vector products only — no
+  factorization — for problems with a zero quadratic term (LPs). Option:
+  <code>step_scale</code>.</li>
+<li><strong>Custom</strong>: pass any callable <code>f(qp, **fom_options) -&gt; spec</code>. It receives
+  a <code>fomtools.cvxpygen.qpdata.QPData</code> (canonical <code>P, q, A</code>, equality values
+  <code>b</code>, inequality bounds <code>u_ineq</code>, and which pieces are parametric, with
+  propagated bounds) and records the method in a <code>Verifier</code> — see
+  <code>fomtools/cvxpygen/builders.py</code> for the built-ins as templates.</li>
+</ul>
+<h2 id="equilibration">Equilibration<a class="headerlink" href="#equilibration" title="Permanent link">&para;</a></h2>
+<p>By default (<code>auto_equilibrate=True</code>) the canonical QP is Ruiz-equilibrated
+before the FOM is built, as OSQP does: diagonal scalings <code>D</code> (variables) and
+<code>E</code> (constraint rows) from ten passes over the KKT matrix <code>[[P, A'], [A, 0]]</code>,
+and a cost scaling <code>c</code>. The solver iterates on <code>c D P D</code>, <code>c D q</code>, <code>E A D</code>,
+<code>E l</code>, <code>E u</code>; the bridge scales the parameters in and the solution out
+(<code>x = D x~</code>, <code>y = E y~ / c</code>), so <code>problem.solve(method='CPG')</code> returns the
+original problem's primal and dual solution, and the reported residuals are
+those of the original problem. The parameter bounds the generated code is
+verified on are scaled exactly. Pass <code>auto_equilibrate=False</code> to build the FOM
+on the canonical QP unchanged (<code>fomtools.cvxpygen.scaling</code> has the routines).</p>
+<p>The cost scaling <code>c</code> is fixed at generation time, so it is computed from the
+largest <code>|q|</code> the parameter bounds allow, not from the current <code>q</code>. Very wide
+<code>param_bounds</code> (or a large <code>bound_margin</code>) on parameters entering <code>q</code> can
+therefore shrink <code>c</code> and flatten <code>P</code>: the solution is still correct, but
+convergence can be slower than without equilibration. The parameter bounds now
+affect conditioning as well as verification, so keep them as tight as the
+application allows.</p>
+<h2 id="code-optimization">Code optimization<a class="headerlink" href="#code-optimization" title="Permanent link">&para;</a></h2>
+<p><code>code_optimization=True</code> runs the code optimization phase after translation
+(see the code generation tutorial): the coding agent rewrites the translated
+solver, its linear solves and its matrix-vector products for speed, and the
+rewrite is kept only if it passes verification again (including the direct
+checks of each solve and product) and is benchmarked faster. Its budget comes from <code>config</code>
+(<code>agent_optimize_timeout_s</code>, two hours per round by default, <code>agent_optimize_max_turns</code>,
+and up to <code>agent_optimize_rounds</code> rounds; see
+<a href="../../user_guide/codegen/#time-and-turn-budgets">time and turn budgets</a>).</p>
+<h2 id="the-three-generation-paths">The three generation paths<a class="headerlink" href="#the-three-generation-paths" title="Permanent link">&para;</a></h2>
+<p>A builder declares which path it wants with <code>@fom_builder(...)</code>, mirroring the
+dispatch in <a href="../../api/codegen/#fomtools.codegen.generate_code"><code>generate_code</code></a>. Undecorated callables are <code>rolled</code>,
+so builders written against the earlier API keep working unchanged.</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Builder returns</th>
+<th>Emits</th>
+<th>Runtime settings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rolled</code> (default)</td>
+<td><code>FomSpec</code> with <code>next_state</code></td>
+<td>one iteration, repeated <code>max_iters</code> times</td>
+<td><code>max_iter</code>; <code>tol</code>, <code>check_termination</code> only under <code>INF_NORM_CHANGE</code></td>
+</tr>
+<tr>
+<td><code>scheduled</code></td>
+<td><code>ScheduledFomSpec</code></td>
+<td>one iteration plus a table per varying coefficient</td>
+<td>same, with <code>max_iter</code> <strong>capped</strong> at the table length</td>
+</tr>
+<tr>
+<td><code>unrolled</code></td>
+<td><code>FomSpec</code> with <code>next_state=None</code> and <code>iterates</code></td>
+<td>the whole recorded run as one pass</td>
+<td>none</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Rolled</strong> is the stationary case: the builder records one iteration and the
+generated loop repeats it. Pass <code>iterates</code> (the successive recorded iterates)
+and <code>param_values</code> as well, and generation <em>checks</em> that repeating that one
+iteration really does reproduce the recording — both built-in stationary
+builders do, so a coefficient that secretly varied with <code>k</code> is caught rather
+than silently frozen at its first recorded value.</p>
+<p><strong>Scheduled</strong> is for a coefficient that varies on purpose. The builder becomes a
+function of its varying scalars, extraction probes it at several values and
+recovers each coefficient block as an affine function of them, and the scalars
+are emitted as tables read at the loop counter. The solver stays one block long
+however far it runs. Two restrictions are worth knowing before you write one:
+the scalar must enter the recorded expressions <strong>linearly</strong>, and it may not
+scale a <strong>constant offset</strong> — so a method that pulls each iterate toward a fixed
+anchor cannot be expressed this way whenever a canonical constant (for instance
+a non-parametric equality right-hand side) reaches the state update.</p>
+<p><strong>Unrolled</strong> generates the run exactly as recorded, which accepts arbitrary
+per-iteration coefficients, a step type that changes with the iteration, and
+anchored methods. It needs <code>allow_unrolled=True</code>, because the emitted program
+grows with the horizon — large for an embedded target — and the iteration count
+is fixed at generation time. Generation rolls the run back up automatically when
+repeating one iteration is <em>verified</em> to reproduce it, so writing a stationary
+method as a loop costs nothing. Record <code>iterates</code> either way you like: the
+recorded iterations alone, or those with the initial iterate kept in slot 0, as
+an <code>IterateTrajectory</code> holds them. A leading initial iterate is recognized and
+dropped, so the emitted run and the iteration count reported through
+<code>solver_stats</code> are the recorded iterations in both cases.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fomtools.codegen.extract_scheduled</span><span class="w"> </span><span class="kn">import</span> <span class="n">Recording</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">fomtools.cvxpygen.builders</span><span class="w"> </span><span class="kn">import</span> <span class="n">ScheduledFomSpec</span><span class="p">,</span> <span class="n">fom_builder</span>
+
+<span class="nd">@fom_builder</span><span class="p">(</span><span class="s2">"scheduled"</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">my_fom</span><span class="p">(</span><span class="n">qp</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">build</span><span class="p">(</span><span class="n">step</span><span class="p">):</span>                     <span class="c1"># one keyword per schedule</span>
+        <span class="o">...</span>                              <span class="c1"># record one iteration using `step`</span>
+        <span class="k">return</span> <span class="n">Recording</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">next_state</span><span class="o">=...</span><span class="p">,</span> <span class="n">state</span><span class="o">=...</span><span class="p">,</span> <span class="n">params</span><span class="o">=...</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">ScheduledFomSpec</span><span class="p">(</span>
+        <span class="n">build</span><span class="o">=</span><span class="n">build</span><span class="p">,</span>
+        <span class="n">schedules</span><span class="o">=</span><span class="p">{</span><span class="s2">"step"</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">k</span><span class="p">:</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">k</span> <span class="o">+</span> <span class="mf">2.0</span><span class="p">)},</span>   <span class="c1"># 0-based counter</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"my_fom"</span><span class="p">,</span> <span class="n">primal_offset</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">primal_dim</span><span class="o">=</span><span class="n">qp</span><span class="o">.</span><span class="n">n</span><span class="p">,</span>
+        <span class="n">dual_offset</span><span class="o">=</span><span class="n">qp</span><span class="o">.</span><span class="n">n</span> <span class="o">+</span> <span class="n">qp</span><span class="o">.</span><span class="n">m</span><span class="p">,</span> <span class="n">dual_dim</span><span class="o">=</span><span class="n">qp</span><span class="o">.</span><span class="n">m</span><span class="p">,</span>
+        <span class="n">param_copy</span><span class="o">=</span><span class="p">(</span><span class="s2">"q"</span><span class="p">,),</span>
+    <span class="p">)</span>
+</code></pre></div>
+<p><code>build_relaxed_admm_qp</code> in <code>fomtools/cvxpygen/builders.py</code> is the same thing
+filled in, and <code>tests/codegen/test_cvxpygen_scheduled.py</code> shows how to check
+such a builder against CVXPY without generating any C.</p>
+<h2 id="parameter-bounds">Parameter bounds<a class="headerlink" href="#parameter-bounds" title="Permanent link">&para;</a></h2>
+<p>FOMTools verifies the generated code by sampling parameters, so every runtime
+parameter needs bounds. Pass <code>param_bounds={param_or_name: (lb, ub)}</code>; bounds
+broadcast against the parameter shape. Parameters without bounds fall back to
+their current value ± <code>bound_margin</code> (default 1.0) with a warning. Bounds are
+propagated to the canonical vectors exactly through CVXPYgen's affine
+parameter maps.</p>
+<h2 id="what-gets-generated">What gets generated<a class="headerlink" href="#what-gets-generated" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>out_qp/
+├── cpg_solver.py            # cpg_solve; registered as problem.solve(method='CPG')
+├── c/
+│   ├── src/cpg_solve.c      # CVXPYgen: canonicalization + parameter updates
+│   ├── src/cpg_workspace.c  # CVXPYgen: canonical data, settings, results
+│   └── solver_code/         # FOMTools: the embedded solver
+│       ├── src/fom_solver.c       # the verified FOM loop
+│       ├── src/fom_{data,ops,linsolve}.c
+│       ├── src/cpg_fom_bridge.c   # Canon_Params -&gt; FomParams -&gt; fom_solve
+│       ├── SPEC.md, spec.json, data.npz   # the IR the agent worked from
+│       └── test/                  # verification harness
+└── ...
+</code></pre></div>
+<p>In C, <code>cpg_update_&lt;param&gt;(...)</code> then <code>cpg_solve()</code> runs the canonicalization
+update and the embedded FOM; results land in <code>CPG_Result</code> as with any CVXPYgen
+solver. The reported residuals are the OSQP-style
+<code>||Ax - clamp(Ax, l, u)||_inf</code> (primal) and <code>||Px + q + A'y||_inf</code> (dual),
+computed by the bridge from the canonical data and the returned solution.</p>
+<h3 id="runtime-settings">Runtime settings<a class="headerlink" href="#runtime-settings" title="Permanent link">&para;</a></h3>
+<p>Which <code>cpg_set_solver_*</code> functions exist depends on the generation path, because
+a solver only advertises settings it can actually honor:</p>
+<ul>
+<li><strong>Rolled</strong>: always <code>cpg_set_solver_max_iter</code> (or
+  <code>problem.solve(method='CPG', max_iter=...)</code>). <code>cpg_set_solver_tol</code> and
+  <code>cpg_set_solver_check_termination</code> (check every N iterations, 0 = disabled)
+  exist only when the solver was generated with
+  <code>TerminationSpec(kind=TerminationKind.INF_NORM_CHANGE, ...)</code>. Under the
+  default <code>MAX_ITERS</code> the residual check is compiled out, so these settings are
+  not emitted and a runtime <code>tol=</code> is rejected rather than silently ignored.
+  Every setting that exists is read by the bridge on every solve, so it can be
+  tuned without regenerating.</li>
+<li><strong>Scheduled</strong>: the same settings, except that <code>max_iter</code> is capped in the bridge
+  at the length of the coefficient tables. Past their end the emitted accessors
+  clamp to the last entry, which would freeze the coefficients rather than
+  continue the method, so raising <code>max_iter</code> beyond the generated horizon has no
+  effect instead of quietly running a different algorithm.</li>
+<li><strong>Unrolled</strong>: none. The body is the whole run executed once, so there is no
+  iteration count to bound, no per-iteration residual to compare against a
+  tolerance, and no interval to check at. CVXPYgen emits no <code>Canon_Settings</code>
+  struct at all for such a solver, and <code>CPG_Info.iter</code> reports the number of
+  iterations the straight-line body performs.</li>
+</ul>
+<p><code>tol</code> and <code>check_termination</code> exist only when the termination kind uses them
+(<code>INF_NORM_CHANGE</code> or <code>OBJECTIVE</code>); under the default <code>MAX_ITERS</code> the check is
+compiled out, so CVXPYgen rejects a runtime <code>tol</code> rather than ignoring it.</p>
+<h3 id="stopping-on-osqps-residuals">Stopping on OSQP's residuals<a class="headerlink" href="#stopping-on-osqps-residuals" title="Permanent link">&para;</a></h3>
+<p>The built-in builders set OSQP's residuals as the verification objective,</p>
+<div class="highlight"><pre><span></span><code>max(||Ax - clamp(Ax, l, u)||_inf, ||Px + q + A'y||_inf)
+</code></pre></div>
+<p>(<code>|A_eq x - b|</code> on the equality rows, <code>max(A_in x - u, 0)</code> on the inequality
+rows), so <code>TerminationKind.OBJECTIVE</code> stops exactly where OSQP would with
+<code>eps_abs = tol</code>, <code>eps_rel = 0</code> and <code>scaled_termination = False</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fomtools.codegen</span><span class="w"> </span><span class="kn">import</span> <span class="n">CodegenConfig</span><span class="p">,</span> <span class="n">TerminationKind</span><span class="p">,</span> <span class="n">TerminationSpec</span>
+
+<span class="n">config</span> <span class="o">=</span> <span class="n">CodegenConfig</span><span class="p">(</span>
+    <span class="n">termination</span><span class="o">=</span><span class="n">TerminationSpec</span><span class="p">(</span><span class="n">kind</span><span class="o">=</span><span class="n">TerminationKind</span><span class="o">.</span><span class="n">OBJECTIVE</span><span class="p">,</span> <span class="n">max_iters</span><span class="o">=</span><span class="mi">4000</span><span class="p">,</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">fcpg</span><span class="o">.</span><span class="n">generate_solver</span><span class="p">(</span><span class="n">problem</span><span class="p">,</span> <span class="s2">"out_qp"</span><span class="p">,</span> <span class="n">fom</span><span class="o">=</span><span class="s2">"admm"</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">)</span>
+<span class="n">problem</span><span class="o">.</span><span class="n">solve</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">"CPG"</span><span class="p">,</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">,</span> <span class="n">check_termination</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+</code></pre></div>
+<p>The residuals are tested every <code>check_termination</code> iterations (default 25) and at
+<code>max_iter</code>, and the <code>pri_res</code> / <code>dua_res</code> the bridge reports are the two halves
+of the objective at the stop. With <code>auto_equilibrate</code> (the default) the FOM iterates
+on the Ruiz-equilibrated QP, and <code>scale_qp</code> records its scalings in
+<code>QPData.unscale = (D, E, c)</code>, so the objective is still measured in the original
+problem's units, the same units the bridge reports. A custom builder
+can reuse <code>fomtools.cvxpygen.builders.set_residual_objective(v, qp, exprs, x, y)</code>
+on the primal and dual iterate its iteration produces.</p>
+<h2 id="limitations">Limitations<a class="headerlink" href="#limitations" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Parameters may enter only the canonical <strong>vectors</strong>: the objective's linear
+  term and constraint right-hand sides. Parameter-dependent <code>P</code>/<code>A</code> entries
+  raise <code>NotImplementedError</code> (FOMTools bakes matrices into the generated
+  code).</li>
+<li>Scheduled coefficients must enter the recorded expressions linearly and may
+  not scale a constant offset; see the three paths above.</li>
+<li>Targets: the embedded C target and the large-scale OpenMP / CUDA targets, all
+  with <code>dtype='float64'</code> (the canonical CVXPYgen data is double precision).</li>
+<li>One solver instance per binary (the bridge globals are unprefixed, as in
+  CVXPYgen's statically-allocated backends).</li>
+<li>With equilibration on, a runtime <code>tol</code> compares successive iterates of the
+  <em>scaled</em> problem; the reported residuals are always those of the original
+  problem.</li>
+<li>Each <code>cpg_solve()</code> cold-starts the FOM from its initial state
+  (<code>fom_update_params</code> resets the iterate), so an anchored method's anchor is
+  always the zero vector.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.indexes", "content.action.edit"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
