@@ -385,7 +385,10 @@ def test_the_pipeline_gate_decides_even_without_the_verify_step(tmp_path, mpc, r
     assert not (tmp_path / "test" / "kernel_check.json").exists()  # nothing shipped
     report = (tmp_path / "OPTIMIZATIONS.md").read_text()
     assert "### Rule violations" in report
-    assert "- [optimization not kept: src/fom_ops.c: floating-point literal '0.37'" in report
+    assert "- round 1: [optimization not kept: src/fom_ops.c: floating-point literal '0.37'" in (
+        report
+    )
+    assert "_The translated solver ships._" in report
 
 
 # -- the report ----------------------------------------------------------------

@@ -252,8 +252,9 @@ class CodegenConfig(BaseModel):
         The least relative speedup a round must make to count as a gain; a
         later round that gains less is reverted. Default 0.02.
     agent_optimize_patience : int
-        Rounds in a row without a gain (failed, slower, or gaining less than
-        ``agent_optimize_min_gain``) that end the phase. Default 2.
+        Rounds in a row without a gain (failed, slower, gaining less than
+        ``agent_optimize_min_gain``, or leaving the sources unchanged) that end
+        the phase. Default 2.
     cg_auto_min_dim : int
         Dimension threshold for the ``AUTO`` → CG upgrade on the large-scale
         CUDA backend (see `SolveMethod`). Raise it to keep more systems
@@ -335,9 +336,9 @@ class CodegenConfig(BaseModel):
             "profile, and what the earlier rounds did; the pipeline re-verifies and "
             "benchmarks it head to head against that solver, and keeps it only if "
             "it gains at least agent_optimize_min_gain. The phase ends early after "
-            "agent_optimize_patience rounds in a row without such a gain, or when a "
-            "round leaves the sources unchanged. One round is the single-pass "
-            "behavior."
+            "agent_optimize_patience rounds in a row without such a gain (a round "
+            "that leaves the sources unchanged counts). One round is the "
+            "single-pass behavior."
         ),
     )
     agent_optimize_min_gain: float = Field(
@@ -357,8 +358,9 @@ class CodegenConfig(BaseModel):
         default=2,
         description=(
             "Code optimization rounds in a row without a gain (one that fails "
-            "verification or the kernel rules, is slower, or gains less than "
-            "agent_optimize_min_gain) that end the phase. Such a round is "
+            "verification or the kernel rules, is slower, gains less than "
+            "agent_optimize_min_gain, or leaves the sources unchanged) that end "
+            "the phase. Such a round is "
             "reverted, and the next one is told why. 1 stops at the first one."
         ),
     )

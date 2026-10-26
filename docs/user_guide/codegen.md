@@ -346,9 +346,11 @@ each round the pipeline re-verifies the rewrite (including the kernel rules) and
 benchmarks it head to head against that solver. A round that fails, or gains less
 than `agent_optimize_min_gain` (which also absorbs benchmark noise), is reverted;
 the first round alone keeps a rewrite within 2% of the translated solver, as the
-single-pass phase does. `agent_optimize_patience` rounds in a row without that
-gain end the phase, as does a round that leaves the sources unchanged.
-`OPTIMIZATIONS.md` lists the rounds.
+single-pass phase does, but that does not count as a gain.
+`agent_optimize_patience` rounds in a row without a gain end the phase; a round
+that leaves the sources unchanged counts as one. A later round is always told the
+best time and profile so far, measured on the translated solver if no round has
+been kept. `OPTIMIZATIONS.md` lists the rounds.
 
 Each round's summary also lists, under `Blocked by rules:`, the optimizations
 the agent considered but did not make because a rule forbade them, with the rule

@@ -238,8 +238,14 @@ def _kernel_check_lines(
             "rewrite, so there was nothing to collect._"
         )
     elif rule_violations:
-        lines += ["The collected rewrite broke these rules and was discarded:", ""]
+        lines += ["These rounds' rewrites broke the rules and were reverted:", ""]
         lines += [f"- {v}" for v in rule_violations]
+        lines += [
+            "",
+            "_The shipped rewrite, from a later round, passed the rules._"
+            if optimize_succeeded
+            else "_The translated solver ships._",
+        ]
     elif optimize_succeeded:
         lines.append("_None: the collected rewrite passed the rules and was kept._")
     else:
@@ -265,8 +271,8 @@ def _round_lines(rounds: list[dict]) -> list[str]:
     for r in rounds:
         gain = f"{100 * r['gain']:.1f}%" if r.get("gain") is not None else "-"
         reason = r.get("reason")
-        if reason:
-            reason = ("" if r.get("kept") else "reverted: ") + reason
+        if reason and not r.get("kept") and r.get("changed", True):
+            reason = "reverted: " + reason
         outcome = "; ".join(x for x in (reason, r.get("stop_reason")) if x) or "continued"
         outcome = outcome.replace("|", "/")
         if r.get("truncated"):
@@ -361,7 +367,8 @@ def write_optimization_report(
 
     ``kernel_checks`` (one dict per matrix: ``name, shape, nnz, rewritten, mode,
     probes, max_err``) adds the per-routine check table, with the
-    ``rule_violations`` found when the rewrite was collected; ``None`` (a target
+    ``rule_violations`` found when a round's rewrite was collected, each
+    labelled with its round (``round <k>: ...``); ``None`` (a target
     whose products are not editable) leaves the section out.
     ``rewrite_collected`` is False when the phase returned no changed, verified
     rewrite, so the rules never ran on one. ``rounds`` (one dict per round, see

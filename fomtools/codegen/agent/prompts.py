@@ -410,16 +410,17 @@ def code_optimization_continuation(
     if history:
         lines += _history_lines(history)
     stop = (
-        f"after {patience} rounds in a row that fail or gain too little"
+        f"after {patience} rounds in a row that fail, gain too little or change nothing"
         if patience and patience > 1
-        else "when a round fails or gains too little"
+        else "at the first round that fails, gains too little or changes nothing"
     )
     lines += [
         "Look for further speedups, including structure the earlier rounds did not "
         "exploit. Do not repeat an approach the earlier rounds show was reverted "
-        "unless you can fix what made it fail. If you find nothing that helps, leave "
-        "the sources unchanged and say so in your summary: that ends the phase. The "
-        "pipeline reverts a round that fails or gains too little, and stops " + stop + ".",
+        "unless you can fix what made it fail; a reverted round is a reason to try a "
+        "different idea, not to stop. If you find nothing that helps, leave the "
+        "sources unchanged and say so in your summary. The pipeline reverts a round "
+        "that fails or gains too little, and stops " + stop + ".",
         "",
     ]
     return "\n".join(lines)
@@ -444,10 +445,19 @@ def _history_lines(history: list[dict], item_chars: int = 160, max_chars: int = 
     """
     entries = []
     for r in history:
-        head = f"Round {r['index']}: {'kept' if r.get('kept') else 'reverted'}"
-        if r.get("kept") and r.get("gain") is not None:
+        if r.get("kept"):
+            status = "kept"
+        elif r.get("changed", True):
+            status = "reverted"
+        else:
+            status = "no change"
+        head = f"Round {r['index']}: {status}"
+        # A reason marks a round without a gain (a kept first round within the
+        # noise tolerance may even be slower), so only a round without one has
+        # a gain to print.
+        if r.get("kept") and r.get("gain") is not None and not r.get("reason"):
             head += f", {100 * r['gain']:.1f}% faster"
-        if r.get("reason"):
+        if r.get("reason") and r.get("changed", True):
             head += f" ({_clip(r['reason'], 2 * item_chars)})"
         applied = [_clip(a, item_chars) for a in r.get("applied") or []]
         blocked = [

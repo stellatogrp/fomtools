@@ -22,17 +22,21 @@ from fomtools.codegen.agent.prompts import (
     SUMMARY_END,
     code_optimization_continuation,
 )
-from fomtools.codegen.harness import VerifyResult
+from fomtools.codegen.harness import ProfRegion, VerifyResult
 from fomtools.codegen.postprocess import extract_applied_optimizations, extract_rule_friction
 from tests.codegen.conftest import build_ista
 
 GOLDEN = Path(__file__).parent / "golden" / "ista" / "embedded_c" / "fom_solver.c"
 BROKEN = "this is not C;\n"
+# Verifies, but adds a floating-point literal, which the kernel rules forbid.
+LITERAL = "\nfom_float fom_unused(void) { return 0.37; }\n"
 
 
 class ScriptedDriver(AgentDriver):
     """Translation: the golden solver. Round k of optimization: ``script[k-1]``,
-    the golden solver tagged with that marker (or ``BROKEN``)."""
+    the golden solver tagged with that marker (or ``BROKEN``; or, for
+    ``"literal"``, the golden solver with ``LITERAL``, its kernel-rule config
+    deleted so that only the collection gate catches it)."""
 
     def __init__(self, script: list[str]):
         self.script = script
@@ -44,6 +48,9 @@ class ScriptedDriver(AgentDriver):
         self.prompts.append(task.instructions)
         marker = self.script[len(self.prompts) - 1]
         source = BROKEN if marker == "broken" else GOLDEN.read_text() + f"\n/* {marker} */\n"
+        if marker == "literal":
+            (task.workdir / "test" / "kernel_check.json").unlink(missing_ok=True)
+            source = GOLDEN.read_text() + LITERAL
         return StubAgentDriver(source).run(task)
 
 
@@ -179,6 +186,23 @@ def test_a_slower_round_is_reverted(tmp_path, monkeypatch, requires_compiler):
 
 
 @pytest.mark.requires_compiler
+def test_a_reverted_rounds_rule_violations_are_labelled(tmp_path, monkeypatch, requires_compiler):
+    # Round 1 breaks a rule and is reverted; round 2 is clean and kept. The
+    # report names round 1's violation as its own, not the shipped solver's.
+    times = {"translated": 100.0, "r2": 50.0}
+    result, driver, solver = _run(
+        tmp_path, monkeypatch, ["literal", "r2"], times, agent_optimize_rounds=2
+    )
+    assert result.optimization_kept and "/* r2 */" in solver and "0.37" not in solver
+    assert "Round 1: reverted (broke a rule: [optimization not kept: " in driver.prompts[1]
+    report = (tmp_path / "OPTIMIZATIONS.md").read_text()
+    assert "- round 1: [optimization not kept: src/fom_solver.c: floating-point literal '0.37'" in (
+        report
+    )
+    assert "_The shipped rewrite, from a later round, passed the rules._" in report
+
+
+@pytest.mark.requires_compiler
 def test_patience_one_stops_at_the_first_miss(tmp_path, monkeypatch, requires_compiler):
     times = {"translated": 100.0, "r1": 50.0}
     result, driver, solver = _run(
@@ -208,10 +232,60 @@ def test_a_first_round_kept_within_noise_uses_patience(tmp_path, monkeypatch, re
     result, driver, solver = _run(tmp_path, monkeypatch, ["r1", "r2", "r3"], times)
     assert len(driver.prompts) == 2
     assert "/* r1 */" in solver  # kept: the first round's 2% tolerance
+    # Kept, but not reported as a gain: no "-1.0% faster" anywhere.
     assert (
-        "Round 1: kept, -1.0% faster (not enough gain: 101.000 us vs 100.000 us best (-1.0%))"
+        "Round 1: kept (not enough gain: 101.000 us vs 100.000 us best (-1.0%))"
         in driver.prompts[1]
     )
+    assert "The previous round made it" not in driver.prompts[1]
+    assert "% faster" not in driver.prompts[1].split("Earlier rounds")[1]
+
+
+@pytest.mark.requires_compiler
+def test_a_failed_first_round_still_gives_the_next_its_time_and_profile(
+    tmp_path, monkeypatch, requires_compiler
+):
+    _fake_timing(monkeypatch, {"translated": 100.0, "r2": 50.0})
+    region = ProfRegion(name="iteration", total_us=90.0, calls=1, pct=90.0)
+    monkeypatch.setattr(gen, "run_profile", lambda out_dir: [region])
+    case = build_ista(max_iters=50)
+    driver = ScriptedDriver(["broken", "r2"])
+    generate_code(
+        case["verifier"],
+        case["next_state"],
+        tmp_path,
+        config=case["config"].model_copy(update=dict(agent_optimize_rounds=2)),
+        driver=driver,
+        name="ista",
+        code_optimization=True,
+        profile=True,
+    )
+    assert "It currently takes 100.000 us per solve" in driver.prompts[1]
+    assert "Its current profile" in driver.prompts[1] and "iteration" in driver.prompts[1]
+
+
+@pytest.mark.requires_compiler
+def test_an_unchanged_round_uses_patience(tmp_path, monkeypatch, requires_compiler):
+    # Round 2 changes nothing (the same r1 again): a miss, not the end.
+    times = {"translated": 100.0, "r1": 50.0, "r3": 25.0}
+    result, driver, solver = _run(
+        tmp_path, monkeypatch, ["r1", "r1", "r3"], times, agent_optimize_rounds=3
+    )
+    assert len(driver.prompts) == 3
+    assert "/* r3 */" in solver
+    assert "Round 2: no change" in driver.prompts[2]
+    assert "Round 2: no change (" not in driver.prompts[2]  # its reason is the status
+    report = (tmp_path / "OPTIMIZATIONS.md").read_text()
+    assert f"| {gen.STOP_NO_CHANGE} |" in report  # not "reverted: ..."
+
+
+@pytest.mark.requires_compiler
+def test_unchanged_rounds_in_a_row_end_the_phase(tmp_path, monkeypatch, requires_compiler):
+    times = {"translated": 100.0, "r1": 50.0}
+    result, driver, solver = _run(tmp_path, monkeypatch, ["r1", "r1", "r1", "r1"], times)
+    assert len(driver.prompts) == 3
+    assert "/* r1 */" in solver
+    assert gen.STOP_PATIENCE in (tmp_path / "OPTIMIZATIONS.md").read_text()
 
 
 @pytest.mark.requires_compiler
@@ -285,7 +359,9 @@ def test_run_code_optimization_on_a_copy(tmp_path, monkeypatch, requires_compile
     )
     assert opt.kept and opt.translated_us == 100.0 and opt.final_us == 40.0
     assert [r.kept for r in opt.rounds] == [True, False]  # round 2: unchanged sources
-    assert opt.rounds[-1].stop_reason == gen.STOP_NO_CHANGE
+    # An unchanged round is a miss; here it is also the last round.
+    assert opt.rounds[-1].reason == gen.STOP_NO_CHANGE
+    assert opt.rounds[-1].stop_reason == gen.STOP_MAX_ROUNDS
     assert "/* r1 */" not in (emitted / "src" / "fom_solver.c").read_text()
     assert opt.optimizations_md and opt.optimizations_md.exists()
 
