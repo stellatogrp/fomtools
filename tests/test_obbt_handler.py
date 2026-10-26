@@ -29,6 +29,7 @@ from tests.conftest import (
     mip_params,
     step_input_widths,
 )
+from tests.test_solver_update_bounds import col_bounds
 
 # --------------------------------------------------------------------------
 # Local builders for ReLU / saturated-linear chains (constant bounds so the
@@ -142,6 +143,78 @@ def test_obbt_preserves_mip_optimum_with_convex_hull_cuts(solver, op):
     opt_no = v_no.solve(convex_hull_cuts=True)
     opt_ob = v_ob.solve(convex_hull_cuts=True)
     assert abs(opt_ob - opt_no) <= 1e-4
+
+
+@pytest.mark.parametrize("solver", SOLVERS)
+def test_obbt_preserves_mip_optimum_deep_lasso(solver):
+    # A longer chain pushes more OBBT bounds into the MIP model.
+    v_no, it_no = build_lasso_ista(obbt=None, solver=solver, K=5)
+    v_ob, it_ob = build_lasso_ista(obbt=solver, solver=solver, K=5)
+    assert abs(_mip_optimum(v_ob, it_ob) - _mip_optimum(v_no, it_no)) <= 1e-4
+
+
+def _continuous_boxes(solver):
+    """Map each continuous leaf of ``solver`` to its model bounds, infinities as +-inf."""
+    boxes = {}
+    for leaf in solver.vector_var_map:
+        if not leaf.is_binary:
+            lb, ub = col_bounds(solver, leaf)
+            boxes[leaf] = (np.where(lb <= -1e100, -np.inf, lb), np.where(ub >= 1e100, np.inf, ub))
+    return boxes
+
+
+def _build_retightened_leaves(obbt, solver, n=3, theory=True):
+    """
+    Build a problem whose leaves OBBT tightens *after* they are registered: a
+    constraint on a parameter, an Affine step with a non-identity ``output_mat``
+    (output OBBT) and, if ``theory``, a theory bound. Step inputs, in contrast,
+    are tightened before their output leaves are created and never go through
+    ``Solver.update_bounds``.
+    """
+    np.random.seed(0)
+    M = np.eye(n) + 0.3 * np.random.rand(n, n)
+    v = Verifier(
+        solver=solver, obbt_solver=obbt, params=mip_params(solver), theory_func=lambda k: 0.5
+    )
+    p = v.parameter(n, lb=-2.0, ub=2.0)
+    z0 = v.iterate(n, lb=-1.0, ub=1.0)
+    for i, ub in enumerate([1.0, 0.5, 0.0]):
+        v.add_constraint(p[i] <= ub)
+    z1 = v.implicit_linear(z0 + p, output_mat=M)
+    z2 = v.relu(z1)
+    target = v.iterate(n, lb=-10.0, ub=10.0)
+    if theory:
+        v.theory_bound(1, target, z2)
+    v.maximize(ft.norm(z2 - target, np.inf))
+    return v, (p, z1, target)
+
+
+@pytest.mark.parametrize("solver", SOLVERS)
+def test_obbt_retightened_bounds_reach_the_solver_models(solver):
+    # Every tightening of a registered leaf must reach the MIP model and the OBBT LP.
+    v_no, (_, z1_no, _) = _build_retightened_leaves(None, solver)
+    v_ob, (p, z1, target) = _build_retightened_leaves(solver, solver)
+    for model in (v_ob.canonicalizer.solver, v_ob.obbt_handler.solver):
+        for leaf, (lb, ub) in _continuous_boxes(model).items():
+            np.testing.assert_array_equal(lb, leaf.lb)
+            np.testing.assert_array_equal(ub, leaf.ub)
+
+    # Not vacuous: each of the three paths tightened its leaf in the models.
+    _, p_ub = col_bounds(v_ob.canonicalizer.solver, p)
+    np.testing.assert_allclose(p_ub, [1.0, 0.5, 0.0], atol=1e-5)
+    widths = [
+        np.sum(np.subtract(*col_bounds(v.canonicalizer.solver, z)[::-1]))
+        for v, z in [(v_no, z1_no), (v_ob, z1)]
+    ]
+    assert widths[1] < widths[0] - 1e-3
+    assert np.all(col_bounds(v_ob.obbt_handler.solver, target)[1] < 10.0)
+
+    # The pushed bounds are valid: the MIP optimum does not change. Without the
+    # theory bound, whose box comes from the (OBBT-tightened) bounds of z2 and so
+    # legitimately differs between the two builds.
+    v_no, _ = _build_retightened_leaves(None, solver, theory=False)
+    v_ob, _ = _build_retightened_leaves(solver, solver, theory=False)
+    assert v_ob.solve() == pytest.approx(v_no.solve(), abs=1e-4)
 
 
 # --------------------------------------------------------------------------
