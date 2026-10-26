@@ -232,15 +232,53 @@ class HiGHSSolver(MIPSolver):
             A ``LinearExpression`` object registered with the solver whose
             underlying variable bounds are to be updated.
 
-            lb: float or np.ndarray
+        lb: float or np.ndarray
             New lower bound(s).
 
-            ub: float or np.ndarray
+        ub: float or np.ndarray
             New upper bound(s).
 
+        Raises
+        ------
+        TypeError
+            If ``expression`` is not a leaf ``LinearExpression``.
         """
-        for i, var in enumerate(self.expression_to_solver(expression)):
-            var.bounds = (lb[i], ub[i])
+        lb = np.broadcast_to(np.asarray(lb, dtype=float), expression.ndim)
+        ub = np.broadcast_to(np.asarray(ub, dtype=float), expression.ndim)
+        if expression.is_leaf and expression not in self.vector_var_map:
+            self.add_var(expression, lb, ub)
+            return
+        # Change the columns of the leaf: expression_to_solver would give linear
+        # expressions, whose bounds assignments are silently dropped.
+        indices = np.array([var.index for var in self.leaf_expr_to_solver(expression)])
+        self.model.changeColsBounds(expression.ndim, indices, lb, ub)
+
+    def leaf_expr_to_solver(self, expression: LinearExpression) -> list:
+        """
+        Resolve a leaf ``LinearExpression`` into its list of HiGHS variables.
+
+        Parameters
+        ----------
+        expression: LinearExpression
+            A leaf ``LinearExpression`` object with a single entry in
+            ``expression.decomposition_dict``.
+
+        Returns
+        -------
+        list[highspy.highs.highs_var]
+            The HiGHS variables corresponding to the leaf ``expression``'s sole key.
+
+        Raises
+        ------
+        TypeError
+            If ``expression`` is not a leaf ``LinearExpression``.
+        """
+        if expression.is_leaf:
+            return self.vector_var_map[next(iter(expression.decomposition_dict))]
+
+        raise TypeError(
+            "Invalid input: expression must be a leaf. Received a composite one instead."
+        )
 
     def add_constr(self, constraint: Constraint | hp.highs.highs_linear_expression):
         """

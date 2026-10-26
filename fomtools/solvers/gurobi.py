@@ -337,10 +337,22 @@ class GurobiSolver(MIPSolver):
         ub: float or np.ndarray
             New upper bound(s).
 
+        Raises
+        ------
+        TypeError
+            If ``expression`` is not a leaf ``LinearExpression``.
         """
-        var = self.expression_to_solver(expression)
+        lb = np.broadcast_to(np.asarray(lb, dtype=float), expression.ndim)
+        ub = np.broadcast_to(np.asarray(ub, dtype=float), expression.ndim)
+        if expression.is_leaf and expression not in self.vector_var_map:
+            self.add_var(expression, lb, ub)
+            return
+        # The MVar of the leaf: expression_to_solver would give an MLinExpr, whose
+        # LB/UB assignments are silently dropped.
+        var = self.leaf_expr_to_solver(expression)
         var.LB = lb
         var.UB = ub
+        self.model.update()
 
     def add_constr(self, constraint) -> None:
         """
