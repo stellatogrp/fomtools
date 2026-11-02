@@ -50,7 +50,14 @@ def _fake_timing(monkeypatch, times):
                 return us
         return times["translated"]
 
+    def fake_head_to_head(out_dir, write_editable, candidate, best):
+        write_editable(candidate)
+        after = fake_bench(out_dir)
+        write_editable(best)
+        return after, fake_bench(out_dir)
+
     monkeypatch.setattr(gen, "_bench_mean_us", fake_bench)
+    monkeypatch.setattr(gen, "_head_to_head_us", fake_head_to_head)
     monkeypatch.setattr(gen, "run_profile", lambda out_dir: [])
 
 

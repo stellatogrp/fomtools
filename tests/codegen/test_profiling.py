@@ -147,3 +147,43 @@ def test_timing_report_speedup_math():
     assert t.speedup_total == pytest.approx(200.0)
     t.profile = [ProfRegion("matvec", 80.0, 100, 80.0), ProfRegion("relu", 20.0, 100, 20.0)]
     assert "matvec" in t.summary()
+
+
+# --- benchmark length and the head-to-head gate (#168) -------------------
+def test_bench_times_a_fast_solver_for_its_full_budget(tmp_path, requires_compiler):
+    # A ~1 us solve used to stop at 5000 solves, about 5 ms of timed work.
+    _generate(tmp_path)
+    bench = run_bench(tmp_path)
+    assert bench.solves > 5000
+    assert bench.total_us >= 0.9e5  # FOM_BENCH_BUDGET_NS = 100 ms
+
+
+def test_head_to_head_alternates_two_builds_and_leaves_best(
+    tmp_path, monkeypatch, requires_compiler
+):
+    from fomtools.codegen import generate as gen
+
+    _generate(tmp_path)
+    solver = tmp_path / "src" / "fom_solver.c"
+    best = {"src/fom_solver.c": solver.read_text()}
+    # Same code plus a comment: a separate build of the same speed.
+    candidate = {"src/fom_solver.c": best["src/fom_solver.c"] + "\n/* candidate */\n"}
+
+    def write(sources):
+        for rel, text in sources.items():
+            (tmp_path / rel).write_text(text)
+
+    order = []
+    real_run = gen._run_bench_bin
+
+    def recording_run(path, out_dir):
+        order.append(path.name)
+        return real_run(path, out_dir)
+
+    monkeypatch.setattr(gen, "_run_bench_bin", recording_run)
+    after, before = gen._head_to_head_us(tmp_path, write, candidate, best, runs=3)
+    assert after > 0 and before > 0
+    c, b = ".bench_candidate", ".bench_best"
+    assert order == [c, b, b, c, c, b]  # alternating, so drifts hit both alike
+    assert solver.read_text() == best["src/fom_solver.c"]  # best left in place
+    assert not list(tmp_path.glob(".bench_*"))  # copies removed

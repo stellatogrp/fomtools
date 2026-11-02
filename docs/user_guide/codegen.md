@@ -359,9 +359,12 @@ time. Output of a real run on the Lasso example (ISTA, 200 iterations, embedded 
   • ...
 ```
 
-Each round is timed head to head against the best solver so far, so the times
-printed for a round can differ from earlier lines by benchmark noise. A rewrite
-that is not faster, or fails verification, is reverted.
+Each round is timed head to head against the best solver so far: both are built
+once, then run five times each in alternating order, and the medians are compared.
+One `make bench` warms up for 20 ms and then times full solves for 100 ms, so even
+a microsecond solve is timed over many thousands of runs. The times printed for a
+round can still differ from earlier lines by a few percent. A rewrite that is not
+faster, or fails verification, is reverted.
 The portable region profiler (`include/fom_profile.h`) is compiled in only for
 `make profile` (`-DFOM_PROFILE`); its `FOM_PROF_BEGIN/END` macros are no-ops in
 the shipped `make verify` / `make lib` builds, so profiling never affects the
