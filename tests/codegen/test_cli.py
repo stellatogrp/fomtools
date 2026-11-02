@@ -205,7 +205,7 @@ def test_budgets_are_set_per_run_and_reach_the_agent():
     base = ["--example", "ista", "--out", "x"]
     default = _build_config(build_parser().parse_args(base))
     assert default.agent_optimize_timeout_s == CodegenConfig().agent_optimize_timeout_s == 7200
-    assert default.agent_optimize_max_turns == 200 and default.agent_timeout_s == 600
+    assert default.agent_timeout_s == 600 and default.agent_model is None
 
     args = build_parser().parse_args(
         base
@@ -214,14 +214,29 @@ def test_budgets_are_set_per_run_and_reach_the_agent():
             "900",
             "--optimize-timeout",
             "14400",
-            "--optimize-max-turns",
-            "400",
+            "--model",
+            "claude-opus-5-5",
         ]
     )
     config = _build_config(args)
     assert (config.agent_timeout_s, config.agent_optimize_timeout_s) == (900, 14400)
-    assert config.agent_optimize_max_turns == 400
+    assert config.agent_model == "claude-opus-5-5"
     driver = _make_driver(args, config)
-    assert driver.config is config
-    assert driver._timeout_for_phase("code_optimization") == 14400
-    assert driver._timeout_for_phase("translation") == 900
+    assert driver.config is config and driver._model() == "claude-opus-5-5"
+    assert driver._timeout_for("code_optimization") == 14400
+    assert driver._timeout_for("translation") == 900
+    assert driver._build_argv("/w", "p")[-5:-3] == ["--model", "claude-opus-5-5"]
+
+
+def test_model_comes_from_config_then_env_then_the_cli_default(monkeypatch):
+    from fomtools.codegen.agent import make_agent_driver
+    from fomtools.codegen.config import CodegenConfig
+
+    monkeypatch.delenv("FOMTOOLS_CODEGEN_MODEL", raising=False)
+    assert make_agent_driver("codex")._model() is None
+    assert "--model" not in make_agent_driver("claude")._build_argv("/w", "p")
+    monkeypatch.setenv("FOMTOOLS_CODEGEN_MODEL", "from-env")
+    assert make_agent_driver("pi")._model() == "from-env"
+    driver = make_agent_driver("pi")
+    driver.config = CodegenConfig(agent_model="from-config")  # as generate_code does later
+    assert driver._model() == "from-config"

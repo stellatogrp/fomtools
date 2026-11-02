@@ -1,20 +1,23 @@
 """Generic driver for any headless coding-agent CLI, configured by a spec.
 
-A single `CliAgentDriver` drives every prompt-in/files-out CLI backend
-(the example Cursor spec and any user-registered agent); the per-tool differences
-live in
-`CliAgentSpec`. This is the agent-agnostic
-core: the authoritative verify/retry loop is shared via
-`run_verify_loop`, and authentication is
-forced to API-key mode when a key is available (the key is forwarded into the
-spawned process environment so it takes precedence over any on-disk login).
+A single `CliAgentDriver` drives every coding-agent backend: the ``claude``,
+``codex``, ``pi``, and ``cursor`` specs bundled in ``agents.yaml`` and any
+user-registered agent. The per-tool differences live in `CliAgentSpec`. Each
+agent runs through its own installed CLI, so it uses the user's login, config,
+and default model unless ``model`` is set. fomtools never handles API keys or
+logins: each CLI must already be logged in on its own (it also inherits the
+environment, so a key the CLI itself reads still works). The authoritative
+verify/retry loop is shared via `run_verify_loop`.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import signal
 import subprocess
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -33,7 +36,7 @@ class CliAgentDriver(AgentDriver):
     """Drive code generation with a headless CLI described by a `CliAgentSpec`.
 
     A concrete `AgentDriver` for every
-    prompt-in/files-out CLI backend (the example Cursor spec and user-registered
+    prompt-in/files-out CLI backend (the bundled specs and user-registered
     agents).
     All per-tool differences are carried by the ``spec``; this class supplies the
     agent-agnostic core and shares the authoritative verify/retry loop via
@@ -51,36 +54,29 @@ class CliAgentDriver(AgentDriver):
         config=None,
         model: str | None = None,
         max_attempts: int = 5,
-        max_turns: int = 16,
         bin: str | None = None,
-        api_key: str | None = None,
         extra_args: Sequence[str] = (),
     ):
-        """Configure the driver from a CLI spec, model, retry budget, and auth.
+        """Configure the driver from a CLI spec, model, and retry budget.
 
         Parameters
         ----------
         spec : CliAgentSpec
             The per-tool specification describing the CLI's binary, flags,
-            prompt/model/cwd flags, login flow, and auth markers.
+            prompt/model/cwd flags, and auth markers.
         config : optional
             Codegen configuration object, retained for backend use. Defaults to
             ``None``.
         model : str, optional
-            Explicit model identifier, passed via the spec's ``model_flag`` when
-            both are set. When ``None`` the CLI's default model is used.
+            Model identifier, passed via the spec's ``model_flag``. When ``None``
+            it is ``config.agent_model``, else ``FOMTOOLS_CODEGEN_MODEL``, else
+            the CLI's default model, resolved at each invocation (so a config
+            given to the driver later is honored).
         max_attempts : int, optional
             Maximum number of prompt/verify rounds. Defaults to 5.
-        max_turns : int, optional
-            Per-attempt turn budget, kept for parity with the shared loop; these
-            CLIs loop internally so it is not passed through. Defaults to 16.
         bin : str, optional
             Override for the CLI binary name. When ``None`` the spec's ``bin``
             is used.
-        api_key : str, optional
-            Explicit API key. When ``None`` it falls back to the first set
-            variable among the spec's key env vars; when neither is found the
-            backend keeps its default (login) auth.
         extra_args : Sequence of str, optional
             Additional arguments appended to the CLI invocation. Defaults to an
             empty tuple.
@@ -89,77 +85,22 @@ class CliAgentDriver(AgentDriver):
         self.config = config
         self.model = model
         self.max_attempts = max_attempts
-        self.max_turns = max_turns
         self.bin = bin or spec.bin
         self.extra_args = tuple(extra_args)
-        self.api_key = api_key or self._key_from_env()
 
-    def _key_from_env(self) -> str | None:
-        """Return the first API key found among the spec's key env vars.
+    def _child_env(self, deadline: int | None = None) -> dict[str, str] | None:
+        """Process env for the CLI: the parent's plus ``FOMTOOLS_DEADLINE`` (Unix time).
 
-        Returns
-        -------
-        str or None
-            The value of the first set variable in ``spec.key_env_vars``, or
-            ``None`` when none are set.
+        ``None`` without a deadline: the CLI inherits the environment as is.
         """
-        for var in self.spec.key_env_vars:
-            value = os.environ.get(var)
-            if value:
-                return value
-        return None
-
-    def _child_env(self) -> dict[str, str] | None:
-        """Process env for the CLI, forcing API-key auth if we have a key.
-
-        ``None`` when no key is configured (keep default login auth); otherwise
-        the full parent environment with the spec's primary key var injected, so
-        PATH and the rest of the environment are preserved.
-        """
-        if not (self.api_key and self.spec.api_key_env):
+        if deadline is None:
             return None
-        return {**os.environ, self.spec.api_key_env: self.api_key}
-
-    def _ensure_login(self) -> None:
-        """Persist an API-key login for CLIs that need one (spec-driven).
-
-        Some CLIs (e.g. Codex) authenticate from an on-disk session written by
-        their own ``login`` subcommand and do not reliably pick the key up from
-        the environment for every transport. When the spec describes an API-key
-        login flow and we have a key, log in once: skip if ``login_check_args``
-        reports an existing session, otherwise pipe the key to ``login_args`` on
-        stdin. A no-op for backends with no login flow or no resolved key.
-        """
-        if not (self.api_key and self.spec.login_args):
-            return
-        # login_check_args exits 0 when an already authenticated session exists.
-        if self.spec.login_check_args:
-            check = subprocess.run(
-                [self.bin, *self.spec.login_check_args],
-                capture_output=True,
-                text=True,
-            )
-            if check.returncode == 0:
-                return
-        proc = subprocess.run(
-            [self.bin, *self.spec.login_args],
-            input=self.api_key,
-            capture_output=True,
-            text=True,
-        )
-        if proc.returncode != 0:
-            output = proc.stdout + proc.stderr
-            raise AgentBackendError(
-                f"{self.spec.display_name or self.spec.name} CLI login with the "
-                f"resolved API key failed. {self.spec.auth_hint}\n"
-                f"{self.spec.display_name or self.spec.name} output:\n" + output[-1000:]
-            )
+        return {**os.environ, "FOMTOOLS_DEADLINE": str(deadline)}
 
     def run(self, task: AgentTask) -> AgentResult:
         """Drive the CLI until the task's verify command passes (or attempts run out).
 
-        Preflights that the CLI binary is on PATH and, when the spec requires
-        it, persists an API-key login as a side effect. It then resolves the
+        Preflights that the CLI binary is on PATH. It then resolves the
         task workdir to an absolute path and hands control to
         `run_verify_loop`, which repeatedly
         invokes the CLI and runs the verify command to decide success.
@@ -179,8 +120,7 @@ class CliAgentDriver(AgentDriver):
         Raises
         ------
         AgentBackendError
-            If the CLI binary is not on PATH, or an API-key login is required
-            but fails. Neither condition is recoverable by retrying.
+            If the CLI binary is not on PATH; retrying cannot fix that.
         """
         if shutil.which(self.bin) is None:
             raise AgentBackendError(
@@ -189,39 +129,53 @@ class CliAgentDriver(AgentDriver):
                 "(`--agent claude`)."
             )
 
-        self._ensure_login()
         # Resolve to an ABSOLUTE workdir: some CLIs resolve their dir flag
         # relative to their own cwd, so a relative path applied as both --cd and
         # the subprocess cwd would be doubled.
         workdir = str(Path(task.workdir).resolve())
         self._truncated = False
 
-        def attempt_timeout() -> int | None:
-            # Each attempt gets what is left of the phase budget.
+        def attempt(prompt: str) -> str:
+            # Each attempt gets what is left of the phase budget as a hard timeout,
+            # and the agent is told to stop GRACE_S before it (FOMTOOLS_DEADLINE).
             budget = task.extra.get("budget")
-            return max(1, int(budget.remaining())) if budget is not None else None
+            timeout = max(1, int(budget.remaining())) if budget is not None else None
+            deadline = budget.agent_deadline() if budget is not None else None
+            return self._invoke_agent(
+                self._build_argv(workdir, prompt), workdir, timeout=timeout, deadline=deadline
+            )
 
         return run_verify_loop(
             task,
-            lambda prompt, max_turns: self._invoke_agent(
-                self._build_argv(workdir, prompt), workdir, timeout=attempt_timeout()
-            ),
+            attempt,
             max_attempts=self.max_attempts,
-            max_turns=self.max_turns,
             truncated_probe=lambda: self._truncated,
-            budget_s=self._timeout_for(task.phase),
+            budget_s=task.extra.get("timeout_s") or self._timeout_for(task.phase),
         )
 
     def _timeout_for(self, phase: str) -> int | None:
-        """Wall-clock budget for the phase, from the codegen config if present.
+        """Wall-clock budget for the phase, from the codegen config.
 
-        Returns ``None`` to run unbounded, preserving this driver's historical
-        behaviour when no config supplies a budget.
+        Without a config the `CodegenConfig` defaults apply, so a driver run
+        directly is never unbounded.
         """
         config = getattr(self, "config", None)
+        if config is None:
+            from fomtools.codegen.config import CodegenConfig
+
+            config = CodegenConfig()
         key = "agent_optimize_timeout_s" if phase == "code_optimization" else "agent_timeout_s"
         value = getattr(config, key, None)
         return int(value) if value else None
+
+    def _model(self) -> str | None:
+        """The model to request: explicit, else the config's, else the env's, else none."""
+        return (
+            self.model
+            or getattr(self.config, "agent_model", None)
+            or os.environ.get("FOMTOOLS_CODEGEN_MODEL")
+            or None
+        )
 
     def _build_argv(self, workdir: str, prompt: str) -> list[str]:
         """Assemble the full CLI argument vector for one invocation.
@@ -247,8 +201,14 @@ class CliAgentDriver(AgentDriver):
         argv = [self.bin, *spec.base_args, *spec.flags, *self.extra_args]
         if spec.cwd_flag:
             argv += [spec.cwd_flag, workdir]
-        if self.model and spec.model_flag:
-            argv += [spec.model_flag, self.model]
+        model = self._model()
+        if model and spec.model_flag:
+            argv += [spec.model_flag, model]
+        elif model:
+            warnings.warn(
+                f"the {spec.name!r} agent spec has no model_flag, so model {model!r} is ignored",
+                stacklevel=2,
+            )
         full_prompt = prompt
         if spec.sysprompt_flag:
             argv += [spec.sysprompt_flag, SYSTEM_PROMPT]
@@ -258,13 +218,28 @@ class CliAgentDriver(AgentDriver):
         argv += [spec.prompt_arg, full_prompt] if spec.prompt_arg else [full_prompt]
         return argv
 
+    def _text(self, stdout: str) -> str:
+        """The agent's text from its stdout, per the spec's ``output_format``."""
+        if self.spec.output_format == "text":
+            return stdout
+        if self.spec.output_format == "stream-json":
+            return stream_json_text(stdout)
+        raise ValueError(
+            f"agent {self.spec.name!r}: unknown output_format {self.spec.output_format!r}; "
+            "use 'text' or 'stream-json'"
+        )
+
     def _invoke_agent(
-        self, argv: list[str], workdir: str | Path, timeout: int | None = None
+        self,
+        argv: list[str],
+        workdir: str | Path,
+        timeout: int | None = None,
+        deadline: int | None = None,
     ) -> str:
         """Run one agent attempt by shelling out to the CLI.
 
         Executes ``argv`` in ``workdir`` with the child environment from
-        `_child_env` (API-key auth injected when configured), capturing
+        `_child_env` (the agent's deadline), capturing
         output. Success is left to the caller's verify command; this method only
         returns the captured text or fails fast on an unrecoverable auth error.
 
@@ -274,6 +249,10 @@ class CliAgentDriver(AgentDriver):
             The full CLI argument vector.
         workdir : str or Path
             Absolute working directory to run the CLI in.
+        timeout : int, optional
+            Seconds after which the process is ended and its partial output kept.
+        deadline : int, optional
+            Unix time passed to the agent as ``FOMTOOLS_DEADLINE``.
 
         Returns
         -------
@@ -287,38 +266,59 @@ class CliAgentDriver(AgentDriver):
             non-zero with output matching one of the spec's auth-failure markers.
         """
 
+        # The child inherits this thread's signal mask, and some imports block
+        # SIGINT and SIGTERM (`import cvxpygen` does). Spawn with an empty mask
+        # so the agent can still be interrupted and asked to stop.
+        mask = signal.pthread_sigmask(signal.SIG_SETMASK, ())
         try:
-            proc = subprocess.run(
+            # Its own session, so a timeout or an interrupt ends the agent together
+            # with what it started (a `make bench`, the solver binary).
+            proc = subprocess.Popen(
                 argv,
                 cwd=workdir,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                env=self._child_env(),
-                timeout=timeout,
+                env=self._child_env(deadline),
+                start_new_session=True,
             )
         except FileNotFoundError as exc:  # binary vanished after preflight
             raise AgentBackendError(
                 f"{self.spec.display_name or self.spec.name} CLI {self.bin!r} not found: {exc}"
             ) from exc
-        except subprocess.TimeoutExpired as exc:
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_group(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:  # a detached child still holds the pipes
+                stdout, stderr = "", ""
             # Keep the partial output and say so. Propagating would discard it and
             # leak the argv (hence the prompt) into the log via str(exc).
             self._truncated = True
             name = self.spec.display_name or self.spec.name
             return (
-                _decode_stream(exc.stdout)
-                + _decode_stream(exc.stderr)
+                self._text(_decode_stream(stdout))
+                + _decode_stream(stderr)
                 + (
                     f"\n[fomtools: the {name} CLI exceeded its {timeout}s budget for this attempt "
                     "and was terminated; any output above is partial.]\n"
                 )
             )
-        output = proc.stdout + proc.stderr
+        except BaseException:  # e.g. KeyboardInterrupt: do not leave the agent running
+            _kill_group(proc)
+            raise
+        output = self._text(stdout) + stderr
         # An auth failure is not a fixable task error — retrying would just burn
         # the attempt budget. Surface it immediately so run_verify_loop fails fast
         # instead of masking it as a failed attempt.
         if proc.returncode != 0:
-            lowered = output.lower()
+            # Only the end of the output: an auth failure is the CLI's last word,
+            # while the transcript before it can mention anything.
+            lowered = output[-2000:].lower()
             if any(marker in lowered for marker in self.spec.all_auth_markers):
                 raise AgentBackendError(
                     f"{self.spec.display_name or self.spec.name} CLI could not "
@@ -326,3 +326,49 @@ class CliAgentDriver(AgentDriver):
                     f"{self.spec.display_name or self.spec.name} output:\n" + output[-1000:]
                 )
         return output
+
+
+def stream_json_text(stdout: str) -> str:
+    """The text blocks of Claude Code's ``stream-json`` events, one per line.
+
+    Assistant text is kept in order. The final ``result`` is added only when it
+    reports an error (it repeats the last text otherwise). Lines that are not
+    JSON, such as a CLI error printed before the stream starts, are kept as is,
+    and so is a last line cut off by a timeout.
+    """
+    chunks: list[str] = []
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            if line.strip():
+                chunks.append(line)
+            continue
+        if not isinstance(event, dict):
+            continue
+        message = event.get("message")
+        if event.get("type") == "assistant" and isinstance(message, dict):
+            for block in message.get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "text" and block.get("text"):
+                    chunks.append(block["text"])
+        elif event.get("type") == "result" and event.get("is_error"):
+            chunks.append(str(event.get("result") or event.get("subtype") or "error"))
+    return "\n".join(chunks) + ("\n" if chunks else "")
+
+
+def _kill_group(proc: subprocess.Popen, grace_s: float = 5.0) -> None:
+    """End ``proc`` and every process in its session (it was started in its own).
+
+    SIGTERM first so the CLI can stop what it started, then SIGKILL after
+    ``grace_s`` for whatever is left in the group.
+    """
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            return
+        if sig == signal.SIGTERM:
+            try:
+                proc.wait(timeout=grace_s)
+            except subprocess.TimeoutExpired:
+                pass

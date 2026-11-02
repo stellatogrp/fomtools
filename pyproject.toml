@@ -42,11 +42,10 @@ gpu = ["cupy-cuda12x"]
 # cuDSS for the CUDA target's direct linear solves (matches the CUDA 13 toolkit).
 cuda = ["nvidia-cudss-cu13; sys_platform == 'linux'"]
 
-# Code generation. The Claude Agent SDK is only needed to *run* the LLM coding
-# agent; extracting the IR, scaffolding, building, and the ctypes wrapper need
-# none of this (the wrapper uses the stdlib ``ctypes``). The Pi backend is a CLI
-# (https://pi.dev), installed separately, so it needs no Python dependency here.
-codegen = ["claude-agent-sdk", "openai-codex"]
+# Code generation needs no Python dependencies: the coding agent is an installed
+# CLI (claude, codex, pi, cursor, ...), and the wrapper uses the stdlib ``ctypes``.
+# The extra stays so that `pip install fomtools[codegen]` keeps working.
+codegen = []
 
 # CVXPYgen integration (fomtools.cvxpygen): model in CVXPY, canonicalize with
 # CVXPYgen's generated C code, solve with a fomtools-generated embedded FOM.

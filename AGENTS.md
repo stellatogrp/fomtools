@@ -67,12 +67,13 @@ These invariants are checked by tests; keep them when editing `fomtools/codegen/
 - Every generated solver must pass the numerical acceptance check against the
   NumPy oracle (`oracle.py`); the agent may only edit the files a target marks
   editable, and the package restores the rest before each check.
-- Agent backends are pluggable: SDK drivers in `agent/`, any headless CLI agent
-  through `agent/agents.yaml`. `fomtools/codegen/agent/stub.py` lets the
+- Agent backends are pluggable: every agent is a headless CLI described in
+  `agent/agents.yaml` (`claude`, `codex`, `pi`, `cursor`) and run by
+  `agent/cli_driver.py`; no vendor SDKs. `fomtools/codegen/agent/stub.py` lets the
   pipeline and tests run without a model.
 
 Useful environment variables: `FOMTOOLS_CUDA_RUN=1|0` forces or disables GPU
-execution of the CUDA checks; `FOMTOOLS_CODEGEN_BACKEND` selects the agent.
+execution of the CUDA checks; `FOMTOOLS_CODEGEN_BACKEND` selects the agent and `FOMTOOLS_CODEGEN_MODEL` its model.
 
 ## Conventions
 

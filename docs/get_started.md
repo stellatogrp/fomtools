@@ -76,7 +76,7 @@ Quote extras so shells such as zsh do not interpret the brackets. From PyPI use
 | Extra | Installation | Purpose |
 |---|---|---|
 | Gurobi | `uv pip install -e ".[gurobi]"` | Optional MIP/MIQP/MIQCP backend; a suitable Gurobi license is required |
-| Code generation | `uv pip install -e ".[codegen]"` | Coding-agent SDKs; authentication is configured separately |
+| Code generation | `uv pip install -e ".[codegen]"` | Nothing extra (kept for compatibility); code generation needs an installed, logged-in agent CLI such as Claude Code or Codex |
 | CVXPYgen | `uv pip install -e ".[cvxpygen]"` | High-level problem-modeling integration |
 | CUDA code generation | `uv pip install -e ".[cuda]"` | cuDSS for direct linear solves in the generated CUDA solver (Linux) |
 | GPU | `uv pip install -e ".[gpu]"` | CuPy for CUDA simulation; GPU SDP additionally requires Julia, Clarabel.jl with CUDA, and juliacall |

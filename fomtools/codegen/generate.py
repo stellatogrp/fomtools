@@ -446,7 +446,7 @@ def _generate_code(
 
         driver = get_default_driver(config)
     elif getattr(driver, "config", False) is None:
-        # A driver built without a config (e.g. ClaudeAgentDriver()) takes this
+        # A driver built without a config (e.g. CliAgentDriver(spec)) takes this
         # run's budgets instead of its constructor default.
         driver.config = config
 
@@ -613,8 +613,8 @@ class CodeOptimizationResult:
     verify_output: str | None = None
 
 
-#: Turn budget of the follow-up that asks for a missing round summary.
-SUMMARY_FOLLOWUP_MAX_TURNS = 4
+#: Wall-clock budget, in seconds, of the follow-up that asks for a missing round summary.
+SUMMARY_FOLLOWUP_TIMEOUT_S = 300
 
 
 def _summary_followup(
@@ -624,10 +624,9 @@ def _summary_followup(
 
     A fresh run is shown the round's diff and asked to print only the summary;
     the caller restores the round's sources afterwards in case it edited them.
-    Its verify command is a no-op, so the driver makes one attempt. Backends
-    that ignore ``max_turns`` (Codex, pi) are bounded only by the phase's
-    wall-clock budget. Returns ``None`` if the follow-up fails: a missing
-    summary never fails a round.
+    Its verify command is a no-op, so the driver makes one attempt, within
+    ``SUMMARY_FOLLOWUP_TIMEOUT_S``. Returns ``None`` if the follow-up fails: a
+    missing summary never fails a round.
     """
     from fomtools.codegen.agent.prompts import code_optimization_summary_request
 
@@ -647,8 +646,7 @@ def _summary_followup(
         instructions=code_optimization_summary_request(diff),
         # Nothing to verify: one attempt, and no "make it pass" re-prompt.
         verify_cmd=[sys.executable, "-c", ""],
-        max_turns=SUMMARY_FOLLOWUP_MAX_TURNS,
-        extra={**task.extra, "summary_only": True},
+        extra={**task.extra, "summary_only": True, "timeout_s": SUMMARY_FOLLOWUP_TIMEOUT_S},
     )
     try:
         return driver.run(followup)
@@ -731,7 +729,7 @@ def run_code_optimization(
         write_editable(kept)
 
     def ensure_summary(index, task, result, before, after):
-        """A kept round that ended (often at its turn budget) before the agent
+        """A kept round that ended (often at its time budget) before the agent
         wrote its summary gets a short follow-up asking for it, which may not edit."""
         if SUMMARY_BEGIN in (result.agent_log or ""):
             return
@@ -776,7 +774,6 @@ def run_code_optimization(
             verify_cmd=target.verify_command(),
             instructions=instructions,
             phase="code_optimization",
-            max_turns=config.agent_optimize_max_turns,
             bench_cmd=["make", "bench"],
             restore_hook=restore_all_but_editable,
             extra={"editable_paths": editable},

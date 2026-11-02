@@ -10,10 +10,66 @@
 #   ~/.config/fomtools/agents.yaml          # per-user config
 #   $FOMTOOLS_CODEGEN_AGENTS                 # explicit path (takes precedence)
 #
-# Valid keys map 1:1 onto fomtools.codegen.agent.specs.CliAgentSpec; an unknown
+# Valid keys map 1:1 onto fomtools.codegen.agent.cli_specs.CliAgentSpec; an unknown
 # key raises so typos surface loudly. `bin` is the only required key.
 
 agents:
+  # Claude Code (https://claude.com/claude-code), the default backend. Runs
+  # `claude -p` headless in the output dir with the file and shell tools. The
+  # PreToolUse hook enforces the phase's time budget: once FOMTOOLS_DEADLINE
+  # (Unix time, set by fomtools) has passed, every tool call is refused with an
+  # instruction to stop and summarize, a minute before the process is ended.
+  claude:
+    bin: claude
+    flags:
+      - "-p"
+      # Isolated from the user's own settings, CLAUDE.md, hooks, plugins, and MCP
+      # servers, so results do not depend on whose machine runs them. The login
+      # is kept; the deadline hook below comes in through --settings.
+      - "--setting-sources"
+      - ""
+      - "--strict-mcp-config"
+      # The event stream, reduced to the agent's text by fomtools, so a round
+      # ended at its timeout keeps the notes written so far.
+      - "--output-format"
+      - "stream-json"
+      - "--verbose"
+      - "--permission-mode"
+      - "bypassPermissions"
+      - "--allowedTools"
+      - "Read,Write,Edit,Bash,Glob,Grep"
+      - "--settings"
+      - '{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"[ -z \"$FOMTOOLS_DEADLINE\" ] || [ \"$(date +%s)\" -lt \"$FOMTOOLS_DEADLINE\" ] || { echo \"fomtools: the time budget is spent. Stop editing and print your summary now.\" >&2; exit 2; }"}]}]}}'
+    cwd_flag: --add-dir
+    sysprompt_flag: --append-system-prompt
+    output_format: stream-json
+    auth_markers: ["authentication_error", "invalid x-api-key", "please run /login", "claude login"]
+    display_name: Claude Code
+    auth_hint: Run `claude` once and log in.
+    install_hint: Install Claude Code (https://claude.com/claude-code) and ensure `claude` is on PATH.
+
+  # OpenAI Codex CLI (https://github.com/openai/codex): `codex exec` in the
+  # output dir (not a git repo), with approvals and the sandbox bypassed since
+  # the dir is isolated. The time budget is the process timeout.
+  codex:
+    bin: codex
+    base_args: ["exec"]
+    flags: ["--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"]
+    cwd_flag: --cd
+    display_name: Codex
+    auth_hint: Run `codex login`.
+    install_hint: Install the Codex CLI (https://github.com/openai/codex) and ensure `codex` is on PATH.
+
+  # Pi (https://pi.dev): one-shot print mode, trusting the files in the output
+  # dir. Pi is multi-provider and uses its own login or provider keys. The time
+  # budget is the process timeout.
+  pi:
+    bin: pi
+    flags: ["--print", "--approve"]
+    display_name: Pi
+    auth_hint: Run `pi` and use /login.
+    install_hint: Install Pi (https://pi.dev) and ensure `pi` is on PATH.
+
   # Cursor CLI agent (https://cursor.com/docs/cli). Drives `cursor-agent` in
   # non-interactive mode, looping internally on the workspace until it stops.
   cursor:
@@ -25,9 +81,6 @@ agents:
     # not set `prompt_arg`. cursor-agent has no system-prompt flag, so the shared
     # SYSTEM_PROMPT is automatically prepended to the task prompt.
     model_flag: --model            # e.g. --agent cursor with model "sonnet-4.5"
-    # API key is read from CURSOR_API_KEY and forwarded into the child process,
-    # forcing API-key auth over any on-disk `cursor-agent login` session.
-    api_key_env: CURSOR_API_KEY
     display_name: Cursor
-    auth_hint: Run `cursor-agent login` or set CURSOR_API_KEY.
+    auth_hint: Run `cursor-agent login`.
     install_hint: Install the Cursor CLI (https://cursor.com/docs/cli) and ensure `cursor-agent` is on PATH.

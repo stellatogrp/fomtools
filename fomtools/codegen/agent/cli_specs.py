@@ -3,19 +3,18 @@
 Most real backends are the same shape: a non-interactive CLI that takes a prompt,
 edits files inside a working directory, and loops internally until done. They
 differ only in *data* — the executable, a couple of flags, how the prompt and
-working directory are passed, which env var holds the API key, and the strings
+working directory are passed, and the strings
 that mark an auth failure. `CliAgentSpec` captures exactly those
 differences so a single generic driver
 (`CliAgentDriver`) can drive any of
 them.
 
-This makes code generation agent-agnostic: an example spec for the Cursor CLI
-ships in ``agents.yaml``, and users add *their own* agents with no code changes —
-either at runtime via `register_agent`, or declaratively via a YAML config
-file (see `load_user_specs`). Anything that is not a prompt-in/files-out
-CLI (an in-process SDK, a JSON-RPC subprocess, an HTTP API) is still served by
-implementing the `AgentDriver` ABC
-directly — e.g. the Claude/Codex SDK drivers and the Pi (pi.dev) RPC driver.
+This makes code generation agent-agnostic: specs for Claude Code, Codex, Pi,
+and the Cursor CLI ship in ``agents.yaml``, and users add *their own* agents with
+no code changes, either at runtime via `register_agent`, or declaratively via a
+YAML config file (see `load_user_specs`). Anything that is not a
+prompt-in/files-out CLI (an HTTP API, say) can implement the `AgentDriver` ABC
+directly.
 """
 
 from __future__ import annotations
@@ -38,9 +37,10 @@ SYSTEM_PROMPT = (
 # mark a non-recoverable authentication failure rather than a fixable task error.
 # Specs may extend this with backend-specific markers.
 DEFAULT_AUTH_MARKERS: tuple[str, ...] = (
+    # Specific phrases only: bare status codes or "authentication" also appear in
+    # ordinary agent transcripts (benchmark numbers, code), and a false match
+    # aborts the run as an auth failure.
     "unauthorized",
-    "401",
-    "403",
     "invalid api key",
     "incorrect api key",
     "missing api key",
@@ -49,7 +49,8 @@ DEFAULT_AUTH_MARKERS: tuple[str, ...] = (
     "api_key_invalid",
     "not logged in",
     "please log in",
-    "authentication",
+    "authentication failed",
+    "authentication_error",
 )
 _REGISTRY = {}
 
@@ -58,7 +59,7 @@ _REGISTRY = {}
 class CliAgentSpec:
     """How to drive one headless coding-agent CLI.
 
-    Everything that varies between Cursor and any user-supplied agent is
+    Everything that varies between the agent CLIs (bundled or user-supplied) is
     a field here; the invocation logic lives once in
     `CliAgentDriver`.
 
@@ -82,20 +83,10 @@ class CliAgentSpec:
     sysprompt_flag:
         Flag for an extra system prompt (Claude's ``--append-system-prompt``);
         ``None`` means `SYSTEM_PROMPT` is prepended to the task prompt.
-    api_key_env:
-        Primary env var holding the API key (``"OPENAI_API_KEY"``); a resolved
-        key is forwarded here to force API-key auth over any on-disk login.
-    api_key_aliases:
-        Additional env vars to read a key from (resolution order after
-        ``api_key_env``), e.g. ``("GOOGLE_API_KEY",)`` as a provider alias.
-    login_check_args:
-        Subcommand args that report whether an on-disk login already exists,
-        exiting 0 when authenticated (Codex's ``("login", "status")``); empty if
-        the CLI has no such check.
-    login_args:
-        Subcommand args that persist an API-key login, reading the key from
-        stdin (Codex's ``("login", "--with-api-key")``). Empty means the CLI
-        needs no login step — the forwarded ``api_key_env`` is enough.
+    output_format:
+        ``"text"`` (default) keeps stdout as is. ``"stream-json"`` reads Claude
+        Code's one-JSON-event-per-line stream and keeps the agent's text, so a CLI
+        ended at its timeout still leaves what it wrote so far.
     auth_markers:
         Output substrings flagging an auth failure (merged with the defaults).
     display_name, auth_hint, install_hint:
@@ -110,10 +101,7 @@ class CliAgentSpec:
     prompt_arg: str | None = None
     cwd_flag: str | None = None
     sysprompt_flag: str | None = None
-    api_key_env: str | None = None
-    api_key_aliases: tuple[str, ...] = ()
-    login_check_args: tuple[str, ...] = ()
-    login_args: tuple[str, ...] = ()
+    output_format: str = "text"
     auth_markers: tuple[str, ...] = field(default_factory=tuple)
     display_name: str = ""
     auth_hint: str = ""
@@ -127,11 +115,6 @@ class CliAgentSpec:
             seen.setdefault(m.lower(), None)
         return tuple(seen)
 
-    @property
-    def key_env_vars(self) -> tuple[str, ...]:
-        """Env vars to read an API key from, in resolution order."""
-        return tuple(v for v in (self.api_key_env, *self.api_key_aliases) if v)
-
 
 _user_specs_loaded = False
 
@@ -140,9 +123,6 @@ _user_specs_loaded = False
 _TUPLE_FIELDS = {
     "base_args",
     "flags",
-    "api_key_aliases",
-    "login_check_args",
-    "login_args",
     "auth_markers",
 }
 _STR_FIELDS = {
@@ -151,7 +131,7 @@ _STR_FIELDS = {
     "prompt_arg",
     "cwd_flag",
     "sysprompt_flag",
-    "api_key_env",
+    "output_format",
     "display_name",
     "auth_hint",
     "install_hint",
@@ -212,11 +192,11 @@ def load_user_specs(*, force: bool = False) -> None:
             bin: aider
             flags: ["--yes", "--no-auto-commit"]
             prompt_arg: --message
-            api_key_env: OPENAI_API_KEY
             display_name: Aider
-            auth_hint: Set OPENAI_API_KEY.
+            auth_hint: Run `aider` once and log in.
 
-    The example spec (``cursor``) can be overridden by name. Missing
+    The bundled specs (``claude``, ``codex``, ``pi``, ``cursor``) can be
+    overridden by name. Missing
     files are skipped; a malformed file raises so the user sees the problem.
     """
     global _user_specs_loaded

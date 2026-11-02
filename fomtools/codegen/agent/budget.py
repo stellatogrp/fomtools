@@ -1,51 +1,23 @@
-"""Wall-clock budget for one agent phase, enforced turn by turn through SDK hooks.
+"""Wall-clock budget for one agent phase.
 
-The in-process Claude SDK has no wall-clock limit of its own, only a turn cap,
-and a single turn can run a long benchmark. A `TimeBudget` instead checks
-the clock around every tool call, through the SDK's public hook API
-(``ClaudeAgentOptions(hooks=...)``):
-
-* after each tool call (``PostToolUse``) the agent is told how much time is
-  left, so it can pace itself;
-* before each tool call (``PreToolUse``) a ``Bash`` command's timeout is capped
-  at the time left (by rewriting its input only; the permission decision is left
-  to the driver's permission mode), so no single command outlives the budget; once the budget is
-  spent every tool is denied with an instruction to wrap up; and once a short
-  grace period after that has also passed, the session is ended.
-
-The hooks are plain async callables over a clock, so they can be exercised
-directly without the SDK.
+`run_verify_loop` starts a `TimeBudget` for each phase and publishes it to the
+driver as ``task.extra["budget"]``. `CliAgentDriver` gives every attempt what is
+left of it as a hard process timeout, and tells the agent the deadline through
+the ``FOMTOOLS_DEADLINE`` environment variable (Unix time), a grace period
+(``GRACE_S``, or a fifth of a shorter budget) before that timeout. An agent CLI with tool hooks can then stop and write its
+summary in time; the bundled ``claude`` spec does this with a ``PreToolUse``
+hook.
 """
 
 from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
-#: Time the agent gets after the budget is spent to write its summary before the
-#: session is ended outright.
+#: Time the agent gets after ``FOMTOOLS_DEADLINE`` to write its summary before the
+#: process is ended (at most a fifth of the budget).
 GRACE_S = 60.0
-#: The Bash tool's own ceiling on a command timeout, in milliseconds.
-_BASH_MAX_TIMEOUT_MS = 600_000
-#: Floor on a capped Bash timeout, so a command issued just before the deadline
-#: can still start.
-_BASH_MIN_TIMEOUT_MS = 1_000
-
-
-def _fmt(seconds: float) -> str:
-    seconds = max(0, int(seconds))
-    minutes, secs = divmod(seconds, 60)
-    return f"{minutes}m {secs:02d}s" if minutes else f"{secs}s"
-
-
-def _as_ms(value: Any) -> int | None:
-    """A Bash ``timeout`` as an int, or ``None`` if missing or not a number."""
-    try:
-        return None if value is None else int(float(value))
-    except (TypeError, ValueError, OverflowError):
-        return None
 
 
 @dataclass
@@ -55,9 +27,6 @@ class TimeBudget:
     deadline: float
     total_s: float
     clock: Callable[[], float] = time.monotonic
-    grace_s: float = GRACE_S
-    #: Set once a hook has denied a tool or ended the session for lack of time.
-    exhausted: bool = field(default=False, init=False)
 
     @classmethod
     def starting_now(
@@ -68,65 +37,11 @@ class TimeBudget:
     def remaining(self) -> float:
         return self.deadline - self.clock()
 
-    async def after_tool(self, input_data: Any, tool_use_id: str | None, context: Any) -> dict:
-        """``PostToolUse``: tell the agent how much of its budget is left."""
-        left = self.remaining()
-        if left > 0:
-            note = (
-                f"[fomtools] Time budget: {_fmt(left)} of {_fmt(self.total_s)} remain. "
-                "Pace your work so the solver passes verify and your summary is written "
-                "before it runs out."
-            )
-        else:
-            note = (
-                "[fomtools] Time budget exhausted. Stop now: leave the solver in a state "
-                "that passes verify and write your summary."
-            )
-        return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": note}}
+    @property
+    def grace_s(self) -> float:
+        """The summary-writing time at the end: ``GRACE_S``, or a fifth of a short budget."""
+        return min(GRACE_S, 0.2 * self.total_s)
 
-    async def before_tool(self, input_data: Any, tool_use_id: str | None, context: Any) -> dict:
-        """``PreToolUse``: cap Bash timeouts, deny tools once out of time, then end the session."""
-        left = self.remaining()
-        if left <= -self.grace_s:
-            self.exhausted = True
-            return {
-                "continue_": False,
-                "stopReason": f"fomtools: the {_fmt(self.total_s)} time budget is spent",
-            }
-        if left <= 0:
-            self.exhausted = True
-            return {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": (
-                        "Time budget exhausted. Do not run more tools: stop and write your "
-                        "summary now."
-                    ),
-                }
-            }
-        tool_input = dict((input_data or {}).get("tool_input") or {})
-        if (input_data or {}).get("tool_name") == "Bash":
-            cap_ms = max(_BASH_MIN_TIMEOUT_MS, min(_BASH_MAX_TIMEOUT_MS, int(left * 1000)))
-            requested = _as_ms(tool_input.get("timeout"))
-            if requested is None or requested > cap_ms:
-                tool_input["timeout"] = cap_ms
-                # No permissionDecision: an explicit "allow" would skip the
-                # normal permission check, and a timeout rewrite must not
-                # widen what the agent may run.
-                return {
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "updatedInput": tool_input,
-                    }
-                }
-        return {}
-
-    def hooks(self) -> dict[str, list]:
-        """``ClaudeAgentOptions.hooks`` for this budget (every tool)."""
-        from claude_agent_sdk import HookMatcher  # the caller already imported the SDK
-
-        return {
-            "PreToolUse": [HookMatcher(matcher=None, hooks=[self.before_tool])],
-            "PostToolUse": [HookMatcher(matcher=None, hooks=[self.after_tool])],
-        }
+    def agent_deadline(self) -> int:
+        """The Unix time at which the agent should stop: ``grace_s`` before the end."""
+        return int(time.time() + max(0.0, self.remaining() - self.grace_s))
