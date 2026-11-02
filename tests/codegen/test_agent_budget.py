@@ -53,8 +53,29 @@ def test_without_a_budget_every_attempt_runs(tmp_path):
 def test_agent_deadline_leaves_the_grace_period():
     budget = TimeBudget.starting_now(600.0)
     assert abs(budget.agent_deadline() - (time.time() + 600 - GRACE_S)) <= 1
-    spent = TimeBudget.starting_now(10.0)  # less than the grace period left
-    assert abs(spent.agent_deadline() - time.time()) <= 1
+    short = TimeBudget.starting_now(30.0)  # a fifth of a short budget, not GRACE_S
+    assert short.grace_s == 6.0
+    assert abs(short.agent_deadline() - (time.time() + 24)) <= 1
+
+
+def test_no_retry_starts_inside_the_grace_period(tmp_path):
+    calls = []
+
+    def agent(prompt):
+        calls.append(1)
+        time.sleep(0.85)  # leaves less than the 0.2 s grace of a 1 s budget
+        return "attempted"
+
+    result = run_verify_loop(_failing_task(tmp_path), agent, max_attempts=5, budget_s=1.0)
+    assert len(calls) == 1 and "budget for this phase is spent" in result.log
+
+
+def test_a_driver_without_config_gets_the_default_budgets():
+    from fomtools.codegen.config import CodegenConfig
+
+    driver = CliAgentDriver(get_spec("claude"))
+    assert driver._timeout_for("translation") == CodegenConfig().agent_timeout_s
+    assert driver._timeout_for("code_optimization") == CodegenConfig().agent_optimize_timeout_s
 
 
 def _recording_driver(tmp_path, monkeypatch):
@@ -92,6 +113,7 @@ def test_a_task_timeout_replaces_the_phase_budget(tmp_path, monkeypatch):
 
 def test_without_a_budget_no_deadline_is_set(tmp_path, monkeypatch):
     driver, seen = _recording_driver(tmp_path, monkeypatch)
+    driver.config = type("C", (), {"agent_timeout_s": None})()
     driver.run(_failing_task(tmp_path))
     assert seen["timeout"] is None
     assert seen["env"] is None  # no key, no deadline: the CLI inherits the environment
@@ -117,3 +139,50 @@ def test_claude_hook_refuses_tools_after_the_deadline(offset, code):
     )
     assert proc.returncode == code
     assert ("print your summary" in proc.stderr) == (code == 2)
+
+
+def _script_driver(tmp_path, code: str) -> CliAgentDriver:
+    """A driver whose "CLI" is ``python -c code``."""
+    spec = CliAgentSpec(name="fake", bin=sys.executable, base_args=("-c", code), model_flag=None)
+    return CliAgentDriver(spec)
+
+
+def test_numbers_in_a_failing_transcript_are_not_an_auth_error(tmp_path):
+    driver = _script_driver(
+        tmp_path, "import sys; print('solve time 1.4031 ms; 401 iterations'); sys.exit(1)"
+    )
+    out = driver._invoke_agent(driver._build_argv(str(tmp_path), "p"), tmp_path)
+    assert "401 iterations" in out
+
+
+def test_an_auth_failure_at_the_end_fails_fast(tmp_path):
+    from fomtools.codegen.agent.driver import AgentBackendError
+
+    driver = _script_driver(tmp_path, "import sys; print('Error: Invalid API key'); sys.exit(1)")
+    with pytest.raises(AgentBackendError, match="could not authenticate"):
+        driver._invoke_agent(driver._build_argv(str(tmp_path), "p"), tmp_path)
+
+
+def test_a_timeout_also_ends_what_the_agent_started(tmp_path):
+    pid_file = tmp_path / "child.pid"
+    code = (
+        "import subprocess, sys, time;"
+        f"c = subprocess.Popen(['sleep', '60']); open({str(pid_file)!r}, 'w').write(str(c.pid));"
+        "time.sleep(60)"
+    )
+    driver = _script_driver(tmp_path, code)
+    out = driver._invoke_agent(driver._build_argv(str(tmp_path), "p"), tmp_path, timeout=2)
+    assert "exceeded its 2s budget" in out
+    child = int(pid_file.read_text())
+    time.sleep(0.2)
+    with pytest.raises(ProcessLookupError):
+        import os
+
+        os.kill(child, 0)
+
+
+def test_a_model_for_a_spec_without_a_model_flag_warns(tmp_path):
+    driver = _script_driver(tmp_path, "pass")
+    driver.model = "some-model"
+    with pytest.warns(UserWarning, match="no model_flag"):
+        driver._build_argv(str(tmp_path), "p")

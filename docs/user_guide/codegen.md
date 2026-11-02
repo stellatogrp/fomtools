@@ -238,8 +238,9 @@ deterministic, offline runs.
 
 Select the agent with `FOMTOOLS_CODEGEN_BACKEND` (or `--agent` on the command
 line). Each agent uses its CLI's own default model and configuration, so it
-follows the CLI's updates. To pick a model, set `CodegenConfig(agent_model=...)`,
-`FOMTOOLS_CODEGEN_MODEL`, or `--model`, in that order of precedence:
+follows the CLI's updates. To pick a model, set `CodegenConfig(agent_model=...)`
+(`--model` on the command line), which takes precedence over
+`FOMTOOLS_CODEGEN_MODEL`:
 
 ```python
 config = CodegenConfig(agent_model="claude-opus-5-5")

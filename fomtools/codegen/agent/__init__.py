@@ -63,7 +63,6 @@ def make_agent_driver(backend: str | None = None, config=None) -> AgentDriver:
     nondeterministic and need auth, so they never run in CI.
     """
     backend = backend or os.environ.get("FOMTOOLS_CODEGEN_BACKEND") or _DEFAULT_BACKEND
-    model = getattr(config, "agent_model", None) or os.environ.get("FOMTOOLS_CODEGEN_MODEL")
     try:
         spec = get_spec(backend)
     except KeyError:
@@ -71,7 +70,7 @@ def make_agent_driver(backend: str | None = None, config=None) -> AgentDriver:
             f"unknown agent backend {backend!r}; choose from {available_backends()} "
             "or define one in ~/.config/fomtools/agents.yaml (or $FOMTOOLS_CODEGEN_AGENTS)"
         ) from None
-    return CliAgentDriver(spec, config=config, model=model or None)
+    return CliAgentDriver(spec, config=config)
 
 
 def get_default_driver(config=None, backend: str | None = None) -> AgentDriver:

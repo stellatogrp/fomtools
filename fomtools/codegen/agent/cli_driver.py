@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -67,8 +69,10 @@ class CliAgentDriver(AgentDriver):
             Codegen configuration object, retained for backend use. Defaults to
             ``None``.
         model : str, optional
-            Explicit model identifier, passed via the spec's ``model_flag`` when
-            both are set. When ``None`` the CLI's default model is used.
+            Model identifier, passed via the spec's ``model_flag``. When ``None``
+            it is ``config.agent_model``, else ``FOMTOOLS_CODEGEN_MODEL``, else
+            the CLI's default model, resolved at each invocation (so a config
+            given to the driver later is honored).
         max_attempts : int, optional
             Maximum number of prompt/verify rounds. Defaults to 5.
         bin : str, optional
@@ -215,15 +219,28 @@ class CliAgentDriver(AgentDriver):
         )
 
     def _timeout_for(self, phase: str) -> int | None:
-        """Wall-clock budget for the phase, from the codegen config if present.
+        """Wall-clock budget for the phase, from the codegen config.
 
-        Returns ``None`` to run unbounded, preserving this driver's historical
-        behaviour when no config supplies a budget.
+        Without a config the `CodegenConfig` defaults apply, so a driver run
+        directly is never unbounded.
         """
         config = getattr(self, "config", None)
+        if config is None:
+            from fomtools.codegen.config import CodegenConfig
+
+            config = CodegenConfig()
         key = "agent_optimize_timeout_s" if phase == "code_optimization" else "agent_timeout_s"
         value = getattr(config, key, None)
         return int(value) if value else None
+
+    def _model(self) -> str | None:
+        """The model to request: explicit, else the config's, else the env's, else none."""
+        return (
+            self.model
+            or getattr(self.config, "agent_model", None)
+            or os.environ.get("FOMTOOLS_CODEGEN_MODEL")
+            or None
+        )
 
     def _build_argv(self, workdir: str, prompt: str) -> list[str]:
         """Assemble the full CLI argument vector for one invocation.
@@ -249,8 +266,14 @@ class CliAgentDriver(AgentDriver):
         argv = [self.bin, *spec.base_args, *spec.flags, *self.extra_args]
         if spec.cwd_flag:
             argv += [spec.cwd_flag, workdir]
-        if self.model and spec.model_flag:
-            argv += [spec.model_flag, self.model]
+        model = self._model()
+        if model and spec.model_flag:
+            argv += [spec.model_flag, model]
+        elif model:
+            warnings.warn(
+                f"the {spec.name!r} agent spec has no model_flag, so model {model!r} is ignored",
+                stacklevel=2,
+            )
         full_prompt = prompt
         if spec.sysprompt_flag:
             argv += [spec.sysprompt_flag, SYSTEM_PROMPT]
@@ -298,37 +321,49 @@ class CliAgentDriver(AgentDriver):
         """
 
         try:
-            proc = subprocess.run(
+            # Its own session, so a timeout or an interrupt ends the agent together
+            # with what it started (a `make bench`, the solver binary).
+            proc = subprocess.Popen(
                 argv,
                 cwd=workdir,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 env=self._child_env(deadline),
-                timeout=timeout,
+                start_new_session=True,
             )
         except FileNotFoundError as exc:  # binary vanished after preflight
             raise AgentBackendError(
                 f"{self.spec.display_name or self.spec.name} CLI {self.bin!r} not found: {exc}"
             ) from exc
-        except subprocess.TimeoutExpired as exc:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_group(proc)
+            stdout, stderr = proc.communicate()
             # Keep the partial output and say so. Propagating would discard it and
             # leak the argv (hence the prompt) into the log via str(exc).
             self._truncated = True
             name = self.spec.display_name or self.spec.name
             return (
-                _decode_stream(exc.stdout)
-                + _decode_stream(exc.stderr)
+                _decode_stream(stdout)
+                + _decode_stream(stderr)
                 + (
                     f"\n[fomtools: the {name} CLI exceeded its {timeout}s budget for this attempt "
                     "and was terminated; any output above is partial.]\n"
                 )
             )
-        output = proc.stdout + proc.stderr
+        except BaseException:  # e.g. KeyboardInterrupt: do not leave the agent running
+            _kill_group(proc)
+            raise
+        output = stdout + stderr
         # An auth failure is not a fixable task error — retrying would just burn
         # the attempt budget. Surface it immediately so run_verify_loop fails fast
         # instead of masking it as a failed attempt.
         if proc.returncode != 0:
-            lowered = output.lower()
+            # Only the end of the output: an auth failure is the CLI's last word,
+            # while the transcript before it can mention anything.
+            lowered = output[-2000:].lower()
             if any(marker in lowered for marker in self.spec.all_auth_markers):
                 raise AgentBackendError(
                     f"{self.spec.display_name or self.spec.name} CLI could not "
@@ -336,3 +371,11 @@ class CliAgentDriver(AgentDriver):
                     f"{self.spec.display_name or self.spec.name} output:\n" + output[-1000:]
                 )
         return output
+
+
+def _kill_group(proc: subprocess.Popen) -> None:
+    """End ``proc`` and every process in its session (it was started in its own)."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass

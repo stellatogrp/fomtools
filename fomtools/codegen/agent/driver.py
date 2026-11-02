@@ -1,8 +1,8 @@
 """The (mockable) coding-agent interface.
 
 Code generation delegates the actual translation of the Intermediate Representation (IR) into
-target source to an `AgentDriver`. The real driver shells out to the Claude Agent SDK; the
-`StubAgentDriver` drops a known-good source so
+target source to an `AgentDriver`. The real driver, `CliAgentDriver`, runs a headless
+agent CLI (Claude Code, Codex, ...); the `StubAgentDriver` drops a known-good source so
 the whole pipeline is testable without an LLM.
 """
 
@@ -79,7 +79,7 @@ class AgentResult:
         `extract_agent_notes`, which would
         otherwise have to pick the agent's words out of compiler noise.
     turns_used:
-        Number of attempts (or turns) consumed producing this result.
+        Number of agent attempts consumed producing this result.
     artifacts:
         Paths to the files the agent produced or refined.
     truncated:
@@ -239,7 +239,8 @@ def run_verify_loop(
 
     attempts_made = 0
     for attempt in range(max_attempts):
-        if budget is not None and attempt > 0 and budget.remaining() <= 0:
+        # A retry that would start inside the grace period could only be told to stop.
+        if budget is not None and attempt > 0 and budget.remaining() <= budget.grace_s:
             log_parts.append(
                 f"\n[fomtools: the {budget_s:g}s budget for this phase is spent; "
                 "no further attempts.]\n"

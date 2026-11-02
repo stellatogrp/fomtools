@@ -37,9 +37,10 @@ SYSTEM_PROMPT = (
 # mark a non-recoverable authentication failure rather than a fixable task error.
 # Specs may extend this with backend-specific markers.
 DEFAULT_AUTH_MARKERS: tuple[str, ...] = (
+    # Specific phrases only: bare status codes or "authentication" also appear in
+    # ordinary agent transcripts (benchmark numbers, code), and a false match
+    # aborts the run as an auth failure.
     "unauthorized",
-    "401",
-    "403",
     "invalid api key",
     "incorrect api key",
     "missing api key",
@@ -48,7 +49,8 @@ DEFAULT_AUTH_MARKERS: tuple[str, ...] = (
     "api_key_invalid",
     "not logged in",
     "please log in",
-    "authentication",
+    "authentication failed",
+    "authentication_error",
 )
 _REGISTRY = {}
 

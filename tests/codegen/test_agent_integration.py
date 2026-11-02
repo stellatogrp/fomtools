@@ -1,6 +1,6 @@
 """Real-agent integration test.
 
-This exercises the actual Claude Agent SDK driver writing a solver from scratch
+This exercises the real Claude Code CLI agent writing a solver from scratch
 and iterating until ``make verify`` passes. It is nondeterministic, needs auth,
 and is therefore gated behind ``FOMTOOLS_CODEGEN_AGENT=1`` and the ``agent``
 marker; it never runs in CI.

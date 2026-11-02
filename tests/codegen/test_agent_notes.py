@@ -271,15 +271,6 @@ def test_phase_selects_its_own_budget(phase, expected):
     assert CliAgentDriver(get_spec("claude"), config=config)._timeout_for(phase) == expected
 
 
-def test_no_budget_without_config():
-    from fomtools.codegen.agent import CliAgentDriver
-    from fomtools.codegen.agent.cli_specs import get_spec
-
-    driver = CliAgentDriver(get_spec("claude"))
-    assert driver._timeout_for("translation") is None
-    assert driver._timeout_for("code_optimization") is None
-
-
 def test_a_driver_built_without_a_config_takes_the_runs_budgets(tmp_path, requires_compiler):
     from pathlib import Path
 

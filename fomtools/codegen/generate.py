@@ -729,7 +729,7 @@ def run_code_optimization(
         write_editable(kept)
 
     def ensure_summary(index, task, result, before, after):
-        """A kept round that ended (often at its turn budget) before the agent
+        """A kept round that ended (often at its time budget) before the agent
         wrote its summary gets a short follow-up asking for it, which may not edit."""
         if SUMMARY_BEGIN in (result.agent_log or ""):
             return
