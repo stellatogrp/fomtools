@@ -282,3 +282,63 @@ def test_claude_streams_json():
     spec = get_spec("claude")
     assert spec.output_format == "stream-json"
     assert "stream-json" in spec.flags and "--verbose" in spec.flags
+
+
+def test_claude_keeps_commands_in_the_foreground():
+    # A background task keeps `claude -p` waiting after its reply (#166).
+    flags = get_spec("claude").flags
+    settings = json.loads(flags[flags.index("--settings") + 1])
+    assert settings["env"] == {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}
+    from fomtools.codegen.agent.cli_specs import SYSTEM_PROMPT
+
+    assert "foreground" in SYSTEM_PROMPT and "nohup" in SYSTEM_PROMPT
+
+
+def test_what_the_agent_left_running_is_ended_when_it_exits(tmp_path):
+    # As `nohup make bench &`: a child that outlives the CLI, not holding its pipes.
+    import os
+
+    pid_file = tmp_path / "child.pid"
+    code = (
+        "import subprocess;"
+        "c = subprocess.Popen(['sleep', '60'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL);"
+        f"open({str(pid_file)!r}, 'w').write(str(c.pid)); print('done')"
+    )
+    driver = _script_driver(tmp_path, code)
+    start = time.monotonic()
+    out = driver._invoke_agent(driver._build_argv(str(tmp_path), "p"), tmp_path, timeout=30)
+    assert out.strip() == "done" and time.monotonic() - start < 10
+    time.sleep(0.2)
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pid_file.read_text()), 0)
+
+
+def test_specs_load_once_across_threads(monkeypatch):
+    # A second thread used to find the "loaded" flag set and the registry empty.
+    import threading
+
+    from fomtools.codegen.agent import cli_specs
+
+    monkeypatch.setattr(cli_specs, "_REGISTRY", {})
+    monkeypatch.setattr(cli_specs, "_user_specs_loaded", False)
+    paths = cli_specs._config_paths
+    monkeypatch.setattr(cli_specs, "_config_paths", lambda: (time.sleep(0.2), paths())[1])
+    errors = []
+
+    def lookup():
+        try:
+            get_spec("claude")
+        except KeyError as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=lookup) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+
+
+def test_codex_runs_without_the_user_config():
+    flags = get_spec("codex").flags
+    assert {"--ignore-user-config", "--ignore-rules", "--ephemeral"} <= set(flags)

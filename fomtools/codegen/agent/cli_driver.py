@@ -17,6 +17,7 @@ import os
 import shutil
 import signal
 import subprocess
+import time
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
@@ -311,6 +312,9 @@ class CliAgentDriver(AgentDriver):
         except BaseException:  # e.g. KeyboardInterrupt: do not leave the agent running
             _kill_group(proc)
             raise
+        # The agent is done, so anything it left running in its session (a job
+        # started with `&` or `nohup`) would only skew the timings that follow.
+        _kill_group(proc, grace_s=1.0)
         output = self._text(stdout) + stderr
         # An auth failure is not a fixable task error — retrying would just burn
         # the attempt budget. Surface it immediately so run_verify_loop fails fast
@@ -359,16 +363,26 @@ def stream_json_text(stdout: str) -> str:
 def _kill_group(proc: subprocess.Popen, grace_s: float = 5.0) -> None:
     """End ``proc`` and every process in its session (it was started in its own).
 
-    SIGTERM first so the CLI can stop what it started, then SIGKILL after
-    ``grace_s`` for whatever is left in the group.
+    SIGTERM first so the CLI can stop what it started, then SIGKILL for whatever
+    is still in the group after ``grace_s``. Also cleans up after a CLI that
+    already exited, which leaves only its leftover children in the group.
     """
-    for sig in (signal.SIGTERM, signal.SIGKILL):
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return  # the group is empty
+    deadline = time.monotonic() + grace_s
+    while time.monotonic() < deadline:
         try:
-            os.killpg(proc.pid, sig)
+            proc.wait(timeout=0.05)  # reap the CLI so it does not hold the group
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(proc.pid, 0)
         except (ProcessLookupError, PermissionError):
             return
-        if sig == signal.SIGTERM:
-            try:
-                proc.wait(timeout=grace_s)
-            except subprocess.TimeoutExpired:
-                pass
+        time.sleep(0.05)
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass

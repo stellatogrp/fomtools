@@ -19,6 +19,10 @@ agents:
   # PreToolUse hook enforces the phase's time budget: once FOMTOOLS_DEADLINE
   # (Unix time, set by fomtools) has passed, every tool call is refused with an
   # instruction to stop and summarize, a minute before the process is ended.
+  # CLAUDE_CODE_DISABLE_BACKGROUND_TASKS keeps every Bash command in the
+  # foreground: a background task (asked for, or a command that outlived the
+  # Bash timeout) keeps `claude -p` waiting after its reply, until the phase
+  # timeout ends it (#166).
   claude:
     bin: claude
     flags:
@@ -39,7 +43,7 @@ agents:
       - "--allowedTools"
       - "Read,Write,Edit,Bash,Glob,Grep"
       - "--settings"
-      - '{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"[ -z \"$FOMTOOLS_DEADLINE\" ] || [ \"$(date +%s)\" -lt \"$FOMTOOLS_DEADLINE\" ] || { echo \"fomtools: the time budget is spent. Stop editing and print your summary now.\" >&2; exit 2; }"}]}]}}'
+      - '{"env":{"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS":"1"},"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"[ -z \"$FOMTOOLS_DEADLINE\" ] || [ \"$(date +%s)\" -lt \"$FOMTOOLS_DEADLINE\" ] || { echo \"fomtools: the time budget is spent. Stop editing and print your summary now.\" >&2; exit 2; }"}]}]}}'
     cwd_flag: --add-dir
     sysprompt_flag: --append-system-prompt
     output_format: stream-json
@@ -54,7 +58,15 @@ agents:
   codex:
     bin: codex
     base_args: ["exec"]
-    flags: ["--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"]
+    # Isolated from the user's ~/.codex/config.toml (hooks, MCP servers, profiles,
+    # a pinned model) and execpolicy rules; no session files. The login is kept.
+    # Codex still reads ~/.codex/AGENTS.md; no flag turns that off.
+    flags:
+      - "--skip-git-repo-check"
+      - "--dangerously-bypass-approvals-and-sandbox"
+      - "--ignore-user-config"
+      - "--ignore-rules"
+      - "--ephemeral"
     cwd_flag: --cd
     display_name: Codex
     auth_hint: Run `codex login`.
