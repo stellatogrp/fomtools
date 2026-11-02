@@ -20,6 +20,12 @@ Authentication works in two modes:
   the in-process SDK, ``subprocess`` ``env`` for the CLI fallback) to force
   API-key auth even when a subscription login is also present.
 
+The in-process SDK runs the ``claude`` found on ``PATH`` when there is one, not the
+CLI bundled with ``claude_agent_sdk``. The bundled CLI is pinned to the SDK release
+and its default model ages with it; the installed one is kept up to date, so
+without an explicit ``model`` the agent gets Claude Code's current default (or the
+one set in its settings).
+
 The common SDK-backend machinery (retry loop wiring, child environment, CLI
 auth-error handling, SDK→CLI fallback) lives in
 `SdkAgentDriver`; this module supplies
@@ -27,6 +33,8 @@ only the Claude-specific argv and in-process SDK invocation.
 """
 
 from __future__ import annotations
+
+import shutil
 
 from fomtools.codegen.agent.driver import AgentTask, _redact_exception
 from fomtools.codegen.agent.sdk_base import (
@@ -126,6 +134,8 @@ class ClaudeAgentDriver(SdkAgentDriver):
             # is used; omitted entirely in auth mode (subscription/OAuth login).
             **({"env": env} if env else {}),
             **({"model": self.model} if self.model else {}),
+            # The installed CLI, not the one bundled with (and as old as) the SDK.
+            **({"cli_path": cli} if (cli := shutil.which("claude")) else {}),
             **({"hooks": budget.hooks()} if budget is not None else {}),
         )
 

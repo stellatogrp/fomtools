@@ -145,3 +145,13 @@ def test_without_a_budget_every_attempt_runs(tmp_path):
     result = run_verify_loop(task, lambda prompt, turns: "attempted", max_attempts=3)
     assert result.turns_used == 3
     assert "budget" not in task.extra
+
+
+def test_sdk_options_prefer_the_installed_claude_cli(tmp_path, monkeypatch):
+    from fomtools.codegen.agent import claude_sdk
+
+    task = AgentTask(workdir=tmp_path, solver_rel_path="src/fom_solver.c", verify_cmd=["true"])
+    monkeypatch.setattr(claude_sdk.shutil, "which", lambda name: f"/opt/bin/{name}")
+    assert claude_sdk.ClaudeAgentDriver()._sdk_options(task, 5)["cli_path"] == "/opt/bin/claude"
+    monkeypatch.setattr(claude_sdk.shutil, "which", lambda name: None)
+    assert "cli_path" not in claude_sdk.ClaudeAgentDriver()._sdk_options(task, 5)
