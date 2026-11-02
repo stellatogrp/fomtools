@@ -17,12 +17,15 @@ Flow:
 
 from __future__ import annotations
 
+import difflib
+import sys
 import time
 import warnings
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from fomtools.codegen.agent.driver import AgentDriver, AgentResult, AgentTask
+from fomtools.codegen.agent.prompts import SUMMARY_BEGIN
 from fomtools.codegen.config import CodegenConfig
 from fomtools.codegen.emit import scaffold
 from fomtools.codegen.extract import extract_ir
@@ -40,12 +43,14 @@ from fomtools.codegen.kernel_rules import functions, reachable, strip_c_comments
 from fomtools.codegen.oracle import check_stationary
 from fomtools.codegen.postprocess import (
     extract_agent_notes,
+    extract_applied_optimizations,
     extract_rule_friction,
     parse_ops_checks,
     unified_solver_diff,
     write_optimization_report,
     write_production_variant,
 )
+from fomtools.codegen.progress import Progress
 from fomtools.codegen.targets import TargetDescriptor
 
 
@@ -307,6 +312,7 @@ def generate_code(
     iterates=None,
     param_values: dict | None = None,
     roll: bool = True,
+    verbose: bool = False,
 ) -> CodegenResult:
     """Generate a low-level solver for the FOM recorded in ``verifier``.
 
@@ -370,9 +376,54 @@ def generate_code(
         Unrolled path only: emit the compact rolled IR when repeating one
         iteration is verified to reproduce the recording. Pass ``False`` to unroll
         regardless.
+    verbose:
+        Print progress: one line per phase and per code optimization round, and
+        a final summary of the timings and the optimizations the agent kept.
     """
+    progress = Progress(verbose)
+    try:
+        return _generate_code(
+            progress,
+            verifier,
+            next_state,
+            out_dir,
+            config,
+            driver,
+            state,
+            params,
+            name,
+            code_optimization,
+            profile,
+            schedules,
+            iterates,
+            param_values,
+            roll,
+        )
+    finally:
+        progress.close()
+
+
+def _generate_code(
+    progress: Progress,
+    verifier,
+    next_state,
+    out_dir,
+    config,
+    driver,
+    state,
+    params,
+    name,
+    code_optimization,
+    profile,
+    schedules,
+    iterates,
+    param_values,
+    roll,
+) -> CodegenResult:
+    """`generate_code`'s body; ``progress`` is closed by the caller, also on error."""
     config = config or CodegenConfig()
     out_dir = Path(out_dir)
+    progress.start("extract + scaffold")
 
     ir = extract_fom_ir(
         verifier,
@@ -388,6 +439,7 @@ def generate_code(
     )
 
     target = scaffold(ir, out_dir, config)
+    progress.done(True, "data, factorizations, matvecs")
 
     if driver is None:
         from fomtools.codegen.agent import get_default_driver
@@ -423,6 +475,7 @@ def generate_code(
     # no baseline (it reads no matrix data: every product goes through a checked
     # fom_apply_*); the check below applies it again and decides.
     target.write_kernel_check_config(out_dir, ir, None)
+    progress.start("translate → C (agent)")
     try:
         translate = driver.run(translation_task)
     finally:
@@ -451,6 +504,7 @@ def generate_code(
             timing.profile = run_profile(out_dir)
         except Exception:
             timing.profile = []
+    progress.translated(translate.success, translate.log, timing and timing.c_initial_us)
 
     # --- Code optimization phase ---------------------------------------------
     optimize = None
@@ -468,12 +522,15 @@ def generate_code(
             profile=profile,
             timing=timing,
             translated_verify_output=translate.log,
+            progress=progress,
         )
         optimize = opt.optimize
         optimization_diff = opt.diff
         optimizations_md = opt.optimizations_md
         kernel_checks = opt.kernel_checks
         rule_friction = opt.rule_friction
+        if opt.kept:
+            progress.summary(name, timing, opt.verify_output, opt.applied)
     # Always persist the raw agent output, code optimization phase or not.
     _write_agent_transcripts(out_dir, translate, optimize)
 
@@ -550,6 +607,54 @@ class CodeOptimizationResult:
     #: What the agent says a rule blocked, one dict per item (``round, idea,
     #: rule, expected_gain``), from every round's summary.
     rule_friction: list[dict] = field(default_factory=list)
+    #: What the agent says it applied, from the kept rounds' summaries.
+    applied: list[str] = field(default_factory=list)
+    #: ``make verify`` output of the shipped solver.
+    verify_output: str | None = None
+
+
+#: Turn budget of the follow-up that asks for a missing round summary.
+SUMMARY_FOLLOWUP_MAX_TURNS = 4
+
+
+def _summary_followup(
+    driver: AgentDriver, task: AgentTask, before: dict[str, str], after: dict[str, str]
+) -> AgentResult | None:
+    """Ask the agent for the summary of a round that ended without one.
+
+    A fresh run is shown the round's diff and asked to print only the summary;
+    the caller restores the round's sources afterwards in case it edited them.
+    Its verify command is a no-op, so the driver makes one attempt. Backends
+    that ignore ``max_turns`` (Codex, pi) are bounded only by the phase's
+    wall-clock budget. Returns ``None`` if the follow-up fails: a missing
+    summary never fails a round.
+    """
+    from fomtools.codegen.agent.prompts import code_optimization_summary_request
+
+    diff = "".join(
+        "".join(
+            difflib.unified_diff(
+                before[rel].splitlines(keepends=True),
+                after[rel].splitlines(keepends=True),
+                fromfile=f"{rel} (before this round)",
+                tofile=f"{rel} (after this round)",
+            )
+        )
+        for rel in after
+    )
+    followup = replace(
+        task,
+        instructions=code_optimization_summary_request(diff),
+        # Nothing to verify: one attempt, and no "make it pass" re-prompt.
+        verify_cmd=[sys.executable, "-c", ""],
+        max_turns=SUMMARY_FOLLOWUP_MAX_TURNS,
+        extra={**task.extra, "summary_only": True},
+    )
+    try:
+        return driver.run(followup)
+    except Exception as exc:  # noqa: BLE001 - the summary is a report, not a gate
+        warnings.warn(f"the follow-up asking for a round summary failed: {exc}", stacklevel=2)
+        return None
 
 
 #: Why a round ended the phase.
@@ -572,6 +677,7 @@ def run_code_optimization(
     timing: TimingReport | None = None,
     translated_verify_output: str | None = None,
     write_report: bool = True,
+    progress: Progress | None = None,
 ) -> CodeOptimizationResult:
     """Run the code optimization phase on ``out_dir``, in rounds, and gate each one.
 
@@ -600,7 +706,8 @@ def run_code_optimization(
     ``timing``, if given, gets ``c_initial_us`` / ``c_final_us`` (the translated
     and the shipped solver, head to head) and the shipped solver's profile.
     ``translated_verify_output`` is the translated solver's verify output, used
-    for the kernel-check table when no round is kept.
+    for the kernel-check table when no round is kept. ``progress`` reports each
+    round as it ends.
     """
     from fomtools.codegen.agent.prompts import (
         code_optimization_continuation,
@@ -609,6 +716,7 @@ def run_code_optimization(
 
     out_dir = Path(out_dir)
     editable = tuple(target.optimization_editable_paths())
+    progress = progress or Progress(False)
 
     def read_editable() -> dict[str, str]:
         return {rel: (out_dir / rel).read_text() for rel in editable}
@@ -621,6 +729,19 @@ def run_code_optimization(
         kept = read_editable()
         target.scaffold(ir, out_dir)
         write_editable(kept)
+
+    def ensure_summary(index, task, result, before, after):
+        """A kept round that ended (often at its turn budget) before the agent
+        wrote its summary gets a short follow-up asking for it, which may not edit."""
+        if SUMMARY_BEGIN in (result.agent_log or ""):
+            return
+        followup = _summary_followup(driver, task, before, after)
+        write_editable(after)
+        log = followup.agent_log if followup is not None else ""
+        if log and SUMMARY_BEGIN in log:
+            agent_logs.append(f"\n--- round {index} summary (follow-up) ---\n" + log)
+            notes_by_round[:] = [(i, n) for i, n in notes_by_round if i != index]
+            notes_by_round.append((index, extract_agent_notes(log)))
 
     measure = profile and find_compiler() is not None
     translated = read_editable()  # known-good fallback
@@ -641,6 +762,8 @@ def run_code_optimization(
     n_rounds = config.agent_optimize_rounds
 
     for index in range(1, n_rounds + 1):
+        if rounds:  # the previous round ended without a break
+            progress.round(rounds[-1])
         instructions = base_instructions
         if index > 1:
             last = rounds[-1]
@@ -662,6 +785,7 @@ def run_code_optimization(
         # sees a violation as it makes it; the gate below applies them again and
         # decides. The shipped directory carries no such config.
         target.write_kernel_check_config(out_dir, ir, translated)
+        progress.start(f"optimize · round {index} (agent)")
         start = time.monotonic()
         try:
             result = driver.run(task)
@@ -715,6 +839,7 @@ def run_code_optimization(
             break
 
         if not measure:
+            ensure_summary(index, task, result, best, candidate)
             best, best_verify_output = candidate, recheck.output
             record.kept = True
             record.stop_reason = STOP_UNMEASURED
@@ -739,6 +864,7 @@ def run_code_optimization(
             record.stop_reason = STOP_NOT_FASTER
             break
         write_editable(candidate)
+        ensure_summary(index, task, result, best, candidate)
         best, best_us, best_verify_output = candidate, us_after, recheck.output
         record.kept = True
         if record.gain is None or record.gain < config.agent_optimize_min_gain:
@@ -752,6 +878,8 @@ def run_code_optimization(
         except Exception:
             best_profile = []
 
+    if rounds:
+        progress.round(rounds[-1])
     write_editable(best)
     kept = best != translated
 
@@ -792,6 +920,13 @@ def run_code_optimization(
 
     rule_friction = [
         dict(round=i, **item) for i, n in notes_by_round for item in extract_rule_friction(n)
+    ]
+    kept_rounds = {r.index for r in rounds if r.kept}
+    applied = [
+        item
+        for i, n in notes_by_round
+        if i in kept_rounds
+        for item in extract_applied_optimizations(n)
     ]
 
     optimizations_md = None
@@ -847,4 +982,6 @@ def run_code_optimization(
         kernel_checks=kernel_checks,
         optimizations_md=optimizations_md,
         rule_friction=rule_friction,
+        applied=applied,
+        verify_output=best_verify_output,
     )

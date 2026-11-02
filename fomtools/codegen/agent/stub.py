@@ -85,6 +85,8 @@ class StubAgentDriver(AgentDriver):
             The outcome, whose ``success`` reflects whether the verify command
             passed.
         """
+        if task.extra.get("summary_only"):  # a request for a summary edits nothing
+            return AgentResult(success=True, log="", agent_log="")
         target = task.workdir / task.solver_rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(self._source)

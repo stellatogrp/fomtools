@@ -37,7 +37,8 @@ from fomtools.codegen import generate_code
 # From a full recording (auto-rolls when stationary):
 result = generate_code(verifier, None, "out/ista",
     config=config, iterates=z, name="ista",
-    code_optimization=False, profile=False, roll=True)
+    code_optimization=False, profile=False, roll=True,
+    verbose=True)   # print progress (see below)
 
 # From a single stationary iteration:
 result = generate_code(verifier, next_state, "out/ista",
@@ -47,6 +48,15 @@ result = generate_code(verifier, next_state, "out/ista",
 result = generate_code(build_fn, None, "out/fista",
     schedules={"gamma": momentum_fn}, config=config)
 ```
+
+### Progress output
+
+`verbose=True` (also accepted by `Verifier.codegen`) prints one line per phase and
+per code-optimization round (with a bar that shrinks with the solve time), then a
+summary: translated vs. optimized time, the verification error, and the
+optimizations the agent kept. A spinner with elapsed time shows on a terminal;
+notebooks and logs get a line at the start of each phase. Colors are used only on
+a terminal and never when `NO_COLOR` is set.
 
 ### Stopping on the verification objective
 

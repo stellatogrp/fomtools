@@ -19,7 +19,12 @@ import difflib
 import re
 from pathlib import Path
 
-from fomtools.codegen.agent.prompts import BLOCKED_HEADING, SUMMARY_BEGIN, SUMMARY_END
+from fomtools.codegen.agent.prompts import (
+    APPLIED_HEADING,
+    BLOCKED_HEADING,
+    SUMMARY_BEGIN,
+    SUMMARY_END,
+)
 
 # One line per matrix from verify's direct check of fom_apply_<name>.
 _OPSCHECK_RE = re.compile(
@@ -269,6 +274,36 @@ def _round_lines(rounds: list[dict]) -> list[str]:
     return lines + [""]
 
 
+_BULLET_RE = re.compile(r"^(?:[-*]|\d+[.)])\s+(.*)$")
+
+
+def _summary_list(notes: str, heading: str) -> list[list[str]]:
+    """The ``- a | b | c`` lines under ``heading`` in the agent's summary, split on ``|``.
+
+    Accepts ``-``, ``*``, and numbered bullets, and reads until the first blank
+    or non-list line after the first item. ``- none`` (or no section) gives ``[]``.
+    """
+    lines = notes.splitlines()
+    start = next(
+        (i for i, ln in enumerate(lines) if ln.strip().strip("*#").strip() == heading),
+        None,
+    )
+    if start is None:
+        return []
+    found = []
+    for line in lines[start + 1 :]:
+        bullet = _BULLET_RE.match(line.strip())
+        if bullet is None:  # a blank line, prose, or the next (bold) heading
+            if found or line.strip():
+                break
+            continue
+        item = bullet[1].strip()
+        if not item or item.lower().rstrip(".") == "none":
+            continue
+        found.append([part.strip() for part in item.split("|")])
+    return found
+
+
 def extract_rule_friction(notes: str) -> list[dict]:
     """The optimizations the agent reports a rule blocked, from its summary.
 
@@ -277,32 +312,20 @@ def extract_rule_friction(notes: str) -> list[dict]:
     first blank or non-list line. ``- none`` (or no section) gives ``[]``. A line
     without separators is kept whole as the idea.
     """
-    lines = notes.splitlines()
-    start = next(
-        (i for i, ln in enumerate(lines) if ln.strip().strip("*#").strip() == BLOCKED_HEADING),
-        None,
-    )
-    if start is None:
-        return []
-    found = []
-    for line in lines[start + 1 :]:
-        item = line.strip()
-        if not item.startswith(("-", "*")):
-            if found or item:
-                break
-            continue
-        item = item[1:].strip()
-        if not item or item.lower().rstrip(".") == "none":
-            continue
-        parts = [part.strip() for part in item.split("|")]
-        found.append(
-            dict(
-                idea=parts[0],
-                rule=parts[1] if len(parts) > 1 else "",
-                expected_gain=parts[2] if len(parts) > 2 else "",
-            )
+    return [
+        dict(
+            idea=parts[0],
+            rule=parts[1] if len(parts) > 1 else "",
+            expected_gain=parts[2] if len(parts) > 2 else "",
         )
-    return found
+        for parts in _summary_list(notes, BLOCKED_HEADING)
+    ]
+
+
+def extract_applied_optimizations(notes: str) -> list[str]:
+    """The optimizations the agent reports it kept: the ``<what>`` part of each
+    ``- <what> | <structure>`` line under ``Optimizations applied:``."""
+    return [parts[0] for parts in _summary_list(notes, APPLIED_HEADING) if parts[0]]
 
 
 def write_optimization_report(

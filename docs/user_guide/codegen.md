@@ -318,6 +318,37 @@ Profiling breakdown (hottest first):
 ```
 
 The generated directory also exposes `make bench` and `make profile` directly.
+
+### Watching the run
+
+Pass `verbose=True` to follow the run as it happens: one line per phase, one per
+optimization round with a bar that shrinks with the solve time, and a final summary
+with the optimizations the agent kept. On a terminal a spinner shows the elapsed
+time. Output of a real run on the Lasso example (ISTA, 200 iterations, embedded C):
+
+```
+✓ extract + scaffold           data, factorizations, matvecs  0 s
+✓ translate → C (agent)        VERIFY OK  max err 0e+00  1.95 µs  95 s
+✓ optimize · round 1 (agent)    1.43 µs →  1.29 µs  ███████████░  1.10x  VERIFY ✓  1814 s
+✗ optimize · round 2 (agent)   1.18 µs vs 1.01 µs best, not faster, reverted  1584 s
+
+  lasso
+  translated C     1.43 µs  ██████████████████████████████
+  optimized C      1.29 µs  ███████████████████████████  1.10x faster
+  NumPy           1,503 µs
+  VERIFY OK  worst error 4.4e-16 over 8 samples
+  what the agent found:
+  • Ping-pong state/new_state buffers, drop per-iter copy
+  • Hoist bias_t0 computation outside the iteration loop
+  • Inline t0_state matrix coefficients, unroll 4x4 product
+  • Fuse fom_iterate into single inlined matvec+soft+add
+  • Rewrite soft-threshold as v - clamp(v,-l,l) via fmin/fmax
+  • ...
+```
+
+Each round is timed head to head against the best solver so far, so the times
+printed for a round can differ from earlier lines by benchmark noise. A rewrite
+that is not faster, or fails verification, is reverted.
 The portable region profiler (`include/fom_profile.h`) is compiled in only for
 `make profile` (`-DFOM_PROFILE`); its `FOM_PROF_BEGIN/END` macros are no-ops in
 the shipped `make verify` / `make lib` builds, so profiling never affects the
