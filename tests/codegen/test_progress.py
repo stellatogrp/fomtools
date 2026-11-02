@@ -49,7 +49,7 @@ def test_round_lines_and_summary():
     text = stream.getvalue()
     assert "\033" not in text  # no colors or cursor codes off a terminal
     assert "VERIFY OK  max err 2e-16  100 µs" in text
-    assert "100 µs → 40 µs  █████░░░░░░░  2.50x" in text
+    assert "100 µs →    40 µs  █████░░░░░░░  2.50x" in text
     assert "failed verification, reverted" in text
     assert "45 µs vs 40 µs best, not faster, reverted" in text
     assert "2.50x faster" in text and "• fused matvecs" in text
@@ -133,7 +133,8 @@ class Tty(io.StringIO):
         return True
 
 
-def test_tty_spinner_stops_and_close_marks_open_phase():
+def test_tty_spinner_stops_and_close_marks_open_phase(monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
     stream = Tty()
     p = Progress(True, stream)
     p.start("translate")

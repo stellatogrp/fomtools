@@ -149,7 +149,7 @@ class Progress:
             self.t0 = self.t0 or r.us_before or r.us_after
             full, empty = bar(r.us_after / self.t0)
             detail = (
-                f"{_us(self.t0)} → {_us(r.us_after)}  "
+                f"{_us(self.t0):>8} → {_us(r.us_after):>8}  "
                 f"{self._paint(full, '36')}{self._paint(empty, '2')}  "
                 f"{self._paint(f'{self.t0 / r.us_after:.2f}x', '1')}  "
                 f"{self._paint('VERIFY ✓', '32')}"

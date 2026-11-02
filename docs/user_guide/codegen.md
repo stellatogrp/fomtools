@@ -329,7 +329,7 @@ time. Output of a real run on the Lasso example (ISTA, 200 iterations, embedded 
 ```
 ✓ extract + scaffold           data, factorizations, matvecs  0 s
 ✓ translate → C (agent)        VERIFY OK  max err 0e+00  1.95 µs  95 s
-✓ optimize · round 1 (agent)   1.43 µs → 1.29 µs  ███████████░  1.10x  VERIFY ✓  1814 s
+✓ optimize · round 1 (agent)    1.43 µs →  1.29 µs  ███████████░  1.10x  VERIFY ✓  1814 s
 ✗ optimize · round 2 (agent)   1.18 µs vs 1.01 µs best, not faster, reverted  1584 s
 
   lasso
