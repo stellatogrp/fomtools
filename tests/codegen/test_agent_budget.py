@@ -337,3 +337,8 @@ def test_specs_load_once_across_threads(monkeypatch):
     for t in threads:
         t.join()
     assert not errors
+
+
+def test_codex_runs_without_the_user_config():
+    flags = get_spec("codex").flags
+    assert {"--ignore-user-config", "--ignore-rules", "--ephemeral"} <= set(flags)

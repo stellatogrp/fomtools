@@ -58,7 +58,15 @@ agents:
   codex:
     bin: codex
     base_args: ["exec"]
-    flags: ["--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"]
+    # Isolated from the user's ~/.codex/config.toml (hooks, MCP servers, profiles,
+    # a pinned model) and execpolicy rules; no session files. The login is kept.
+    # Codex still reads ~/.codex/AGENTS.md; no flag turns that off.
+    flags:
+      - "--skip-git-repo-check"
+      - "--dangerously-bypass-approvals-and-sandbox"
+      - "--ignore-user-config"
+      - "--ignore-rules"
+      - "--ephemeral"
     cwd_flag: --cd
     display_name: Codex
     auth_hint: Run `codex login`.
