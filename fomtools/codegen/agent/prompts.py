@@ -435,5 +435,6 @@ Between the markers, give:
 - a section headed exactly `{BLOCKED_HEADING}` with the single line `- none`.
 
 ```diff
-{diff}```
+{diff.rstrip()}
+```
 """

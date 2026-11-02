@@ -3,8 +3,10 @@
 Prints one line per phase, one line per code optimization round with a bar that
 shrinks with the solve time, and a final summary: translated vs. optimized time,
 the verification error, and the optimizations the agent kept. While an agent
-runs on a terminal, a spinner shows the elapsed time. Standard library only;
-colors only on a terminal and never with ``NO_COLOR`` set.
+runs on a terminal, a spinner shows the elapsed time; elsewhere (notebooks, logs)
+a line marks the start of each phase. Standard library only; colors only on a
+terminal and never with ``NO_COLOR`` set. Call `Progress.close` when the run ends,
+also on error, to stop the spinner.
 """
 
 from __future__ import annotations
@@ -48,23 +50,39 @@ class Progress:
         self._start = 0.0
         self._stop: threading.Event | None = None
         self._thread: threading.Thread | None = None
+        self._active = False
 
     # -- output helpers -----------------------------------------------------
     def _paint(self, text: str, code: str) -> str:
         return f"\033[{code}m{text}\033[0m" if self.color else text
 
-    def _write(self, line: str) -> None:
-        clear = "\r\033[K" if self.tty else ""
-        self.stream.write(f"{clear}{line}\n")
+    def _emit(self, text: str) -> None:
+        """Write ``text``, replacing what the stream's encoding cannot represent."""
+        try:
+            self.stream.write(text)
+        except UnicodeEncodeError:
+            enc = getattr(self.stream, "encoding", None) or "ascii"
+            self.stream.write(text.encode(enc, "replace").decode(enc))
         self.stream.flush()
+
+    def _write(self, line: str) -> None:
+        self._emit(("\r\033[K" if self.tty else "") + line + "\n")
+
+    def _stop_spinner(self) -> None:
+        if self._thread is not None:
+            self._stop.set()
+            self._thread.join()
+            self._thread = None
 
     # -- phases -------------------------------------------------------------
     def start(self, label: str) -> None:
         """Begin a phase; on a terminal, spin with the elapsed time until `done`."""
         if not self.enabled:
             return
-        self._label, self._start = label, time.monotonic()
+        self._stop_spinner()
+        self._label, self._start, self._active = label, time.monotonic(), True
         if not self.tty:
+            self._write(f"… {label}")
             return
         self._stop = threading.Event()
 
@@ -73,10 +91,7 @@ class Progress:
             while not self._stop.wait(0.1):
                 elapsed = time.monotonic() - self._start
                 frame = self._paint(_SPIN[i % len(_SPIN)], "36")
-                self.stream.write(
-                    f"\r\033[K{frame} {label}  {self._paint(f'{elapsed:.0f} s', '2')}"
-                )
-                self.stream.flush()
+                self._emit(f"\r\033[K{frame} {label}  {self._paint(f'{elapsed:.0f} s', '2')}")
                 i += 1
 
         self._thread = threading.Thread(target=spin, daemon=True)
@@ -86,14 +101,17 @@ class Progress:
         """End the current phase with a ✓ or ✗ line."""
         if not self.enabled:
             return
-        if self._thread is not None:
-            self._stop.set()
-            self._thread.join()
-            self._thread = None
+        self._stop_spinner()
+        self._active = False
         elapsed = time.monotonic() - self._start
         mark = self._paint("✓", "32") if ok else self._paint("✗", "31")
         text = f"{self._label:<28} {detail}".rstrip()
         self._write(f"{mark} {text}  {self._paint(f'{elapsed:.0f} s', '2')}")
+
+    def close(self) -> None:
+        """Stop the spinner; a phase still open (the run raised) is marked ✗."""
+        if self.enabled and self._active:
+            self.done(False, "stopped")
 
     def translated(self, ok: bool, verify_output: str | None, us: float | None) -> None:
         """End the translation phase: verification error and, if measured, its time."""
@@ -121,11 +139,12 @@ class Progress:
             self.done(True, self._paint("no further change", "2"))
         elif not r.correct:
             self.done(False, self._paint("failed verification, reverted", "31"))
+        elif not r.kept:
+            after = _us(r.us_after) if r.us_after else "not timed"
+            before = f" vs {_us(r.us_before)} best" if r.us_before else ""
+            self.done(False, f"{after}{before}, not faster, reverted")
         elif r.us_after is None:
             self.done(True, "VERIFY OK  (not timed)")
-        elif not r.kept:
-            before = f" vs {_us(r.us_before)} best" if r.us_before else ""
-            self.done(False, f"{_us(r.us_after)}{before}, not faster, reverted")
         else:
             self.t0 = self.t0 or r.us_before or r.us_after
             full, empty = bar(r.us_after / self.t0)
@@ -158,7 +177,8 @@ class Progress:
                 lines.append(
                     f"  {label:<13} {_us(us):>10}  {self._paint(bar(us / t0, width)[0], code)}"
                 )
-            lines[-1] += "  " + self._paint(f"{t0 / t1:.2f}x faster", "1;32")
+            gain = f"{t0 / t1:.2f}x faster" if t1 < t0 else f"{t0 / t1:.2f}x (within noise)"
+            lines[-1] += "  " + self._paint(gain, "1;32" if t1 < t0 else "1")
         if timing and timing.python_us and t1:
             lines.append(self._paint(f"  {'NumPy':<13} {_us(timing.python_us):>10}", "2"))
         err = verify_error(verify_output)

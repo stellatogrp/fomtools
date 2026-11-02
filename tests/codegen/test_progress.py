@@ -1,6 +1,8 @@
 """Progress output of `generate_code(verbose=True)` and its helpers."""
 
 import io
+import sys
+import time
 
 import pytest
 
@@ -124,3 +126,107 @@ def test_missing_summary_is_requested(tmp_path, monkeypatch, capsys, requires_co
     assert "/* r1 */" in (tmp_path / "src" / "fom_solver.c").read_text()  # edit undone
     assert result.optimization_kept
     assert "• fused the two matvecs" in capsys.readouterr().out
+
+
+class Tty(io.StringIO):
+    def isatty(self):
+        return True
+
+
+def test_tty_spinner_stops_and_close_marks_open_phase():
+    stream = Tty()
+    p = Progress(True, stream)
+    p.start("translate")
+    time.sleep(0.25)
+    p.close()  # e.g. the run raised mid-phase
+    assert p._thread is None and "⠋\033[0m translate" in stream.getvalue()
+    assert stream.getvalue().rstrip().split("\r\033[K")[-1].startswith("\033[31m✗\033[0m translate")
+    size = len(stream.getvalue())
+    time.sleep(0.25)
+    assert len(stream.getvalue()) == size  # nothing writes after close
+    p.close()  # idempotent
+
+
+def test_untimed_revert_and_unencodable_stream():
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+    p = Progress(True, stream)
+    p.start("optimize · round 1")
+    p.round(OptimizationRound(1, True, True, False))
+    stream.seek(0)
+    assert "? optimize ? round 1" in stream.read()  # the ✗ and · are replaced
+    out = io.StringIO()
+    p = Progress(True, out)
+    p.start("r")
+    p.round(OptimizationRound(1, True, True, False))
+    assert "✗ r" in out.getvalue() and "not timed, not faster, reverted" in out.getvalue()
+
+
+def test_summary_list_stops_at_bold_heading_and_reads_numbers():
+    notes = f"**{APPLIED_HEADING}**\n- fused | D\n**{BLOCKED_HEADING}**\n- inverse | rule | 2x\n"
+    assert extract_applied_optimizations(notes) == ["fused"]
+    assert extract_applied_optimizations(f"{APPLIED_HEADING}\n1. a | b\n2) c\n") == ["a", "c"]
+
+
+class FailingSummaryDriver(SilentRoundDriver):
+    def run(self, task):
+        if task.extra.get("summary_only"):
+            raise RuntimeError("backend down")
+        return super().run(task)
+
+
+def _verbose_run(tmp_path, driver, rounds):
+    return generate_code(
+        *(lambda c: (c["verifier"], c["next_state"]))(case := build_ista(max_iters=50)),
+        tmp_path,
+        config=case["config"].model_copy(update={"agent_optimize_rounds": rounds}),
+        driver=driver,
+        name="ista",
+        code_optimization=True,
+        profile=True,
+        verbose=True,
+    )
+
+
+@pytest.mark.requires_compiler
+def test_followup_only_for_kept_rounds(tmp_path, monkeypatch, capsys, requires_compiler):
+    _fake_timing(monkeypatch, {"translated": 100.0, "r1": 50.0, "r2": 60.0})
+    driver = SilentRoundDriver(["r1", "r2"])
+    _verbose_run(tmp_path, driver, 2)
+    assert len(driver.followups) == 1 and "/* r1 */" in driver.followups[0]
+
+
+@pytest.mark.requires_compiler
+def test_failed_followup_warns_and_nothing_kept_prints_no_summary(
+    tmp_path, monkeypatch, capsys, requires_compiler
+):
+    _fake_timing(monkeypatch, {"translated": 100.0, "r1": 50.0})
+    with pytest.warns(UserWarning, match="round summary failed"):
+        result = _verbose_run(tmp_path / "a", FailingSummaryDriver(["r1"]), 1)
+    assert result.optimization_kept and "what the agent found" not in capsys.readouterr().out
+    _fake_timing(monkeypatch, {"translated": 100.0, "r1": 150.0})
+    result = _verbose_run(tmp_path / "b", SilentRoundDriver(["r1"]), 1)
+    out = capsys.readouterr().out
+    assert not result.optimization_kept and "translated C" not in out and "reverted" in out
+
+
+def test_generate_code_closes_progress_on_error(tmp_path, monkeypatch):
+    stream = Tty()
+    monkeypatch.setattr(sys, "stdout", stream)
+
+    class Boom(ScriptedDriver):
+        def run(self, task):
+            raise KeyboardInterrupt
+
+    case = build_ista(max_iters=50)
+    with pytest.raises(KeyboardInterrupt):
+        generate_code(
+            case["verifier"],
+            case["next_state"],
+            tmp_path,
+            config=case["config"],
+            driver=Boom([]),
+            name="ista",
+            verbose=True,
+        )
+    assert "translate → C (agent)" in stream.getvalue().rstrip().split("\r\033[K")[-1]
+    assert "stopped" in stream.getvalue()

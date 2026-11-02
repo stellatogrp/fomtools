@@ -274,11 +274,14 @@ def _round_lines(rounds: list[dict]) -> list[str]:
     return lines + [""]
 
 
+_BULLET_RE = re.compile(r"^(?:[-*]|\d+[.)])\s+(.*)$")
+
+
 def _summary_list(notes: str, heading: str) -> list[list[str]]:
     """The ``- a | b | c`` lines under ``heading`` in the agent's summary, split on ``|``.
 
-    Reads until the first blank or non-list line after the first item. ``- none``
-    (or no section) gives ``[]``.
+    Accepts ``-``, ``*``, and numbered bullets, and reads until the first blank
+    or non-list line after the first item. ``- none`` (or no section) gives ``[]``.
     """
     lines = notes.splitlines()
     start = next(
@@ -289,12 +292,12 @@ def _summary_list(notes: str, heading: str) -> list[list[str]]:
         return []
     found = []
     for line in lines[start + 1 :]:
-        item = line.strip()
-        if not item.startswith(("-", "*")):
-            if found or item:
+        bullet = _BULLET_RE.match(line.strip())
+        if bullet is None:  # a blank line, prose, or the next (bold) heading
+            if found or line.strip():
                 break
             continue
-        item = item[1:].strip()
+        item = bullet[1].strip()
         if not item or item.lower().rstrip(".") == "none":
             continue
         found.append([part.strip() for part in item.split("|")])

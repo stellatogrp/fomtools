@@ -18,6 +18,7 @@ Flow:
 from __future__ import annotations
 
 import difflib
+import sys
 import time
 import warnings
 from dataclasses import dataclass, field, replace
@@ -379,9 +380,49 @@ def generate_code(
         Print progress: one line per phase and per code optimization round, and
         a final summary of the timings and the optimizations the agent kept.
     """
+    progress = Progress(verbose)
+    try:
+        return _generate_code(
+            progress,
+            verifier,
+            next_state,
+            out_dir,
+            config,
+            driver,
+            state,
+            params,
+            name,
+            code_optimization,
+            profile,
+            schedules,
+            iterates,
+            param_values,
+            roll,
+        )
+    finally:
+        progress.close()
+
+
+def _generate_code(
+    progress: Progress,
+    verifier,
+    next_state,
+    out_dir,
+    config,
+    driver,
+    state,
+    params,
+    name,
+    code_optimization,
+    profile,
+    schedules,
+    iterates,
+    param_values,
+    roll,
+) -> CodegenResult:
+    """`generate_code`'s body; ``progress`` is closed by the caller, also on error."""
     config = config or CodegenConfig()
     out_dir = Path(out_dir)
-    progress = Progress(verbose)
     progress.start("extract + scaffold")
 
     ir = extract_fom_ir(
@@ -437,9 +478,6 @@ def generate_code(
     progress.start("translate → C (agent)")
     try:
         translate = driver.run(translation_task)
-    except BaseException:
-        progress.done(False, "agent error")
-        raise
     finally:
         target.remove_kernel_check_config(out_dir)
     if translate.success:
@@ -491,7 +529,7 @@ def generate_code(
         optimizations_md = opt.optimizations_md
         kernel_checks = opt.kernel_checks
         rule_friction = opt.rule_friction
-        if opt.rounds:
+        if opt.kept:
             progress.summary(name, timing, opt.verify_output, opt.applied)
     # Always persist the raw agent output, code optimization phase or not.
     _write_agent_transcripts(out_dir, translate, optimize)
@@ -586,7 +624,10 @@ def _summary_followup(
 
     A fresh run is shown the round's diff and asked to print only the summary;
     the caller restores the round's sources afterwards in case it edited them.
-    Returns ``None`` if the follow-up fails: a missing summary never fails a round.
+    Its verify command is a no-op, so the driver makes one attempt. Backends
+    that ignore ``max_turns`` (Codex, pi) are bounded only by the phase's
+    wall-clock budget. Returns ``None`` if the follow-up fails: a missing
+    summary never fails a round.
     """
     from fomtools.codegen.agent.prompts import code_optimization_summary_request
 
@@ -604,6 +645,8 @@ def _summary_followup(
     followup = replace(
         task,
         instructions=code_optimization_summary_request(diff),
+        # Nothing to verify: one attempt, and no "make it pass" re-prompt.
+        verify_cmd=[sys.executable, "-c", ""],
         max_turns=SUMMARY_FOLLOWUP_MAX_TURNS,
         extra={**task.extra, "summary_only": True},
     )
@@ -687,6 +730,19 @@ def run_code_optimization(
         target.scaffold(ir, out_dir)
         write_editable(kept)
 
+    def ensure_summary(index, task, result, before, after):
+        """A kept round that ended (often at its turn budget) before the agent
+        wrote its summary gets a short follow-up asking for it, which may not edit."""
+        if SUMMARY_BEGIN in (result.agent_log or ""):
+            return
+        followup = _summary_followup(driver, task, before, after)
+        write_editable(after)
+        log = followup.agent_log if followup is not None else ""
+        if log and SUMMARY_BEGIN in log:
+            agent_logs.append(f"\n--- round {index} summary (follow-up) ---\n" + log)
+            notes_by_round[:] = [(i, n) for i, n in notes_by_round if i != index]
+            notes_by_round.append((index, extract_agent_notes(log)))
+
     measure = profile and find_compiler() is not None
     translated = read_editable()  # known-good fallback
     best = translated
@@ -733,9 +789,6 @@ def run_code_optimization(
         start = time.monotonic()
         try:
             result = driver.run(task)
-        except BaseException:
-            progress.done(False, "agent error")
-            raise
         finally:
             target.remove_kernel_check_config(out_dir)
         wall = time.monotonic() - start
@@ -745,18 +798,7 @@ def run_code_optimization(
         header = f"\n===== code optimization round {index} =====\n"
         logs.append(header + (result.log or ""))
         agent_logs.append(header + (result.agent_log or ""))
-        summary_log = result.agent_log or ""
-        if result.success and candidate != best and SUMMARY_BEGIN not in summary_log:
-            # The round's sources verify, but the round ended (often at its turn
-            # budget) before the agent wrote its summary: ask for it in a short
-            # follow-up that may not edit.
-            followup = _summary_followup(driver, task, best, candidate)
-            write_editable(candidate)
-            if followup is not None:
-                summary_log = followup.agent_log or ""
-                agent_logs.append(f"\n--- round {index} summary (follow-up) ---\n" + summary_log)
-                turns += followup.turns_used or 0
-        notes = extract_agent_notes(summary_log)
+        notes = extract_agent_notes(result.agent_log or "")
         if notes.strip():
             notes_by_round.append((index, notes))
         turns += result.turns_used or 0
@@ -797,6 +839,7 @@ def run_code_optimization(
             break
 
         if not measure:
+            ensure_summary(index, task, result, best, candidate)
             best, best_verify_output = candidate, recheck.output
             record.kept = True
             record.stop_reason = STOP_UNMEASURED
@@ -821,6 +864,7 @@ def run_code_optimization(
             record.stop_reason = STOP_NOT_FASTER
             break
         write_editable(candidate)
+        ensure_summary(index, task, result, best, candidate)
         best, best_us, best_verify_output = candidate, us_after, recheck.output
         record.kept = True
         if record.gain is None or record.gain < config.agent_optimize_min_gain:
