@@ -18,9 +18,9 @@ examples, and [the API page](../api/codegen.md) documents each symbol.
 ## Defining the FOM
 
 The Python snippets below reuse the imports and problem data in the first block.
-Calls to `codegen`, `codegen_rolled`, and `generate_code` require the `codegen`
-extra and an authenticated coding-agent driver (`FOMTOOLS_CODEGEN_AGENT=1`),
-or an explicit `driver=`. Recording the method requires no coding agent.
+Calls to `codegen`, `codegen_rolled`, and `generate_code` need a coding-agent CLI
+that is installed and already logged in (`claude` by default), enabled with
+`FOMTOOLS_CODEGEN_AGENT=1`, or an explicit `driver=`. Recording the method requires no coding agent.
 
 Write the algorithm as a loop, exactly as you would to verify it, and keep the
 iterate sequence. An

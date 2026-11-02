@@ -8,6 +8,7 @@ touching the algorithm-specific intermediate representation, which lives in
 
 from __future__ import annotations
 
+import warnings
 from enum import Enum
 from typing import Literal
 
@@ -354,6 +355,20 @@ class CodegenConfig(BaseModel):
     )
 
     model_config = ConfigDict(frozen=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_removed_options(cls, data):
+        # Removed with the vendor SDKs; warn instead of ignoring it silently.
+        if isinstance(data, dict) and "agent_optimize_max_turns" in data:
+            data = {k: v for k, v in data.items() if k != "agent_optimize_max_turns"}
+            warnings.warn(
+                "agent_optimize_max_turns was removed and has no effect; the time "
+                "budget agent_optimize_timeout_s bounds a code optimization round",
+                FutureWarning,
+                stacklevel=2,
+            )
+        return data
 
     @model_validator(mode="before")
     @classmethod

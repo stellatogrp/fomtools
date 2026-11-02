@@ -116,7 +116,7 @@ def test_without_a_budget_no_deadline_is_set(tmp_path, monkeypatch):
     driver.config = type("C", (), {"agent_timeout_s": None})()
     driver.run(_failing_task(tmp_path))
     assert seen["timeout"] is None
-    assert seen["env"] is None  # no key, no deadline: the CLI inherits the environment
+    assert seen["env"] is None  # no deadline: the CLI inherits the environment
 
 
 def _claude_hook_command() -> str:
@@ -186,3 +186,99 @@ def test_a_model_for_a_spec_without_a_model_flag_warns(tmp_path):
     driver.model = "some-model"
     with pytest.warns(UserWarning, match="no model_flag"):
         driver._build_argv(str(tmp_path), "p")
+
+
+def test_a_timeout_sends_sigterm_first(tmp_path):
+    # The CLI traps SIGTERM and writes a marker: it got the chance to clean up.
+    marker = tmp_path / "termed"
+    code = (
+        "import signal, sys, time;"
+        f"signal.signal(signal.SIGTERM, lambda *a: (open({str(marker)!r}, 'w').close(), sys.exit(0)));"
+        "time.sleep(60)"
+    )
+    driver = _script_driver(tmp_path, code)
+    # 5 s so the handler is installed before the timeout, even on a loaded machine.
+    driver._invoke_agent(driver._build_argv(str(tmp_path), "p"), tmp_path, timeout=5)
+    assert marker.exists()
+
+
+def test_the_agent_starts_with_no_blocked_signals(tmp_path):
+    # As after `import cvxpygen`, which blocks SIGINT and SIGTERM in this thread.
+    import signal
+
+    old = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+    try:
+        test_a_timeout_sends_sigterm_first(tmp_path)
+        assert signal.SIGTERM in signal.pthread_sigmask(signal.SIG_BLOCK, [])  # restored
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, old)
+
+
+def test_claude_runs_isolated_from_user_settings():
+    flags = get_spec("claude").flags
+    assert flags[flags.index("--setting-sources") + 1] == ""
+    assert "--strict-mcp-config" in flags
+
+
+def test_specs_no_longer_take_api_keys():
+    from fomtools.codegen.agent.cli_specs import _spec_from_table
+
+    with pytest.raises(ValueError, match="unknown key 'api_key_env'"):
+        _spec_from_table("x", {"bin": "x", "api_key_env": "OPENAI_API_KEY"})
+
+
+def test_removed_max_turns_option_warns():
+    from fomtools.codegen.config import CodegenConfig
+
+    with pytest.warns(FutureWarning, match="agent_optimize_max_turns was removed"):
+        config = CodegenConfig(agent_optimize_max_turns=400)
+    assert not hasattr(config, "agent_optimize_max_turns")
+
+
+def _event(kind, **fields):
+    return json.dumps({"type": kind, **fields})
+
+
+def _say(text):
+    return _event("assistant", message={"content": [{"type": "text", "text": text}]})
+
+
+def test_stream_json_keeps_the_agent_text():
+    from fomtools.codegen.agent.cli_driver import stream_json_text
+
+    tool = _event("assistant", message={"content": [{"type": "tool_use", "name": "Bash"}]})
+    stream = "\n".join(
+        [
+            _event("system", subtype="init"),
+            _say("PLAN: fuse the matvecs."),
+            tool,
+            _event("user", message={"content": [{"type": "tool_result", "content": "x"}]}),
+            _say("DONE"),
+            _event("result", subtype="success", result="DONE", is_error=False),
+        ]
+    )
+    assert stream_json_text(stream) == "PLAN: fuse the matvecs.\nDONE\n"
+    failed = _event("result", subtype="success", result="Invalid API key", is_error=True)
+    assert stream_json_text("Error: no prompt\n" + failed) == "Error: no prompt\nInvalid API key\n"
+    assert stream_json_text(_say("half") + '\n{"type": "assist') == 'half\n{"type": "assist\n'
+
+
+def test_a_stream_json_agent_ended_at_its_timeout_keeps_its_notes(tmp_path):
+    code = f"import time; print({_say('round 1: hoisted the constant term')!r}, flush=True); time.sleep(60)"
+    spec = CliAgentSpec(
+        name="fake",
+        bin=sys.executable,
+        base_args=("-c", code),
+        model_flag=None,
+        output_format="stream-json",
+    )
+    driver = CliAgentDriver(spec)
+    out = driver._invoke_agent(driver._build_argv(str(tmp_path), "p"), tmp_path, timeout=3)
+    assert out.startswith("round 1: hoisted the constant term\n")
+    assert "exceeded its 3s budget" in out and '"type"' not in out
+
+
+def test_claude_streams_json():
+    spec = get_spec("claude")
+    assert spec.output_format == "stream-json"
+    assert "stream-json" in spec.flags and "--verbose" in spec.flags

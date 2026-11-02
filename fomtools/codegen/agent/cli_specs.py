@@ -3,7 +3,7 @@
 Most real backends are the same shape: a non-interactive CLI that takes a prompt,
 edits files inside a working directory, and loops internally until done. They
 differ only in *data* — the executable, a couple of flags, how the prompt and
-working directory are passed, which env var holds the API key, and the strings
+working directory are passed, and the strings
 that mark an auth failure. `CliAgentSpec` captures exactly those
 differences so a single generic driver
 (`CliAgentDriver`) can drive any of
@@ -83,20 +83,10 @@ class CliAgentSpec:
     sysprompt_flag:
         Flag for an extra system prompt (Claude's ``--append-system-prompt``);
         ``None`` means `SYSTEM_PROMPT` is prepended to the task prompt.
-    api_key_env:
-        Primary env var holding the API key (``"OPENAI_API_KEY"``); a resolved
-        key is forwarded here to force API-key auth over any on-disk login.
-    api_key_aliases:
-        Additional env vars to read a key from (resolution order after
-        ``api_key_env``), e.g. ``("GOOGLE_API_KEY",)`` as a provider alias.
-    login_check_args:
-        Subcommand args that report whether an on-disk login already exists,
-        exiting 0 when authenticated (Codex's ``("login", "status")``); empty if
-        the CLI has no such check.
-    login_args:
-        Subcommand args that persist an API-key login, reading the key from
-        stdin (Codex's ``("login", "--with-api-key")``). Empty means the CLI
-        needs no login step — the forwarded ``api_key_env`` is enough.
+    output_format:
+        ``"text"`` (default) keeps stdout as is. ``"stream-json"`` reads Claude
+        Code's one-JSON-event-per-line stream and keeps the agent's text, so a CLI
+        ended at its timeout still leaves what it wrote so far.
     auth_markers:
         Output substrings flagging an auth failure (merged with the defaults).
     display_name, auth_hint, install_hint:
@@ -111,10 +101,7 @@ class CliAgentSpec:
     prompt_arg: str | None = None
     cwd_flag: str | None = None
     sysprompt_flag: str | None = None
-    api_key_env: str | None = None
-    api_key_aliases: tuple[str, ...] = ()
-    login_check_args: tuple[str, ...] = ()
-    login_args: tuple[str, ...] = ()
+    output_format: str = "text"
     auth_markers: tuple[str, ...] = field(default_factory=tuple)
     display_name: str = ""
     auth_hint: str = ""
@@ -128,11 +115,6 @@ class CliAgentSpec:
             seen.setdefault(m.lower(), None)
         return tuple(seen)
 
-    @property
-    def key_env_vars(self) -> tuple[str, ...]:
-        """Env vars to read an API key from, in resolution order."""
-        return tuple(v for v in (self.api_key_env, *self.api_key_aliases) if v)
-
 
 _user_specs_loaded = False
 
@@ -141,9 +123,6 @@ _user_specs_loaded = False
 _TUPLE_FIELDS = {
     "base_args",
     "flags",
-    "api_key_aliases",
-    "login_check_args",
-    "login_args",
     "auth_markers",
 }
 _STR_FIELDS = {
@@ -152,7 +131,7 @@ _STR_FIELDS = {
     "prompt_arg",
     "cwd_flag",
     "sysprompt_flag",
-    "api_key_env",
+    "output_format",
     "display_name",
     "auth_hint",
     "install_hint",
@@ -213,9 +192,8 @@ def load_user_specs(*, force: bool = False) -> None:
             bin: aider
             flags: ["--yes", "--no-auto-commit"]
             prompt_arg: --message
-            api_key_env: OPENAI_API_KEY
             display_name: Aider
-            auth_hint: Set OPENAI_API_KEY.
+            auth_hint: Run `aider` once and log in.
 
     The bundled specs (``claude``, ``codex``, ``pi``, ``cursor``) can be
     overridden by name. Missing
