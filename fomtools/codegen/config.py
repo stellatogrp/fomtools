@@ -237,12 +237,13 @@ class CodegenConfig(BaseModel):
         Number of random parameter instances drawn for the golden verify data.
     seed : int
         RNG seed for reproducible verify-sample generation.
+    agent_model : str or None
+        Model passed to the coding-agent CLI (``--model``). ``None`` (the
+        default) uses ``FOMTOOLS_CODEGEN_MODEL`` if set, else the CLI's own
+        default model.
     agent_timeout_s : int
         Wall-clock budget, in seconds, for the translation phase, shared by
         all of its agent attempts. Default 600.
-    agent_optimize_max_turns : int
-        Turn budget for one coding-agent attempt at the code optimization
-        phase. Default 200.
     agent_optimize_timeout_s : int
         Wall-clock budget, in seconds, for one round of the code optimization
         phase. Default 7200.
@@ -284,28 +285,24 @@ class CodegenConfig(BaseModel):
     )
     num_verify_samples: int = 8
     seed: int = 0
+    agent_model: str | None = Field(
+        default=None,
+        description=(
+            "Model passed to the coding-agent CLI through its --model flag, e.g. "
+            "'claude-opus-5-5'. None uses FOMTOOLS_CODEGEN_MODEL if set, else the "
+            "CLI's own default model (which follows the installed CLI's updates)."
+        ),
+    )
     agent_timeout_s: int = Field(
         ge=1,
         default=600,
         description=(
             "Wall-clock budget, in seconds, for the translation phase, shared by "
-            "all of its agent attempts. The agent is told the time left after each "
-            "tool call, a shell command cannot outlive it, and once it is spent the "
-            "agent is stopped (after a short grace period to write its summary) "
-            "and no further attempt starts. The phase is a bounded task, so the "
-            "default is generous for it."
-        ),
-    )
-    agent_optimize_max_turns: int = Field(
-        ge=1,
-        default=200,
-        description=(
-            "Turn budget for one coding-agent attempt at the code optimization phase. "
-            "The phase is a profile/rewrite/verify/benchmark loop, so a method "
-            "with more structure to exploit needs more turns; exhausting the "
-            "budget leaves the verified solver in place but costs the agent's own "
-            "summary of what it did. Sized so the wall-clock budget, not turns, "
-            "is what ends a run at the default."
+            "all of its agent attempts. The agent CLI is told the deadline "
+            "(FOMTOOLS_DEADLINE, a minute before the end; the claude spec's hook "
+            "then refuses further tool calls so it writes its summary), the "
+            "process is ended when the budget is spent, and no further attempt "
+            "starts. The phase is a bounded task, so the default is generous for it."
         ),
     )
     agent_optimize_timeout_s: int = Field(

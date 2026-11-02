@@ -25,7 +25,7 @@ _HAS_CC = bool(shutil.which("cc") or shutil.which("gcc") or shutil.which("clang"
 @pytest.mark.skipif(not _HAS_CC, reason="no C compiler available")
 def test_real_agent_translates_ista(tmp_path):
     from fomtools.codegen import ReferenceOracle, generate_code
-    from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
+    from fomtools.codegen.agent import make_agent_driver
     from fomtools.codegen.harness import build_lib
     from tests.codegen.conftest import build_ista
 
@@ -35,7 +35,7 @@ def test_real_agent_translates_ista(tmp_path):
         case["next_state"],
         tmp_path,
         config=case["config"],
-        driver=ClaudeAgentDriver(),
+        driver=make_agent_driver("claude", case["config"]),
         name="ista",
     )
     assert result.translate.success, result.translate.log
@@ -60,7 +60,7 @@ def test_real_agent_code_optimization_speeds_up_and_stays_correct(tmp_path):
     """Code optimization phase: the agent's profile-guided loop speeds up the solver while
     staying numerically correct, and the timing report is populated."""
     from fomtools.codegen import generate_code
-    from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
+    from fomtools.codegen.agent import make_agent_driver
     from tests.codegen.conftest import build_ista
 
     case = build_ista(max_iters=200)
@@ -69,7 +69,7 @@ def test_real_agent_code_optimization_speeds_up_and_stays_correct(tmp_path):
         case["next_state"],
         tmp_path,
         config=case["config"],
-        driver=ClaudeAgentDriver(),
+        driver=make_agent_driver("claude", case["config"]),
         name="ista",
         code_optimization=True,
         profile=True,

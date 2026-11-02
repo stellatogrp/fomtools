@@ -68,7 +68,7 @@ def _build_config(args) -> CodegenConfig:
             for field, value in (
                 ("agent_timeout_s", args.translate_timeout),
                 ("agent_optimize_timeout_s", args.optimize_timeout),
-                ("agent_optimize_max_turns", args.optimize_max_turns),
+                ("agent_model", args.model),
                 ("agent_optimize_rounds", args.optimize_rounds),
                 ("agent_optimize_min_gain", args.optimize_min_gain),
             )
@@ -110,6 +110,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="real coding-agent backend for --driver agent (default: claude, or "
         "$FOMTOOLS_CODEGEN_BACKEND); custom CLI agents can be defined in "
         "~/.config/fomtools/agents.yaml",
+    )
+    p.add_argument(
+        "--model",
+        default=None,
+        help="model for the agent CLI, passed as its --model (default: "
+        "$FOMTOOLS_CODEGEN_MODEL, else the CLI's own default)",
     )
     p.add_argument("--golden", help="known-good solver source (for --driver stub)")
     p.add_argument("--version", choices=[v.value for v in Version], default="embedded")
@@ -164,12 +170,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         metavar="SECONDS",
         help="wall-clock budget of one code optimization round (default: 7200)",
-    )
-    p.add_argument(
-        "--optimize-max-turns",
-        type=int,
-        metavar="N",
-        help="turn budget of one code optimization round (default: 200)",
     )
     p.add_argument(
         "--optimize-rounds",

@@ -1,18 +1,13 @@
 """Coding-agent drivers for code generation.
 
-Code generation is **agent-agnostic**: any prompt-in/files-out CLI agent is
-supported via a declarative `CliAgentSpec`
-driven by the generic `CliAgentDriver`.
-An example spec for ``cursor`` ships in ``agents.yaml``; users add their own
-agents with no code changes — at runtime via
-`register_agent` or declaratively via a YAML
-config (see `load_user_specs`). ``claude``,
-``codex``, and ``pi`` (https://pi.dev) are served by dedicated drivers
-(`ClaudeAgentDriver`,
-`CodexAgentDriver`,
-`PiDevAgentDriver`) that prefer an
-in-process SDK (Pi via its JSON-RPC subprocess) with a CLI fallback. Anything
-that is not a CLI can implement the
+Code generation is **agent-agnostic**: every agent is a headless CLI described by
+a declarative `CliAgentSpec` and driven by the generic `CliAgentDriver`. Specs
+for ``claude`` (the default), ``codex``, ``pi`` (https://pi.dev), and ``cursor``
+ship in ``agents.yaml``; users add their own agents with no code changes, at
+runtime via `register_agent` or in a YAML config (see `load_user_specs`). Each
+agent runs through its own installed CLI, so it uses the user's login, config,
+and default model; set ``CodegenConfig.agent_model`` or ``FOMTOOLS_CODEGEN_MODEL``
+to pick another model. Anything that is not a CLI can implement the
 `AgentDriver` ABC directly.
 """
 
@@ -32,17 +27,15 @@ from fomtools.codegen.agent.cli_specs import (
     register_agent,
 )
 from fomtools.codegen.agent.stub import StubAgentDriver
-from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
 from fomtools.codegen.agent.cli_driver import CliAgentDriver
 from fomtools.codegen.agent.cli_specs import get_spec
-from fomtools.codegen.agent.codex_sdk import CodexAgentDriver
-from fomtools.codegen.agent.pidev_sdk import PiDevAgentDriver
 
 __all__ = [
     "AgentBackendError",
     "AgentDriver",
     "AgentResult",
     "AgentTask",
+    "CliAgentDriver",
     "CliAgentSpec",
     "StubAgentDriver",
     "available_backends",
@@ -51,36 +44,26 @@ __all__ = [
     "register_agent",
 ]
 
-# Backends with their own dedicated drivers (an in-process SDK, or — for ``pi`` —
-# its JSON-RPC subprocess), as opposed to declarative CLI specs in the registry.
-# The first is the default backend.
-_SDK_BACKENDS = ("claude", "codex", "pi")
-_DEFAULT_BACKEND = _SDK_BACKENDS[0]
+_DEFAULT_BACKEND = "claude"
 
 
 def available_backends() -> list[str]:
-    """All selectable backends: the dedicated-driver backends plus every CLI spec."""
-    return [*_SDK_BACKENDS, *available_specs()]
+    """All selectable backends: every registered CLI spec (bundled and user)."""
+    return available_specs()
 
 
 def make_agent_driver(backend: str | None = None, config=None) -> AgentDriver:
     """Construct a real coding-agent driver for the selected backend.
 
-    ``backend`` is any name from `available_backends` (built-in
-    ``claude`` / ``codex`` / ``pi``, or a user-registered CLI agent). When
+    ``backend`` is any name from `available_backends` (bundled ``claude`` /
+    ``codex`` / ``pi`` / ``cursor``, or a user-registered CLI agent). When
     ``None`` it is read from ``FOMTOOLS_CODEGEN_BACKEND`` and otherwise defaults
-    to ``"claude"``. These backends are nondeterministic and need auth, so they
-    never run in CI.
+    to ``"claude"``. The model is ``config.agent_model``, else
+    ``FOMTOOLS_CODEGEN_MODEL``, else the CLI's own default. These backends are
+    nondeterministic and need auth, so they never run in CI.
     """
     backend = backend or os.environ.get("FOMTOOLS_CODEGEN_BACKEND") or _DEFAULT_BACKEND
-    match backend:
-        case "claude":
-            return ClaudeAgentDriver(config=config)
-        case "codex":
-            return CodexAgentDriver(config=config)
-        case "pi":
-            return PiDevAgentDriver(config=config)
-
+    model = getattr(config, "agent_model", None) or os.environ.get("FOMTOOLS_CODEGEN_MODEL")
     try:
         spec = get_spec(backend)
     except KeyError:
@@ -88,7 +71,7 @@ def make_agent_driver(backend: str | None = None, config=None) -> AgentDriver:
             f"unknown agent backend {backend!r}; choose from {available_backends()} "
             "or define one in ~/.config/fomtools/agents.yaml (or $FOMTOOLS_CODEGEN_AGENTS)"
         ) from None
-    return CliAgentDriver(spec, config=config)
+    return CliAgentDriver(spec, config=config, model=model or None)
 
 
 def get_default_driver(config=None, backend: str | None = None) -> AgentDriver:

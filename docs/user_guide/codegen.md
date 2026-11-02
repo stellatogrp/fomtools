@@ -228,10 +228,22 @@ settings and at other runtime `check_termination` and `max_iter`. An unrolled ru
 (one that does not roll back up) evaluates the objective once, after its single
 pass.
 
-This requires a coding agent. Enable the real Claude Agent SDK driver with
-`FOMTOOLS_CODEGEN_AGENT=1` (requires authentication), or pass an explicit driver
-(for example a `StubAgentDriver` wrapping a known-good source) for fully
+This requires a coding agent: an installed, logged-in agent CLI. Claude Code
+(`claude`, the default), Codex (`codex`), Pi (`pi`), and Cursor (`cursor-agent`)
+are bundled in `fomtools/codegen/agent/agents.yaml`, and any other headless agent
+can be added there or in `~/.config/fomtools/agents.yaml`. No Python packages are
+needed for it. Enable it with `FOMTOOLS_CODEGEN_AGENT=1`, or pass an explicit
+driver (for example a `StubAgentDriver` wrapping a known-good source) for fully
 deterministic, offline runs.
+
+Select the agent with `FOMTOOLS_CODEGEN_BACKEND` (or `--agent` on the command
+line). Each agent uses its CLI's own default model and configuration, so it
+follows the CLI's updates. To pick a model, set `CodegenConfig(agent_model=...)`,
+`FOMTOOLS_CODEGEN_MODEL`, or `--model`, in that order of precedence:
+
+```python
+config = CodegenConfig(agent_model="claude-opus-5-5")
+```
 
 The emitted directory (`out/ista`) contains:
 
@@ -354,7 +366,7 @@ The portable region profiler (`include/fom_profile.h`) is compiled in only for
 the shipped `make verify` / `make lib` builds, so profiling never affects the
 production solver.
 
-### Time and turn budgets
+### Time budgets
 
 Each agent phase runs under a budget, set per run on `CodegenConfig`:
 
@@ -362,7 +374,6 @@ Each agent phase runs under a budget, set per run on `CodegenConfig`:
 |---|---|---|
 | `agent_timeout_s` | 600 s (10 min) | wall-clock time of the translation phase |
 | `agent_optimize_timeout_s` | 7200 s (2 h) | wall-clock time of one code optimization round |
-| `agent_optimize_max_turns` | 200 | agent turns of one code optimization round |
 | `agent_optimize_rounds` | 5 | maximum number of code optimization rounds |
 | `agent_optimize_min_gain` | 0.02 | a round gaining less than this (relative) ends the phase |
 
@@ -385,18 +396,21 @@ keep the translated solver too.
 
 Translation is a bounded task and rarely needs more than a few minutes. The code
 optimization phase is open-ended, and on a GPU every round (an `nvcc` build,
-`make verify`, `make bench`) is slow, so it gets two hours and enough turns that
-time, not turns, ends a run. Raise them for larger problems:
+`make verify`, `make bench`) is slow, so it gets two hours. Raise the budgets for
+larger problems:
 
 ```python
-config = CodegenConfig(agent_optimize_timeout_s=4 * 3600, agent_optimize_max_turns=400)
+config = CodegenConfig(agent_optimize_timeout_s=4 * 3600)
 result = generate_code(..., config=config, code_optimization=True)
 ```
 
 or, on the command line, `--translate-timeout`, `--optimize-timeout` (seconds),
-`--optimize-max-turns`, `--optimize-rounds` and `--optimize-min-gain`. The
+`--optimize-rounds` and `--optimize-min-gain`. The
 budgets apply to whichever agent driver runs, a driver you build yourself included: one built without a config takes the run's.
-When a budget runs out the agent is stopped, whatever it wrote is re-verified and
+A minute before a budget runs out, the agent is told to stop through the
+`FOMTOOLS_DEADLINE` environment variable (Unix time). The bundled Claude Code spec
+reads it in a hook that then refuses further tool calls and asks for the summary;
+an agent you add can do the same. When the budget runs out the agent is stopped, whatever it wrote is re-verified and
 benchmarked as usual, and the report says so (in that case the agent may not have
 written its own summary). For reference, a CUDA CG solve stopped at 30 minutes
 had already gone from 2.05 s to 0.114 s per solve and was still improving.
@@ -785,8 +799,9 @@ both side by side is the quickest way to see what declaring a coefficient buys.
 `--scaffold-only` emits everything except the solver body (useful to inspect the
 spec and data before invoking the agent). `--no-roll` keeps a recorded run
 unrolled even when it could be rolled back up. `--translate-timeout`,
-`--optimize-timeout` (seconds), `--optimize-max-turns`, `--optimize-rounds` and
-`--optimize-min-gain` set the agent's budgets for this run ([above](#time-and-turn-budgets)). `--tol` alone stops on the
+`--optimize-timeout` (seconds), `--optimize-rounds` and
+`--optimize-min-gain` set the agent's budgets for this run ([above](#time-budgets)),
+and `--agent` and `--model` select the agent and its model. `--tol` alone stops on the
 infinity-norm change; with `--objective` it stops on the verification objective
 the module set on its recording, and `--check-termination N` sets the interval.
 

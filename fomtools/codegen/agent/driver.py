@@ -40,8 +40,6 @@ class AgentTask:
     phase:
         ``"translation"`` for the translation phase (the initial faithful
         translation), ``"code_optimization"`` for the code optimization phase.
-    max_turns:
-        Maximum agent turns before giving up.
     bench_cmd:
         Optional benchmark command for the code optimization phase.
     restore_hook:
@@ -50,7 +48,8 @@ class AgentTask:
         agent may only change the solver body, so any edits it makes elsewhere
         are reverted.
     extra:
-        Free-form dictionary for backend-specific extra data.
+        Free-form dictionary for backend-specific extra data. ``timeout_s``
+        there replaces the phase's wall-clock budget for this task.
     """
 
     workdir: Path
@@ -58,7 +57,6 @@ class AgentTask:
     verify_cmd: list[str]
     instructions: str = ""
     phase: Literal["translation", "code_optimization"] = "translation"
-    max_turns: int = 40
     bench_cmd: list[str] | None = None
     restore_hook: Callable[[], None] | None = None
     extra: dict = field(default_factory=dict)
@@ -177,18 +175,16 @@ class AgentDriver(ABC):
 
 def run_verify_loop(
     task: AgentTask,
-    invoke_agent: Callable[[str, int], str],
+    invoke_agent: Callable[[str], str],
     *,
     max_attempts: int = 5,
-    max_turns: int = 16,
     truncated_probe: Callable[[], bool] | None = None,
     budget_s: float | None = None,
 ) -> AgentResult:
     """Drive a real coding backend against ``task.verify_cmd`` until it passes.
 
-    This is the authoritative retry loop shared by every real backend (the
-    Claude SDK/CLI driver, the Codex CLI driver, ...). On each attempt it calls
-    runs one backend attempt, restores the deterministic files via ``task.restore_hook``
+    This is the authoritative retry loop shared by every real backend (every
+    `CliAgentDriver`). On each attempt it runs one backend attempt, restores the deterministic files via ``task.restore_hook``
     (the agent may only change the solver body), then runs ``task.verify_cmd`` *itself*
     to decide success. On failure it re-prompts with the captured verify output until the command
     passes or the budget is spent.
@@ -199,13 +195,10 @@ def run_verify_loop(
         The unit of work describing the workspace, the solver path to
         write, the restore hook, and the verify command to run.
     invoke_agent:
-        Callable running one backend attempt given ``(prompt, max_turns)`` and
-        returning its captured log text. It must NOT decide success.
+        Callable running one backend attempt given the prompt and returning
+        its captured log text. It must NOT decide success.
     max_attempts:
         How many prompt/verify rounds to attempt.
-    max_turns:
-        Per-attempt turn budget for the translation phase (the code
-        optimization phase uses ``task.max_turns`` instead).
     truncated_probe:
         Optional callable the backend supplies to report whether its last
         attempt was cut short by a wall-clock budget. Its result is recorded on
@@ -237,9 +230,6 @@ def run_verify_loop(
     agent_parts: list[str] = []
     prompt = task.instructions
 
-    # Larger turn budget for the open-ended code optimization phase.
-    turns = task.max_turns if task.phase == "code_optimization" else max(max_turns, 20)
-
     budget = None
     if budget_s is not None:
         from fomtools.codegen.agent.budget import TimeBudget
@@ -257,11 +247,11 @@ def run_verify_loop(
             break
         attempts_made = attempt + 1
         log_parts.append(f"\n===== agent attempt {attempt + 1} =====\n")
-        # The agent hitting its turn cap (or any transient error) must not crash
-        # the run: capture it and let the authoritative verify below decide,
+        # The agent stopping early (or any transient error) must not crash the
+        # run: capture it and let the authoritative verify below decide,
         # since the agent may already have produced passing code.
         try:
-            agent_log = invoke_agent(prompt, turns)
+            agent_log = invoke_agent(prompt)
         except AgentBackendError:
             # The backend cannot run at all (missing CLI / not authenticated).
             # Fail fast rather than retrying or masking it as a failed attempt —

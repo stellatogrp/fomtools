@@ -9,13 +9,12 @@ differences so a single generic driver
 (`CliAgentDriver`) can drive any of
 them.
 
-This makes code generation agent-agnostic: an example spec for the Cursor CLI
-ships in ``agents.yaml``, and users add *their own* agents with no code changes —
-either at runtime via `register_agent`, or declaratively via a YAML config
-file (see `load_user_specs`). Anything that is not a prompt-in/files-out
-CLI (an in-process SDK, a JSON-RPC subprocess, an HTTP API) is still served by
-implementing the `AgentDriver` ABC
-directly — e.g. the Claude/Codex SDK drivers and the Pi (pi.dev) RPC driver.
+This makes code generation agent-agnostic: specs for Claude Code, Codex, Pi,
+and the Cursor CLI ship in ``agents.yaml``, and users add *their own* agents with
+no code changes, either at runtime via `register_agent`, or declaratively via a
+YAML config file (see `load_user_specs`). Anything that is not a
+prompt-in/files-out CLI (an HTTP API, say) can implement the `AgentDriver` ABC
+directly.
 """
 
 from __future__ import annotations
@@ -58,7 +57,7 @@ _REGISTRY = {}
 class CliAgentSpec:
     """How to drive one headless coding-agent CLI.
 
-    Everything that varies between Cursor and any user-supplied agent is
+    Everything that varies between the agent CLIs (bundled or user-supplied) is
     a field here; the invocation logic lives once in
     `CliAgentDriver`.
 
@@ -216,7 +215,8 @@ def load_user_specs(*, force: bool = False) -> None:
             display_name: Aider
             auth_hint: Set OPENAI_API_KEY.
 
-    The example spec (``cursor``) can be overridden by name. Missing
+    The bundled specs (``claude``, ``codex``, ``pi``, ``cursor``) can be
+    overridden by name. Missing
     files are skipped; a malformed file raises so the user sees the problem.
     """
     global _user_specs_loaded

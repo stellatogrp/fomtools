@@ -178,15 +178,16 @@ def test_decode_stream_handles_bytes_str_and_none():
 
 def test_timeout_keeps_partial_output_and_leaks_no_argv():
     """The killed agent's output is recoverable; the plumbing must not drop it."""
-    from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
+    from fomtools.codegen.agent import CliAgentDriver
+    from fomtools.codegen.agent.cli_specs import get_spec
 
-    driver = ClaudeAgentDriver()
+    driver = CliAgentDriver(get_spec("claude"))
     argv = [
         sys.executable,
         "-c",
         "import sys,time;print('AGENT PARTIAL OUTPUT');sys.stdout.flush();time.sleep(30)",
     ]
-    out = driver._invoke_cli(argv, workdir=".", timeout=2)
+    out = driver._invoke_agent(argv, workdir=".", timeout=2)
 
     assert "AGENT PARTIAL OUTPUT" in out
     assert "exceeded its 2s budget" in out
@@ -198,20 +199,18 @@ def test_timeout_keeps_partial_output_and_leaks_no_argv():
 # --- truncation reaches the report ---------------------------------------
 def test_truncation_is_recorded_on_the_result():
     task = _noop_task()
-    result = run_verify_loop(
-        task, lambda prompt, turns: "agent said things", truncated_probe=lambda: True
-    )
+    result = run_verify_loop(task, lambda prompt: "agent said things", truncated_probe=lambda: True)
     assert result.success is True
     assert result.truncated is True
 
 
 def test_untruncated_run_reports_false():
-    result = run_verify_loop(_noop_task(), lambda prompt, turns: "fine")
+    result = run_verify_loop(_noop_task(), lambda prompt: "fine")
     assert result.truncated is False
 
 
 def test_agent_log_excludes_verify_output():
-    result = run_verify_loop(_noop_task(), lambda prompt, turns: "AGENT WORDS")
+    result = run_verify_loop(_noop_task(), lambda prompt: "AGENT WORDS")
     assert "AGENT WORDS" in result.agent_log
     # The combined log keeps carrying verify output (tests and the notebooks read it).
     assert "VERIFY-MARKER" in result.log
@@ -265,18 +264,20 @@ def test_report_without_caveats_is_unchanged(tmp_path):
     [("translation", 111), ("code_optimization", 222)],
 )
 def test_phase_selects_its_own_budget(phase, expected):
-    from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
+    from fomtools.codegen.agent import CliAgentDriver
+    from fomtools.codegen.agent.cli_specs import get_spec
 
     config = CodegenConfig(agent_timeout_s=111, agent_optimize_timeout_s=222)
-    assert ClaudeAgentDriver(config=config)._timeout_for_phase(phase) == expected
+    assert CliAgentDriver(get_spec("claude"), config=config)._timeout_for(phase) == expected
 
 
-def test_budget_falls_back_to_the_constructor_default_without_config():
-    from fomtools.codegen.agent.claude_sdk import ClaudeAgentDriver
+def test_no_budget_without_config():
+    from fomtools.codegen.agent import CliAgentDriver
+    from fomtools.codegen.agent.cli_specs import get_spec
 
-    driver = ClaudeAgentDriver(cli_timeout=42)
-    assert driver._timeout_for_phase("translation") == 42
-    assert driver._timeout_for_phase("code_optimization") == 42
+    driver = CliAgentDriver(get_spec("claude"))
+    assert driver._timeout_for("translation") is None
+    assert driver._timeout_for("code_optimization") is None
 
 
 def test_a_driver_built_without_a_config_takes_the_runs_budgets(tmp_path, requires_compiler):

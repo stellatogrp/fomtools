@@ -141,7 +141,7 @@ def generate_solver(
         rewrites the translated solver for speed, the rewrite is re-verified and
         benchmarked, and it is kept only if it passes and is faster. Its budget
         comes from ``config`` (``agent_optimize_timeout_s``,
-        ``agent_optimize_max_turns``).
+        ``agent_optimize_rounds``).
     auto_equilibrate:
         Ruiz-equilibrate the canonical QP before the FOM is built (default):
         the solver iterates on ``c D P D``, ``c D q``, ``E A D``, ``E l``, ``E u``

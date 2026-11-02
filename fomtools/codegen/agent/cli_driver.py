@@ -1,9 +1,10 @@
 """Generic driver for any headless coding-agent CLI, configured by a spec.
 
-A single `CliAgentDriver` drives every prompt-in/files-out CLI backend
-(the example Cursor spec and any user-registered agent); the per-tool differences
-live in
-`CliAgentSpec`. This is the agent-agnostic
+A single `CliAgentDriver` drives every coding-agent backend: the ``claude``,
+``codex``, ``pi``, and ``cursor`` specs bundled in ``agents.yaml`` and any
+user-registered agent. The per-tool differences live in `CliAgentSpec`. Each
+agent runs through its own installed CLI, so it uses the user's login, config,
+and default model unless ``model`` is set. This is the agent-agnostic
 core: the authoritative verify/retry loop is shared via
 `run_verify_loop`, and authentication is
 forced to API-key mode when a key is available (the key is forwarded into the
@@ -33,7 +34,7 @@ class CliAgentDriver(AgentDriver):
     """Drive code generation with a headless CLI described by a `CliAgentSpec`.
 
     A concrete `AgentDriver` for every
-    prompt-in/files-out CLI backend (the example Cursor spec and user-registered
+    prompt-in/files-out CLI backend (the bundled specs and user-registered
     agents).
     All per-tool differences are carried by the ``spec``; this class supplies the
     agent-agnostic core and shares the authoritative verify/retry loop via
@@ -51,7 +52,6 @@ class CliAgentDriver(AgentDriver):
         config=None,
         model: str | None = None,
         max_attempts: int = 5,
-        max_turns: int = 16,
         bin: str | None = None,
         api_key: str | None = None,
         extra_args: Sequence[str] = (),
@@ -71,9 +71,6 @@ class CliAgentDriver(AgentDriver):
             both are set. When ``None`` the CLI's default model is used.
         max_attempts : int, optional
             Maximum number of prompt/verify rounds. Defaults to 5.
-        max_turns : int, optional
-            Per-attempt turn budget, kept for parity with the shared loop; these
-            CLIs loop internally so it is not passed through. Defaults to 16.
         bin : str, optional
             Override for the CLI binary name. When ``None`` the spec's ``bin``
             is used.
@@ -89,7 +86,6 @@ class CliAgentDriver(AgentDriver):
         self.config = config
         self.model = model
         self.max_attempts = max_attempts
-        self.max_turns = max_turns
         self.bin = bin or spec.bin
         self.extra_args = tuple(extra_args)
         self.api_key = api_key or self._key_from_env()
@@ -109,16 +105,20 @@ class CliAgentDriver(AgentDriver):
                 return value
         return None
 
-    def _child_env(self) -> dict[str, str] | None:
-        """Process env for the CLI, forcing API-key auth if we have a key.
+    def _child_env(self, deadline: int | None = None) -> dict[str, str] | None:
+        """Process env for the CLI: the API key, if any, and the agent's deadline.
 
-        ``None`` when no key is configured (keep default login auth); otherwise
-        the full parent environment with the spec's primary key var injected, so
-        PATH and the rest of the environment are preserved.
+        ``None`` when there is neither (the CLI inherits the environment and keeps
+        its default login auth). Otherwise the full parent environment with the
+        spec's primary key var injected, which forces API-key auth, and
+        ``FOMTOOLS_DEADLINE`` (Unix time) when the phase has a budget.
         """
-        if not (self.api_key and self.spec.api_key_env):
-            return None
-        return {**os.environ, self.spec.api_key_env: self.api_key}
+        extra = {}
+        if self.api_key and self.spec.api_key_env:
+            extra[self.spec.api_key_env] = self.api_key
+        if deadline is not None:
+            extra["FOMTOOLS_DEADLINE"] = str(deadline)
+        return {**os.environ, **extra} if extra else None
 
     def _ensure_login(self) -> None:
         """Persist an API-key login for CLIs that need one (spec-driven).
@@ -196,20 +196,22 @@ class CliAgentDriver(AgentDriver):
         workdir = str(Path(task.workdir).resolve())
         self._truncated = False
 
-        def attempt_timeout() -> int | None:
-            # Each attempt gets what is left of the phase budget.
+        def attempt(prompt: str) -> str:
+            # Each attempt gets what is left of the phase budget as a hard timeout,
+            # and the agent is told to stop GRACE_S before it (FOMTOOLS_DEADLINE).
             budget = task.extra.get("budget")
-            return max(1, int(budget.remaining())) if budget is not None else None
+            timeout = max(1, int(budget.remaining())) if budget is not None else None
+            deadline = budget.agent_deadline() if budget is not None else None
+            return self._invoke_agent(
+                self._build_argv(workdir, prompt), workdir, timeout=timeout, deadline=deadline
+            )
 
         return run_verify_loop(
             task,
-            lambda prompt, max_turns: self._invoke_agent(
-                self._build_argv(workdir, prompt), workdir, timeout=attempt_timeout()
-            ),
+            attempt,
             max_attempts=self.max_attempts,
-            max_turns=self.max_turns,
             truncated_probe=lambda: self._truncated,
-            budget_s=self._timeout_for(task.phase),
+            budget_s=task.extra.get("timeout_s") or self._timeout_for(task.phase),
         )
 
     def _timeout_for(self, phase: str) -> int | None:
@@ -259,7 +261,11 @@ class CliAgentDriver(AgentDriver):
         return argv
 
     def _invoke_agent(
-        self, argv: list[str], workdir: str | Path, timeout: int | None = None
+        self,
+        argv: list[str],
+        workdir: str | Path,
+        timeout: int | None = None,
+        deadline: int | None = None,
     ) -> str:
         """Run one agent attempt by shelling out to the CLI.
 
@@ -274,6 +280,10 @@ class CliAgentDriver(AgentDriver):
             The full CLI argument vector.
         workdir : str or Path
             Absolute working directory to run the CLI in.
+        timeout : int, optional
+            Seconds after which the process is ended and its partial output kept.
+        deadline : int, optional
+            Unix time passed to the agent as ``FOMTOOLS_DEADLINE``.
 
         Returns
         -------
@@ -293,7 +303,7 @@ class CliAgentDriver(AgentDriver):
                 cwd=workdir,
                 capture_output=True,
                 text=True,
-                env=self._child_env(),
+                env=self._child_env(deadline),
                 timeout=timeout,
             )
         except FileNotFoundError as exc:  # binary vanished after preflight
