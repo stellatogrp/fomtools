@@ -20,6 +20,7 @@ directly.
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -30,7 +31,10 @@ import yaml
 SYSTEM_PROMPT = (
     "You are an expert in high-performance numerical C. You translate a "
     "specified first-order optimization method into a correct, allocation-free, "
-    "division-free embedded C solver and iterate until it passes verification."
+    "division-free embedded C solver and iterate until it passes verification. "
+    "Run every command in the foreground and wait for it to finish; never start "
+    "background jobs (no `&`, `nohup`, or background tasks), since the session "
+    "ends when you reply and the timings must not overlap."
 )
 
 # Substrings (matched case-insensitively against the CLI's own error output) that
@@ -117,6 +121,7 @@ class CliAgentSpec:
 
 
 _user_specs_loaded = False
+_load_lock = threading.Lock()
 
 # Field name -> coercion for the YAML loader (everything else is rejected so a
 # typo surfaces loudly instead of being silently ignored).
@@ -200,23 +205,26 @@ def load_user_specs(*, force: bool = False) -> None:
     files are skipped; a malformed file raises so the user sees the problem.
     """
     global _user_specs_loaded
-    if _user_specs_loaded and not force:
-        return
-    _user_specs_loaded = True
-    for path in _config_paths():
-        if not path.is_file():
-            continue
-        with path.open("rb") as fh:
-            data = yaml.safe_load(fh) or {}
-        if not isinstance(data, dict):
-            raise ValueError(f"{path}: top-level mapping with an 'agents:' key expected")
-        agents = data.get("agents", {})
-        if not isinstance(agents, dict):
-            raise ValueError(f"{path}: 'agents' must be a mapping of name -> spec")
-        for name, table in agents.items():
-            if not isinstance(table, dict):
-                raise ValueError(f"{path}: agent {name!r} must be a mapping")
-            register_agent(_spec_from_table(name, table))
+    # One loader at a time: a second thread must not see the flag set while the
+    # registry is still empty.
+    with _load_lock:
+        if _user_specs_loaded and not force:
+            return
+        _user_specs_loaded = True
+        for path in _config_paths():
+            if not path.is_file():
+                continue
+            with path.open("rb") as fh:
+                data = yaml.safe_load(fh) or {}
+            if not isinstance(data, dict):
+                raise ValueError(f"{path}: top-level mapping with an 'agents:' key expected")
+            agents = data.get("agents", {})
+            if not isinstance(agents, dict):
+                raise ValueError(f"{path}: 'agents' must be a mapping of name -> spec")
+            for name, table in agents.items():
+                if not isinstance(table, dict):
+                    raise ValueError(f"{path}: agent {name!r} must be a mapping")
+                register_agent(_spec_from_table(name, table))
 
 
 def get_spec(name: str) -> CliAgentSpec:
