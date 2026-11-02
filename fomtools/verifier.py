@@ -1528,6 +1528,7 @@ class Verifier(object):
         profile=False,
         roll=True,
         param_values=None,
+        verbose=False,
     ):
         """Generate a low-level solver for the run recorded on this verifier.
 
@@ -1579,6 +1580,7 @@ class Verifier(object):
             iterates=iterates,
             param_values=param_values,
             roll=roll,
+            verbose=verbose,
         )
 
     def codegen_rolled(
@@ -1594,6 +1596,7 @@ class Verifier(object):
         profile=False,
         iterates=None,
         param_values=None,
+        verbose=False,
     ):
         """Generate a rolled solver from one stationary iteration.
 
@@ -1636,6 +1639,7 @@ class Verifier(object):
             profile=profile,
             iterates=iterates,
             param_values=param_values,
+            verbose=verbose,
         )
 
     def _solution_value(self, expr: LinearExpression) -> np.ndarray:

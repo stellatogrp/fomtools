@@ -31,7 +31,7 @@ class ScriptedDriver(AgentDriver):
         self.prompts: list[str] = []
 
     def run(self, task):
-        if task.phase == "translation":
+        if task.phase == "translation" or task.extra.get("summary_only"):
             return StubAgentDriver(GOLDEN).run(task)
         self.prompts.append(task.instructions)
         marker = self.script[len(self.prompts) - 1]

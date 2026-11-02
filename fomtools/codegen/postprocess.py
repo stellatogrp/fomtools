@@ -19,7 +19,12 @@ import difflib
 import re
 from pathlib import Path
 
-from fomtools.codegen.agent.prompts import BLOCKED_HEADING, SUMMARY_BEGIN, SUMMARY_END
+from fomtools.codegen.agent.prompts import (
+    APPLIED_HEADING,
+    BLOCKED_HEADING,
+    SUMMARY_BEGIN,
+    SUMMARY_END,
+)
 
 # One line per matrix from verify's direct check of fom_apply_<name>.
 _OPSCHECK_RE = re.compile(
@@ -269,17 +274,15 @@ def _round_lines(rounds: list[dict]) -> list[str]:
     return lines + [""]
 
 
-def extract_rule_friction(notes: str) -> list[dict]:
-    """The optimizations the agent reports a rule blocked, from its summary.
+def _summary_list(notes: str, heading: str) -> list[list[str]]:
+    """The ``- a | b | c`` lines under ``heading`` in the agent's summary, split on ``|``.
 
-    Reads the lines under the ``Blocked by rules:`` heading the optimization
-    prompt asks for, each ``- <idea> | <rule> | <expected gain>``, until the
-    first blank or non-list line. ``- none`` (or no section) gives ``[]``. A line
-    without separators is kept whole as the idea.
+    Reads until the first blank or non-list line after the first item. ``- none``
+    (or no section) gives ``[]``.
     """
     lines = notes.splitlines()
     start = next(
-        (i for i, ln in enumerate(lines) if ln.strip().strip("*#").strip() == BLOCKED_HEADING),
+        (i for i, ln in enumerate(lines) if ln.strip().strip("*#").strip() == heading),
         None,
     )
     if start is None:
@@ -294,15 +297,32 @@ def extract_rule_friction(notes: str) -> list[dict]:
         item = item[1:].strip()
         if not item or item.lower().rstrip(".") == "none":
             continue
-        parts = [part.strip() for part in item.split("|")]
-        found.append(
-            dict(
-                idea=parts[0],
-                rule=parts[1] if len(parts) > 1 else "",
-                expected_gain=parts[2] if len(parts) > 2 else "",
-            )
-        )
+        found.append([part.strip() for part in item.split("|")])
     return found
+
+
+def extract_rule_friction(notes: str) -> list[dict]:
+    """The optimizations the agent reports a rule blocked, from its summary.
+
+    Reads the lines under the ``Blocked by rules:`` heading the optimization
+    prompt asks for, each ``- <idea> | <rule> | <expected gain>``, until the
+    first blank or non-list line. ``- none`` (or no section) gives ``[]``. A line
+    without separators is kept whole as the idea.
+    """
+    return [
+        dict(
+            idea=parts[0],
+            rule=parts[1] if len(parts) > 1 else "",
+            expected_gain=parts[2] if len(parts) > 2 else "",
+        )
+        for parts in _summary_list(notes, BLOCKED_HEADING)
+    ]
+
+
+def extract_applied_optimizations(notes: str) -> list[str]:
+    """The optimizations the agent reports it kept: the ``<what>`` part of each
+    ``- <what> | <structure>`` line under ``Optimizations applied:``."""
+    return [parts[0] for parts in _summary_list(notes, APPLIED_HEADING) if parts[0]]
 
 
 def write_optimization_report(

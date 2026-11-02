@@ -14,6 +14,8 @@ SUMMARY_BEGIN = _SUMMARY_BEGIN
 SUMMARY_END = _SUMMARY_END
 #: Heading of the summary section where the agent lists what the rules blocked.
 BLOCKED_HEADING = "Blocked by rules:"
+#: Heading of the summary section where the agent lists what it applied.
+APPLIED_HEADING = "Optimizations applied:"
 
 
 def _objective_block(ir: FomIR, objective_src: str) -> str:
@@ -351,8 +353,9 @@ marker lines exactly, each alone on its own line:
 Between the markers, give:
 - the initial vs. final whole-solve `mean_us` and the overall speedup factor;
 - the profiling breakdown of the FINAL solver (region, time, %), hottest first;
-- a short list of the optimizations you applied and why. For each one, name the
-  structure you exploited, so a reader can tell what made it valid here;
+- a section headed exactly `{APPLIED_HEADING}` listing the optimizations you
+  kept, one per line as `- <what you did, in under 60 characters> | <the
+  structure you exploited, so a reader can tell what made it valid here>`;
 - a section headed exactly `{BLOCKED_HEADING}` listing every optimization you
   considered but did not make because a rule forbade it (the kernel rules, the
   files you may edit, or the target constraints), one per line as
@@ -406,3 +409,31 @@ def code_optimization_continuation(
         "",
     ]
     return "\n".join(lines)
+
+
+def code_optimization_summary_request(diff: str, max_chars: int = 20000) -> str:
+    """Prompt for the follow-up asking for the summary a round did not write.
+
+    The agent sees the round's diff of the editable sources and must not edit
+    anything; only the marked summary is read from its output.
+    """
+    if len(diff) > max_chars:
+        diff = diff[:max_chars] + "\n[... diff truncated ...]\n"
+    return f"""A code optimization round on this solver ended before its summary was written.
+Do NOT edit, build, or run anything. Read the diff below, which shows the editable
+sources before and after the round, and print only the summary, bracketed by these
+two marker lines exactly, each alone on its own line:
+
+{_SUMMARY_BEGIN}
+...your summary here...
+{_SUMMARY_END}
+
+Between the markers, give:
+- a section headed exactly `{APPLIED_HEADING}` listing each optimization in the diff,
+  one per line as `- <what was done, in under 60 characters> | <the structure it
+  exploits, so a reader can tell what made it valid here>`;
+- a section headed exactly `{BLOCKED_HEADING}` with the single line `- none`.
+
+```diff
+{diff}```
+"""
