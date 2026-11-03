@@ -220,14 +220,22 @@ For full CVXPYgen integration docs, read `references/cvxpygen.md`.
 ## Installation
 
 ```bash
-uv pip install -e .               # basic
-uv pip install -e ".[dev]"        # development (pytest, ruff)
-uv pip install -e ".[codegen]"    # code generation
-uv pip install -e ".[cvxpygen]"   # CVXPYgen integration
-uv pip install -e ".[docs]"       # documentation (mkdocs)
+pip install fomtools                    # from PyPI: verification and simulation with HiGHS
+pip install "fomtools[gurobi,codegen]"  # extras (quote the brackets)
+pip install "fomtools[all]"             # every extra (GPU packages skipped on macOS)
+uv pip install -e ".[dev,docs]"         # from source: tests, lint, docs (also installs Gurobi)
 ```
 
-Requires Python 3.12+. Core dependencies include `numpy`, `scipy`, `highspy`, and `cvxpy`. Gurobi is optional and requires a suitable license. `torch`/`jax` are optional neural-network dependencies.
+| Extra | Purpose |
+|-------|---------|
+| `gurobi` | Optional MIP/MIQP/MIQCP backend (needs a license) |
+| `codegen` | Nothing extra (kept for compatibility); codegen needs an installed, logged-in agent CLI (Claude Code, Codex, ...) and a C compiler |
+| `cvxpygen` | CVXPYgen integration |
+| `cuda` | cuDSS for direct linear solves in generated CUDA solvers (Linux) |
+| `gpu` | CuPy for CUDA simulation |
+| `nn` | PyTorch/JAX/Flax integrations |
+
+Requires Python 3.12+. The base package includes HiGHS (default MIP solver) and CVXPY with Clarabel; no Gurobi license is needed. Install this skill with `npx skills add stellatogrp/fomtools -g`.
 
 ## CLI
 
