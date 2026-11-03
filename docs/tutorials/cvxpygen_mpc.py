@@ -7,19 +7,13 @@ app = marimo.App()
 @app.cell(hide_code=True)
 def _():
     import marimo as mo
-    import os
 
     import cvxpy as cp
     import numpy as np
 
     import fomtools.cvxpygen as fcpg
     from fomtools.codegen import CodegenConfig, TerminationSpec
-
-    # Generating a verified embedded solver needs a real coding-agent backend.
-    # When it isn't configured (e.g. a headless docs build), the codegen and
-    # solve cells below skip with a message instead of raising.
-    agent_available = os.environ.get("FOMTOOLS_CODEGEN_AGENT") == "1"
-    return CodegenConfig, TerminationSpec, agent_available, cp, fcpg, mo, np
+    return CodegenConfig, TerminationSpec, cp, fcpg, mo, np
 
 
 @app.cell(hide_code=True)
@@ -35,9 +29,9 @@ def _(mo):
 
     Running the whole notebook needs the `cvxpygen` and `codegen` extras (`pip install 'fomtools[cvxpygen,codegen]'`) and `cmake` on your `PATH`, which CVXPYgen uses to build the Python wrapper.
     The solver is written by an LLM coding agent and then verified against a Python reference, so generating it also needs a configured coding agent.
-    Set `FOMTOOLS_CODEGEN_AGENT=1` before starting marimo to use the Claude agent.
-    Without it, the generation and solve cells below print a message and skip, and the rest of the notebook still runs.
-    The solver is written to `mpc_solver/` relative to the working directory, so start marimo (or `python cvxpygen_mpc.py`) from this directory.
+    When you run this notebook locally with marimo, generation starts only when you click the button below, so the rest of the notebook runs without an agent.
+    It uses the coding-agent CLI (`claude` by default), which must be installed and logged in.
+    The solver is written to `mpc_solver/` relative to the working directory, so start marimo from this directory.
     """)
     return
 
@@ -137,9 +131,16 @@ def _(mo):
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    run_agent = mo.ui.run_button(label="Generate with the coding agent")
+    run_agent
+    return (run_agent,)
+
+
 @app.cell
-def _(CodegenConfig, TerminationSpec, agent_available, fcpg, problem, x0):
-    if agent_available:
+def _(CodegenConfig, TerminationSpec, fcpg, problem, run_agent, x0):
+    if run_agent.value:
         result = fcpg.generate_solver(
             problem,
             "mpc_solver",  # relative path: cvxpygen imports <code_dir>.cpg_solver
@@ -151,8 +152,8 @@ def _(CodegenConfig, TerminationSpec, agent_available, fcpg, problem, x0):
     else:
         result = None
         print(
-            "Skipping solver generation: set FOMTOOLS_CODEGEN_AGENT=1 (and configure a "
-            "coding-agent backend) to generate and verify the embedded solver."
+            "Solver not generated yet: run this notebook with marimo and click the button "
+            "above to generate and verify the embedded solver with the coding agent."
         )
     return (result,)
 
@@ -171,8 +172,8 @@ def _(mo):
 
 
 @app.cell
-def _(agent_available, cp, nx, problem, result, rng, us, x0):
-    if agent_available and result is not None:
+def _(cp, nx, problem, result, rng, us, x0):
+    if result is not None:
         x0.value = rng.uniform(-0.5, 0.5, size=nx)
         problem.solve(method="CPG")
         print("first input:", us.value[0])

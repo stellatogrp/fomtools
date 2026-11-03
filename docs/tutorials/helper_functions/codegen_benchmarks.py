@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
-from fomtools.codegen.agent import make_agent_driver
+from fomtools.codegen.agent import get_default_driver
 from fomtools.codegen.harness import find_compiler
 
 
 def run_lasso_codegen_benchmark(
     *,
     config: Any,
+    live: bool,
     next_state: Any,
     out_dir: Path,
     python_us: float,
@@ -24,10 +24,11 @@ def run_lasso_codegen_benchmark(
 ) -> dict[str, Any]:
     """Generate and time the Lasso solver, or return the published timings.
 
-    A live code generation run requires a configured coding agent and a C compiler.
-    Documentation builds use the recorded benchmark row instead.
+    With ``live=True`` the default coding-agent CLI generates the solver, which needs
+    the CLI installed and logged in and a C compiler. Otherwise, as in documentation
+    builds, the recorded benchmark row is returned.
     """
-    if os.environ.get("FOMTOOLS_CODEGEN_AGENT") != "1":
+    if not live:
         recorded = json.loads(timing_file.read_text())["examples"]["lasso"]
         return {
             "python_us": recorded["python_us"],
@@ -47,7 +48,7 @@ def run_lasso_codegen_benchmark(
         out_dir,
         next_state=next_state,
         config=config,
-        driver=make_agent_driver(config=config),
+        driver=get_default_driver(config=config),
         state=[state],
         params=[x_param],
         name="lasso_codegen_speedup",
@@ -81,6 +82,7 @@ def run_lasso_codegen_benchmark(
 def run_codegen_benchmark(
     *,
     config: Any,
+    live: bool,
     example: str,
     name: str,
     next_state: Any,
@@ -91,8 +93,8 @@ def run_codegen_benchmark(
     timing_file: Path,
     verifier: Any,
 ) -> dict[str, Any]:
-    """Generate and time a tutorial solver, or return its published timings."""
-    if os.environ.get("FOMTOOLS_CODEGEN_AGENT") != "1":
+    """Generate and time a tutorial solver (``live=True``), or return its published timings."""
+    if not live:
         recorded = json.loads(timing_file.read_text())["examples"][example]
         return {
             "python_us": recorded["python_us"],
@@ -113,7 +115,7 @@ def run_codegen_benchmark(
         out_dir,
         next_state=next_state,
         config=config,
-        driver=make_agent_driver(config=config),
+        driver=get_default_driver(config=config),
         state=state,
         name=name,
         code_optimization=True,
