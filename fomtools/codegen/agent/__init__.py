@@ -46,6 +46,7 @@ __all__ = [
 ]
 
 _DEFAULT_BACKEND = "claude"
+_OFF = {"0", "false", "no", "off"}  # FOMTOOLS_CODEGEN_AGENT values that disable real agents
 
 
 def available_backends() -> list[str]:
@@ -79,7 +80,8 @@ def get_default_driver(config=None, backend: str | None = None) -> AgentDriver:
 
     This is the real CLI agent from `make_agent_driver`: ``claude`` by default,
     or the one selected via ``backend`` / ``FOMTOOLS_CODEGEN_BACKEND``. Its CLI
-    must be installed and logged in. Set ``FOMTOOLS_CODEGEN_AGENT=0`` to disable
+    must be installed and logged in. Set ``FOMTOOLS_CODEGEN_AGENT=0`` (or ``false``, ``no``,
+    ``off``) to disable
     real agents (the test suite does), so that a call without a driver fails
     instead of running a nondeterministic, paid agent.
 
@@ -88,7 +90,7 @@ def get_default_driver(config=None, backend: str | None = None) -> AgentDriver:
     RuntimeError
         If real agents are disabled, or the backend's CLI is not on PATH.
     """
-    if os.environ.get("FOMTOOLS_CODEGEN_AGENT") == "0":
+    if os.environ.get("FOMTOOLS_CODEGEN_AGENT", "").strip().lower() in _OFF:
         raise RuntimeError(
             "No coding-agent driver provided and real agents are disabled "
             "(FOMTOOLS_CODEGEN_AGENT=0). Pass driver=... (e.g. StubAgentDriver) "

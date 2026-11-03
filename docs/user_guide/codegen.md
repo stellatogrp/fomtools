@@ -232,7 +232,7 @@ This requires a coding agent: an installed, logged-in agent CLI. Claude Code
 (`claude`, the default), Codex (`codex`), Pi (`pi`), and Cursor (`cursor-agent`)
 are bundled in `fomtools/codegen/agent/agents.yaml`, and any other headless agent
 can be added there or in `~/.config/fomtools/agents.yaml`. No Python packages are
-needed for it. Without a `driver=`, FOMTOOLS uses `claude`, or the agent named in
+needed for it. Without a `driver=`, FOMTools uses `claude`, or the agent named in
 `FOMTOOLS_CODEGEN_BACKEND`. Pass an explicit driver (for example a `StubAgentDriver`
 wrapping a known-good source) for fully deterministic, offline runs. Set
 `FOMTOOLS_CODEGEN_AGENT=0` to turn real agents off, as the test suite does.
