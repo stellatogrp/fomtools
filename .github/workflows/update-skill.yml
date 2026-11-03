@@ -15,6 +15,8 @@ permissions:
 
 jobs:
   update-skill:
+    # Skip its own sync commits and other bot pushes; the action refuses them anyway.
+    if: github.event.sender.type != 'Bot'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

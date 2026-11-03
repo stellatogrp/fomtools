@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# A newer push to the same PR (often the skill-sync bot's commit) cancels the older run,
+# so superseded jobs stop holding the Gurobi license's few sessions. Runs on main finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   linter:
     runs-on: ubuntu-latest

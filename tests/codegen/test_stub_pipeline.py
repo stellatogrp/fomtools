@@ -83,8 +83,9 @@ def test_failing_solver_reports_failure(tmp_path, requires_compiler):
     assert not result.translate.success
 
 
-def test_no_driver_with_agents_disabled_raises(tmp_path, monkeypatch):
-    monkeypatch.setenv("FOMTOOLS_CODEGEN_AGENT", "0")
+@pytest.mark.parametrize("value", ["0", "false", "No", " off "])
+def test_no_driver_with_agents_disabled_raises(tmp_path, monkeypatch, value):
+    monkeypatch.setenv("FOMTOOLS_CODEGEN_AGENT", value)
     case = build_ista()
     with pytest.raises(RuntimeError, match="FOMTOOLS_CODEGEN_AGENT=0"):
         generate_code(case["verifier"], case["next_state"], tmp_path, config=case["config"])
