@@ -29,9 +29,9 @@ def _(mo):
 
     Running the whole notebook needs the `cvxpygen` and `codegen` extras (`pip install 'fomtools[cvxpygen,codegen]'`) and `cmake` on your `PATH`, which CVXPYgen uses to build the Python wrapper.
     The solver is written by an LLM coding agent and then verified against a Python reference, so generating it also needs a configured coding agent.
-    Generation starts only when you click the button below, so the rest of the notebook runs without an agent.
+    When you run this notebook locally with marimo, generation starts only when you click the button below, so the rest of the notebook runs without an agent.
     It uses the coding-agent CLI (`claude` by default), which must be installed and logged in.
-    The solver is written to `mpc_solver/` relative to the working directory, so start marimo (or `python cvxpygen_mpc.py`) from this directory.
+    The solver is written to `mpc_solver/` relative to the working directory, so start marimo from this directory.
     """)
     return
 
@@ -152,8 +152,8 @@ def _(CodegenConfig, TerminationSpec, fcpg, problem, run_agent, x0):
     else:
         result = None
         print(
-            "Solver not generated yet: click the button above to generate and verify "
-            "the embedded solver with the coding agent."
+            "Solver not generated yet: run this notebook with marimo and click the button "
+            "above to generate and verify the embedded solver with the coding agent."
         )
     return (result,)
 

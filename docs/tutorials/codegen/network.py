@@ -246,10 +246,10 @@ def _(mo):
     mo.vstack(
         [
             mo.md(
-                "The timings below are the recorded benchmark. Click the button to "
-                "generate, verify, and time the solver on this machine instead. It runs "
-                "the coding-agent CLI (`claude` by default, installed and logged in) and "
-                "takes several minutes."
+                "The timings below are the recorded benchmark. When you run this "
+                "notebook locally with marimo, click the button to generate, verify, and "
+                "time the solver on your machine instead. It runs the coding-agent CLI "
+                "(`claude` by default, installed and logged in) and takes several minutes."
             ),
             run_agent,
         ]
