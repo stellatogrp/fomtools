@@ -142,12 +142,30 @@ def _(A, K, eta, solve_pgd_numpy, statistics, time, x_mid, z0):
 
 
 @app.cell(hide_code=True)
+def _(mo):
+    run_agent = mo.ui.run_button(label="Generate with the coding agent")
+    mo.vstack(
+        [
+            mo.md(
+                "The timings below are the recorded benchmark. Click the button to "
+                "generate, verify, and time the solver on this machine instead. It runs "
+                "the coding-agent CLI (`claude` by default, installed and logged in) and "
+                "takes several minutes."
+            ),
+            run_agent,
+        ]
+    )
+    return (run_agent,)
+
+
+@app.cell(hide_code=True)
 def _(
     config,
     next_state,
     out_dir,
     params,
     python_us,
+    run_agent,
     run_codegen_benchmark,
     s_state,
     timing_file,
@@ -155,6 +173,7 @@ def _(
 ):
     timings = run_codegen_benchmark(
         config=config,
+        live=run_agent.value,
         example="nnls",
         name="nnls_codegen_speedup",
         next_state=next_state,
