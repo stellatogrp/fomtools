@@ -69,7 +69,9 @@ The `Verifier` records the whole iteration, so the loop only keeps the last two 
 Pass `verbose=True` to `Verifier` or to `solve` to see the solver logs.
 
 To generate a solver, keep all the iterates in a list and pass them to `codegen`.
-It produces a specialized C solver with a Python wrapper:
+It produces a specialized C solver with a Python wrapper.
+A coding-agent CLI (`claude` by default) writes the solver, so it must be installed and
+logged in; enable it with `FOMTOOLS_CODEGEN_AGENT=1 python script.py`:
 
 ```python
 vp = ft.Verifier()
