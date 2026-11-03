@@ -14,7 +14,7 @@ Python, and FOMTools uses that description to
 
 A real run, time-lapsed (tap to enlarge). Claude Code, with the FOMTools skill, wrote the lasso script.
 FOMTools computes the worst-case residual, then a coding agent translates the iteration to
-C and makes it 2.25x faster in two rounds, about 2,000x faster than NumPy. Every
+C and makes it 2.25x faster in two rounds, over 2,000x faster than NumPy. Every
 rewrite is checked against the reference. See the
 [code generation tutorials](tutorials/codegen.md) for more examples.
 
@@ -71,7 +71,7 @@ Pass `verbose=True` to `Verifier` or to `solve` to see the solver logs.
 To generate a solver, keep all the iterates in a list and pass them to `codegen`.
 It produces a specialized C solver with a Python wrapper.
 A coding-agent CLI (`claude` by default) writes the solver, so it must be installed and
-logged in; enable it with `FOMTOOLS_CODEGEN_AGENT=1 python script.py`:
+logged in:
 
 ```python
 vp = ft.Verifier()

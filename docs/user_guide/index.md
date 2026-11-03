@@ -214,8 +214,8 @@ agent, and iterates the generated code against a Python reference oracle until i
 numerically verified. The emitted directory is a self contained C project with an
 OSQP style ABI, all numeric data, a `Makefile`, and a small `ctypes` wrapper.
 
-This call requires the `codegen` extra and an authenticated coding agent driver.
-Set `FOMTOOLS_CODEGEN_AGENT=1` or pass an explicit `driver=`. See the
+This call requires the `codegen` extra and a coding-agent CLI that is installed and
+logged in (`claude` by default), or an explicit `driver=`. See the
 [code generation guide](codegen.md#generating-the-solver).
 
 ```python

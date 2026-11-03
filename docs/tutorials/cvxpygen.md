@@ -30,9 +30,8 @@ the environment (CVXPYgen builds the extension module with
 `python -m pip install`); the `cvxpygen` extra installs `pip`. With the default
 `wrapper=True`, `generate_solver` checks for both before any code generation
 and raises a `RuntimeError` naming what is missing; pass `wrapper=False` to emit
-the C code only. Generating the solver body requires a coding-agent driver: set
-`FOMTOOLS_CODEGEN_AGENT=1` to use the Claude agent, or pass an explicit
-`driver=`.
+the C code only. Generating the solver body runs a coding-agent CLI that is
+installed and logged in (`claude` by default), or an explicit `driver=`.
 
 ## The seamless flow
 
