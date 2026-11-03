@@ -14,7 +14,7 @@ uv pip install 'fomtools[cvxpygen]'   # cvxpy, cvxpygen, osqp
 
 Building the Python wrapper needs `cmake` and `pip`. Generating the solver
 body needs an installed, logged-in agent CLI (default `claude`) or an explicit
-`driver=`; `FOMTOOLS_CODEGEN_AGENT=0` turns real agents off.
+`driver=`; `FOMTOOLS_CODEGEN_AGENT=0` (or `false`, `no`, `off`) turns real agents off.
 
 ## Usage
 
