@@ -18,6 +18,9 @@ Flow:
 from __future__ import annotations
 
 import difflib
+import shutil
+import statistics
+import subprocess
 import sys
 import time
 import warnings
@@ -33,6 +36,7 @@ from fomtools.codegen.harness import (
     TimingReport,
     build_and_verify,
     find_compiler,
+    parse_bench,
     representative_params,
     run_bench,
     run_profile,
@@ -152,11 +156,75 @@ def _kernel_checks(target, ir, out_dir, final, translated, verify_output) -> lis
     return rows
 
 
-def _bench_mean_us(out_dir: Path) -> float | None:
+#: Timing runs per solver; their median is the solver's time (one run is noisy).
+BENCH_RUNS = 5
+
+
+def _build_bench(out_dir: Path, name: str) -> Path | None:
+    """Build ``bench_bin`` from the current sources and keep a copy as ``name``.
+
+    ``make bench`` also runs the binary once, which serves as a warmup.
+    """
     try:
-        return run_bench(out_dir).mean_us
+        run_bench(out_dir)
+        dst = Path(out_dir) / name
+        shutil.copy2(Path(out_dir) / "bench_bin", dst)
+        return dst
     except Exception:
         return None
+
+
+def _run_bench_bin(path: Path, out_dir: Path) -> float | None:
+    proc = subprocess.run([str(path)], cwd=str(out_dir), capture_output=True, text=True)
+    if proc.returncode != 0:
+        return None
+    try:
+        return parse_bench(proc.stdout + proc.stderr).mean_us
+    except ValueError:
+        return None
+
+
+def _median(values) -> float | None:
+    values = [v for v in values if v]
+    return statistics.median(values) if values else None
+
+
+def _bench_mean_us(out_dir: Path, runs: int = BENCH_RUNS) -> float | None:
+    """Per-solve time of the current sources: the median of ``runs`` bench runs."""
+    path = _build_bench(out_dir, ".bench_current")
+    if path is None:
+        return None
+    try:
+        return _median(_run_bench_bin(path, out_dir) for _ in range(runs))
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _head_to_head_us(
+    out_dir: Path, write_editable, candidate: dict, best: dict, runs: int = BENCH_RUNS
+) -> tuple[float | None, float | None]:
+    """Per-solve times of ``candidate`` and ``best``, measured alternately.
+
+    Each is built once; then the two binaries run ``runs`` times each, in
+    alternating order, so slow drifts (clock speed, other load) hit both alike.
+    Returns the two medians and leaves ``best`` written.
+    """
+    write_editable(candidate)
+    cand_bin = _build_bench(out_dir, ".bench_candidate")
+    write_editable(best)
+    best_bin = _build_bench(out_dir, ".bench_best")
+    times: dict[str, list] = {"candidate": [], "best": []}
+    bins = {"candidate": cand_bin, "best": best_bin}
+    try:
+        for i in range(runs):
+            for key in ("candidate", "best") if i % 2 == 0 else ("best", "candidate"):
+                if bins[key] is not None:
+                    times[key].append(_run_bench_bin(bins[key], out_dir))
+        return _median(times["candidate"]), _median(times["best"])
+    finally:
+        for path in bins.values():
+            if path is not None:
+                path.unlink(missing_ok=True)
 
 
 def optimization_is_faster(
@@ -843,10 +911,8 @@ def run_code_optimization(
             break
 
         # Gate 2 (performance): head to head against the best so far, measured
-        # now (timings are noisy, so both are measured back to back).
-        us_after = _bench_mean_us(out_dir)
-        write_editable(best)
-        us_before = _bench_mean_us(out_dir)
+        # now and alternately (timings are noisy), leaving the best written.
+        us_after, us_before = _head_to_head_us(out_dir, write_editable, candidate, best)
         if index == 1:
             translated_us = us_before
         record.us_before, record.us_after = us_before, us_after
