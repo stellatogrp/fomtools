@@ -1,7 +1,22 @@
 # ![FOMTools](assets/logo/logo.svg#only-light){ .fomtools-logo } ![FOMTools](assets/logo/logo-dark.svg#only-dark){ .fomtools-logo }
 
-FOMTools is a Python package that provides tools to verify the performance
-of first-order iterative methods applied on parametric quadratic optimization.
+FOMTools is a Python package for developing, analyzing, and deploying first-order methods
+for parametric linear and convex quadratic optimization. You write the iteration once in
+Python, and FOMTools uses that description to
+
+- **verify** worst-case performance with mixed-integer optimization;
+- **simulate** it at scale on CPU or GPU, with probabilistic bounds;
+- **generate code**: an LLM coding agent writes and optimizes a C, OpenMP, or CUDA solver,
+  checked against a reference run at every step;
+- **solve CVXPY problems** as a [CVXPYgen](https://github.com/cvxgrp/cvxpygen) backend.
+
+[![A coding agent writes a lasso script with the FOMTools skill; FOMTools verifies the worst case, then an agent translates and optimizes an embedded C solver](assets/codegen-lasso.gif)](assets/codegen-lasso.gif)
+
+A real run, time-lapsed (tap to enlarge). Claude Code, with the FOMTools skill, wrote the lasso script.
+FOMTools computes the worst-case residual, then a coding agent translates the iteration to
+C and makes it 2.25x faster in two rounds, over 2,000x faster than NumPy. Every
+rewrite is checked against the reference. See the
+[code generation tutorials](tutorials/codegen.md) for more examples.
 
 To install the package and the FOMTools agent skill for coding agents, see
 [Get started](get_started.md).
@@ -53,12 +68,21 @@ print("worst-case q:", q.value)
 The `Verifier` records the whole iteration, so the loop only keeps the last two iterates for the objective.
 Pass `verbose=True` to `Verifier` or to `solve` to see the solver logs.
 
-This short script is a basic example of what FOMTools can do: verifying
-worst-case behavior of an iterative algorithm under parameter uncertainty using
-mixed-integer optimization.
+To generate a solver, keep all the iterates in a list and pass them to `codegen`.
+It produces a specialized C solver with a Python wrapper.
+A coding-agent CLI (`claude` by default) writes the solver, so it must be installed and
+logged in:
 
-Beyond this example, FOMTools supports verification of a wide range of iterative methods,
-including projected gradient methods, proximal operators, and algorithms with nonlinearities.
+```python
+vp = ft.Verifier()
+q = vp.parameter(n, lb=-1, ub=1)
+z = [vp.iterate(n, lb=0, ub=0)]
+for k in range(K):
+    z.append(vp.relu(z[-1] - eta * (P @ z[-1] + q)))
+
+result = vp.codegen("out/pgd", iterates=z, code_optimization=True)
+```
+
 For a guided introduction, see the [FOMTools tutorials](tutorials/index.md), which cover
 [verification](tutorials/verification.md) and [code generation](tutorials/codegen.md)
 examples from optimization and control.
