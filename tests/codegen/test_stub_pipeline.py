@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from fomtools.codegen import StubAgentDriver, generate_code
+from fomtools.codegen import StubAgentDriver, agent, generate_code
 from fomtools.codegen.targets.embedded_c import EmbeddedCTarget
 from tests.codegen.conftest import build_ista, gate
 
@@ -83,10 +83,28 @@ def test_failing_solver_reports_failure(tmp_path, requires_compiler):
     assert not result.translate.success
 
 
-def test_no_driver_without_env_raises(tmp_path):
+def test_no_driver_with_agents_disabled_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("FOMTOOLS_CODEGEN_AGENT", "0")
     case = build_ista()
-    with pytest.raises(RuntimeError, match="No coding-agent driver"):
+    with pytest.raises(RuntimeError, match="FOMTOOLS_CODEGEN_AGENT=0"):
         generate_code(case["verifier"], case["next_state"], tmp_path, config=case["config"])
+
+
+def test_default_driver_is_the_cli_agent(monkeypatch):
+    monkeypatch.delenv("FOMTOOLS_CODEGEN_AGENT", raising=False)
+    monkeypatch.delenv("FOMTOOLS_CODEGEN_BACKEND", raising=False)
+    monkeypatch.setattr(agent.shutil, "which", lambda name: f"/usr/bin/{name}")
+    driver = agent.get_default_driver()
+    assert isinstance(driver, agent.CliAgentDriver)
+    assert driver.spec.name == "claude"
+
+
+def test_default_driver_missing_cli_raises(monkeypatch):
+    monkeypatch.delenv("FOMTOOLS_CODEGEN_AGENT", raising=False)
+    monkeypatch.setenv("FOMTOOLS_CODEGEN_BACKEND", "codex")
+    monkeypatch.setattr(agent.shutil, "which", lambda name: None)
+    with pytest.raises(RuntimeError, match="'codex' is not on PATH"):
+        agent.get_default_driver()
 
 
 def test_restore_hook_reverts_agent_tampering(tmp_path, requires_compiler):

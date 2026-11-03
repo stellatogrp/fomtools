@@ -1,5 +1,12 @@
+import os
+
 import numpy as np
 import pytest
+
+# A codegen call without a driver runs the real CLI agent. Keep tests from reaching
+# one unless the real-agent tests are asked for with FOMTOOLS_CODEGEN_AGENT=1.
+if os.environ.get("FOMTOOLS_CODEGEN_AGENT") != "1":
+    os.environ["FOMTOOLS_CODEGEN_AGENT"] = "0"
 
 from fomtools.verifier import Verifier
 

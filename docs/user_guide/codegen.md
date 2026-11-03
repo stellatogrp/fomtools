@@ -18,9 +18,9 @@ examples, and [the API page](../api/codegen.md) documents each symbol.
 ## Defining the FOM
 
 The Python snippets below reuse the imports and problem data in the first block.
-Calls to `codegen`, `codegen_rolled`, and `generate_code` need a coding-agent CLI
-that is installed and already logged in (`claude` by default), enabled with
-`FOMTOOLS_CODEGEN_AGENT=1`, or an explicit `driver=`. Recording the method requires no coding agent.
+Calls to `codegen`, `codegen_rolled`, and `generate_code` run a coding-agent CLI that
+is installed and already logged in (`claude` by default), unless you pass an explicit
+`driver=`. Recording the method requires no coding agent.
 
 Write the algorithm as a loop, exactly as you would to verify it, and keep the
 iterate sequence. An
@@ -232,9 +232,10 @@ This requires a coding agent: an installed, logged-in agent CLI. Claude Code
 (`claude`, the default), Codex (`codex`), Pi (`pi`), and Cursor (`cursor-agent`)
 are bundled in `fomtools/codegen/agent/agents.yaml`, and any other headless agent
 can be added there or in `~/.config/fomtools/agents.yaml`. No Python packages are
-needed for it. Enable it with `FOMTOOLS_CODEGEN_AGENT=1`, or pass an explicit
-driver (for example a `StubAgentDriver` wrapping a known-good source) for fully
-deterministic, offline runs.
+needed for it. Without a `driver=`, FOMTOOLS uses `claude`, or the agent named in
+`FOMTOOLS_CODEGEN_BACKEND`. Pass an explicit driver (for example a `StubAgentDriver`
+wrapping a known-good source) for fully deterministic, offline runs. Set
+`FOMTOOLS_CODEGEN_AGENT=0` to turn real agents off, as the test suite does.
 
 Select the agent with `FOMTOOLS_CODEGEN_BACKEND` (or `--agent` on the command
 line). Each agent uses its CLI's own default model and configuration, so it
