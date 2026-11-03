@@ -173,7 +173,7 @@ reciprocals). Override with `CodegenConfig(solve_method="LDLT"/"LU"/"CG")`.
 - `AgentDriver`: interface for the LLM coding agent.
 - `StubAgentDriver`: drops a known-good golden solver for CI testing (no LLM needed).
 - Real agents (headless CLIs defined in `fomtools/codegen/agent/agents.yaml`): Claude (`claude`, the default), Codex (`codex`), Pi (`pi`), Cursor (`cursor`, runs `cursor-agent`), or custom CLI agents from `~/.config/fomtools/agents.yaml` (or `$FOMTOOLS_CODEGEN_AGENTS`).
-- Enable real agent: `FOMTOOLS_CODEGEN_AGENT=1`
+- Enable real agent: `FOMTOOLS_CODEGEN_AGENT=1` (the agent CLI must be installed and logged in)
 - Select backend: `FOMTOOLS_CODEGEN_BACKEND=claude`; select its model: `FOMTOOLS_CODEGEN_MODEL=<model>`
 
 ### Agent Phases

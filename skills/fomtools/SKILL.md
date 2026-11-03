@@ -93,7 +93,7 @@ FOMTools generates OSQP-style embedded C solvers from verified FOMs. An LLM codi
 
 Any verifier works, including the default MIP one from the verification example:
 keep all iterates in a list and call `vp.codegen("out/pgd", iterates=z, code_optimization=True)`.
-A real coding agent needs `FOMTOOLS_CODEGEN_AGENT=1` (backend `claude`, `codex`, `pi`, or
+A real coding agent needs its CLI installed and logged in, and `FOMTOOLS_CODEGEN_AGENT=1` (backend `claude`, `codex`, `pi`, or
 `cursor` via `FOMTOOLS_CODEGEN_BACKEND`, model via `FOMTOOLS_CODEGEN_MODEL`).
 
 ```python
