@@ -168,11 +168,29 @@ def _(D, K, eta, lambd, s0, solve_ista_numpy, statistics, time, x_mid):
 
 
 @app.cell(hide_code=True)
+def _(mo):
+    run_agent = mo.ui.run_button(label="Generate with the coding agent")
+    mo.vstack(
+        [
+            mo.md(
+                "The timings below are the recorded benchmark. When you run this "
+                "notebook locally with marimo, click the button to generate, verify, and "
+                "time the solver on your machine instead. It runs the coding-agent CLI "
+                "(`claude` by default, installed and logged in) and takes several minutes."
+            ),
+            run_agent,
+        ]
+    )
+    return (run_agent,)
+
+
+@app.cell(hide_code=True)
 def _(
     config,
     next_s,
     out_dir,
     python_us,
+    run_agent,
     run_lasso_codegen_benchmark,
     s,
     timing_file,
@@ -181,6 +199,7 @@ def _(
 ):
     timings = run_lasso_codegen_benchmark(
         config=config,
+        live=run_agent.value,
         next_state=next_s,
         out_dir=out_dir,
         python_us=python_us,
