@@ -123,9 +123,9 @@ def generate_solver(
         once, so there is no iteration count, tolerance or check interval to
         act on.
     driver:
-        fomtools coding-agent driver. ``None`` uses the default (the Claude
-        agent when ``FOMTOOLS_CODEGEN_AGENT=1`` is set; otherwise an error
-        explains the options).
+        fomtools coding-agent driver. ``None`` uses the default CLI agent
+        (``claude``, or ``FOMTOOLS_CODEGEN_BACKEND``), which must be installed
+        and logged in; ``FOMTOOLS_CODEGEN_AGENT=0`` turns real agents off.
     param_bounds:
         Mapping from CVXPY ``Parameter`` objects (or names) to ``(lb, ub)``
         used for verification sampling. Parameters without bounds fall back to

@@ -74,6 +74,8 @@ These invariants are checked by tests; keep them when editing `fomtools/codegen/
 
 Useful environment variables: `FOMTOOLS_CUDA_RUN=1|0` forces or disables GPU
 execution of the CUDA checks; `FOMTOOLS_CODEGEN_BACKEND` selects the agent and `FOMTOOLS_CODEGEN_MODEL` its model.
+A codegen call without `driver=` runs the real agent CLI; `tests/conftest.py` sets
+`FOMTOOLS_CODEGEN_AGENT=0` to block that, unless you run the real-agent tests with `FOMTOOLS_CODEGEN_AGENT=1`.
 
 ## Conventions
 

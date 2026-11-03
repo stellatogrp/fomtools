@@ -14,6 +14,7 @@ to pick another model. Anything that is not a CLI can implement the
 from __future__ import annotations
 
 import os
+import shutil
 
 from fomtools.codegen.agent.driver import (
     AgentBackendError,
@@ -45,6 +46,7 @@ __all__ = [
 ]
 
 _DEFAULT_BACKEND = "claude"
+_OFF = {"0", "false", "no", "off"}  # FOMTOOLS_CODEGEN_AGENT values that disable real agents
 
 
 def available_backends() -> list[str]:
@@ -74,19 +76,33 @@ def make_agent_driver(backend: str | None = None, config=None) -> AgentDriver:
 
 
 def get_default_driver(config=None, backend: str | None = None) -> AgentDriver:
-    """Return the default coding agent.
+    """Return the coding agent used when no driver is passed.
 
-    A real backend is used only when explicitly enabled via
-    ``FOMTOOLS_CODEGEN_AGENT=1`` (they are nondeterministic and need auth).
-    Without that, callers must pass an explicit driver (e.g. a
-    `StubAgentDriver`). The backend (``claude`` by default, or any
-    registered CLI agent) is selected via ``backend`` /
-    ``FOMTOOLS_CODEGEN_BACKEND``.
+    This is the real CLI agent from `make_agent_driver`: ``claude`` by default,
+    or the one selected via ``backend`` / ``FOMTOOLS_CODEGEN_BACKEND``. Its CLI
+    must be installed and logged in. Set ``FOMTOOLS_CODEGEN_AGENT=0`` (or ``false``, ``no``,
+    ``off``) to disable
+    real agents (the test suite does), so that a call without a driver fails
+    instead of running a nondeterministic, paid agent.
+
+    Raises
+    ------
+    RuntimeError
+        If real agents are disabled, or the backend's CLI is not on PATH.
     """
-    if os.environ.get("FOMTOOLS_CODEGEN_AGENT") == "1":
-        return make_agent_driver(backend=backend, config=config)
-    raise RuntimeError(
-        "No coding-agent driver provided. Either pass driver=... (e.g. "
-        "StubAgentDriver) or set FOMTOOLS_CODEGEN_AGENT=1 to use a real "
-        "coding-agent backend (claude, codex, pi, or a custom CLI agent)."
-    )
+    if os.environ.get("FOMTOOLS_CODEGEN_AGENT", "").strip().lower() in _OFF:
+        raise RuntimeError(
+            "No coding-agent driver provided and real agents are disabled "
+            "(FOMTOOLS_CODEGEN_AGENT=0). Pass driver=... (e.g. StubAgentDriver) "
+            "or unset FOMTOOLS_CODEGEN_AGENT."
+        )
+    driver = make_agent_driver(backend=backend, config=config)
+    if shutil.which(driver.bin) is None:
+        spec = driver.spec
+        raise RuntimeError(
+            f"No coding-agent driver provided and the {spec.display_name or spec.name} "
+            f"CLI {driver.bin!r} is not on PATH. {spec.install_hint} Or choose another "
+            "agent with FOMTOOLS_CODEGEN_BACKEND (claude, codex, pi, cursor), or pass "
+            "driver=..."
+        )
+    return driver
