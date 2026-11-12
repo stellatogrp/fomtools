@@ -141,6 +141,24 @@ def user_bounds_vector(
     return lb, ub, unbounded
 
 
+def is_upper_triangular(P: spa.spmatrix) -> bool:
+    """Whether ``P`` stores nothing below its diagonal.
+
+    cvxpygen built on CVXPY's canonical maps stores only the upper triangle of
+    the symmetric canonical ``P`` (the OSQP convention); older cvxpygen stores
+    the full matrix. A diagonal ``P`` reads the same either way.
+    """
+    return spa.tril(P, k=-1).nnz == 0
+
+
+def full_symmetric_P(P: spa.spmatrix) -> spa.csc_matrix:
+    """The full symmetric canonical ``P``, whichever convention cvxpygen used."""
+    P = spa.csc_matrix(P)
+    if is_upper_triangular(P):
+        P = spa.csc_matrix(P + spa.triu(P, k=1).T)
+    return P
+
+
 def _parametric_rows(mapping: spa.spmatrix) -> np.ndarray:
     """Boolean mask of rows that depend on user parameters (not just the constant)."""
     M = spa.csr_matrix(mapping)[:, :-1]
@@ -162,7 +180,7 @@ def extract_qp_data(canon, param_bounds: dict | None = None, bound_margin: float
                 "right-hand sides."
             )
 
-    P = spa.csc_matrix(pc.p["P"])
+    P = full_symmetric_P(pc.p["P"])
     A = spa.csc_matrix(pc.p["A"]) if pc.p["A"] is not None else spa.csc_matrix((0, P.shape[0]))
     q = np.asarray(pc.p["q"], dtype=float).ravel()
     l_full = np.asarray(pc.p["l"], dtype=float).ravel()

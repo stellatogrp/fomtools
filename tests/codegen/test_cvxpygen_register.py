@@ -48,9 +48,15 @@ def test_seam_canary():
     # Dispatch seam wrapped by register().
     assert callable(Canonicalizer._get_interface_class)
 
-    # Interface construction contract: interface_class(data, p_prob, enable_settings).
+    # Interface construction contract: interface_class(data, p_prob, enable_settings)
+    # in cvxpygen 1.0, interface_class(canon_maps, enable_settings) once cvxpygen
+    # builds on CVXPY's canonical maps (cvxpy/cvxpygen#133). FomtoolsInterface
+    # forwards either; a third shape needs a look.
     params = list(inspect.signature(QPCanonMixin.__init__).parameters)
-    assert params == ["self", "data", "p_prob", "enable_settings"], params
+    assert params in (
+        ["self", "data", "p_prob", "enable_settings"],
+        ["self", "canon_maps", "enable_settings"],
+    ), params
 
     # generate_code hook signature used by Generator._run_solver_code_generation.
     params = list(inspect.signature(SolverInterface.generate_code).parameters)
