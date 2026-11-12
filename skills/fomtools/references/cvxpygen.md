@@ -60,6 +60,7 @@ Use a *relative* `code_dir` -- CVXPYgen imports `<code_dir>.cpg_solver`.
 | `fom=` | Description | Options (`fom_options=`) |
 |--------|-------------|------------------------|
 | `"admm"` | ADMM (default). Sparse LDLt + projection. Works for any QP. | `rho`, `sigma`, `alpha`, `rho_eq_scale` |
+| `"relaxed_admm"` | Same operator as ADMM, over-relaxation `alpha_k` ramps linearly with the iteration (scheduled path). Any sequence in (0, 2) converges. | `rho`, `sigma`, `rho_eq_scale`, `alpha_start` (1.0), `alpha_final` (1.9), `ramp_iters` (50) |
 | `"pdhg"` | PDHG / Chambolle-Pock. SpMV only, no factorization. For LPs (zero quadratic term). | `step_scale` |
 | Custom callable | `f(qp, **fom_options) -> FomSpec` | User-defined |
 
