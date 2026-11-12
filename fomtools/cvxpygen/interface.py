@@ -303,7 +303,6 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
 
     solver_name = "FOMTOOLS"
     cvxpy_solver_name = "OSQP"
-    supports_quad_obj = True
 
     # The bridge re-reads Canon_Params on every solve, so no per-parameter
     # solver update calls are needed.
