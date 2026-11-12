@@ -14,7 +14,9 @@ Generation options that cvxpygen's plumbing does not carry (FOM choice,
 fomtools config, agent driver, parameter bounds) travel through a
 context-variable set by `fomtools.cvxpygen.api.generate_solver`.
 
-Validated against cvxpygen 1.x (see the seam-canary test in
+Validated against cvxpygen 1.x, both before and after it moved to CVXPY's
+canonical maps (cvxpy/cvxpygen#133), which changed the interface constructor
+and stores only the upper triangle of ``P`` (see the seam-canary test in
 ``tests/codegen/test_cvxpygen_register.py``).
 """
 
@@ -40,7 +42,7 @@ from fomtools.codegen.generate import generate_code as fomtools_generate_code
 from fomtools.codegen.targets import get_target
 from fomtools.cvxpygen.builders import ScheduledFomSpec, fom_kind, resolve_builder
 from fomtools.cvxpygen.glue import cmake_solver_sources, emit_bridge, write_solver_cmake_stub
-from fomtools.cvxpygen.qpdata import extract_qp_data
+from fomtools.cvxpygen.qpdata import extract_qp_data, is_upper_triangular
 from fomtools.cvxpygen.scaling import ruiz_for, scale_qp
 
 #: (version, backend) combinations the cvxpygen integration can emit a build for.
@@ -301,7 +303,6 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
 
     solver_name = "FOMTOOLS"
     cvxpy_solver_name = "OSQP"
-    supports_quad_obj = True
 
     # The bridge re-reads Canon_Params on every solve, so no per-parameter
     # solver update calls are needed.
@@ -349,7 +350,10 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
 
     docu = "https://github.com/stellatogrp/fomtools"
 
-    def __init__(self, data, p_prob, enable_settings):
+    def __init__(self, *args, **kwargs):
+        # cvxpygen 1.0 passes (data, p_prob, enable_settings); cvxpygen built on
+        # CVXPY's canonical maps passes (canon_maps, enable_settings). Nothing
+        # here reads them, so forward whichever arrived.
         opts = _current_options()
         # The settings struct is written before canonicalization reaches
         # generate_code, so which settings exist has to come from what the
@@ -367,7 +371,7 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
         # Build sources follow the chosen target: OpenMP reuses the embedded C
         # files; CUDA emits .cu translation units. The bridge stays host C.
         self.cmake_sources = cmake_solver_sources(get_target(opts.config))
-        super().__init__(data, p_prob, enable_settings)
+        super().__init__(*args, **kwargs)
 
     def generate_code(
         self, configuration, code_dir, solver_code_dir, cvxpygen_directory, canon, gradient, prefix
@@ -426,7 +430,8 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
         _check_ir_matches_kind(result.ir, kind)
 
         # The bridge's objective loop exists iff Canon_Params has a P member.
-        has_quad_term = canon.parameter_canon.p.get("P") is not None
+        P_canon = canon.parameter_canon.p.get("P")
+        has_quad_term = P_canon is not None
         emit_bridge(
             spec,
             qp,
@@ -444,6 +449,9 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
             # _unrolled_iter_count.
             iter_count=_unrolled_iter_count(spec) if result.ir.unrolled else None,
             scaling=scaling,
+            # Which convention Canon_Params.P follows (full or upper triangle)
+            # depends on the cvxpygen version; the bridge's x'Px must match it.
+            p_upper=has_quad_term and is_upper_triangular(P_canon),
         )
         write_solver_cmake_stub(solver_code_dir)
 

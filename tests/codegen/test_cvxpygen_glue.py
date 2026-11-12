@@ -9,13 +9,21 @@ importing cvxpygen or running cvxpygen's canonicalizer. The full end-to-end path
 
 from __future__ import annotations
 
+import subprocess
+
 import numpy as np
+import pytest
 import scipy.sparse as spa
 
 from fomtools.codegen.config import Backend, CodegenConfig, Version
 from fomtools.codegen.targets import get_target
 from fomtools.cvxpygen.builders import FomSpec
-from fomtools.cvxpygen.glue import cmake_solver_sources, emit_bridge
+from fomtools.cvxpygen.glue import (
+    _p_matvec_src,
+    _quad_objective_src,
+    cmake_solver_sources,
+    emit_bridge,
+)
 from fomtools.cvxpygen.qpdata import QPData
 
 
@@ -249,3 +257,71 @@ def test_bridge_scales_inequality_bounds_but_keeps_infinities(tmp_path):
     # u_ineq rows start after the n_eq = 2 equality rows.
     assert "bridge_E[2 + i] * (Canon_Params.u + 2)[i]" in src
     assert ">= 1e+30" in src
+
+
+def test_bridge_full_P_by_default(tmp_path):
+    src = _emit(tmp_path, _qp())
+    assert "fom_obj_val += 0.5 * Canon_Params.P->x[j]" in src
+    assert "if (Canon_Params.P->i[j] != i)" not in src
+
+
+def test_bridge_mirrors_an_upper_triangular_P(tmp_path):
+    src = _emit(tmp_path, _qp(), p_upper=True)
+    assert "(Canon_Params.P->i[j] == i ? 0.5 : 1.0)" in src
+    assert (
+        "if (Canon_Params.P->i[j] != i) bridge_g[i] += Canon_Params.P->x[j] * "
+        "sol_x[Canon_Params.P->i[j]];" in src
+    )
+
+
+@pytest.mark.requires_compiler
+@pytest.mark.parametrize("p_upper", [False, True])
+def test_bridge_quadratic_terms_match_numpy(requires_compiler, tmp_path, p_upper):
+    """Compile the bridge's x'Px and Px loops on a dense symmetric P.
+
+    cvxpygen before cvxpy/cvxpygen#133 stores the full P in Canon_Params,
+    after it only the upper triangle; each stored form, read with the matching
+    ``p_upper``, has to give the full matrix's objective and P x.
+    """
+    n = 4
+    rng = np.random.default_rng(0)
+    W = rng.standard_normal((n, n))
+    P_full = W @ W.T + np.eye(n)
+    x = rng.standard_normal(n)
+    P = spa.csc_matrix(np.triu(P_full) if p_upper else P_full)
+
+    def arr(ctype, values):
+        fmt = (lambda v: str(int(v))) if ctype == "int" else (lambda v: repr(float(v)))
+        return "{" + ", ".join(fmt(v) for v in values) + "}"
+
+    harness = f"""
+#include <stdio.h>
+typedef struct {{ int *p; int *i; double *x; }} csc;
+static int Pp[] = {arr("int", P.indptr)};
+static int Pi[] = {arr("int", P.indices)};
+static double Px[] = {arr("double", P.data)};
+static csc P_mat = {{Pp, Pi, Px}};
+static struct {{ csc *P; }} Canon_Params = {{&P_mat}};
+static double sol_x[] = {arr("double", x)};
+static double bridge_g[{n}];
+static double fom_obj_val = 0.0;
+int main(void) {{
+  int i, j;
+{_quad_objective_src(n, "", p_upper)}
+{_p_matvec_src(n, "", p_upper)}
+  printf("%.17g\\n", fom_obj_val);
+  for (i = 0; i < {n}; i++) printf("%.17g\\n", bridge_g[i]);
+  return 0;
+}}
+"""
+    c_file = tmp_path / "harness.c"
+    c_file.write_text(harness)
+    exe = tmp_path / "harness"
+    subprocess.run([requires_compiler, str(c_file), "-o", str(exe)], check=True)
+    out = np.array(
+        subprocess.run([str(exe)], check=True, capture_output=True, text=True).stdout.split(),
+        dtype=float,
+    )
+
+    np.testing.assert_allclose(out[0], 0.5 * x @ P_full @ x, rtol=1e-12)
+    np.testing.assert_allclose(out[1:], P_full @ x, rtol=1e-12)

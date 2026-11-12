@@ -146,10 +146,47 @@ def _param_copy_line(piece: str, index: int, src: str, offset: int, scaled: bool
     return f"    fom_params.p{index}[i] = (fom_float)({rhs});"
 
 
-def _residual_block(qp: QPData, prefix: str, has_quad_term: bool) -> str:
+def _p_matvec_src(n: int, prefix: str, p_upper: bool) -> str:
+    """C code adding ``P x`` to ``bridge_g`` from ``Canon_Params.P`` (CSC).
+
+    With ``p_upper`` the stored ``P`` is only the upper triangle of the
+    symmetric matrix (the convention of CVXPY's canonical maps), so each
+    off-diagonal entry also contributes its mirror.
+    """
+    P = f"{prefix}Canon_Params.P"
+    lines = [
+        f"  for (i = 0; i < {n}; i++) {{  /* + P x */",
+        f"    for (j = {P}->p[i]; j < {P}->p[i + 1]; j++) {{",
+        f"      bridge_g[{P}->i[j]] += {P}->x[j] * sol_x[i];",
+    ]
+    if p_upper:
+        lines.append(f"      if ({P}->i[j] != i) bridge_g[i] += {P}->x[j] * sol_x[{P}->i[j]];")
+    lines += ["    }", "  }"]
+    return "\n".join(lines)
+
+
+def _quad_objective_src(n: int, prefix: str, p_upper: bool) -> str:
+    """C code adding ``(1/2) x^T P x`` to ``fom_obj_val`` from ``Canon_Params.P``.
+
+    With ``p_upper`` each stored off-diagonal entry stands for two entries of
+    the symmetric matrix, so it is weighted 1 instead of 1/2.
+    """
+    P = f"{prefix}Canon_Params.P"
+    weight = f"({P}->i[j] == i ? 0.5 : 1.0)" if p_upper else "0.5"
+    return (
+        f"  for (i = 0; i < {n}; i++) {{\n"
+        f"    for (j = {P}->p[i]; j < {P}->p[i + 1]; j++) {{\n"
+        f"      fom_obj_val += {weight} * {P}->x[j] * sol_x[{P}->i[j]] * sol_x[i];\n"
+        "    }\n"
+        "  }\n"
+    )
+
+
+def _residual_block(qp: QPData, prefix: str, has_quad_term: bool, p_upper: bool) -> str:
     """C code computing OSQP-style primal/dual residuals into the info globals.
 
-    ``Canon_Params`` exposes the canonical ``P`` (``n x n`` symmetric, CSC) and
+    ``Canon_Params`` exposes the canonical ``P`` (``n x n`` CSC, full or upper
+    triangle per ``p_upper``) and
     ``A`` (``m x n``, CSC by variable columns) matrices plus the bound vectors
     ``l``/``u`` (length ``m``, infinities clamped to ``+/-1e30``). With the
     returned primal ``sol_x`` and dual ``sol_y`` this yields the same residuals
@@ -182,12 +219,7 @@ def _residual_block(qp: QPData, prefix: str, has_quad_term: bool) -> str:
     # Dual residual: ||P x + q + A^T y||_inf.
     lines.append(f"  for (i = 0; i < {n}; i++) bridge_g[i] = {p}Canon_Params.q[i];")
     if has_quad_term:
-        lines += [
-            f"  for (i = 0; i < {n}; i++) {{  /* + P x (P is {n}x{n} symmetric, CSC) */",
-            f"    for (j = {p}Canon_Params.P->p[i]; j < {p}Canon_Params.P->p[i + 1]; j++)",
-            f"      bridge_g[{p}Canon_Params.P->i[j]] += {p}Canon_Params.P->x[j] * sol_x[i];",
-            "  }",
-        ]
+        lines.append(_p_matvec_src(n, p, p_upper))
     if m > 0:
         lines += [
             f"  for (i = 0; i < {n}; i++) {{  /* + A^T y */",
@@ -215,6 +247,7 @@ def emit_bridge(
     schedule_len: int | None = None,
     iter_count: int | None = None,
     scaling: Scaling | None = None,
+    p_upper: bool = False,
 ) -> None:
     """Write ``include/cpg_fom_bridge.h`` and ``src/cpg_fom_bridge.c``.
 
@@ -236,6 +269,11 @@ def emit_bridge(
     the way in, the primal and dual solution unscaled on the way out
     (``x = D x~``, ``y = E y~ / c``), and the residuals and objective, which
     read the original ``Canon_Params``, are those of the original problem.
+
+    ``p_upper`` says that ``Canon_Params.P`` stores only the upper triangle of
+    the symmetric ``P`` (cvxpygen built on CVXPY's canonical maps) rather than
+    the full matrix (older cvxpygen); the objective and dual residual then
+    account for the mirrored off-diagonal entries.
     """
     solver_code_dir = Path(solver_code_dir)
     n, m = qp.n, qp.m
@@ -289,13 +327,7 @@ extern void {fn}(void);
     copies_src = "\n".join(copies)
 
     if has_quad_term:
-        quad_src = f"""\
-  for (i = 0; i < {n}; i++) {{
-    for (j = {prefix}Canon_Params.P->p[i]; j < {prefix}Canon_Params.P->p[i + 1]; j++) {{
-      fom_obj_val += 0.5 * {prefix}Canon_Params.P->x[j] * sol_x[{prefix}Canon_Params.P->i[j]] * sol_x[i];
-    }}
-  }}
-"""
+        quad_src = _quad_objective_src(n, prefix, p_upper)
     else:
         quad_src = "  /* no quadratic term */\n"
 
@@ -308,7 +340,7 @@ extern void {fn}(void);
             f"   * counter is 1; report the {iter_count} iterations it performs. */\n"
             f"  fom_iter = {iter_count};"
         )
-    residual_src = _residual_block(qp, prefix, has_quad_term)
+    residual_src = _residual_block(qp, prefix, has_quad_term, p_upper)
     # Scratch for the residual evaluation (statically allocated, like sol_x).
     scratch = (
         f"static double bridge_Ax[{max(m, 1)}];  /* A x, for the primal residual */\n"

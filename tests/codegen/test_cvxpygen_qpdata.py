@@ -4,13 +4,18 @@ import warnings
 
 import numpy as np
 import pytest
+import scipy.sparse as spa
 
 cp = pytest.importorskip("cvxpy")
 from tests.codegen.conftest import importorskip_cvxpygen  # noqa: E402
 
 importorskip_cvxpygen()
 
-from fomtools.cvxpygen.qpdata import extract_qp_data  # noqa: E402
+from fomtools.cvxpygen.qpdata import (  # noqa: E402
+    extract_qp_data,
+    full_symmetric_P,
+    is_upper_triangular,
+)
 
 from .conftest import cvxpygen_canonicalize  # noqa: E402
 
@@ -116,3 +121,45 @@ def test_extract_parametric_inequality_rhs():
     lo, hi = qp.bounds["u_ineq"]
     np.testing.assert_allclose(lo, 0.5 * np.ones(3))
     np.testing.assert_allclose(hi, 2.0 * np.ones(3))
+
+
+def _dense_P_qp(n=4, seed=0):
+    """QP with a dense quadratic cost and a parametric linear cost."""
+    W = np.random.default_rng(seed).standard_normal((n, n))
+    P = W @ W.T + np.eye(n)
+    q = cp.Parameter(n, name="q")
+    x = cp.Variable(n, name="x")
+    problem = cp.Problem(cp.Minimize(0.5 * cp.quad_form(x, P) + q @ x), [cp.sum(x) == 1, x >= -1])
+    q.value = np.zeros(n)
+    return problem, q, P
+
+
+def test_extract_dense_P_is_full_symmetric():
+    # Holds for either cvxpygen convention: the full P (cvxpygen 1.0) or its
+    # upper triangle (cvxpygen on CVXPY's canonical maps, cvxpy/cvxpygen#133).
+    problem, q, P = _dense_P_qp()
+    canon, _ = cvxpygen_canonicalize(problem)
+    qp = extract_qp_data(canon, param_bounds={q: (-1.0, 1.0)})
+    np.testing.assert_allclose(qp.P.toarray(), P, atol=1e-12)
+
+
+def test_extract_either_P_convention_gives_the_same_qp():
+    # Swap the stored P for the other convention than the installed cvxpygen
+    # produces (full <-> upper triangle); the extracted QP must not change.
+    problem, q, P = _dense_P_qp()
+    canon, _ = cvxpygen_canonicalize(problem)
+    for stored in (spa.csc_matrix(P), spa.csc_matrix(np.triu(P))):
+        canon.parameter_canon.p["P"] = stored
+        qp = extract_qp_data(canon, param_bounds={q: (-1.0, 1.0)})
+        np.testing.assert_allclose(qp.P.toarray(), P, atol=1e-12)
+
+
+def test_full_symmetric_P_conventions():
+    P = np.array([[2.0, 1.0, 0.0], [1.0, 3.0, -1.0], [0.0, -1.0, 4.0]])
+    for stored in (P, np.triu(P)):
+        np.testing.assert_array_equal(full_symmetric_P(spa.csc_matrix(stored)).toarray(), P)
+    D = np.diag(np.diag(P))
+    np.testing.assert_array_equal(full_symmetric_P(spa.csc_matrix(D)).toarray(), D)
+    assert is_upper_triangular(spa.csc_matrix(np.triu(P)))
+    assert is_upper_triangular(spa.csc_matrix(D))
+    assert not is_upper_triangular(spa.csc_matrix(P))
