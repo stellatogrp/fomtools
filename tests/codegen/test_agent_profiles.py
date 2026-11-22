@@ -1,6 +1,7 @@
 """The bundled agent profiles: the defaults, pinned, and the restricted variants."""
 
 import json
+import tomllib
 from dataclasses import replace
 
 import pytest
@@ -18,12 +19,27 @@ HOOKS = {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command"
 FOREGROUND = {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}
 CLAUDE_COMMON = ["-p", "--setting-sources", "", "--strict-mcp-config"]
 CLAUDE_COMMON += ["--output-format", "stream-json", "--verbose"]
+# Well-known credential locations that the restricted profiles hide from the
+# agent's commands. Generic names only: nothing specific to a machine or a user.
+DENY_READ = [
+    *["~/.ssh", "~/.aws", "~/.gnupg", "~/.config/gh", "~/.config/gcloud", "~/.azure"],
+    *["~/.kube", "~/.docker", "~/.netrc", "~/.npmrc", "~/.pypirc", "~/.git-credentials"],
+]
 SANDBOX = {
     "enabled": True,
     "failIfUnavailable": True,
     "allowUnsandboxedCommands": False,
     "autoAllowBashIfSandboxed": False,
+    "filesystem": {"denyRead": DENY_READ},
 }
+CODEX_PERMISSIONS = [
+    *["-c", 'default_permissions="fomtools"'],
+    *["-c", 'permissions.fomtools.extends=":workspace"'],
+    *[
+        "-c",
+        "permissions.fomtools.filesystem={" + ",".join(f'"{p}"="deny"' for p in DENY_READ) + "}",
+    ],
+]
 BASH_RULES = "Bash(make *),Bash(./verify_bin *),Bash(./bench_bin *),Bash(./profile_bin *)"
 
 
@@ -125,14 +141,31 @@ def test_claude_sandboxed_differs_from_claude_only_in_permissions():
 def test_codex_sandboxed_argv():
     argv = _argv("codex-sandboxed")
     assert argv == [
-        *["codex", "exec", "--skip-git-repo-check", "--sandbox", "workspace-write"],
+        *["codex", "exec", "--skip-git-repo-check", *CODEX_PERMISSIONS],
         *["--ignore-user-config", "--ignore-rules", "--ephemeral"],
         *["--cd", "/w", SYSTEM_PROMPT + "\n\nPROMPT"],
     ]
     assert "--dangerously-bypass-approvals-and-sandbox" not in argv
+    # A permissions profile replaces `--sandbox`; Codex rejects the two together.
+    assert "--sandbox" not in argv
     default, restricted = get_spec("codex"), get_spec("codex-sandboxed")
     same = replace(restricted, name="codex", flags=default.flags, display_name="Codex")
     assert same == default
+
+
+def test_restricted_profiles_deny_reads_of_credential_locations():
+    _, settings = _split_settings(_argv("claude-sandboxed"))
+    assert settings["sandbox"]["filesystem"] == {"denyRead": DENY_READ}
+    # Codex takes the same list, as a TOML table of `"<path>" = "deny"` entries.
+    flags = get_spec("codex-sandboxed").flags
+    table = tomllib.loads(next(f for f in flags if f.startswith("permissions.fomtools.filesystem")))
+    assert table["permissions"]["fomtools"]["filesystem"] == dict.fromkeys(DENY_READ, "deny")
+    # Home-relative paths only, and neither CLI's own login directory.
+    assert all(p.startswith("~/.") for p in DENY_READ)
+    assert not any(p.startswith(("~/.claude", "~/.codex")) for p in DENY_READ)
+    # The default profiles carry no such list.
+    assert "sandbox" not in _split_settings(_argv("claude"))[1]
+    assert not any("permissions" in f for f in get_spec("codex").flags)
 
 
 # --- selecting a profile by name ---------------------------------------------
@@ -153,5 +186,6 @@ def test_profile_selected_on_the_command_line(monkeypatch):
     parser = cli.build_parser()
     args = parser.parse_args(["--example", "ista", "--out", "o", "--agent", "codex-sandboxed"])
     driver = cli._make_driver(args, cli._build_config(args))
-    assert driver.spec.name == "codex-sandboxed" and "--sandbox" in driver.spec.flags
+    assert driver.spec.name == "codex-sandboxed"
+    assert 'default_permissions="fomtools"' in driver.spec.flags
     assert "claude-sandboxed" in parser.format_help()

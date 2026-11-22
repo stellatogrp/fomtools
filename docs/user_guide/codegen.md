@@ -303,31 +303,61 @@ defaults are unchanged.
   run fails at startup if the sandbox cannot start. The deadline hook and the
   isolation from your own settings are those of `claude`. A run leaves an empty
   `.claude/` directory in the output directory, which you can delete.
-- `codex-sandboxed` runs `codex exec --sandbox workspace-write` in place of the
-  bypass. Commands can write only in the output directory, `/tmp` and `$TMPDIR`,
-  and have no network. `codex exec` never asks for approval, so a blocked command
-  fails. Any command may run, not only `make`.
+- `codex-sandboxed` runs `codex exec` with a permissions profile in place of the
+  bypass. The profile extends Codex's built-in `:workspace` profile, which is
+  the `workspace-write` sandbox. Commands can write only in the output
+  directory, `/tmp` and `$TMPDIR`, and have no network. `codex exec` never asks
+  for approval, so a blocked command fails. Any command may run, not only
+  `make`.
 
-Neither profile keeps your files private. They limit writes and network access,
-not reads:
+Neither profile keeps your files private. They limit writes and network access.
+Reads are limited only by a short list. Both profiles hide these well-known
+credential locations from the commands the agent runs, including a `make` recipe
+and a compiled binary:
 
-- With `codex-sandboxed`, every command can read any file you can.
+```
+~/.ssh  ~/.aws  ~/.gnupg  ~/.config/gh  ~/.config/gcloud  ~/.azure
+~/.kube  ~/.docker  ~/.netrc  ~/.npmrc  ~/.pypirc  ~/.git-credentials
+```
+
+`claude-sandboxed` passes the list as `sandbox.filesystem.denyRead` in its
+`--settings`. `codex-sandboxed` passes it as `"<path>" = "deny"` entries of its
+permissions profile. A path that does not exist on your machine is harmless. The
+agent's own login is not on the list, so it keeps working.
+
+This list is a default, and it cannot be complete. Everything else stays
+readable:
+
+- With `codex-sandboxed`, every command can read any other file you can.
 - With `claude-sandboxed`, the file tools and the shell commands Claude Code
   inspects (`cat`, `wc`, and the like) are refused outside the output directory.
-  A `make` recipe or a compiled binary is not inspected. It can read any file you
-  can, such as `~/.ssh` or a file of API keys.
+  A `make` recipe or a compiled binary is not inspected. It can read any other
+  file you can, such as a file of API keys in your home directory, a `.env` file
+  in another project, or a browser profile.
 - With both, commands inherit your environment variables, including any keys in
-  them.
+  them. The list does not change that.
 
 What a command prints goes back to the agent, and so to its model provider. The
-sandbox blocks other network access from the commands, but not that channel. To
-hide files from the commands of `claude-sandboxed`, copy its entry to
-`~/.config/fomtools/agents.yaml` and add paths under `sandbox.filesystem.denyRead`
-in its `--settings` (for example `"filesystem":{"denyRead":["~/.ssh"]}`, which
-was checked to block the read inside `make`). Denying the whole home directory
-stops `make` when the output directory is inside it. To
-keep everything else out of reach, run FOMTools in a container or a virtual
-machine.
+sandbox blocks other network access from the commands, but not that channel.
+
+To hide more files, copy the profile's entry from the packaged `agents.yaml` to
+`~/.config/fomtools/agents.yaml` under the same name, and add your paths. Your
+copy replaces the packaged entry, so keep the paths that are already there. For
+`claude-sandboxed`, add them to `denyRead` in the `--settings` JSON:
+
+```json
+"filesystem": {"denyRead": ["~/.ssh", "...", "~/my-keys.env"]}
+```
+
+For `codex-sandboxed`, add them to the `permissions.fomtools.filesystem` table:
+
+```toml
+permissions.fomtools.filesystem={"~/.ssh"="deny", ..., "~/my-keys.env"="deny"}
+```
+
+Do not deny the whole home directory with `claude-sandboxed`. That stops `make`
+when the output directory is inside it. To keep everything else out of reach, run
+FOMTools in a container or a virtual machine.
 
 Pi and Cursor have no restricted profile. Pi can switch whole tools off
 (`--tools`), but it cannot limit what its `bash` tool runs or where it writes.
@@ -350,7 +380,9 @@ Both profiles were checked on macOS with Claude Code 2.1.330 and Codex CLI
 | Inside `make`: write to `$TMPDIR` | allowed | allowed |
 | Inside `make`: write to `/tmp` | denied | allowed |
 | Inside `make`: network request | denied | denied |
-| Inside `make`: read `~/.ssh` or another file in the home directory | allowed | allowed |
+| Inside `make`: list a directory on the deny list (`~/.ssh`, `~/.config/gh`, `~/.docker`) | denied | denied |
+| Inside `make`: read a file in a directory added to the deny list | denied | denied |
+| Inside `make`: read another file in the home directory | allowed | allowed |
 | Directly: `curl --version`, `cc --version`, `sh -c ...`, `FOO=1 make` | denied | not checked |
 | Directly: a network request with `curl` | denied | denied |
 | Directly: `touch` outside the directory | denied | no file created |
