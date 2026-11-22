@@ -238,7 +238,9 @@ wrapping a known-good source) for fully deterministic, offline runs. Set
 `FOMTOOLS_CODEGEN_AGENT=0` to turn real agents off, as the test suite does.
 
 Select the agent with `FOMTOOLS_CODEGEN_BACKEND` (or `--agent` on the command
-line). Each agent uses its CLI's own default model and configuration, so it
+line). The agents run with full access by default; see
+[the restricted profiles](#what-the-agent-may-do-and-the-restricted-profiles).
+Each agent uses its CLI's own default model and configuration, so it
 follows the CLI's updates. To pick a model, set `CodegenConfig(agent_model=...)`
 (`--model` on the command line), which takes precedence over
 `FOMTOOLS_CODEGEN_MODEL`:
@@ -264,6 +266,59 @@ timings when measured, and a SHA-256 of every source a library build compiles
 (`src/`, the generated headers in `include/`, and `release/`). A new run on the
 directory removes it first, so a run that fails or is interrupted leaves none.
 An interrupted code optimization round also puts the best verified sources back.
+
+### What the agent may do, and the restricted profiles
+
+The agent runs in the output directory. All it needs is to read and edit files
+there and to run the target's `make` targets (`verify`, `bench`, `profile`) and
+the binaries they build. The default profiles do not enforce this. They turn the
+CLI's own permission checks off, so the agent can run any command and write
+anywhere you can:
+
+| Profile | Flags that grant access |
+|---|---|
+| `claude` | `--permission-mode bypassPermissions`, with the file tools and an unrestricted `Bash` |
+| `codex` | `--dangerously-bypass-approvals-and-sandbox` |
+| `pi` | `--print --approve`, with pi's unrestricted `bash` tool |
+| `cursor` | `--print --force` |
+
+Two opt-in profiles confine the agent. Select them like any other agent, with
+`--agent claude-sandboxed` or `FOMTOOLS_CODEGEN_BACKEND=codex-sandboxed`. The
+defaults are unchanged.
+
+- `claude-sandboxed` runs Claude Code with `--permission-mode acceptEdits` and
+  `--permission-prompts none`. File edits inside the output directory are
+  accepted. Anything else that would need approval is denied instead of asked.
+  `--tools` limits the built-in tools to `Read`, `Write`, `Edit`, `Bash`, `Glob`
+  and `Grep`. `Bash` runs only `make ...`, `./verify_bin`, `./bench_bin` and
+  `./profile_bin`, plus the read-only commands Claude Code always permits (`ls`,
+  `cat`, and the like). A compiler call outside `make` is refused. Those commands
+  run in Claude Code's Bash sandbox (Seatbelt on macOS, `bubblewrap` and `socat`
+  on Linux), which lets them write only in the output directory and a temporary
+  directory and gives them no network. The sandbox is what confines an edited
+  `Makefile` or the solver binary itself; the command list alone would not. The
+  run fails at startup if the sandbox cannot start. The deadline hook and the
+  isolation from your own settings are those of `claude`.
+- `codex-sandboxed` runs `codex exec --sandbox workspace-write` in place of the
+  bypass. Commands can write only in the output directory, `/tmp` and `$TMPDIR`,
+  and have no network. `codex exec` never asks for approval, so a blocked command
+  fails. Reads are not restricted.
+
+Pi and Cursor have no restricted profile. Pi can switch whole tools off
+(`--tools`), but it cannot limit what its `bash` tool runs or where it writes.
+The Cursor CLI was not available to check. To confine either one, run FOMTools
+inside a container or a virtual machine.
+
+Both profiles were checked on macOS with Claude Code 2.1.330 and Codex CLI
+0.167.0. `make` built and ran a binary. A write to the home directory and a
+network request from inside `make` were refused. With Claude Code, so were
+`curl`, `cc` called directly, and a file-tool write outside the directory. One
+run of the `ista` example on the embedded C target, with code optimization off,
+passed `make verify` with each profile. Not tested: the code optimization phase,
+the OpenMP target (it runs the same `make` targets, so it is expected to work),
+Linux, and the CUDA target. The CUDA target needs `nvcc` and access to the GPU
+device, which a sandbox may block, so use the default profiles there until you
+have checked it on your machine.
 
 ## Using the generated solver
 

@@ -52,6 +52,46 @@ agents:
     auth_hint: Run `claude` once and log in.
     install_hint: Install Claude Code (https://claude.com/claude-code) and ensure `claude` is on PATH.
 
+  # Claude Code, restricted (opt-in: `--agent claude-sandboxed`). The same entry
+  # as `claude` except for what the agent may do:
+  # - `acceptEdits` with `--permission-prompts none`: file edits inside the
+  #   output dir are accepted, and anything that would need approval is denied
+  #   instead of asked. No bare Write/Edit allow rule, which would cover any path.
+  # - `--tools` limits the built-in tools to the six below (no web or subagents).
+  # - Bash runs only the target's `make` targets and the binaries they build
+  #   (read-only commands such as `ls` and `cat` need no rule).
+  # - The Bash sandbox (Seatbelt on macOS, bubblewrap and socat on Linux)
+  #   confines those commands, and so an edited Makefile or the solver itself:
+  #   writes only in the output dir and a temp dir, no network. The run fails at
+  #   startup if the sandbox cannot start, instead of running unsandboxed.
+  claude-sandboxed:
+    bin: claude
+    flags:
+      - "-p"
+      - "--setting-sources"
+      - ""
+      - "--strict-mcp-config"
+      - "--output-format"
+      - "stream-json"
+      - "--verbose"
+      - "--permission-mode"
+      - "acceptEdits"
+      - "--permission-prompts"
+      - "none"
+      - "--tools"
+      - "Read,Write,Edit,Bash,Glob,Grep"
+      - "--allowedTools"
+      - "Bash(make *),Bash(./verify_bin *),Bash(./bench_bin *),Bash(./profile_bin *)"
+      - "--settings"
+      - '{"env":{"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS":"1"},"sandbox":{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"autoAllowBashIfSandboxed":false},"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"[ -z \"$FOMTOOLS_DEADLINE\" ] || [ \"$(date +%s)\" -lt \"$FOMTOOLS_DEADLINE\" ] || { echo \"fomtools: the time budget is spent. Stop editing and print your summary now.\" >&2; exit 2; }"}]}]}}'
+    cwd_flag: --add-dir
+    sysprompt_flag: --append-system-prompt
+    output_format: stream-json
+    auth_markers: ["authentication_error", "invalid x-api-key", "please run /login", "claude login"]
+    display_name: Claude Code (sandboxed)
+    auth_hint: Run `claude` once and log in.
+    install_hint: Install Claude Code (https://claude.com/claude-code) and ensure `claude` is on PATH.
+
   # OpenAI Codex CLI (https://github.com/openai/codex): `codex exec` in the
   # output dir (not a git repo), with approvals and the sandbox bypassed since
   # the dir is isolated. The time budget is the process timeout.
@@ -72,9 +112,29 @@ agents:
     auth_hint: Run `codex login`.
     install_hint: Install the Codex CLI (https://github.com/openai/codex) and ensure `codex` is on PATH.
 
+  # Codex, restricted (opt-in: `--agent codex-sandboxed`). The same entry as
+  # `codex` with the bypass replaced by the workspace-write sandbox: commands
+  # write only in the output dir, /tmp and $TMPDIR, and have no network.
+  # `codex exec` never asks for approval, so a command the sandbox blocks fails.
+  codex-sandboxed:
+    bin: codex
+    base_args: ["exec"]
+    flags:
+      - "--skip-git-repo-check"
+      - "--sandbox"
+      - "workspace-write"
+      - "--ignore-user-config"
+      - "--ignore-rules"
+      - "--ephemeral"
+    cwd_flag: --cd
+    display_name: Codex (sandboxed)
+    auth_hint: Run `codex login`.
+    install_hint: Install the Codex CLI (https://github.com/openai/codex) and ensure `codex` is on PATH.
+
   # Pi (https://pi.dev): one-shot print mode, trusting the files in the output
   # dir. Pi is multi-provider and uses its own login or provider keys. The time
-  # budget is the process timeout.
+  # budget is the process timeout. No restricted variant: pi can switch whole
+  # tools off (`--tools`) but cannot limit what its bash tool runs or writes.
   pi:
     bin: pi
     flags: ["--print", "--approve"]
