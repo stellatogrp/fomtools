@@ -6,27 +6,19 @@ rest of the pipeline (and tests) need not shell out directly.
 
 from __future__ import annotations
 
-import os
 import re
-import shutil
 import statistics
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from fomtools.codegen.manifest import check_manifest
-from fomtools.codegen.proc import DEFAULT_CHECK_TIMEOUT_S, run_check
+from fomtools.codegen.proc import (
+    DEFAULT_CHECK_TIMEOUT_S,
+    find_compiler,  # noqa: F401  (resolved in `proc`, imported from here by callers)
+    run_check,
+)
 from fomtools.codegen.targets import TargetDescriptor
-
-
-def find_compiler() -> str | None:
-    """The C compiler the generated Makefiles build with, or ``None``.
-
-    That is ``$CC`` when it is set, else ``cc`` (``CC ?= cc``). No other
-    compiler is looked for, since ``make`` would not use it.
-    """
-    words = os.environ.get("CC", "").split() or ["cc"]
-    return shutil.which(words[0])
 
 
 @dataclass

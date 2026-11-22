@@ -23,7 +23,13 @@ import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from fomtools.codegen.proc import TIMEOUT_RETURNCODE, run_check
+from fomtools.codegen.proc import (
+    FALLBACK_COMPILERS,
+    TIMEOUT_RETURNCODE,
+    fallback_compiler,
+    find_compiler,
+    run_check,
+)
 
 #: Statuses of a `Check`.
 OK = "ok"  # found
@@ -183,19 +189,22 @@ def _python_checks() -> list[Check]:
 
 
 def _compiler_check(compiler: str | None, cwd: str) -> Check:
-    """The compiler `find_compiler` returns: the one ``make`` uses, ``$CC`` else ``cc``."""
+    """The compiler `find_compiler` returns: ``$CC``, else ``cc``, else a fallback."""
     cc = " ".join(os.environ.get("CC", "").split())
     if compiler is not None:
         check = _tool("Build tools", "C compiler", compiler, cwd, "", MISSING)
-        return replace(check, detail=check.detail + f"  (CC={cc})") if cc else check
+        note = f"  (CC={cc})" if cc else ""
+        if fallback_compiler():
+            note = (
+                f"  (fallback: no `cc` on PATH; fomtools runs make with CC={compiler}, "
+                "and so must a `make` you run yourself)"
+            )
+        return replace(check, detail=check.detail + note)
     if cc:
         detail = f"CC={cc} not found (required: the generated Makefiles build with $CC)"
         return Check("Build tools", "C compiler", MISSING, detail)
-    detail = "`cc` not found (required)"
-    other = next((name for name in ("gcc", "clang") if shutil.which(name)), None)
-    if other:
-        detail += f"; `{other}` is installed, and the generated Makefiles use it with CC={other}"
-    return Check("Build tools", "C compiler", MISSING, detail)
+    names = ", ".join(f"`{name}`" for name in ("cc", *FALLBACK_COMPILERS))
+    return Check("Build tools", "C compiler", MISSING, f"not found (required): no {names}")
 
 
 def _openmp_check(compiler: str | None, cwd: str) -> Check:
@@ -369,7 +378,6 @@ def doctor(backend: str | None = None) -> DoctorReport:
         `print_report`, or ``print(report)``.
     """
     from fomtools.codegen.agent import _DEFAULT_BACKEND
-    from fomtools.codegen.harness import find_compiler
 
     default = backend or os.environ.get("FOMTOOLS_CODEGEN_BACKEND") or _DEFAULT_BACKEND
     with tempfile.TemporaryDirectory(prefix="fomtools-doctor-") as cwd:

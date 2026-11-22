@@ -48,7 +48,10 @@ only without a C compiler or `make`. It takes no other argument, except that
 `--agent NAME` marks that backend as the default.
 
 The compiler is the one the generated Makefiles use: `$CC` when it is set, else
-`cc`. The check runs each program with `--version`, builds one small OpenMP
+`cc`. On a machine with neither, FOMTools falls back to `gcc`, then `clang`, and
+runs every `make` of a run with `CC` set to it. The report says so, since a
+`make` you run yourself in the output directory then needs the same `CC`. A `CC`
+that does not resolve is an error, with no fallback. The check runs each program with `--version`, builds one small OpenMP
 file in a temporary directory, and asks `nvidia-smi` for devices. It never calls
 a model, so it cannot tell whether an agent is signed in. For `claude-sandboxed`
 on Linux it also looks for `bubblewrap` and `socat`, without starting the
