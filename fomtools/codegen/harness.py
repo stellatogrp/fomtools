@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from fomtools.codegen.manifest import check_manifest
 from fomtools.codegen.proc import DEFAULT_CHECK_TIMEOUT_S, run_check
 from fomtools.codegen.targets import TargetDescriptor
 
@@ -227,13 +228,18 @@ def build_lib(
     workdir: str | Path,
     make_target: str = "lib",
     timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S,
+    allow_unverified: bool = False,
 ) -> Path:
     """Build the shared library (``make lib``) and return its path.
 
-    A build still going after ``timeout_s`` seconds is ended and raises like any
-    other failure.
+    The sources are first checked against the directory's verification record
+    (`fomtools.codegen.manifest.check_manifest`): a directory without one
+    warns, and one whose sources changed since they were verified raises unless
+    ``allow_unverified`` is set. A build still going after ``timeout_s`` seconds
+    is ended and raises like any other failure.
     """
     workdir = Path(workdir)
+    check_manifest(workdir, allow_unverified)
     proc = run_check(["make", make_target], workdir, timeout_s)
     if proc.returncode != 0:
         raise RuntimeError(f"library build failed:\n{proc.stdout}\n{proc.stderr}")

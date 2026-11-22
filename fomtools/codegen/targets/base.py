@@ -75,6 +75,19 @@ class TargetDescriptor(ABC):
         """
         return (self.solver_source_path(), self.linsolve_source_path(), self.ops_source_path())
 
+    def library_source_paths(self) -> tuple[str, ...]:
+        """Sources the solver library is compiled from (``make lib``): the
+        editable ones, the numeric data and the objective."""
+        rel = [
+            self.solver_source_path(),
+            "src/fom_data.c",
+            self.linsolve_source_path(),
+            self.ops_source_path(),
+        ]
+        if self.objective_source_path() not in rel:  # its own file except by default
+            rel.append(self.objective_source_path())
+        return tuple(rel)
+
     def agent_notes(self) -> str:
         """Target-specific guidance appended to the coding-agent prompts.
 

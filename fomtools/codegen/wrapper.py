@@ -11,10 +11,12 @@ layout as the emitted header) and exposes an OSQP-like ``Solver`` class:
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 from fomtools.codegen.config import CodegenConfig
 from fomtools.codegen.ir import FomIR
+from fomtools.codegen.manifest import check_manifest
 
 
 def emit_wrapper(ir: FomIR, out_dir: str | Path, config: CodegenConfig) -> Path:
@@ -41,6 +43,8 @@ def _render(ir: FomIR, config: CodegenConfig) -> str:
 
     param_names = [p.name for p in ir.params]
     param_dims = {p.name: p.dim for p in ir.params}
+    # The one check every load path runs, copied in so the wrapper stays standalone.
+    check_source = inspect.getsource(check_manifest)
 
     return f'''"""Auto-generated ctypes wrapper for the `{ir.name}` solver.
 
@@ -108,10 +112,17 @@ def _default_lib_path():
     return str(base / names[0])
 
 
-class Solver:
-    """Thin handle around the generated C solver."""
+{check_source}
 
-    def __init__(self, lib_path=None):
+class Solver:
+    """Thin handle around the generated C solver.
+
+    The sources next to this wrapper are checked against the directory's
+    verification record before the library is loaded: see ``check_manifest``.
+    """
+
+    def __init__(self, lib_path=None, allow_unverified=False):
+        check_manifest(Path(__file__).resolve().parent.parent, allow_unverified)
         self._lib = ctypes.CDLL(lib_path or _default_lib_path())
         self._lib.fom_set_default_settings.argtypes = [ctypes.POINTER(FomSettings)]
         self._lib.fom_setup.argtypes = [ctypes.POINTER(FomWorkspace), ctypes.POINTER(FomSettings)]

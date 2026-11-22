@@ -255,7 +255,15 @@ src/       fom_solver.c (the agent's solver), fom_data.c (all numeric data)
 test/      SPEC.md, spec.json, data.npz, verify_main.c, verify_data.h
 python/    fom_solver.py   (ctypes wrapper)
 Makefile   (make verify / make lib)
+fomtools_manifest.json   (verification record, written when the run verified)
 ```
+
+`fomtools_manifest.json` records the fomtools version, the target and dtype, the
+numbers of the passing verify (samples, worst max-abs error, tolerance), the
+timings when measured, and a SHA-256 of every source a library build compiles
+(`src/`, the generated headers in `include/`, and `release/`). A new run on the
+directory removes it first, so a run that fails or is interrupted leaves none.
+An interrupted code optimization round also puts the best verified sources back.
 
 ## Using the generated solver
 
@@ -288,6 +296,12 @@ solver = Solver()
 out = solver.solve(p0=b)          # {"x", "iter", "residual", "status"}
 solver.update_settings(tol=1e-8, check_termination=10, max_iter=500)  # runtime
 ```
+
+`Solver()` and `fomtools.codegen.harness.build_lib` first check the sources
+against `fomtools_manifest.json`. A directory without one (older output, or a run
+that did not finish) loads with a warning. If a recorded source changed after
+verification they raise an error naming the files; pass `allow_unverified=True`
+to get a warning instead.
 
 ## Performance: timing, profiling, and the code optimization phase
 

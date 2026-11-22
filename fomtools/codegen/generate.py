@@ -43,6 +43,7 @@ from fomtools.codegen.harness import (
 )
 from fomtools.codegen.ir import FomIR
 from fomtools.codegen.kernel_rules import functions, reachable, strip_c_comments_and_strings
+from fomtools.codegen.manifest import remove_manifest, write_manifest
 from fomtools.codegen.oracle import check_stationary
 from fomtools.codegen.postprocess import (
     extract_agent_notes,
@@ -594,6 +595,7 @@ def _generate_code(
     optimizations_md = None
     kernel_checks = None
     rule_friction: list[dict] = []
+    verify_output = translate.log  # of the solver that ships
     if code_optimization and translate.success:
         opt = run_code_optimization(
             ir,
@@ -611,6 +613,7 @@ def _generate_code(
         optimizations_md = opt.optimizations_md
         kernel_checks = opt.kernel_checks
         rule_friction = opt.rule_friction
+        verify_output = opt.verify_output
         if opt.kept:
             progress.summary(name, timing, opt.verify_output, opt.applied)
     # Always persist the raw agent output, code optimization phase or not.
@@ -624,6 +627,9 @@ def _generate_code(
             target.solver_source_path(),
             tuple(rel for rel in editable if rel != target.solver_source_path()),
         )
+        # Last, once everything a library build compiles is in place: the record
+        # that these sources are the verified ones (none after a compile-only check).
+        write_manifest(out_dir, target, verify_output, timing)
 
     return CodegenResult(
         ir=ir,
@@ -824,6 +830,7 @@ def run_code_optimization(
             notes_by_round.append((index, extract_agent_notes(log)))
 
     measure = profile and find_compiler() is not None
+    remove_manifest(out_dir)  # the sources are about to change; the caller records the result
     translated = read_editable()  # known-good fallback
     best = translated
     best_us: float | None = None
@@ -841,126 +848,134 @@ def run_code_optimization(
     base_instructions = code_optimization_instructions(ir, target)
     n_rounds = config.agent_optimize_rounds
 
-    for index in range(1, n_rounds + 1):
-        if rounds:  # the previous round ended without a break
-            progress.round(rounds[-1])
-        instructions = base_instructions
-        if index > 1:
-            last = rounds[-1]
-            instructions += code_optimization_continuation(
-                index, n_rounds, best_us, translated_us, last.gain, best_profile
+    # A round that raises or is interrupted (Ctrl-C) must not leave its unverified
+    # candidate behind: the generated files are restored and, on every way out,
+    # the best verified sources are written back.
+    try:
+        for index in range(1, n_rounds + 1):
+            if rounds:  # the previous round ended without a break
+                progress.round(rounds[-1])
+            instructions = base_instructions
+            if index > 1:
+                last = rounds[-1]
+                instructions += code_optimization_continuation(
+                    index, n_rounds, best_us, translated_us, last.gain, best_profile
+                )
+            task = AgentTask(
+                workdir=out_dir,
+                solver_rel_path=target.solver_source_path(),
+                verify_cmd=target.verify_command(),
+                instructions=instructions,
+                phase="code_optimization",
+                bench_cmd=["make", "bench"],
+                restore_hook=restore_all_but_editable,
+                extra={"editable_paths": editable},
+                check_timeout_s=config.check_timeout_s,
             )
-        task = AgentTask(
-            workdir=out_dir,
-            solver_rel_path=target.solver_source_path(),
-            verify_cmd=target.verify_command(),
-            instructions=instructions,
-            phase="code_optimization",
-            bench_cmd=["make", "bench"],
-            restore_hook=restore_all_but_editable,
-            extra={"editable_paths": editable},
-            check_timeout_s=config.check_timeout_s,
-        )
-        # While the agent works, `make verify` also applies the kernel rules, so it
-        # sees a violation as it makes it; the gate below applies them again and
-        # decides. The shipped directory carries no such config.
-        target.write_kernel_check_config(out_dir, ir, translated)
-        progress.start(f"optimize · round {index} (agent)")
-        start = time.monotonic()
-        try:
-            result = driver.run(task)
-        finally:
-            target.remove_kernel_check_config(out_dir)
-        wall = time.monotonic() - start
-        restore_all_but_editable()  # discard edits outside the editable sources
-        candidate = read_editable()
+            # While the agent works, `make verify` also applies the kernel rules, so it
+            # sees a violation as it makes it; the gate below applies them again and
+            # decides. The shipped directory carries no such config.
+            target.write_kernel_check_config(out_dir, ir, translated)
+            progress.start(f"optimize · round {index} (agent)")
+            start = time.monotonic()
+            try:
+                result = driver.run(task)
+            finally:
+                target.remove_kernel_check_config(out_dir)
+            wall = time.monotonic() - start
+            restore_all_but_editable()  # discard edits outside the editable sources
+            candidate = read_editable()
 
-        header = f"\n===== code optimization round {index} =====\n"
-        logs.append(header + (result.log or ""))
-        agent_logs.append(header + (result.agent_log or ""))
-        notes = extract_agent_notes(result.agent_log or "")
-        if notes.strip():
-            notes_by_round.append((index, notes))
-        turns += result.turns_used or 0
-        truncated_any = truncated_any or bool(result.truncated)
+            header = f"\n===== code optimization round {index} =====\n"
+            logs.append(header + (result.log or ""))
+            agent_logs.append(header + (result.agent_log or ""))
+            notes = extract_agent_notes(result.agent_log or "")
+            if notes.strip():
+                notes_by_round.append((index, notes))
+            turns += result.turns_used or 0
+            truncated_any = truncated_any or bool(result.truncated)
 
-        changed = candidate != best
-        record = OptimizationRound(
-            index=index,
-            changed=changed,
-            correct=False,
-            kept=False,
-            agent_wall_s=wall,
-            truncated=bool(result.truncated),
-        )
-        rounds.append(record)
-        if not changed:
-            record.correct = bool(result.success)
-            record.stop_reason = STOP_NO_CHANGE
-            logs.append("[no source change from this code optimization round]")
-            break
-
-        # Gate 1 (correctness): the round's sources must still verify and pass
-        # the kernel rules (and, on the embedded target, its static checks).
-        # Otherwise fall back to the best sources so far.
-        collected_any = collected_any or bool(result.success)
-        recheck = build_and_verify(out_dir, target) if result.success else None
-        issues = _static_issues(target, ir, candidate, translated) if result.success else []
-        record.correct = bool(result.success and recheck.success and not issues)
-        if not record.correct:
-            write_editable(best)
-            static_issues = issues
-            logs.append(
-                "[optimization round not kept: its sources failed verification]"
-                + ("\n" + recheck.output if recheck and not recheck.success else "")
-                + ("\n" + "\n".join(issues) if issues else "")
+            changed = candidate != best
+            record = OptimizationRound(
+                index=index,
+                changed=changed,
+                correct=False,
+                kept=False,
+                agent_wall_s=wall,
+                truncated=bool(result.truncated),
             )
-            record.stop_reason = STOP_FAILED
-            break
+            rounds.append(record)
+            if not changed:
+                record.correct = bool(result.success)
+                record.stop_reason = STOP_NO_CHANGE
+                logs.append("[no source change from this code optimization round]")
+                break
 
-        if not measure:
+            # Gate 1 (correctness): the round's sources must still verify and pass
+            # the kernel rules (and, on the embedded target, its static checks).
+            # Otherwise fall back to the best sources so far.
+            collected_any = collected_any or bool(result.success)
+            recheck = build_and_verify(out_dir, target) if result.success else None
+            issues = _static_issues(target, ir, candidate, translated) if result.success else []
+            record.correct = bool(result.success and recheck.success and not issues)
+            if not record.correct:
+                write_editable(best)
+                static_issues = issues
+                logs.append(
+                    "[optimization round not kept: its sources failed verification]"
+                    + ("\n" + recheck.output if recheck and not recheck.success else "")
+                    + ("\n" + "\n".join(issues) if issues else "")
+                )
+                record.stop_reason = STOP_FAILED
+                break
+
+            if not measure:
+                ensure_summary(index, task, result, best, candidate)
+                best, best_verify_output = candidate, recheck.output
+                record.kept = True
+                record.stop_reason = STOP_UNMEASURED
+                break
+
+            # Gate 2 (performance): head to head against the best so far, measured
+            # now and alternately (timings are noisy), leaving the best written.
+            us_after, us_before = _head_to_head_us(
+                out_dir, write_editable, candidate, best, timeout_s=config.check_timeout_s
+            )
+            if index == 1:
+                translated_us = us_before
+            record.us_before, record.us_after = us_before, us_after
+            if us_before and us_after:
+                record.gain = (us_before - us_after) / us_before
+            tol = 1.02 if index == 1 else 1.0
+            if not optimization_is_faster(us_after, us_before, tol=tol):
+                logs.append(
+                    f"[optimization round not kept: its build ({us_after} us) was not "
+                    f"faster than the best so far ({us_before} us)]"
+                )
+                record.stop_reason = STOP_NOT_FASTER
+                break
+            write_editable(candidate)
             ensure_summary(index, task, result, best, candidate)
-            best, best_verify_output = candidate, recheck.output
+            best, best_us, best_verify_output = candidate, us_after, recheck.output
             record.kept = True
-            record.stop_reason = STOP_UNMEASURED
-            break
-
-        # Gate 2 (performance): head to head against the best so far, measured
-        # now and alternately (timings are noisy), leaving the best written.
-        us_after, us_before = _head_to_head_us(
-            out_dir, write_editable, candidate, best, timeout_s=config.check_timeout_s
-        )
-        if index == 1:
-            translated_us = us_before
-        record.us_before, record.us_after = us_before, us_after
-        if us_before and us_after:
-            record.gain = (us_before - us_after) / us_before
-        tol = 1.02 if index == 1 else 1.0
-        if not optimization_is_faster(us_after, us_before, tol=tol):
-            logs.append(
-                f"[optimization round not kept: its build ({us_after} us) was not "
-                f"faster than the best so far ({us_before} us)]"
-            )
-            record.stop_reason = STOP_NOT_FASTER
-            break
-        write_editable(candidate)
-        ensure_summary(index, task, result, best, candidate)
-        best, best_us, best_verify_output = candidate, us_after, recheck.output
-        record.kept = True
-        if record.gain is None or record.gain < config.agent_optimize_min_gain:
-            record.stop_reason = STOP_SMALL_GAIN
-            break
-        if index == n_rounds:
-            record.stop_reason = STOP_MAX_ROUNDS
-            break
-        try:
-            best_profile = run_profile(out_dir, timeout_s=config.check_timeout_s)
-        except Exception:
-            best_profile = []
+            if record.gain is None or record.gain < config.agent_optimize_min_gain:
+                record.stop_reason = STOP_SMALL_GAIN
+                break
+            if index == n_rounds:
+                record.stop_reason = STOP_MAX_ROUNDS
+                break
+            try:
+                best_profile = run_profile(out_dir, timeout_s=config.check_timeout_s)
+            except Exception:
+                best_profile = []
+    except BaseException:
+        target.scaffold(ir, out_dir)
+        raise
+    finally:
+        write_editable(best)
 
     if rounds:
         progress.round(rounds[-1])
-    write_editable(best)
     kept = best != translated
 
     if timing is not None and measure:

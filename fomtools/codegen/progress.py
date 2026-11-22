@@ -18,13 +18,26 @@ import threading
 import time
 
 _SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-_VERIFY_ERR_RE = re.compile(r"worst max-abs error over (\d+) samples: (\S+)")
+_VERIFY_ERR_RE = re.compile(r"worst max-abs error over (\d+) samples: (\S+)(?: \(tol ([^\s)]+)\))?")
+
+
+def verify_numbers(output: str | None) -> tuple[int, float, float | None] | None:
+    """``(samples, worst max-abs error, tolerance)`` from ``make verify`` output.
+
+    The last such line counts: a log of several attempts ends with the one that
+    passed. ``None`` if no line was printed (e.g. a compile-only check).
+    """
+    found = _VERIFY_ERR_RE.findall(output or "")
+    if not found:
+        return None
+    samples, err, tol = found[-1]
+    return int(samples), float(err), float(tol) if tol else None
 
 
 def verify_error(output: str | None) -> tuple[int, float] | None:
     """``(samples, worst max-abs error)`` from ``make verify`` output, if printed."""
-    m = _VERIFY_ERR_RE.search(output or "")
-    return (int(m[1]), float(m[2])) if m else None
+    numbers = verify_numbers(output)
+    return numbers[:2] if numbers else None
 
 
 def bar(fraction: float, width: int = 12) -> tuple[str, str]:
