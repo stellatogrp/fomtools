@@ -184,7 +184,7 @@ def test_bench_stats():
     s = BenchStats.of([3.0, 1.0, 2.0, 10.0, 4.0])
     assert (s.runs, s.median, s.min, s.max) == (5, 3.0, 1.0, 10.0)
     assert s.mad == 1.0  # deviations 0, 2, 1, 7, 1: the slow run does not move it
-    assert s.spread() == "± 1.000 (1.000 to 10.000, 5 runs)"
+    assert s.spread() == "± 1.000 (1.000 to 10.000 µs, 5 runs)"
     even = BenchStats.of([1.0, 2.0, 4.0, 8.0])
     assert even.median == 3.0 and even.mad == 1.5  # deviations 2, 1, 1, 5
     # Failed runs (None) are ignored.
@@ -192,7 +192,7 @@ def test_bench_stats():
     assert (failed.runs, failed.median, failed.min, failed.max, failed.mad) == (2, 3.0, 2, 4, 1)
     one = BenchStats.of(iter([5.0]))
     assert (one.runs, one.median, one.min, one.max, one.mad) == (1, 5.0, 5.0, 5.0, 0.0)
-    assert one.spread() == "± 0.000 (5.000 to 5.000, 1 run)"
+    assert one.spread() == "± 0.000 (5.000 to 5.000 µs, 1 run)"
     assert BenchStats.of([]) is None and BenchStats.of([None, None]) is None
 
 

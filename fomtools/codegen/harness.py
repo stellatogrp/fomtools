@@ -16,6 +16,7 @@ from pathlib import Path
 
 from fomtools.codegen.manifest import check_manifest
 from fomtools.codegen.proc import DEFAULT_CHECK_TIMEOUT_S, run_check
+from fomtools.codegen.progress import format_time
 from fomtools.codegen.targets import TargetDescriptor
 
 
@@ -101,9 +102,13 @@ class BenchStats:
         return cls(len(values), median, min(values), max(values), mad)
 
     def spread(self) -> str:
-        """``± MAD (min to max, n runs)``, to print next to the median."""
+        """``± MAD (min to max, n runs)``, to print next to the median, in its unit."""
         runs = "1 run" if self.runs == 1 else f"{self.runs} runs"
-        return f"± {self.mad:.3f} ({self.min:.3f} to {self.max:.3f}, {runs})"
+
+        def fmt(value, unit=False):
+            return format_time(value, like=self.median, digits=4, unit=unit)
+
+        return f"± {fmt(self.mad)} ({fmt(self.min)} to {fmt(self.max, True)}, {runs})"
 
 
 @dataclass
@@ -159,14 +164,14 @@ class TimingReport:
         """A human-readable speedup + profiling summary."""
         lines = ["Timing summary (per solve):"]
         if self.python_us is not None:
-            lines.append(f"  Python reference (before codegen): {self.python_us:10.3f} us")
+            lines.append(f"  Python reference (before codegen): {format_time(self.python_us):>10}")
         for label, us, stats in (
             ("Generated C (translated):", self.c_initial_us, self.c_initial_stats),
             ("Generated C (optimized): ", self.c_final_us, self.c_final_stats),
         ):
             if us is not None:
                 spread = f"  {stats.spread()}" if stats else ""
-                lines.append(f"  {label}         {us:10.3f} us{spread}")
+                lines.append(f"  {label}          {format_time(us):>10}{spread}")
         if self.speedup_codegen:
             lines.append(f"  Speedup from codegen (Py -> C):    {self.speedup_codegen:8.1f}x")
         if self.speedup_optimization:
@@ -177,7 +182,7 @@ class TimingReport:
             lines.append("Profiling breakdown (hottest first):")
             for r in self.profile:
                 lines.append(
-                    f"  {r.name:<24} {r.total_us:12.3f} us  {r.pct:6.2f}%  ({r.calls} calls)"
+                    f"  {r.name:<24} {format_time(r.total_us):>10}  {r.pct:6.2f}%  ({r.calls} calls)"
                 )
         return "\n".join(lines)
 
