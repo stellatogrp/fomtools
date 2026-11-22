@@ -4,6 +4,7 @@ deadline hook in the bundled ``claude`` spec."""
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -379,16 +380,16 @@ def test_codex_runs_without_the_user_config():
 # --- the limit on the package's own checks --------------------------------
 def _hanging_verify_task(tmp_path, timeout_s=0.5):
     """A verify command that prints, starts a child, and never returns."""
+    # A shell, not Python: it prints within milliseconds, so the short limit does
+    # not race the interpreter's startup on a loaded machine.
     pid_file = tmp_path / "child.pid"
-    code = (
-        "import subprocess, time;"
-        f"c = subprocess.Popen(['sleep', '60']); open({str(pid_file)!r}, 'w').write(str(c.pid));"
-        "print('partial verify output', flush=True); time.sleep(60)"
+    script = (
+        f"sleep 60 & echo $! > {shlex.quote(str(pid_file))}; echo partial verify output; sleep 60"
     )
     task = AgentTask(
         workdir=Path(tmp_path),
         solver_rel_path="src/fom_solver.c",
-        verify_cmd=[sys.executable, "-c", code],
+        verify_cmd=["sh", "-c", script],
         check_timeout_s=timeout_s,
     )
     return task, pid_file
@@ -426,6 +427,24 @@ def test_a_verify_past_its_limit_also_ends_what_it_started(tmp_path):
     # As `make verify`: ending only `make` would leave the solver binary running.
     task, pid_file = _hanging_verify_task(tmp_path)
     run_verify_loop(task, lambda prompt: "tried", max_attempts=1)
+    assert _is_dead(int(pid_file.read_text()))
+
+
+def test_an_interrupted_check_also_ends_what_it_started(tmp_path, monkeypatch):
+    # Ctrl-C does not reach the check (it has its own session), so `run_check` ends it.
+    from fomtools.codegen.proc import run_check
+
+    task, pid_file = _hanging_verify_task(tmp_path, timeout_s=30)
+
+    def interrupted(self, *args, **kwargs):
+        end = time.monotonic() + 10
+        while not (pid_file.exists() and pid_file.read_text().strip()) and time.monotonic() < end:
+            time.sleep(0.01)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        run_check(task.verify_cmd, tmp_path, task.check_timeout_s)
     assert _is_dead(int(pid_file.read_text()))
 
 
