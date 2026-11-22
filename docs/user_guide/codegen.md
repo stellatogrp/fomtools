@@ -256,6 +256,7 @@ test/      SPEC.md, spec.json, data.npz, verify_main.c, verify_data.h
 python/    fom_solver.py   (ctypes wrapper)
 Makefile   (make verify / make lib)
 fomtools_manifest.json   (verification record, written when the run verified)
+libfomsolver.build.json  (build stamp, written by build_lib next to the library)
 ```
 
 `fomtools_manifest.json` records the fomtools version, the target and dtype, the
@@ -303,6 +304,17 @@ that did not finish) loads with a warning. If a recorded source changed after
 verification they raise an error naming the files; pass `allow_unverified=True`
 to get a warning instead. A record that cannot be read is treated the same way.
 The wrapper and a built library deployed without the sources load with a warning.
+
+`Solver()` also checks that the library it loads was built from those sources, so
+a `libfomsolver` left over from before a regeneration is not used silently.
+`build_lib` always rebuilds, and writes `libfomsolver.build.json` next to the
+library: the hash of the library and of the sources it compiled. With that stamp
+the comparison is by content. A library built by hand with `make lib` has no
+stamp. It loads without a warning unless a recorded source is newer than the
+library file, which is the only evidence left. A stale library raises an error
+that names the sources; rebuild it with `build_lib` or `make lib`, or pass
+`allow_unverified=True` to get a warning instead. A directory without a
+verification record has no list of sources, so its library is not checked.
 
 ## Performance: timing, profiling, and the code optimization phase
 
