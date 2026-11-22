@@ -95,8 +95,30 @@ def _make_driver(args, config):
     return None
 
 
+class _DoctorAction(argparse.Action):
+    """``--doctor``: print the setup report and exit, as ``--help`` does.
+
+    An action, so that it runs before the required arguments are enforced.
+    """
+
+    def __init__(self, option_strings, dest, **kwargs):
+        super().__init__(option_strings, dest, nargs=0, default=argparse.SUPPRESS, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        from fomtools.codegen.diagnostics import main as doctor_main
+
+        # An --agent given before --doctor is the one marked as the default.
+        parser.exit(doctor_main(backend=getattr(namespace, "agent", None)))
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="fomtools-codegen", description=__doc__)
+    p.add_argument(
+        "--doctor",
+        action=_DoctorAction,
+        help="check this machine's setup (compiler, make, OpenMP, CUDA, agent CLIs) and "
+        "exit; needs no other argument",
+    )
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--example", choices=sorted(EXAMPLES), help="built-in example FOM")
     src.add_argument("--module", help="path to a Python module defining build_fom()")

@@ -15,6 +15,49 @@ what the emitted project contains. The
 brief, the [tutorials](../tutorials/codegen.md) work through five complete
 examples, and [the API page](../api/codegen.md) documents each symbol.
 
+## Check your setup
+
+A run needs a C compiler, `make`, and an installed, signed-in agent CLI. The
+OpenMP and CUDA targets need more. One command reports what this machine has:
+
+```
+fomtools-codegen --doctor
+```
+
+```
+Build tools
+  ✓ C compiler          Apple clang version 21.0.0 (clang-2100.3.34.2)  (/usr/bin/cc)
+  ✓ make                GNU Make 3.81  (/usr/bin/make)
+  ○ OpenMP              /usr/bin/cc does not build with -fopenmp: ...
+
+Agents
+  ✓ claude (default)    2.1.330 (Claude Code)  (~/.local/bin/claude); login not checked: Run `claude` once and log in.
+  ○ cursor              `cursor-agent` not found. Install the Cursor CLI ...
+
+Targets
+  ✓ embedded C          ready; agents: claude
+  ✓ large-scale OpenMP  ready (serial build only); agents: claude
+  ○ large-scale CUDA    cannot run: no nvcc
+```
+
+`✓` is found, `○` is missing but optional (the line says what needs it), `!` is
+found but its `--version` failed, and `✗` is missing and required. The report
+also lists the Python extras, `nvcc`, the GPU and cuDSS, and every agent
+backend, including your own from `agents.yaml`. The exit status is nonzero only
+without a C compiler or `make`. It takes no other argument. `--agent NAME`
+before it marks that backend as the default.
+
+It never calls a model, so it cannot tell whether an agent is signed in. From
+Python or a notebook:
+
+```python
+from fomtools.codegen import doctor
+
+report = doctor()
+print(report)  # the same text
+report.ok, report.targets, report.agents
+```
+
 ## Defining the FOM
 
 The Python snippets below reuse the imports and problem data in the first block.

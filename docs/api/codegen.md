@@ -34,3 +34,7 @@ complete examples.
 ::: fomtools.codegen.AgentDriver
 
 ::: fomtools.codegen.StubAgentDriver
+
+::: fomtools.codegen.doctor
+
+::: fomtools.codegen.DoctorReport

@@ -30,9 +30,12 @@ The public surface:
 * `generate_code` — the end-to-end entry point.
 * `AgentDriver` / `StubAgentDriver` — the (mockable) coding-agent
   interface.
+* `doctor` — check this machine for what a run needs (compiler, ``make``,
+  OpenMP, CUDA, agent CLIs); also ``fomtools-codegen --doctor``.
 """
 
 from fomtools.codegen.agent import AgentDriver, AgentResult, AgentTask, StubAgentDriver
+from fomtools.codegen.diagnostics import DoctorReport, doctor, print_report
 from fomtools.codegen.config import (
     Backend,
     CodegenConfig,
@@ -101,4 +104,7 @@ __all__ = [
     "Recording",
     "extract_scheduled_ir",
     "extract_unrolled_ir",
+    "doctor",
+    "DoctorReport",
+    "print_report",
 ]

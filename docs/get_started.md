@@ -37,7 +37,8 @@ pip install "fomtools[all]"
 ```
 
 `all` skips the GPU packages on macOS. Gurobi still needs a license, and code
-generation still needs a C compiler and a signed-in coding agent.
+generation still needs a C compiler and a signed-in coding agent. Run
+`fomtools-codegen --doctor` to [check the setup](user_guide/codegen.md#check-your-setup).
 
 To upgrade to a newer release:
 

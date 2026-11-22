@@ -19,6 +19,10 @@ from fomtools.codegen.ir import FomIR
 from fomtools.codegen.targets.base import objective_violations
 from fomtools.codegen.targets.embedded_c import _KERNEL_CHECK_RECIPE, EmbeddedCTarget
 
+#: The ``OMPFLAGS`` value of a multithreaded build; ``fomtools-codegen --doctor``
+#: checks that the compiler builds with it.
+OPENMP_FLAG = "-fopenmp"
+
 
 class OpenMpTarget(EmbeddedCTarget):
     name = "large_scale_openmp"
@@ -115,14 +119,14 @@ class OpenMpTarget(EmbeddedCTarget):
                 "## Build & verify",
                 "```",
                 "make verify                 # serial build, checked vs the reference oracle",
-                "make verify OMPFLAGS=-fopenmp   # multithreaded build",
-                "make lib OMPFLAGS=-fopenmp      # shared library for the Python wrapper",
+                f"make verify OMPFLAGS={OPENMP_FLAG}   # multithreaded build",
+                f"make lib OMPFLAGS={OPENMP_FLAG}      # shared library for the Python wrapper",
                 "```",
                 "",
                 "The matrix-vector products (`fom_ops.c`) and the conjugate-gradient",
                 "solve (`fom_linsolve.c`, when `solve_method=cg`) carry OpenMP pragmas on",
                 "their data-parallel loops, guarded by `#ifdef _OPENMP`: the default",
-                "serial build ignores them, and `OMPFLAGS=-fopenmp` turns threading on.",
+                f"serial build ignores them, and `OMPFLAGS={OPENMP_FLAG}` turns threading on.",
                 "The triangular solves of the direct (LDL^T / LU) factorizations are",
                 "inherently sequential and run single-threaded.",
                 "",

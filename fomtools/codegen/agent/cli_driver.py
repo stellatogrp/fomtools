@@ -125,7 +125,7 @@ class CliAgentDriver(AgentDriver):
             raise AgentBackendError(
                 f"{self.spec.display_name or self.spec.name} CLI {self.bin!r} not found "
                 f"on PATH. {self.spec.install_hint} Or select a different backend "
-                "(`--agent claude`)."
+                "(`--agent claude`). Run `fomtools-codegen --doctor` to check the setup."
             )
 
         # Resolve to an ABSOLUTE workdir: some CLIs resolve their dir flag

@@ -105,6 +105,6 @@ def get_default_driver(config=None, backend: str | None = None) -> AgentDriver:
             f"No coding-agent driver provided and the {spec.display_name or spec.name} "
             f"CLI {driver.bin!r} is not on PATH. {spec.install_hint} Or choose another "
             f"agent with FOMTOOLS_CODEGEN_BACKEND ({', '.join(available_backends())}), "
-            "or pass driver=..."
+            "or pass driver=... Run `fomtools-codegen --doctor` to check the setup."
         )
     return driver
