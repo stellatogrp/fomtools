@@ -68,8 +68,9 @@ def test_short_verify_output_appears_once_in_the_retry_prompt(tmp_path):
     prompt = _retry_prompt(tmp_path, output)
     assert prompt.count(output) == 1
     assert "characters omitted" not in prompt
-    # Just under the limit, where the head and the tail used to overlap.
-    output = "".join(f"line {i:04d};" for i in range(800))[:8000]
+    # Exactly at the limit (8000 characters), the longest output that is not clipped.
+    output = "".join(f"line {i:04d};" for i in range(800))
+    assert len(output) == 8000
     assert _retry_prompt(tmp_path, output).count(output) == 1
 
 
