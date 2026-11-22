@@ -19,6 +19,7 @@ from fomtools.codegen.proc import TIMEOUT_RETURNCODE, run_check
 from fomtools.codegen.targets import large_scale_cuda
 
 EVERYTHING = {"cc", "make", "nvcc", "nvidia-smi", "claude", "codex", "pi", "cursor-agent"}
+EVERYTHING |= {"bwrap", "socat"}  # the sandbox of claude-sandboxed on Linux
 
 
 class Machine:
@@ -230,7 +231,7 @@ def test_login_is_not_checked_and_the_report_says_so(machine):
 
 def test_sandboxed_claude_needs_bubblewrap_and_socat_on_linux(machine, monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
-    machine.tools.add("bwrap")
+    machine.tools.discard("socat")
     report = doctor()
     check = report.get("claude-sandboxed")
     assert check.status == OPTIONAL and "its sandbox cannot start: no socat" in check.detail
