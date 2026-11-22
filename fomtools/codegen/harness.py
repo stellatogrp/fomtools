@@ -9,11 +9,11 @@ from __future__ import annotations
 import re
 import shutil
 import statistics
-import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from fomtools.codegen.proc import DEFAULT_CHECK_TIMEOUT_S, run_check
 from fomtools.codegen.targets import TargetDescriptor
 
 
@@ -35,13 +35,12 @@ class VerifyResult:
 
 
 def build_and_verify(workdir: str | Path, target: TargetDescriptor) -> VerifyResult:
-    """Run the target's verify command in ``workdir``."""
-    proc = subprocess.run(
-        target.verify_command(),
-        cwd=str(workdir),
-        capture_output=True,
-        text=True,
-    )
+    """Run the target's verify command in ``workdir``.
+
+    A run still going after the ``check_timeout_s`` of the target's config is
+    ended and reported as a failure (see `fomtools.codegen.proc.run_check`).
+    """
+    proc = run_check(target.verify_command(), workdir, target.config.check_timeout_s)
     return VerifyResult(
         success=proc.returncode == 0,
         returncode=proc.returncode,
@@ -164,17 +163,33 @@ def parse_profile(text: str) -> list[ProfRegion]:
     return regions
 
 
-def run_bench(workdir: str | Path, make_target: str = "bench") -> BenchResult:
-    """Build and run the benchmark; return the parsed result."""
-    proc = subprocess.run(["make", make_target], cwd=str(workdir), capture_output=True, text=True)
+def run_bench(
+    workdir: str | Path,
+    make_target: str = "bench",
+    timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S,
+) -> BenchResult:
+    """Build and run the benchmark; return the parsed result.
+
+    A run still going after ``timeout_s`` seconds is ended and raises like any
+    other failure.
+    """
+    proc = run_check(["make", make_target], workdir, timeout_s)
     if proc.returncode != 0:
         raise RuntimeError(f"benchmark build/run failed:\n{proc.stdout}\n{proc.stderr}")
     return parse_bench(proc.stdout + proc.stderr)
 
 
-def run_profile(workdir: str | Path, make_target: str = "profile") -> list[ProfRegion]:
-    """Build with profiling enabled, run, and return the region breakdown."""
-    proc = subprocess.run(["make", make_target], cwd=str(workdir), capture_output=True, text=True)
+def run_profile(
+    workdir: str | Path,
+    make_target: str = "profile",
+    timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S,
+) -> list[ProfRegion]:
+    """Build with profiling enabled, run, and return the region breakdown.
+
+    A run still going after ``timeout_s`` seconds is ended and raises like any
+    other failure.
+    """
+    proc = run_check(["make", make_target], workdir, timeout_s)
     if proc.returncode != 0:
         raise RuntimeError(f"profile build/run failed:\n{proc.stdout}\n{proc.stderr}")
     return parse_profile(proc.stdout + proc.stderr)
@@ -208,15 +223,18 @@ def representative_params(ir) -> dict:
     return pvals
 
 
-def build_lib(workdir: str | Path, make_target: str = "lib") -> Path:
-    """Build the shared library (``make lib``) and return its path."""
+def build_lib(
+    workdir: str | Path,
+    make_target: str = "lib",
+    timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S,
+) -> Path:
+    """Build the shared library (``make lib``) and return its path.
+
+    A build still going after ``timeout_s`` seconds is ended and raises like any
+    other failure.
+    """
     workdir = Path(workdir)
-    proc = subprocess.run(
-        ["make", make_target],
-        cwd=str(workdir),
-        capture_output=True,
-        text=True,
-    )
+    proc = run_check(["make", make_target], workdir, timeout_s)
     if proc.returncode != 0:
         raise RuntimeError(f"library build failed:\n{proc.stdout}\n{proc.stderr}")
     for name in ("libfomsolver.dylib", "libfomsolver.so"):

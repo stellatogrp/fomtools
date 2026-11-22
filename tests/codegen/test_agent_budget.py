@@ -14,7 +14,8 @@ import pytest
 from fomtools.codegen.agent import CliAgentDriver
 from fomtools.codegen.agent.budget import GRACE_S, TimeBudget
 from fomtools.codegen.agent.cli_specs import CliAgentSpec, get_spec
-from fomtools.codegen.agent.driver import AgentTask, _decode_stream, run_verify_loop
+from fomtools.codegen.agent.driver import AgentTask, run_verify_loop
+from fomtools.codegen.proc import decode_stream
 
 
 def _failing_task(tmp_path):
@@ -47,7 +48,7 @@ def test_without_a_budget_every_attempt_runs(tmp_path):
     result = run_verify_loop(task, lambda prompt: "attempted", max_attempts=3)
     assert result.turns_used == 3
     assert "budget" not in task.extra
-    assert _decode_stream(None) == ""
+    assert decode_stream(None) == ""
 
 
 def _retry_prompt(tmp_path, output):
@@ -373,3 +374,120 @@ def test_specs_load_once_across_threads(monkeypatch):
 def test_codex_runs_without_the_user_config():
     flags = get_spec("codex").flags
     assert {"--ignore-user-config", "--ignore-rules", "--ephemeral"} <= set(flags)
+
+
+# --- the limit on the package's own checks --------------------------------
+def _hanging_verify_task(tmp_path, timeout_s=0.5):
+    """A verify command that prints, starts a child, and never returns."""
+    pid_file = tmp_path / "child.pid"
+    code = (
+        "import subprocess, time;"
+        f"c = subprocess.Popen(['sleep', '60']); open({str(pid_file)!r}, 'w').write(str(c.pid));"
+        "print('partial verify output', flush=True); time.sleep(60)"
+    )
+    task = AgentTask(
+        workdir=Path(tmp_path),
+        solver_rel_path="src/fom_solver.c",
+        verify_cmd=[sys.executable, "-c", code],
+        check_timeout_s=timeout_s,
+    )
+    return task, pid_file
+
+
+def _is_dead(pid, wait_s=2.0):
+    import os
+
+    end = time.monotonic() + wait_s
+    while time.monotonic() < end:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_a_verify_past_its_limit_is_a_failed_attempt_and_the_loop_goes_on(tmp_path):
+    task, _ = _hanging_verify_task(tmp_path)
+    prompts = []
+    start = time.monotonic()
+    result = run_verify_loop(task, lambda prompt: prompts.append(prompt) or "tried", max_attempts=2)
+    assert time.monotonic() - start < 10
+    assert not result.success and result.turns_used == 2
+    # The retry prompt has the partial output and says what happened.
+    assert len(prompts) == 2
+    assert "partial verify output" in prompts[1]
+    assert "exceeded its 0.5s limit and was terminated" in prompts[1]
+    assert "does not terminate" in prompts[1]
+    assert result.log.count("exceeded its 0.5s limit") == 2
+
+
+def test_a_verify_past_its_limit_also_ends_what_it_started(tmp_path):
+    # As `make verify`: ending only `make` would leave the solver binary running.
+    task, pid_file = _hanging_verify_task(tmp_path)
+    run_verify_loop(task, lambda prompt: "tried", max_attempts=1)
+    assert _is_dead(int(pid_file.read_text()))
+
+
+def test_a_check_within_its_limit_is_unchanged(tmp_path):
+    from fomtools.codegen.proc import TIMEOUT_RETURNCODE, run_check
+
+    code = "import sys; print('out'); print('err', file=sys.stderr); sys.exit(3)"
+    proc = run_check([sys.executable, "-c", code], tmp_path, timeout_s=30)
+    assert (proc.returncode, proc.stdout, proc.stderr) == (3, "out\n", "err\n")
+    assert run_check([sys.executable, "-c", ""], tmp_path, timeout_s=None).returncode == 0
+    late = run_check([sys.executable, "-c", "import time; time.sleep(60)"], tmp_path, 0.3)
+    assert late.returncode == TIMEOUT_RETURNCODE != 0
+
+
+def test_check_timeout_is_a_validated_config_field():
+    from pydantic import ValidationError
+
+    from fomtools.codegen.cli import _build_config, build_parser
+    from fomtools.codegen.config import CodegenConfig
+    from fomtools.codegen.proc import DEFAULT_CHECK_TIMEOUT_S
+
+    assert (
+        CodegenConfig().check_timeout_s
+        == DEFAULT_CHECK_TIMEOUT_S
+        == AgentTask(workdir=Path("."), solver_rel_path="s.c", verify_cmd=[]).check_timeout_s
+    )
+    assert CodegenConfig(check_timeout_s=60).check_timeout_s == 60
+    for bad in (0, -5, "soon"):
+        with pytest.raises(ValidationError):
+            CodegenConfig(check_timeout_s=bad)
+    args = build_parser().parse_args(["--example", "ista", "--out", "x", "--check-timeout", "90"])
+    assert _build_config(args).check_timeout_s == 90
+
+
+def test_the_runs_check_timeout_reaches_every_check(tmp_path, monkeypatch, requires_compiler):
+    # Every check of a run with profiling and a code optimization round gets
+    # the config's limit, whichever module starts it.
+    from fomtools.codegen import StubAgentDriver, generate_code, harness
+    from fomtools.codegen import generate as gen
+    from fomtools.codegen.agent import driver as driver_mod
+    from fomtools.codegen.agent import stub
+    from tests.codegen.conftest import build_ista
+
+    limits = []
+    for module in (gen, harness, driver_mod, stub):
+        real = module.run_check
+
+        def recording(cmd, cwd, timeout_s, real=real):
+            limits.append(timeout_s)
+            return real(cmd, cwd, timeout_s)
+
+        monkeypatch.setattr(module, "run_check", recording)
+    case = build_ista()
+    golden = Path(__file__).parent / "golden" / "ista" / "embedded_c" / "fom_solver.c"
+    config = case["config"].model_copy(update={"check_timeout_s": 77})
+    generate_code(
+        case["verifier"],
+        case["next_state"],
+        tmp_path,
+        config=config,
+        driver=StubAgentDriver(golden),
+        code_optimization=True,
+        profile=True,
+    )
+    assert len(limits) > 5 and set(limits) == {77}

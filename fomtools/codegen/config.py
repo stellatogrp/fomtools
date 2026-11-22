@@ -14,6 +14,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from fomtools.codegen.proc import DEFAULT_CHECK_TIMEOUT_S
+
 #: Verify-tolerance default per dtype. Single precision (~1e-7 relative error)
 #: needs a looser equivalence gate than double; see ``CodegenConfig.tol_verify``.
 _TOL_VERIFY_DEFAULTS = {"float64": 1e-6, "float32": 1e-4}
@@ -248,6 +250,9 @@ class CodegenConfig(BaseModel):
     agent_optimize_timeout_s : int
         Wall-clock budget, in seconds, for one round of the code optimization
         phase. Default 7200.
+    check_timeout_s : int
+        Limit, in seconds, of each build, verify, benchmark, or profile run
+        that the package itself starts. Default 1800.
     agent_optimize_rounds : int
         Maximum number of code optimization rounds. Default 5.
     agent_optimize_min_gain : float
@@ -319,6 +324,22 @@ class CodegenConfig(BaseModel):
             "still leaves whatever it had written on disk, which the pipeline "
             "re-verifies and benchmarks. The gates that run after the agent "
             "(verify, benchmark, profile) take seconds and are outside the budget."
+        ),
+    )
+    check_timeout_s: int = Field(
+        ge=1,
+        default=DEFAULT_CHECK_TIMEOUT_S,
+        description=(
+            "Limit, in seconds, of each check the package itself runs on the "
+            "generated code: a `make verify`, a benchmark build or timing run, a "
+            "profile run. These build and run agent-written code, which may loop "
+            "forever. A check still running at the limit is ended together with "
+            "everything it started (make, the compiler, the solver binary) and "
+            "counts as failed: a verify failure the agent is told about and can "
+            "fix, a missing timing. It is separate from the agent budgets, and "
+            "generous on purpose: a healthy check takes seconds on a CPU and at "
+            "most minutes on a GPU (nvcc build, cuDSS factorization), so only a "
+            "hung one reaches half an hour."
         ),
     )
     agent_optimize_rounds: int = Field(

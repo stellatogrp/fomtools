@@ -18,13 +18,13 @@ import sys
 import pytest
 
 from fomtools.codegen.agent.driver import (
-    _decode_stream,
     _redact_exception,
     run_verify_loop,
 )
 from fomtools.codegen.agent.prompts import SUMMARY_BEGIN, SUMMARY_END
 from fomtools.codegen.config import CodegenConfig
 from fomtools.codegen.postprocess import extract_agent_notes, write_optimization_report
+from fomtools.codegen.proc import decode_stream
 
 # The prompt fragment that made the original bug invisible: it contains the very
 # phrase the extractor searched for.
@@ -171,9 +171,9 @@ def test_redact_exception_keeps_ordinary_messages():
 # --- partial-output recovery ----------------------------------------------
 def test_decode_stream_handles_bytes_str_and_none():
     # TimeoutExpired.stdout arrives as bytes even under text=True.
-    assert _decode_stream(b"partial\n") == "partial\n"
-    assert _decode_stream("partial\n") == "partial\n"
-    assert _decode_stream(None) == ""
+    assert decode_stream(b"partial\n") == "partial\n"
+    assert decode_stream("partial\n") == "partial\n"
+    assert decode_stream(None) == ""
 
 
 def test_timeout_keeps_partial_output_and_leaks_no_argv():

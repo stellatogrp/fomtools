@@ -176,9 +176,9 @@ def test_head_to_head_alternates_two_builds_and_leaves_best(
     order = []
     real_run = gen._run_bench_bin
 
-    def recording_run(path, out_dir):
+    def recording_run(path, out_dir, timeout_s):
         order.append(path.name)
-        return real_run(path, out_dir)
+        return real_run(path, out_dir, timeout_s)
 
     monkeypatch.setattr(gen, "_run_bench_bin", recording_run)
     after, before = gen._head_to_head_us(tmp_path, write, candidate, best, runs=3)
@@ -187,3 +187,48 @@ def test_head_to_head_alternates_two_builds_and_leaves_best(
     assert order == [c, b, b, c, c, b]  # alternating, so drifts hit both alike
     assert solver.read_text() == best["src/fom_solver.c"]  # best left in place
     assert not list(tmp_path.glob(".bench_*"))  # copies removed
+
+
+# --- a check that never returns (no compiler) ------------------------------
+def _hanging_bin(tmp_path):
+    path = tmp_path / "bench_bin"
+    path.write_text("#!/bin/sh\necho partial\nsleep 60\n")
+    path.chmod(0o755)
+    return path
+
+
+def test_a_hung_bench_binary_counts_as_a_failed_run(tmp_path):
+    import time
+
+    from fomtools.codegen import generate as gen
+
+    start = time.monotonic()
+    assert gen._run_bench_bin(_hanging_bin(tmp_path), tmp_path, timeout_s=0.3) is None
+    assert time.monotonic() - start < 10
+
+
+def test_hung_make_targets_fail_instead_of_hanging(tmp_path):
+    import shutil
+    import time
+
+    from fomtools.codegen import generate as gen
+    from fomtools.codegen.config import CodegenConfig
+    from fomtools.codegen.harness import build_and_verify, build_lib
+    from fomtools.codegen.targets import get_target
+
+    if shutil.which("make") is None:
+        pytest.skip("no make available")
+    _hanging_bin(tmp_path)
+    (tmp_path / "Makefile").write_text("verify bench profile lib:\n\t./bench_bin\n")
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match="benchmark build/run failed(.|\n)*exceeded its 0.3s"):
+        run_bench(tmp_path, timeout_s=0.3)
+    with pytest.raises(RuntimeError, match="profile build/run failed(.|\n)*partial"):
+        run_profile(tmp_path, timeout_s=0.3)
+    with pytest.raises(RuntimeError, match="library build failed"):
+        build_lib(tmp_path, timeout_s=0.3)
+    assert gen._bench_mean_us(tmp_path, timeout_s=0.3) is None
+    target = get_target(CodegenConfig().model_copy(update={"check_timeout_s": 0.3}))
+    outcome = build_and_verify(tmp_path, target)
+    assert not outcome.success and "exceeded its 0.3s limit" in outcome.output
+    assert time.monotonic() - start < 20

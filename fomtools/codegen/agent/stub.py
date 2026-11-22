@@ -7,11 +7,11 @@ in CI without any model calls or network access.
 
 from __future__ import annotations
 
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
 from fomtools.codegen.agent.driver import AgentDriver, AgentResult, AgentTask
+from fomtools.codegen.proc import run_check
 
 
 class StubAgentDriver(AgentDriver):
@@ -96,11 +96,6 @@ class StubAgentDriver(AgentDriver):
 
         if task.restore_hook is not None:
             task.restore_hook()
-        proc = subprocess.run(
-            task.verify_cmd,
-            cwd=task.workdir,
-            capture_output=True,
-            text=True,
-        )
+        proc = run_check(task.verify_cmd, task.workdir, task.check_timeout_s)
         log = proc.stdout + proc.stderr
         return AgentResult(success=proc.returncode == 0, log=log, turns_used=1, artifacts=[target])

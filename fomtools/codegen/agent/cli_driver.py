@@ -15,9 +15,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import signal
 import subprocess
-import time
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
@@ -28,9 +26,9 @@ from fomtools.codegen.agent.driver import (
     AgentDriver,
     AgentResult,
     AgentTask,
-    _decode_stream,
     run_verify_loop,
 )
+from fomtools.codegen.proc import decode_stream, kill_group, popen_in_session
 
 
 class CliAgentDriver(AgentDriver):
@@ -267,32 +265,18 @@ class CliAgentDriver(AgentDriver):
             non-zero with output matching one of the spec's auth-failure markers.
         """
 
-        # The child inherits this thread's signal mask, and some imports block
-        # SIGINT and SIGTERM (`import cvxpygen` does). Spawn with an empty mask
-        # so the agent can still be interrupted and asked to stop.
-        mask = signal.pthread_sigmask(signal.SIG_SETMASK, ())
         try:
             # Its own session, so a timeout or an interrupt ends the agent together
             # with what it started (a `make bench`, the solver binary).
-            proc = subprocess.Popen(
-                argv,
-                cwd=workdir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=self._child_env(deadline),
-                start_new_session=True,
-            )
+            proc = popen_in_session(argv, cwd=workdir, env=self._child_env(deadline))
         except FileNotFoundError as exc:  # binary vanished after preflight
             raise AgentBackendError(
                 f"{self.spec.display_name or self.spec.name} CLI {self.bin!r} not found: {exc}"
             ) from exc
-        finally:
-            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            _kill_group(proc)
+            kill_group(proc)
             try:
                 stdout, stderr = proc.communicate(timeout=10)
             except subprocess.TimeoutExpired:  # a detached child still holds the pipes
@@ -302,19 +286,19 @@ class CliAgentDriver(AgentDriver):
             self._truncated = True
             name = self.spec.display_name or self.spec.name
             return (
-                self._text(_decode_stream(stdout))
-                + _decode_stream(stderr)
+                self._text(decode_stream(stdout))
+                + decode_stream(stderr)
                 + (
                     f"\n[fomtools: the {name} CLI exceeded its {timeout}s budget for this attempt "
                     "and was terminated; any output above is partial.]\n"
                 )
             )
         except BaseException:  # e.g. KeyboardInterrupt: do not leave the agent running
-            _kill_group(proc)
+            kill_group(proc)
             raise
         # The agent is done, so anything it left running in its session (a job
         # started with `&` or `nohup`) would only skew the timings that follow.
-        _kill_group(proc, grace_s=1.0)
+        kill_group(proc, grace_s=1.0)
         output = self._text(stdout) + stderr
         # An auth failure is not a fixable task error — retrying would just burn
         # the attempt budget. Surface it immediately so run_verify_loop fails fast
@@ -358,31 +342,3 @@ def stream_json_text(stdout: str) -> str:
         elif event.get("type") == "result" and event.get("is_error"):
             chunks.append(str(event.get("result") or event.get("subtype") or "error"))
     return "\n".join(chunks) + ("\n" if chunks else "")
-
-
-def _kill_group(proc: subprocess.Popen, grace_s: float = 5.0) -> None:
-    """End ``proc`` and every process in its session (it was started in its own).
-
-    SIGTERM first so the CLI can stop what it started, then SIGKILL for whatever
-    is still in the group after ``grace_s``. Also cleans up after a CLI that
-    already exited, which leaves only its leftover children in the group.
-    """
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
-        return  # the group is empty
-    deadline = time.monotonic() + grace_s
-    while time.monotonic() < deadline:
-        try:
-            proc.wait(timeout=0.05)  # reap the CLI so it does not hold the group
-        except subprocess.TimeoutExpired:
-            pass
-        try:
-            os.killpg(proc.pid, 0)
-        except (ProcessLookupError, PermissionError):
-            return
-        time.sleep(0.05)
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
