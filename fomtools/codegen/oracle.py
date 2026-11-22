@@ -418,6 +418,85 @@ def sample_param_values(verifier, iterates, state=None, params=None, seed: int =
     return values
 
 
+#: Most samples `edge_param_values` returns, whatever the parameter dimension.
+MAX_EDGE_SAMPLES = 8
+
+#: Face points among them.
+_EDGE_FACE_POINTS = 2
+
+
+def edge_param_values(params, seed: int = 0, existing=()) -> list[dict[str, np.ndarray]]:
+    """Deterministic parameter values at the edges of the parameter box.
+
+    Uniform draws from the interior almost never land where a piecewise affine
+    step changes branch or on an extreme point of the parameter set. These do, in
+    this order:
+
+    * the all-lower-bound vertex, the all-upper-bound vertex and the midpoint;
+    * zero, when it lies inside the box (where soft-thresholding and ReLU switch);
+    * a mixed vertex, each coordinate at its lower or upper bound, and the
+      opposite vertex, so that each coordinate is at both of its bounds;
+    * two face points: an interior draw with a quarter of the coordinates (at
+      least one) pinned to a bound.
+
+    An infinite bound stands in as -1 / +1, as in the random samples. A value
+    equal to an earlier one or to one in ``existing`` is dropped, so a degenerate
+    box (``lb == ub``) yields one sample, not eight. At most `MAX_EDGE_SAMPLES`
+    values are returned, independent of the parameter dimension.
+
+    Parameters
+    ----------
+    params : sequence of ParamSpec
+        The solve-time parameters (``ir.params``).
+    seed : int
+        Seed of the mixed vertices and face points.
+    existing : sequence of dict
+        Parameter values already in the sample set, keyed by parameter name.
+
+    Returns
+    -------
+    list of dict
+        Parameter values keyed by parameter name.
+    """
+    dim = sum(p.dim for p in params)
+    if dim == 0:
+        return []
+    lb = np.concatenate([np.broadcast_to(np.asarray(p.lb, float), (p.dim,)) for p in params])
+    ub = np.concatenate([np.broadcast_to(np.asarray(p.ub, float), (p.dim,)) for p in params])
+    lo = np.where(np.isfinite(lb), lb, -1.0)
+    hi = np.where(np.isfinite(ub), ub, 1.0)
+
+    candidates = [lo, hi, 0.5 * lo + 0.5 * hi]
+    if np.all((lb <= 0.0) & (ub >= 0.0)):
+        candidates.append(np.zeros(dim))
+    rng = np.random.default_rng(seed)
+    # A random vertex and its opposite: each coordinate is at both of its bounds.
+    upper = rng.integers(0, 2, size=dim) == 1
+    candidates += [np.where(upper, hi, lo), np.where(upper, lo, hi)]
+    for _ in range(_EDGE_FACE_POINTS):
+        point = rng.uniform(lo, hi)
+        pinned = rng.choice(dim, size=max(1, dim // 4), replace=False)
+        upper = rng.integers(0, 2, size=pinned.size) == 1
+        point[pinned] = np.where(upper, hi[pinned], lo[pinned])
+        candidates.append(point)
+
+    def key(vec):
+        return (np.asarray(vec, float) + 0.0).tobytes()  # + 0.0: -0.0 and 0.0 are one point
+
+    seen = {key(np.concatenate([np.ravel(e[p.name]) for p in params])) for e in existing}
+    out = []
+    for vec in candidates:
+        if key(vec) in seen:
+            continue
+        seen.add(key(vec))
+        values, offset = {}, 0
+        for p in params:
+            values[p.name] = vec[offset : offset + p.dim] + 0.0
+            offset += p.dim
+        out.append(values)
+    return out
+
+
 def check_unrolled(
     ir: FomIR,
     verifier,
