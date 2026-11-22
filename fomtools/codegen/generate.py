@@ -60,6 +60,7 @@ from fomtools.codegen.proc import DEFAULT_CHECK_TIMEOUT_S, run_check
 from fomtools.codegen.progress import Progress, format_time, verify_numbers
 from fomtools.codegen.report_svg import (
     REPORT_SVG_NAME,
+    remove_report_svg,
     result_report_svg,
     write_report_svg,
 )
@@ -949,6 +950,7 @@ def run_code_optimization(
 
     measure = profile and find_compiler() is not None
     remove_manifest(out_dir)  # the sources are about to change; the caller records the result
+    remove_report_svg(out_dir)  # and draws the card of the result
     translated = read_editable()  # known-good fallback
     best = translated
     best_us: float | None = None

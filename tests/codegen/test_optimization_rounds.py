@@ -236,6 +236,9 @@ def test_the_rounds_record_the_spread(tmp_path, monkeypatch, requires_compiler):
     assert "| 50.0% | ±2.0% | yes |" in report
     assert "| 2 | - | - | - | - | no |" in report
     assert "translated (emitted)     100 µs per solve  ± 2.0 (98.0 to 110.0 µs, 5 runs)" in report
+    # The copied card describes the translated solver: it is gone, and not linked.
+    assert (emitted / "report.svg").is_file() and not (copy / "report.svg").exists()
+    assert "report.svg" not in report
 
 
 @pytest.mark.requires_compiler

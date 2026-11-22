@@ -161,22 +161,28 @@ class TimingReport:
         return None
 
     def summary(self) -> str:
-        """A human-readable speedup + profiling summary."""
+        """A human-readable speedup + profiling summary.
+
+        The optimized solver and its speedups are listed only when the code
+        optimization phase changed the time: with the phase off, or no round
+        kept, the translated solver is the one that ships.
+        """
+        optimized = self.c_final_us is not None and self.c_final_us != self.c_initial_us
         lines = ["Timing summary (per solve):"]
         if self.python_us is not None:
             lines.append(f"  Python reference (before codegen): {format_time(self.python_us):>10}")
-        for label, us, stats in (
-            ("Generated C (translated):", self.c_initial_us, self.c_initial_stats),
-            ("Generated C (optimized): ", self.c_final_us, self.c_final_stats),
+        for label, us, stats, shown in (
+            ("Generated C (translated):", self.c_initial_us, self.c_initial_stats, True),
+            ("Generated C (optimized): ", self.c_final_us, self.c_final_stats, optimized),
         ):
-            if us is not None:
+            if us is not None and shown:
                 spread = f"  {stats.spread()}" if stats else ""
                 lines.append(f"  {label}          {format_time(us):>10}{spread}")
         if self.speedup_codegen:
             lines.append(f"  Speedup from codegen (Py -> C):    {self.speedup_codegen:8.1f}x")
-        if self.speedup_optimization:
+        if optimized and self.speedup_optimization:
             lines.append(f"  Speedup from code optimization:   {self.speedup_optimization:8.2f}x")
-        if self.speedup_total:
+        if optimized and self.speedup_total:
             lines.append(f"  Total speedup (Py -> optimized C): {self.speedup_total:8.1f}x")
         if self.profile:
             lines.append("Profiling breakdown (hottest first):")

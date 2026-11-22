@@ -27,6 +27,8 @@ from fomtools.codegen.agent.prompts import (
 )
 from fomtools.codegen.progress import format_time
 
+OPTIMIZATIONS_NAME = "OPTIMIZATIONS.md"
+
 # One line per matrix from verify's direct check of fom_apply_<name>.
 _OPSCHECK_RE = re.compile(
     r"^OPSCHECK name=(?P<name>\S+) mode=(?P<mode>\w+) probes=(?P<probes>\d+) "
@@ -432,6 +434,6 @@ def write_optimization_report(
         lines += ["_No changes to the generated sources (already optimal or unchanged)._", ""]
     if agent_notes.strip():
         lines += ["## Agent notes", "", "```", agent_notes.strip(), "```", ""]
-    path = out_dir / "OPTIMIZATIONS.md"
+    path = out_dir / OPTIMIZATIONS_NAME
     path.write_text("\n".join(lines))
     return path

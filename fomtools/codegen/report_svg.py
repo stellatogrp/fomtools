@@ -1,7 +1,7 @@
 """The report card of a code-generation run, as a self-contained SVG.
 
 `report_svg` draws what a finished run measured: the time per solve of the NumPy
-reference, the translated and the optimized solver (log scale), the rounds of the
+reference, the translated and the optimized solver (dots on a log scale), the rounds of the
 code optimization phase and why each was kept or reverted, the profile of the
 shipped solver, and the acceptance check against the tolerance. Each part is
 left out when its data is missing. `write_report_svg` writes the card as
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import html
 import math
+import os
 import re
 import unicodedata
 from pathlib import Path
@@ -43,7 +44,7 @@ _COLORS = {
     "border": ("#d9d8d0", "#3a3a37"),
     "ink": ("#0b0b0b", "#f0efec"),
     "ink2": ("#52514e", "#c3c2b7"),
-    "muted": ("#7b7974", "#98968f"),
+    "muted": ("#6f6d68", "#98968f"),
     "grid": ("#e6e5df", "#2c2c2a"),
     "axis": ("#c3c2b7", "#4a4a46"),
     "track": ("#eeede8", "#2a2a28"),
@@ -154,16 +155,11 @@ def _line(x1, y1, x2, y2, stroke="grid", width=1.0) -> str:
     )
 
 
-def _bar(x, y, width, height, fill, tip) -> str:
-    """A bar from ``x``: square at the baseline, rounded at the data end."""
-    r = min(3.0, height / 2, width)
-    d = (
-        f"M{_n(x)} {_n(y)}h{_n(width - r)}a{_n(r)} {_n(r)} 0 0 1 {_n(r)} {_n(r)}"
-        f"v{_n(height - 2 * r)}a{_n(r)} {_n(r)} 0 0 1 {_n(-r)} {_n(r)}h{_n(r - width)}z"
-    )
+def _dot(x, y, fill, tip) -> str:
+    """The mark of a time: a disc at ``(x, y)``."""
     return (
-        f'<path class="fc-{fill} fc-bar" data-length="{_n(width)}" d="{d}">'
-        f"<title>{_esc(tip)}</title></path>"
+        f'<circle class="fc-{fill} fc-dot" cx="{_n(x)}" cy="{_n(y)}" r="5.5">'
+        f"<title>{_esc(tip)}</title></circle>"
     )
 
 
@@ -224,7 +220,7 @@ def _style(theme: str) -> str:
 
 # -- sections: each returns its elements and its height -----------------------
 def _time_rows(timing, optimized: bool) -> list[tuple]:
-    """``(label, color, time, stats, note)`` of the bars that have a time."""
+    """``(label, color, time, stats, note)`` of the rows that have a time."""
     if timing is None:
         return []
     python = _positive(getattr(timing, "python_us", None))
@@ -250,9 +246,9 @@ def _spread(stats) -> tuple[float, float] | None:
 def _time_section(y: float, rows: list[tuple]) -> tuple[list[str], float]:
     spreads = [_spread(r[3]) for r in rows]
     values = [r[2] for r in rows] + [v for s in spreads if s for v in s]
+    # Whole decades around the values. A log axis has no zero, so each time is a
+    # dot at its position, not a bar whose length would depend on where the axis starts.
     low = math.floor(math.log10(min(values)))
-    if math.log10(min(values)) - low < 0.2:
-        low -= 1  # the shortest bar keeps a visible length
     high = max(math.ceil(math.log10(max(values))), low + 1)
 
     def x(value: float) -> float:
@@ -281,18 +277,19 @@ def _time_section(y: float, rows: list[tuple]) -> tuple[list[str], float]:
         mid = top + pitch * i + (15 if spread else pitch / 2)
         out.append(_text(_PAD, mid + 4, label, 12.5, "ink"))
         shown = format_time(value)
-        out.append(_bar(_X0, mid - 6, x(value) - _X0, 12, color, f"{label}: {shown} per solve"))
-        if spread:
+        out.append(_line(_X0, mid, _X1, mid, "grid"))
+        if spread:  # the fastest and the slowest run, under the dot
             a, b = x(spread[0]), x(spread[1])
             out.append(_line(a, mid, b, mid, "ink", 1.25))
-            out += [_line(v, mid - 3.5, v, mid + 3.5, "ink", 1.25) for v in (a, b)]
+            out += [_line(v, mid - 4, v, mid + 4, "ink", 1.25) for v in (a, b)]
             runs = getattr(stats, "runs", None)
             text = (
-                f"{format_time(spread[0], like=value, digits=4, unit=False)} to "
+                f"range {format_time(spread[0], like=value, digits=4, unit=False)} to "
                 f"{format_time(spread[1], like=value, digits=4)}"
                 + (f", {runs} runs" if runs else "")
             )
             out.append(_text(_VX, mid + 19, text, 10.5, "muted", mono=True))
+        out.append(_dot(x(value), mid, color, f"{label}: {shown} per solve"))
         out.append(_text(_VX, mid + 4.5, shown, 13.5, "ink", mono=True, weight=600))
         if note:
             out.append(_text(_RIGHT, mid + 4.5, note, 11.5, "ink2", "end"))
@@ -368,11 +365,11 @@ def _rounds_section(y: float, rounds: list) -> tuple[list[str], float]:
     if not times:
         return out, bottom + 6 - y
     out.append(_line(_X0, bottom, _X1, bottom, "axis"))
-    ends = sorted({min(times), max(times)})
-    for i, value in enumerate(ends):
+    for value in sorted({min(times), max(times)}):
         out.append(_line(x(value), bottom, x(value), bottom + 4, "axis"))
-        anchor = "middle" if len(ends) == 1 else ("start", "end")[i]
-        out.append(_text(x(value), bottom + 16, format_time(value), 10, "muted", anchor, mono=True))
+        out.append(
+            _text(x(value), bottom + 16, format_time(value), 10, "muted", "middle", mono=True)
+        )
     return out, bottom + 24 - y
 
 
@@ -420,32 +417,61 @@ def _profile_section(y: float, profile: list) -> tuple[list[str], float]:
         )
         share_text = f"{100 * share / total:.1f}%"
         out.append(_text(cx + 16, cy, _fit(name, 11.5, column - 96, True), 11.5, "ink", mono=True))
-        out.append(_text(cx + column - 24, cy, share_text, 11.5, "ink2", "end", mono=True))
+        end = _RIGHT if i % columns == columns - 1 else cx + column - 24
+        out.append(_text(end, cy, share_text, 11.5, "ink2", "end", mono=True))
     rows = (len(parts) + columns - 1) // columns
     return out, top + height + 20 + pitch * (rows - 1) + 14 - y
 
 
-def _verify_section(y: float, verify) -> tuple[list[str], float]:
-    samples, error, tolerance = (tuple(verify) + (None, None))[:3]
-    error = float(error) if error is not None and math.isfinite(float(error)) else None
-    error = None if error is None else abs(error)
+def _verify_facts(verify) -> tuple:
+    """``(samples, error, tolerance, failed)`` of the ``verify`` tuple.
+
+    ``error`` is the absolute worst error (``None`` if missing, infinite if not
+    a finite number) and ``tolerance`` is positive or ``None``. The check failed
+    when the error is not finite or is above the tolerance.
+    """
+    samples, error, tolerance = (tuple(verify) + (None, None, None))[:3]
+    try:
+        error = abs(float(error))
+    except (TypeError, ValueError):
+        error = None
+    if error is not None and math.isnan(error):
+        error = math.inf
     tolerance = _positive(tolerance)
-    scale = tolerance is not None and error is not None
-    out = _heading(y, "Acceptance check", "log scale: one tick per decade" if scale else "")
-    line = y + 24
-    out.append(_check(_PAD, line - 4))
+    failed = error is not None and (
+        error == math.inf or (tolerance is not None and error > tolerance)
+    )
+    return samples, error, tolerance, failed
+
+
+def _verify_words(verify) -> tuple[str, str]:
+    """The outcome (``Verified on 60 samples``) and its numbers, in words."""
+    samples, error, tolerance, failed = _verify_facts(verify)
+    said = "NOT verified" if failed else "Verified"
+    if samples is not None:
+        said += f" on {_clean(samples)} sample" + ("" if samples == 1 else "s")
     facts = []
     if error is not None:
-        facts.append(f"worst error {_sci(error)}")
+        facts.append(
+            "worst error not finite" if error == math.inf else f"worst error {_sci(error)}"
+        )
     if tolerance:
         facts.append(f"tolerance {_sci(tolerance)}")
-    if scale and 0 < error < tolerance:
-        facts.append(f"margin {_times(tolerance / error)}")
-    facts = " · ".join(facts)
+        if error and error != math.inf:  # how far the error is from the tolerance
+            ratio = error / tolerance if failed else tolerance / error
+            facts.append(f"{_times(ratio)} {'above' if failed else 'below'} tolerance")
+    return said, " · ".join(facts)
+
+
+def _verify_section(y: float, verify) -> tuple[list[str], float]:
+    _, error, tolerance, failed = _verify_facts(verify)
+    scale = tolerance is not None and error is not None and error != math.inf
+    out = _heading(y, "Acceptance check", "log scale: one tick per decade" if scale else "")
+    line = y + 24
+    out.append(_cross(_PAD + 6, line - 4, 4, "bad") if failed else _check(_PAD, line - 4))
+    said, facts = _verify_words(verify)
     room = _RIGHT - _PAD - 18 - (_width(facts, 11.5, True) + 16 if facts else 0)
-    plural = "" if samples == 1 else "s"
-    said = f"Verified on {_clean(samples)} sample{plural}"
-    if _width(said + " against the NumPy reference", 12.5) <= room:
+    if not failed and _width(said + " against the NumPy reference", 12.5) <= room:
         said += " against the NumPy reference"
     out.append(_text(_PAD + 18, line, _fit(said, 12.5, room), 12.5))
     if facts:
@@ -477,7 +503,8 @@ def _verify_section(y: float, verify) -> tuple[list[str], float]:
     out.append(_line(xt, track - 11, xt, track + 11, "ink2", 2))
     out.append(_text(xt + 7, track - 9, "tolerance", 11, "ink2"))
     out.append(
-        f'<circle class="fc-optimized fc-s-bg fc-error" cx="{_n(xe)}" cy="{_n(track)}" r="6" '
+        f'<circle class="fc-{"bad" if failed else "optimized"} fc-s-bg fc-error" cx="{_n(xe)}" '
+        f'cy="{_n(track)}" r="6" '
         f'stroke-width="2"><title>worst error {_esc(_sci(error))}</title></circle>'
     )
     label = "worst error" + (" (zero)" if not error else "")
@@ -517,8 +544,9 @@ def report_svg(
         The rounds of the code optimization phase. A single round that was kept
         and timed adds nothing to the bars, so it is not drawn.
     verify : tuple, optional
-        ``(samples, worst max-abs error, tolerance)`` of the passing verify, as
-        `fomtools.codegen.progress.verify_numbers` returns it.
+        ``(samples, worst max-abs error, tolerance)`` of the solver's verify, as
+        `fomtools.codegen.progress.verify_numbers` returns it. An error that is
+        above the tolerance or not finite is drawn as a failed check.
     theme : {"auto", "light", "dark"}
         ``"auto"`` follows ``prefers-color-scheme``.
 
@@ -550,11 +578,8 @@ def report_svg(
     if speedup:
         facts.append(f"{_times(speedup)} the speed of the NumPy reference")
     if verify:
-        samples, error = verify[0], verify[1]
-        facts.append(
-            f"verified on {samples} samples with worst error {_sci(abs(error))}"
-            + (f" (tolerance {_sci(verify[2])})" if len(verify) > 2 and verify[2] else "")
-        )
+        said, numbers = _verify_words(verify)
+        facts.append(said.replace("Verified", "verified") + (f": {numbers}" if numbers else ""))
     kept = sum(1 for r in rounds if r.kept)
     if rounds:
         facts.append(f"{kept} of {len(rounds)} optimization rounds kept")
@@ -628,5 +653,7 @@ def remove_report_svg(out_dir: str | Path) -> None:
 def write_report_svg(out_dir: str | Path, svg: str) -> Path:
     """Write ``svg`` as ``report.svg`` in ``out_dir`` and return its path."""
     path = Path(out_dir) / REPORT_SVG_NAME
-    path.write_text(svg, encoding="utf-8")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(svg, encoding="utf-8")
+    os.replace(tmp, path)  # atomic: an interrupted run leaves no half-written card
     return path

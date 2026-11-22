@@ -502,6 +502,8 @@ Profiling breakdown (hottest first):
 The attributes stay in microseconds. Printed times pick their unit (ns, µs, ms
 or s) and show three significant digits; a spread is printed in the unit of its
 median.
+The optimized solver and the two speedups that involve it are printed only
+when the code optimization phase kept a round.
 
 The generated directory also exposes `make bench` and `make profile` directly.
 
@@ -642,24 +644,34 @@ From top to bottom, each part drawn only when the run has its data:
 - **Time per solve** of the NumPy reference, the translated solver and, when an
   optimization was kept, the optimized solver. The axis is logarithmic, since
   the generated code is often hundreds of times faster than NumPy: each gridline
-  is a factor of 10, and equal lengths are equal ratios. The numbers are printed
-  next to the bars, with the fastest and slowest run when the head-to-head
-  benchmark recorded them.
-- **Optimization rounds**, one row per round on a linear axis: a filled disc for
-  a kept round, a ring for a reverted one, a cross for a round that failed
-  verification, each with its time and the reason (`not faster`, `inside noise`,
-  `failed verification`). The line follows the best solver so far.
+  is a factor of 10, and equal distances are equal ratios. A logarithmic axis
+  has no zero, so each time is a dot at its position and not a bar. The numbers
+  are printed next to the dots, with the range from the fastest to the slowest
+  run when the head-to-head benchmark recorded it. With the code optimization
+  phase off, or no round kept, there is no optimized solver on the card.
+- **Optimization rounds**, one row per round on a linear axis that does not
+  start at zero: a filled disc for a kept round, a ring for a reverted one, a
+  cross for a round that failed verification, each with its time and the reason
+  (`not faster`, `inside noise`, `failed verification`). The percentage of a
+  kept round is the gain the keep rule measured (one minus the median of the
+  paired time ratios, as in the table of `OPTIMIZATIONS.md`); it can differ a
+  little from the ratio of the two printed medians. The line follows the best
+  solver so far.
 - **Where the time goes**: the profile of the shipped solver as shares of the
   total, the five largest regions by name.
 - **Acceptance check**: the number of verify samples and the worst error against
-  the tolerance, on a logarithmic axis with one tick per decade.
+  the tolerance, on a logarithmic axis with one tick per decade. The check
+  passes when the error is at or below the tolerance, so `2.3e8× below
+  tolerance` means the error is that many times smaller than what is allowed.
 
 The card is a standalone SVG with no scripts or external fonts. It carries its
 own background and follows the light or dark preference of the viewer, so it can
 go into a README or a paper repository as it is. `OPTIMIZATIONS.md` shows it at
 the top. In a Jupyter or marimo notebook, a `CodegenResult` displays as the card
 with a one-line summary (`result.summary()`); a failed run displays as a
-failure message. To draw the card yourself, for example in a fixed theme:
+failure message. A new run on the same directory first removes the card and
+`OPTIMIZATIONS.md` of the earlier run. To draw the card yourself, for example in
+a fixed theme:
 
 ```python
 from fomtools.codegen.report_svg import result_report_svg

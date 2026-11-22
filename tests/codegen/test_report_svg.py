@@ -85,6 +85,14 @@ def test_format_time_in_the_unit_of_another():
     assert "1.33 ms" in TIMING.summary() and "(1.749 to 1.790 µs, 5 runs)" in TIMING.summary()
 
 
+def test_timing_summary_names_an_optimized_solver_only_when_there_is_one():
+    assert "optimized" in TIMING.summary() and "code optimization:" in TIMING.summary()
+    # The phase off, or no round kept: the translated solver ships, with no 1.00x.
+    same = TimingReport(900.0, 12.0, 12.0).summary()
+    assert "translated" in same and "Speedup from codegen" in same
+    assert "optimiz" not in same and "1.00x" not in same
+
+
 # -- the card ------------------------------------------------------------------
 def test_full_card_is_wellformed_accessible_and_complete():
     svg = report_svg(**FULL)
@@ -107,7 +115,7 @@ def test_full_card_is_wellformed_accessible_and_complete():
         "Optimized solver",
         "1.52 µs",
         "1.15× vs translated",
-        "1.749 to 1.790 µs, 5 runs",
+        "range 1.749 to 1.790 µs, 5 runs",
         "log scale",
         "Round 5",
         "kept, −13.3%",
@@ -119,7 +127,7 @@ def test_full_card_is_wellformed_accessible_and_complete():
         "soft_threshold",
         "51.2%",
         "Verified on 60 samples",
-        "worst error 4.4e-16 · tolerance 1e-6 · margin 2.3e9×",
+        "worst error 4.4e-16 · tolerance 1e-6 · 2.3e9× below tolerance",
     ):
         assert expected in text, expected
     assert "prefers-color-scheme:dark" in svg
@@ -195,7 +203,10 @@ EXTREME = [
     dict(timing=TimingReport(1e-9, 1e12, 1e-9), rounds=[Round(1, True, True, True, 1e12, 1e-9)]),
     dict(verify=(10**9, 0.0, 1e-6)),
     dict(verify=(1, 1e-300, 1e300)),
-    dict(verify=(1, 5.0, 1e-6)),  # an error above the tolerance still draws
+    dict(verify=(1, 5.0, 1e-6)),  # an error above the tolerance
+    dict(verify=(1, float("nan"), 1e-6)),
+    dict(verify=(None, float("inf"))),
+    dict(verify=(3,)),
     dict(name="W" * 400, target="x" * 200, dtype="y" * 200),
     dict(name="解" * 200, timing=TimingReport(profile=[ProfRegion("名" * 99, 1.0, 1, 3.0)] * 9)),
     dict(rounds=[Round(i, True, True, i % 2 == 0, 9.0, 9.0 - i, 0.1) for i in range(1, 13)]),
@@ -240,30 +251,54 @@ def test_geometry_stays_inside_the_card(case):
             left = x - {"start": 0, "middle": extent / 2, "end": extent}[anchor]
             inside(left, float(e.get("y")))
             inside(left + extent)
-    for bar in root.iter(f"{NS}path"):
-        if "fc-bar" in (bar.get("class") or ""):
-            assert float(bar.get("data-length")) >= 0
 
 
-def test_bar_lengths_follow_the_log_of_the_time():
-    def lengths(python, first, final):
-        svg = report_svg("x", timing=TimingReport(python, first, final))
-        return [
-            float(p.get("data-length"))
-            for p in ET.fromstring(svg).iter(f"{NS}path")
-            if "fc-bar" in (p.get("class") or "")
-        ]
+def _dots(svg: str) -> list[float]:
+    circles = ET.fromstring(svg).iter(f"{NS}circle")
+    return [float(c.get("cx")) for c in circles if "fc-dot" in c.get("class").split()]
 
-    numpy, translated, optimized = lengths(1.0e4, 10.0, 1.0)
-    assert numpy > translated > optimized > 0
-    # Equal ratios are equal lengths: one decade from 10 to 1, three from 1e4 to 10.
+
+def test_times_are_dots_at_the_log_of_the_time():
+    svg = report_svg("x", timing=TimingReport(1.0e4, 10.0, 1.0))
+    numpy, translated, optimized = _dots(svg)
+    # Powers of ten sit on the gridlines of the four decades from 1 µs to 10 ms.
+    assert (numpy, translated, optimized) == pytest.approx((468.0, 243.0, 168.0))
+    # Equal ratios are equal distances: one decade from 10 to 1, three from 1e4 to 10.
     assert numpy - translated == pytest.approx(3 * (translated - optimized), rel=1e-3)
-    previous = 0.0
-    for python in (2.0, 20.0, 3.0e3, 4.0e6, 5.0e9):  # 1000x and more: nothing vanishes
-        numpy, translated, optimized = lengths(python, 1.5, 1.0)
-        assert numpy > previous and translated > optimized > 5
-        previous = 0.0 if python < 20 else previous  # the axis grows by whole decades
-    assert "log scale" in _texts(report_svg("x", timing=TimingReport(1.0e4, 10.0, 1.0)))
+    assert "log scale" in _texts(svg) and "fc-bar" not in svg  # no bar: a log axis has no zero
+    # The axis spans whole decades, so a dot does not jump when a time changes a little.
+    at = [_dots(report_svg("x", timing=TimingReport(1.0e4, c, c)))[1] for c in (14.0, 15.0, 16.0)]
+    assert at[0] < at[1] < at[2] and at[2] - at[0] < 10
+    for python in (20.0, 3.0e3, 4.0e6, 5.0e9):  # 1000x and more: both ends stay on the axis
+        numpy, translated, optimized = _dots(report_svg("x", timing=TimingReport(python, 1.5, 1.0)))
+        assert 168 <= optimized < translated < numpy <= 468
+
+
+def test_a_failed_or_malformed_verify_is_not_drawn_as_a_pass():
+    def card(verify):
+        svg = report_svg("x", verify=verify)
+        root = ET.fromstring(svg)
+        return root.get("aria-label"), _texts(svg), svg
+
+    label, text, svg = card((60, 4.4e-16, 1e-6))
+    assert "verified on 60 samples" in label and "Verified on 60 samples" in text
+    assert "fc-optimized fc-s-bg fc-error" in svg and "fc-s-bad" not in svg.split("</style>")[1]
+    # At the tolerance is a pass; above it, or not a number, is a failure in words and mark.
+    assert "Verified on 1 sample" in card((1, 1e-6, 1e-6))[1]
+    for verify, fact in (
+        ((60, 3.2e-4, 1e-6), "320× above tolerance"),
+        ((60, float("nan"), 1e-6), "worst error not finite"),
+        ((60, float("inf"), None), "worst error not finite"),
+    ):
+        label, text, svg = card(verify)
+        assert "NOT verified on 60 samples" in label and "NOT verified on 60 samples" in text
+        assert fact in text and "Verified" not in text and "below" not in text
+        assert (
+            "fc-s-bad" in svg.split("</style>")[1]
+            and "fc-optimized" not in svg.split("</style>")[1]
+        )
+    for verify in ((), (3,), (None, None, None), (60, None, 1e-6), (60, 1e-9), (60, -1e-9, -1.0)):
+        assert ET.fromstring(report_svg("x", verify=verify)) is not None  # never raises
 
 
 # -- the file next to the solver -------------------------------------------------
@@ -289,6 +324,7 @@ def test_a_run_writes_the_card_and_a_rerun_replaces_it(tmp_path, requires_compil
     assert result.verify and result.verify[0] > 0 and result.verify[2] == 1e-6
     root = ET.fromstring(card.read_text(encoding="utf-8"))
     assert f"verified on {result.verify[0]} samples" in root.get("aria-label")
+    assert not list(tmp_path.glob("*.tmp"))  # written in one step
     report = (tmp_path / "OPTIMIZATIONS.md").read_text()
     assert report.startswith(
         f"# Optimization report\n\n![Report card of the run]({REPORT_SVG_NAME})"
@@ -296,7 +332,8 @@ def test_a_run_writes_the_card_and_a_rerun_replaces_it(tmp_path, requires_compil
     assert "## What the agent changed" in report  # the text sections stay
     check_manifest(tmp_path)  # the card is not a recorded source: nothing to trip
 
-    # A translation-only rerun under another name replaces the card.
+    # A translation-only rerun under another name replaces the card, and drops the
+    # optimization report of the earlier run (it would describe, and show, another run).
     card.write_text("stale")
     case = build_ista(max_iters=50)
     generate_code(
@@ -309,6 +346,7 @@ def test_a_run_writes_the_card_and_a_rerun_replaces_it(tmp_path, requires_compil
         profile=False,
     )
     assert "second" in ET.fromstring(card.read_text(encoding="utf-8")).get("aria-label")
+    assert not (tmp_path / "OPTIMIZATIONS.md").exists()
     check_manifest(tmp_path)
 
     # A failed run leaves no card of the earlier one.

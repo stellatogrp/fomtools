@@ -13,6 +13,7 @@ from pathlib import Path
 from fomtools.codegen.config import CodegenConfig
 from fomtools.codegen.ir import FomIR
 from fomtools.codegen.manifest import remove_manifest
+from fomtools.codegen.postprocess import OPTIMIZATIONS_NAME
 from fomtools.codegen.report_svg import remove_report_svg
 from fomtools.codegen.targets import TargetDescriptor, get_target
 from fomtools.codegen.wrapper import emit_wrapper
@@ -37,6 +38,7 @@ def scaffold(
     # about to change, and only a run that finishes and verifies records it again.
     remove_manifest(out)
     remove_report_svg(out)  # the card of the earlier run
+    (out / OPTIMIZATIONS_NAME).unlink(missing_ok=True)  # and its optimization report
 
     target.scaffold(ir, out)
     emit_wrapper(ir, out, config)
