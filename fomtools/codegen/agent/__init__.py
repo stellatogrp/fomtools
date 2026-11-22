@@ -3,7 +3,8 @@
 Code generation is **agent-agnostic**: every agent is a headless CLI described by
 a declarative `CliAgentSpec` and driven by the generic `CliAgentDriver`. Specs
 for ``claude`` (the default), ``codex``, ``pi`` (https://pi.dev), and ``cursor``
-ship in ``agents.yaml``; users add their own agents with no code changes, at
+ship in ``agents.yaml``, with the restricted variants ``claude-sandboxed`` and
+``codex-sandboxed``; users add their own agents with no code changes, at
 runtime via `register_agent` or in a YAML config (see `load_user_specs`). Each
 agent runs through its own installed CLI, so it uses the user's login, config,
 and default model; set ``CodegenConfig.agent_model`` or ``FOMTOOLS_CODEGEN_MODEL``
@@ -58,7 +59,8 @@ def make_agent_driver(backend: str | None = None, config=None) -> AgentDriver:
     """Construct a real coding-agent driver for the selected backend.
 
     ``backend`` is any name from `available_backends` (bundled ``claude`` /
-    ``codex`` / ``pi`` / ``cursor``, or a user-registered CLI agent). When
+    ``codex`` / ``pi`` / ``cursor``, the restricted ``claude-sandboxed`` /
+    ``codex-sandboxed``, or a user-registered CLI agent). When
     ``None`` it is read from ``FOMTOOLS_CODEGEN_BACKEND`` and otherwise defaults
     to ``"claude"``. The model is ``config.agent_model``, else
     ``FOMTOOLS_CODEGEN_MODEL``, else the CLI's own default. These backends are
@@ -102,7 +104,7 @@ def get_default_driver(config=None, backend: str | None = None) -> AgentDriver:
         raise RuntimeError(
             f"No coding-agent driver provided and the {spec.display_name or spec.name} "
             f"CLI {driver.bin!r} is not on PATH. {spec.install_hint} Or choose another "
-            "agent with FOMTOOLS_CODEGEN_BACKEND (claude, codex, pi, cursor), or pass "
-            "driver=..."
+            f"agent with FOMTOOLS_CODEGEN_BACKEND ({', '.join(available_backends())}), "
+            "or pass driver=..."
         )
     return driver

@@ -72,11 +72,15 @@ def test_default_codex_pi_and_cursor_argv_are_pinned():
 
 def test_restricted_profiles_are_selectable_backends():
     assert {"claude-sandboxed", "codex-sandboxed"} <= set(available_backends())
-    # Only the CLIs that can confine the agent have one.
-    assert sorted(n for n in available_backends() if n.endswith("-sandboxed")) == [
-        "claude-sandboxed",
-        "codex-sandboxed",
-    ]
+
+
+def test_missing_cli_message_lists_the_restricted_profiles(monkeypatch):
+    monkeypatch.delenv("FOMTOOLS_CODEGEN_AGENT", raising=False)
+    monkeypatch.setenv("FOMTOOLS_CODEGEN_BACKEND", "claude-sandboxed")
+    monkeypatch.setattr("fomtools.codegen.agent.shutil.which", lambda name: None)
+    with pytest.raises(RuntimeError, match="'claude' is not on PATH") as err:
+        get_default_driver()
+    assert all(name in str(err.value) for name in available_backends())
 
 
 def test_claude_sandboxed_argv():

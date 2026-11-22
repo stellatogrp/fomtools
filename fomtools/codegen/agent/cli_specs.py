@@ -200,7 +200,8 @@ def load_user_specs(*, force: bool = False) -> None:
             display_name: Aider
             auth_hint: Run `aider` once and log in.
 
-    The bundled specs (``claude``, ``codex``, ``pi``, ``cursor``) can be
+    The bundled specs (``claude``, ``codex``, ``pi``, ``cursor``, and the
+    restricted ``claude-sandboxed`` and ``codex-sandboxed``) can be
     overridden by name. Missing
     files are skipped; a malformed file raises so the user sees the problem.
     """
