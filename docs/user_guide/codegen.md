@@ -393,8 +393,12 @@ is one minus their median. The *noise* is twice their median absolute deviation
 
 | round | the rewrite is kept if | why |
 |---|---|---|
-| 1 | `gain >= -noise` | the translated solver is the baseline: a rewrite of the same speed is kept, a measurably slower one is not |
+| 1 | `gain >= -min(noise, 0.02)` | the translated solver is the baseline: a rewrite of the same speed is kept, a measurably slower one is not, and neither is one more than 2% slower |
 | 2 and later | `gain > noise` | each round must be a measured gain, so that rounds inside the noise cannot add up to a slower solver |
+
+The 2% cap in round 1 bounds the loss that noisy timings can let through. A
+band that only follows the noise would keep a rewrite that is really 5% slower
+in about 1 comparison in 4 when single timings vary by 2%.
 
 A rewrite that is not kept, or fails verification, is reverted, and the phase
 ends. A kept round whose gain is below `agent_optimize_min_gain`, or inside the
