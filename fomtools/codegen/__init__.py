@@ -35,7 +35,7 @@ The public surface:
 """
 
 from fomtools.codegen.agent import AgentDriver, AgentResult, AgentTask, StubAgentDriver
-from fomtools.codegen.diagnostics import DoctorReport, doctor, print_report
+from fomtools.codegen.diagnostics import DoctorReport, doctor
 from fomtools.codegen.config import (
     Backend,
     CodegenConfig,
@@ -106,5 +106,4 @@ __all__ = [
     "extract_unrolled_ir",
     "doctor",
     "DoctorReport",
-    "print_report",
 ]

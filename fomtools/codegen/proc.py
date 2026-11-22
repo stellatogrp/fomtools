@@ -52,6 +52,7 @@ def popen_in_session(cmd: list[str], **kwargs) -> subprocess.Popen:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            errors="replace",  # a tool may print bytes that are not valid text
             start_new_session=True,
             **kwargs,
         )
@@ -92,7 +93,7 @@ def kill_group(proc: subprocess.Popen, grace_s: float = 5.0) -> None:
 
 
 def run_check(
-    cmd: list[str], cwd: str | Path, timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S
+    cmd: list[str], cwd: str | Path, timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S, **kwargs
 ) -> subprocess.CompletedProcess:
     """Run ``cmd`` in ``cwd`` and capture its output, for at most ``timeout_s`` seconds.
 
@@ -100,9 +101,9 @@ def run_check(
     started. That is reported as a failure, not raised: the result has the
     nonzero ``returncode`` `TIMEOUT_RETURNCODE`, the output captured so far, and
     a note at the end of ``stderr`` saying the check was terminated. ``None``
-    disables the limit.
+    disables the limit. ``kwargs`` go to ``subprocess.Popen``.
     """
-    proc = popen_in_session(cmd, cwd=str(cwd))
+    proc = popen_in_session(cmd, cwd=str(cwd), **kwargs)
     try:
         stdout, stderr = proc.communicate(timeout=timeout_s)
     except subprocess.TimeoutExpired as exc:

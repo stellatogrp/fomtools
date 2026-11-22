@@ -28,27 +28,33 @@ fomtools-codegen --doctor
 Build tools
   ✓ C compiler          Apple clang version 21.0.0 (clang-2100.3.34.2)  (/usr/bin/cc)
   ✓ make                GNU Make 3.81  (/usr/bin/make)
-  ○ OpenMP              /usr/bin/cc does not build with -fopenmp: ...
+  ○ OpenMP              /usr/bin/cc does not build with -fopenmp (...); the OpenMP target then builds single-threaded. ...
 
 Agents
-  ✓ claude (default)    2.1.330 (Claude Code)  (~/.local/bin/claude); login not checked: Run `claude` once and log in.
+  ✓ claude (default)    2.1.330 (Claude Code)  (~/.local/bin/claude)
   ○ cursor              `cursor-agent` not found. Install the Cursor CLI ...
 
 Targets
-  ✓ embedded C          ready; agents: claude
-  ✓ large-scale OpenMP  ready (serial build only); agents: claude
+  ✓ embedded C          ready
+  ✓ large-scale OpenMP  ready (single-threaded build only)
   ○ large-scale CUDA    cannot run: no nvcc
 ```
 
-`✓` is found, `○` is missing but optional (the line says what needs it), `!` is
-found but its `--version` failed, and `✗` is missing and required. The report
-also lists the Python extras, `nvcc`, the GPU and cuDSS, and every agent
-backend, including your own from `agents.yaml`. The exit status is nonzero only
-without a C compiler or `make`. It takes no other argument. `--agent NAME`
-before it marks that backend as the default.
+`✓` is found, `○` is missing or unusable but optional (the line says what needs
+it), `!` is found but its `--version` failed, and `✗` is missing and required.
+The report also lists the Python extras, `nvcc`, the GPU and cuDSS, and every
+agent backend, including your own from `agents.yaml`. The exit status is nonzero
+only without a C compiler or `make`. It takes no other argument, except that
+`--agent NAME` marks that backend as the default.
 
-It never calls a model, so it cannot tell whether an agent is signed in. From
-Python or a notebook:
+The compiler is the one the generated Makefiles use: `$CC` when it is set, else
+`cc`. The check runs each program with `--version`, builds one small OpenMP
+file in a temporary directory, and asks `nvidia-smi` for devices. It never calls
+a model, so it cannot tell whether an agent is signed in. For `claude-sandboxed`
+on Linux it also looks for `bubblewrap` and `socat`, without starting the
+sandbox.
+
+From Python or a notebook:
 
 ```python
 from fomtools.codegen import doctor

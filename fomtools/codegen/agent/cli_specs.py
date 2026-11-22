@@ -207,11 +207,11 @@ def load_user_specs(*, force: bool = False) -> None:
     """
     global _user_specs_loaded
     # One loader at a time: a second thread must not see the flag set while the
-    # registry is still empty.
+    # registry is still empty. The flag is set last, so a malformed file raises
+    # on every call and not only on the first.
     with _load_lock:
         if _user_specs_loaded and not force:
             return
-        _user_specs_loaded = True
         for path in _config_paths():
             if not path.is_file():
                 continue
@@ -226,6 +226,7 @@ def load_user_specs(*, force: bool = False) -> None:
                 if not isinstance(table, dict):
                     raise ValueError(f"{path}: agent {name!r} must be a mapping")
                 register_agent(_spec_from_table(name, table))
+        _user_specs_loaded = True
 
 
 def get_spec(name: str) -> CliAgentSpec:

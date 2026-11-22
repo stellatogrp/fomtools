@@ -2,30 +2,33 @@
 
 `doctor` looks for the C compiler, ``make``, OpenMP, the CUDA toolchain and the
 agent CLIs, and returns a `DoctorReport`: one `Check` per item and one per
-target. `print_report` writes it with the marks of the progress output. Nothing
-here calls a model or the network, so an agent's login is not checked.
+target. `print_report` writes it with the marks of the progress output.
 
-Standard library only. The optional packages are looked up by their installed
+What is run: each program with ``--version``, one small OpenMP build in a
+temporary directory, and ``nvidia-smi -L``. Nothing calls a model, so an agent's
+login is not checked. The optional packages are looked up by their installed
 metadata and never imported.
 """
 
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import os
 import platform
 import shutil
+import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from fomtools.codegen.proc import TIMEOUT_RETURNCODE, run_check
 
 #: Statuses of a `Check`.
 OK = "ok"  # found
-WARN = "warn"  # found, but something about it could not be checked
-OPTIONAL = "optional"  # not found; only some targets or features need it
+WARN = "warn"  # found, but its version could not be read
+OPTIONAL = "optional"  # not found or not usable; only some targets or features need it
 MISSING = "missing"  # not found, and nothing can run without it
 
 #: Limit, in seconds, of one ``--version`` call and of the OpenMP test build.
@@ -94,24 +97,32 @@ class DoctorReport:
         return format_report(self)
 
 
-def _short(path: str) -> str:
-    """``path`` with the home directory written as ``~``."""
-    home = str(Path.home())
-    return "~" + path[len(home) :] if path == home or path.startswith(home + os.sep) else path
+def _short(text: str) -> str:
+    """``text`` with the home directory written as ``~``, wherever it occurs."""
+    home = os.path.expanduser("~")
+    return text.replace(home, "~") if len(home) > 1 else text
 
 
-def _version(path: str, cwd: str, flag: str = "--version") -> tuple[str, str]:
+def _run(cmd: list[str], cwd: str, timeout_s: float) -> subprocess.CompletedProcess:
+    """`run_check` with no standard input, so a tool that asks a question gets no answer."""
+    return run_check(cmd, cwd, timeout_s, stdin=subprocess.DEVNULL)
+
+
+def _version(path: str, cwd: str) -> tuple[str, str]:
     """``(version line, problem)`` from running ``path --version``; one of them is empty."""
     try:
-        proc = run_check([path, flag], cwd, VERSION_TIMEOUT_S)
+        proc = _run([path, "--version"], cwd, VERSION_TIMEOUT_S)
     except OSError as exc:
-        return "", f"`{flag}` could not run ({exc.strerror or exc})"
+        return "", f"`--version` could not run ({exc.strerror or exc})"
     if proc.returncode == TIMEOUT_RETURNCODE:
-        return "", f"`{flag}` did not return in {VERSION_TIMEOUT_S:g} s"
+        return "", f"`--version` did not return in {VERSION_TIMEOUT_S:g} s"
     if proc.returncode != 0:
-        return "", f"`{flag}` failed (exit status {proc.returncode})"
-    lines = [line.strip() for line in (proc.stdout or proc.stderr).splitlines() if line.strip()]
-    return (lines[0], "") if lines else ("", f"`{flag}` printed nothing")
+        return "", f"`--version` failed (exit status {proc.returncode})"
+    for line in (proc.stdout or proc.stderr).splitlines():
+        line = "".join(ch for ch in line if ch.isprintable()).strip()
+        if line:
+            return line[:80], ""
+    return "", "`--version` printed nothing"
 
 
 def _tool(group: str, name: str, path: str | None, cwd: str, missing: str, status: str) -> Check:
@@ -120,21 +131,27 @@ def _tool(group: str, name: str, path: str | None, cwd: str, missing: str, statu
         return Check(group, name, status, missing)
     version, problem = _version(path, cwd)
     if problem:
-        return Check(group, name, WARN, f"{_short(path)}  ({problem})")
-    return Check(group, name, OK, f"{version}  ({_short(path)})")
+        return Check(group, name, WARN, f"{path}  ({problem})")
+    return Check(group, name, OK, f"{version}  ({path})")
 
 
-def _package(name: str, dists: tuple[str, ...], missing: str) -> Check:
-    """The check of an extra: the versions of its distributions, without importing them."""
-    found = []
+def _extra(name: str, dists: tuple[str, ...], missing: str, need=all) -> Check:
+    """The check of an extra, from the installed metadata; nothing is imported.
+
+    ``need`` is `all` when every distribution is needed, `any` when one is enough.
+    """
+    found = {}
     for dist in dists:
         try:
-            found.append(f"{dist} {importlib.metadata.version(dist)}")
+            found[dist] = importlib.metadata.version(dist)
         except importlib.metadata.PackageNotFoundError:
             pass
-    if found:
-        return Check("Python", name, OK, ", ".join(found))
-    return Check("Python", name, OPTIONAL, f"not installed ({missing})")
+    have = ", ".join(f"{dist} {version}" for dist, version in found.items())
+    if found and need(dist in found for dist in dists):
+        return Check("Python", name, OK, have)
+    lacking = ", ".join(dist for dist in dists if dist not in found)
+    detail = f"{have}, but not {lacking}" if found else "not installed"
+    return Check("Python", name, OPTIONAL, f"{detail} ({missing})")
 
 
 def _python_checks() -> list[Check]:
@@ -143,20 +160,21 @@ def _python_checks() -> list[Check]:
     except importlib.metadata.PackageNotFoundError:
         fomtools_version = "unknown version"
     return [
-        Check("Python", "python", OK, f"{platform.python_version()}  ({_short(sys.executable)})"),
+        Check("Python", "python", OK, f"{platform.python_version()}  ({sys.executable})"),
         Check("Python", "fomtools", OK, fomtools_version),
-        Check("Python", "extra: codegen", OK, "nothing to install"),
-        _package(
+        Check("Python", "extra: codegen", OK, "no Python packages needed"),
+        _extra(
             "extra: cvxpygen",
             ("cvxpygen", "osqp"),
             'needed for parametric CVXPY problems: pip install "fomtools[cvxpygen]"',
         ),
-        _package(
+        _extra(
             "extra: gpu",
             ("cupy-cuda12x", "cupy"),
             'needed to simulate on a GPU: pip install "fomtools[gpu]"',
+            need=any,
         ),
-        _package(
+        _extra(
             "extra: cuda",
             ("nvidia-cudss-cu13",),
             'cuDSS for the CUDA target, Linux only: pip install "fomtools[cuda]"',
@@ -164,32 +182,48 @@ def _python_checks() -> list[Check]:
     ]
 
 
+def _compiler_check(compiler: str | None, cwd: str) -> Check:
+    """The compiler `find_compiler` returns: the one ``make`` uses, ``$CC`` else ``cc``."""
+    cc = " ".join(os.environ.get("CC", "").split())
+    if compiler is not None:
+        check = _tool("Build tools", "C compiler", compiler, cwd, "", MISSING)
+        return replace(check, detail=check.detail + f"  (CC={cc})") if cc else check
+    if cc:
+        detail = f"CC={cc} not found (required: the generated Makefiles build with $CC)"
+        return Check("Build tools", "C compiler", MISSING, detail)
+    detail = "`cc` not found (required)"
+    other = next((name for name in ("gcc", "clang") if shutil.which(name)), None)
+    if other:
+        detail += f"; `{other}` is installed, and the generated Makefiles use it with CC={other}"
+    return Check("Build tools", "C compiler", MISSING, detail)
+
+
 def _openmp_check(compiler: str | None, cwd: str) -> Check:
-    """Whether ``compiler`` builds and links an OpenMP loop with the target's flag."""
+    """Whether ``compiler`` builds and links an OpenMP loop with the target's flags."""
     from fomtools.codegen.targets.large_scale_openmp import OPENMP_FLAG
 
-    needed = "needed for a multithreaded build of the OpenMP target; the serial build works"
+    serial = "the OpenMP target then builds single-threaded"
     if compiler is None:
-        return Check("Build tools", "OpenMP", OPTIONAL, f"not checked: no C compiler ({needed})")
+        return Check("Build tools", "OpenMP", OPTIONAL, "not checked: no C compiler")
     Path(cwd, "openmp_probe.c").write_text(_OPENMP_PROBE)
     # The compile and link line of the target's Makefile, with OMPFLAGS set.
-    cmd = [compiler, "-O3", "-Wall", OPENMP_FLAG, "openmp_probe.c", "-o", "openmp_probe", "-lm"]
+    flags = [*os.environ.get("CC", "").split()[1:], "-O3", "-Wall", "-flto", OPENMP_FLAG]
+    cmd = [compiler, *flags, "openmp_probe.c", "-o", "openmp_probe", "-lm"]
     try:
-        proc = run_check(cmd, cwd, BUILD_TIMEOUT_S)
+        proc = _run(cmd, cwd, BUILD_TIMEOUT_S)
     except OSError as exc:
-        proc = None
         reason = exc.strerror or str(exc)
-    if proc is not None and proc.returncode == 0:
-        return Check("Build tools", "OpenMP", OK, f"{_short(compiler)} builds with {OPENMP_FLAG}")
-    if proc is not None:
+    else:
+        if proc.returncode == 0:
+            return Check("Build tools", "OpenMP", OK, f"{compiler} builds with {OPENMP_FLAG}")
         errors = [line.strip() for line in proc.stderr.splitlines() if "error" in line.lower()]
         reason = errors[0][:120] if errors else f"exit status {proc.returncode}"
         if proc.returncode == TIMEOUT_RETURNCODE:
             reason = f"the test build did not finish in {BUILD_TIMEOUT_S:g} s"
-    detail = f"{_short(compiler)} does not build with {OPENMP_FLAG}: {reason} ({needed}"
+    detail = f"{compiler} does not build with {OPENMP_FLAG} ({reason}); {serial}"
     if sys.platform == "darwin":
-        detail += "; Apple clang has no OpenMP, set CC to a GCC, e.g. CC=gcc-15"
-    return Check("Build tools", "OpenMP", OPTIONAL, detail + ")")
+        detail += ". Apple clang has no OpenMP: for threads set CC to a GCC, e.g. CC=gcc-15"
+    return Check("Build tools", "OpenMP", OPTIONAL, detail)
 
 
 def _cuda_checks(cwd: str) -> list[Check]:
@@ -197,18 +231,21 @@ def _cuda_checks(cwd: str) -> list[Check]:
 
     needed = "needed for the CUDA target"
     nvcc = _tool("CUDA", "nvcc", shutil.which("nvcc"), cwd, f"not found ({needed})", OPTIONAL)
-    if cuda._gpu_visible():
-        gpu = Check("CUDA", "GPU", OK, "nvidia-smi reports a device")
+    devices = cuda._gpu_devices()  # not `_gpu_visible`, which also wants nvcc
+    if devices:
+        more = f" (and {len(devices) - 1} more)" if len(devices) > 1 else ""
+        gpu = Check("CUDA", "GPU", OK, f"{devices[0][:80]}{more}")
     else:
         gpu = Check(
             "CUDA",
             "GPU",
             OPTIONAL,
-            "not found (needed to run the CUDA target's checks; without one they only compile)",
+            "not found by nvidia-smi (needed to run the CUDA target's checks; "
+            "without one they only compile)",
         )
     home = cuda._cudss_home()
     if home:
-        cudss = Check("CUDA", "cuDSS", OK, _short(home))
+        cudss = Check("CUDA", "cuDSS", OK, home)
     else:
         cudss = Check(
             "CUDA",
@@ -220,10 +257,22 @@ def _cuda_checks(cwd: str) -> list[Check]:
     return [nvcc, gpu, cudss]
 
 
-def _default_backend(backend: str | None) -> str:
-    from fomtools.codegen.agent import _DEFAULT_BACKEND
+def _sandbox_needs(spec) -> list[str]:
+    """The programs the sandbox of a Claude Code profile needs and that are not on PATH.
 
-    return backend or os.environ.get("FOMTOOLS_CODEGEN_BACKEND") or _DEFAULT_BACKEND
+    Only on Linux, where Claude Code's Bash sandbox runs on bubblewrap and socat,
+    and only for a spec whose ``--settings`` turn the sandbox on.
+    """
+    if not sys.platform.startswith("linux"):
+        return []
+    for flag in spec.flags:
+        try:
+            sandbox = json.loads(flag).get("sandbox") or {}
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(sandbox, dict) and sandbox.get("enabled"):
+            return [tool for tool in ("bwrap", "socat") if shutil.which(tool) is None]
+    return []
 
 
 def _agent_checks(default: str, cwd: str) -> list[Check]:
@@ -234,7 +283,12 @@ def _agent_checks(default: str, cwd: str) -> list[Check]:
     try:
         names = available_backends()
     except Exception as exc:  # noqa: BLE001 - a malformed agents.yaml is reported, not raised
-        return [Check("Agents", "agents.yaml", OPTIONAL, f"could not be loaded: {exc}")]
+        problem = " ".join(f"{type(exc).__name__}: {exc}".split())[:300]
+        detail = (
+            f"could not be loaded, so no agent can run ({problem}). Check "
+            "~/.config/fomtools/agents.yaml and $FOMTOOLS_CODEGEN_AGENTS"
+        )
+        return [Check("Agents", "agents.yaml", OPTIONAL, detail)]
     checks, versions = [], {}
     for name in names:
         spec = get_spec(name)
@@ -246,34 +300,51 @@ def _agent_checks(default: str, cwd: str) -> list[Check]:
         if path not in versions:  # several backends share one CLI
             versions[path] = _version(path, cwd)
         version, problem = versions[path]
-        login = "login not checked" + (f": {spec.auth_hint}" if spec.auth_hint else "")
-        detail = f"{version or _short(path)}  ({problem or _short(path)}); {login}"
-        checks.append(Check("Agents", name, WARN if problem else OK, detail))
+        status = WARN if problem else OK
+        detail = f"{version or path}  ({problem or path})"
+        lacking = _sandbox_needs(spec)
+        if lacking:
+            status = OPTIONAL
+            detail += (
+                f"; its sandbox cannot start: no {', no '.join(lacking)} "
+                "(install bubblewrap and socat)"
+            )
+        checks.append(Check("Agents", name, status, detail))
     if default not in names:
         detail = f"not a registered backend; choose from {', '.join(names)}"
         checks.append(Check("Agents", default, OPTIONAL, detail))
     return checks
 
 
-def _target_checks(checks: list[Check]) -> list[Check]:
-    """The summary: which targets can run here, and with which agents."""
+def _target_checks(checks: list[Check], default: str) -> list[Check]:
+    """The summary: which targets can run here, and whether an agent can write them."""
+    from fomtools.codegen.targets.large_scale_cuda import CudaTarget
+
     found = {c.name: c.found for c in checks}
     agents = [c.name for c in checks if c.group == "Agents" and c.found]
-    if agents:
-        with_agents = "agents: " + ", ".join(agents)
+    if default in agents:
+        with_agents = ""
+    elif agents:
+        with_agents = f", but not with the default agent ({default}): pass --agent"
     else:
-        with_agents = "no agent CLI found, so only `--scaffold-only` and a stub driver work"
+        with_agents = "; no agent CLI found, so only `--scaffold-only` and a stub driver work"
     lacking = [name for name in ("C compiler", "make") if not found[name]]
 
     def target(name: str, needs: list[str], note: str = "") -> Check:
         if needs:
             status = MISSING if name == "embedded C" else OPTIONAL
             return Check("Targets", name, status, "cannot run: no " + ", no ".join(needs))
-        return Check("Targets", name, OK, f"ready{note}; {with_agents}")
+        return Check("Targets", name, OK, f"ready{note}{with_agents}")
 
-    openmp = "" if found["OpenMP"] else " (serial build only)"
-    cuda = "" if found["GPU"] else " (compile check only: no GPU)"
-    cuda += "" if found["cuDSS"] else " (CG solves only: no cuDSS)"
+    openmp = "" if found["OpenMP"] else " (single-threaded build only)"
+    # What `CudaTarget.verify_command` decides: FOMTOOLS_CUDA_RUN, else a GPU.
+    override = os.environ.get("FOMTOOLS_CUDA_RUN")
+    if override is not None:
+        on_gpu = "checks run on a GPU" if CudaTarget._can_run_on_gpu() else "compile check only"
+        cuda = f" ({on_gpu}: FOMTOOLS_CUDA_RUN={override})"
+    else:
+        cuda = "" if found["GPU"] else " (compile check only: no GPU)"
+    cuda += "" if found["cuDSS"] else " (no cuDSS: a direct linear solve does not build)"
     return [
         target("embedded C", lacking),
         target("large-scale OpenMP", lacking, openmp),
@@ -297,15 +368,15 @@ def doctor(backend: str | None = None) -> DoctorReport:
         run, that is without a C compiler or ``make``. Print it with
         `print_report`, or ``print(report)``.
     """
+    from fomtools.codegen.agent import _DEFAULT_BACKEND
     from fomtools.codegen.harness import find_compiler
 
-    default = _default_backend(backend)
+    default = backend or os.environ.get("FOMTOOLS_CODEGEN_BACKEND") or _DEFAULT_BACKEND
     with tempfile.TemporaryDirectory(prefix="fomtools-doctor-") as cwd:
-        # The generated Makefiles build with $CC when it is set, else with `cc`.
-        compiler = shutil.which(os.environ.get("CC") or "") or find_compiler()
+        compiler = find_compiler()
         checks = _python_checks()
         checks += [
-            _tool("Build tools", "C compiler", compiler, cwd, "not found (required)", MISSING),
+            _compiler_check(compiler, cwd),
             _tool(
                 "Build tools", "make", shutil.which("make"), cwd, "not found (required)", MISSING
             ),
@@ -313,8 +384,9 @@ def doctor(backend: str | None = None) -> DoctorReport:
         ]
         checks += _cuda_checks(cwd)
         checks += _agent_checks(default, cwd)
-    checks += _target_checks(checks)
-    return DoctorReport(tuple(checks), default)
+    checks += _target_checks(checks, default)
+    # No home directory in the report, whichever tool or error message wrote it.
+    return DoctorReport(tuple(replace(c, detail=_short(c.detail)) for c in checks), default)
 
 
 def format_report(report: DoctorReport, color: bool = False, ascii_only: bool = False) -> str:
@@ -337,9 +409,16 @@ def format_report(report: DoctorReport, color: bool = False, ascii_only: bool = 
             mark = f"\033[{code}m{mark}\033[0m"
         lines.append(f"  {mark} {name:<{width}}  {check.detail}".rstrip())
     if report.ok:
-        lines += ["", "Login of the agents is not checked: that would call a model."]
+        lines += [
+            "",
+            "Agent logins are not checked: that would call a model. A run that cannot "
+            "authenticate stops and says how to log in.",
+        ]
     else:
-        lines += ["", "Code generation cannot run here: install a C compiler and make."]
+        lines += [
+            "",
+            "Code generation cannot run here: it needs a C compiler and make (see above).",
+        ]
     return "\n".join(lines) + "\n"
 
 
@@ -352,14 +431,18 @@ def print_report(report: DoctorReport, stream=None) -> None:
     from fomtools.codegen.progress import Progress
 
     stream = stream or sys.stdout
+    encoding = getattr(stream, "encoding", None) or "utf-8"
     try:
-        "".join(mark for mark, _ in _MARKS.values()).encode(
-            getattr(stream, "encoding", None) or "utf-8"
-        )
+        "".join(mark for mark, _ in _MARKS.values()).encode(encoding)
         ascii_only = False
     except (UnicodeEncodeError, LookupError):
         ascii_only = True
-    stream.write(format_report(report, Progress(True, stream).color, ascii_only))
+    text = format_report(report, Progress(True, stream).color, ascii_only)
+    try:  # a version string or a path may still hold a character the stream lacks
+        text = text.encode(encoding, "replace").decode(encoding)
+    except LookupError:
+        pass
+    stream.write(text)
     stream.flush()
 
 

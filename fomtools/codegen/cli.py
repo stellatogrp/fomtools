@@ -107,8 +107,18 @@ class _DoctorAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         from fomtools.codegen.diagnostics import main as doctor_main
 
-        # An --agent given before --doctor is the one marked as the default.
-        parser.exit(doctor_main(backend=getattr(namespace, "agent", None)))
+        # --agent marks the default backend, given before or after --doctor.
+        agent = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+        agent.add_argument("--agent")
+        later = agent.parse_known_args(getattr(namespace, "argv", None) or [])[0].agent
+        parser.exit(doctor_main(backend=later or getattr(namespace, "agent", None)))
+
+
+def _agent_metavar() -> str:
+    try:
+        return "{" + ",".join(available_backends()) + ",...}"
+    except Exception:  # noqa: BLE001 - a malformed agents.yaml: --help and --doctor still work
+        return "NAME"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -117,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--doctor",
         action=_DoctorAction,
         help="check this machine's setup (compiler, make, OpenMP, CUDA, agent CLIs) and "
-        "exit; needs no other argument",
+        "exit; needs no other argument (--agent marks the default backend)",
     )
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--example", choices=sorted(EXAMPLES), help="built-in example FOM")
@@ -128,7 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--agent",
         # Not a hard `choices=`: user-registered CLI agents (from config) are
         # valid too. make_agent_driver validates and lists available backends.
-        metavar="{" + ",".join(available_backends()) + ",...}",
+        metavar=_agent_metavar(),
         default=None,
         help="real coding-agent backend for --driver agent (default: claude, or "
         "$FOMTOOLS_CODEGEN_BACKEND); custom CLI agents can be defined in "
@@ -247,7 +257,9 @@ def _extract_fom(fom: dict, config, roll: bool = True):
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    parser.set_defaults(argv=sys.argv[1:] if argv is None else list(argv))  # for --doctor
+    args = parser.parse_args(argv)
     fom = _load_module_fom(args.module) if args.module else get_example(args.example)
     config = _build_config(args)
 

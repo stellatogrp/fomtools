@@ -6,6 +6,7 @@ rest of the pipeline (and tests) need not shell out directly.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import statistics
@@ -19,8 +20,13 @@ from fomtools.codegen.targets import TargetDescriptor
 
 
 def find_compiler() -> str | None:
-    """Return an available C compiler executable, or ``None``."""
-    return shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+    """The C compiler the generated Makefiles build with, or ``None``.
+
+    That is ``$CC`` when it is set, else ``cc`` (``CC ?= cc``). No other
+    compiler is looked for, since ``make`` would not use it.
+    """
+    words = os.environ.get("CC", "").split() or ["cc"]
+    return shutil.which(words[0])
 
 
 @dataclass

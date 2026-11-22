@@ -64,18 +64,23 @@ from fomtools.codegen.targets.embedded_c import (
 
 
 @functools.cache
-def _gpu_visible() -> bool:
-    """Whether ``nvcc`` can build here and ``nvidia-smi`` sees a device (probed
-    once per process)."""
-    if not shutil.which("nvcc") or not shutil.which("nvidia-smi"):
-        return False
+def _gpu_devices() -> tuple[str, ...]:
+    """The devices ``nvidia-smi -L`` lists (probed once per process)."""
+    if not shutil.which("nvidia-smi"):
+        return ()
     try:
         proc = subprocess.run(["nvidia-smi", "-L"], capture_output=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
-        return False
+        return ()
     # `nvidia-smi -L` lists one "GPU <n>: ..." line per device, or
     # "No devices were found" when none are visible.
-    return proc.returncode == 0 and b"GPU " in proc.stdout
+    lines = proc.stdout.decode(errors="replace").splitlines() if proc.returncode == 0 else []
+    return tuple(line.strip() for line in lines if line.startswith("GPU "))
+
+
+def _gpu_visible() -> bool:
+    """Whether ``nvcc`` can build here and ``nvidia-smi`` sees a device."""
+    return bool(shutil.which("nvcc")) and bool(_gpu_devices())
 
 
 def _cudss_home() -> str:
