@@ -26,6 +26,15 @@ config = CodegenConfig(
     ),                         # (default 1; 25 for OBJECTIVE)
     tol_verify=1e-6,           # float64 verification tolerance
     dtype="float64",           # "float64" or "float32" (tol_verify defaults to 1e-4)
+    tol_kernel=None,           # per-kernel check vs reference; 1e-10 (float64) / 1e-4 (float32)
+    num_verify_samples=8,      # random parameter instances for the verify data
+    seed=0,                    # RNG seed for verify samples
+    agent_model=None,          # --model for the agent CLI; None = FOMTOOLS_CODEGEN_MODEL or CLI default
+    agent_timeout_s=600,       # translation-phase wall-clock budget, shared by all attempts
+    agent_optimize_timeout_s=7200,  # budget for each code-optimization round
+    agent_optimize_rounds=5,   # max optimization rounds
+    agent_optimize_min_gain=0.02,   # a round gaining less than this ends the phase
+    cg_auto_min_dim=256,       # AUTO upgrades SPD solves to CG at this dim (large-scale CUDA only)
 )
 ```
 
@@ -175,6 +184,17 @@ reciprocals). Override with `CodegenConfig(solve_method="LDLT"/"LU"/"CG")`.
 - Real agents: Claude (default), Codex, Pi, Cursor, or custom CLI agents from `~/.config/fomtools/agents.yaml` (or `$FOMTOOLS_CODEGEN_AGENTS`).
 - Without `driver=`, the default agent CLI runs (`claude`, or `FOMTOOLS_CODEGEN_BACKEND`); it must be installed and logged in. Set `FOMTOOLS_CODEGEN_AGENT=0` (or `false`, `no`, `off`) to disable real agents (a call without a driver then raises `RuntimeError`).
 - Select backend: `FOMTOOLS_CODEGEN_BACKEND=claude`; select its model with `FOMTOOLS_CODEGEN_MODEL`
+
+### Time budgets and retries
+
+Each phase has a wall-clock budget (`agent_timeout_s` for translation,
+`agent_optimize_timeout_s` per optimization round) shared by all of its agent
+attempts. The agent is told the deadline through `FOMTOOLS_DEADLINE`; the
+default `claude` spec's hook refuses tool calls once it passes so the agent
+writes its summary, and the process is ended at the budget. The verify/retry
+loop (`run_verify_loop`, `max_attempts=5` on `CliAgentDriver`) re-prompts after a
+failed check and starts no new attempt inside the final grace period. A missing
+CLI or an authentication failure fails fast instead of being retried.
 
 ### Agent Phases
 
