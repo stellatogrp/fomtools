@@ -62,8 +62,12 @@ agents:
   #   (read-only commands such as `ls` and `cat` need no rule).
   # - The Bash sandbox (Seatbelt on macOS, bubblewrap and socat on Linux)
   #   confines those commands, and so an edited Makefile or the solver itself:
-  #   writes only in the output dir and a temp dir, no network. The run fails at
+  #   writes only in the output dir and $TMPDIR, no network. The run fails at
   #   startup if the sandbox cannot start, instead of running unsandboxed.
+  # Reads are not confined: the file tools are refused outside the output dir,
+  # but a `make` recipe or a binary can read any file the user can, and inherits
+  # the environment. To hide paths from them, add `sandbox.filesystem.denyRead`
+  # to the settings in a per-user copy of this entry.
   claude-sandboxed:
     bin: claude
     flags:
@@ -116,6 +120,7 @@ agents:
   # `codex` with the bypass replaced by the workspace-write sandbox: commands
   # write only in the output dir, /tmp and $TMPDIR, and have no network.
   # `codex exec` never asks for approval, so a command the sandbox blocks fails.
+  # Any command may run, and reads are not restricted.
   codex-sandboxed:
     bin: codex
     base_args: ["exec"]

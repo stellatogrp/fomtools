@@ -291,34 +291,80 @@ defaults are unchanged.
   accepted. Anything else that would need approval is denied instead of asked.
   `--tools` limits the built-in tools to `Read`, `Write`, `Edit`, `Bash`, `Glob`
   and `Grep`. `Bash` runs only `make ...`, `./verify_bin`, `./bench_bin` and
-  `./profile_bin`, plus the read-only commands Claude Code always permits (`ls`,
-  `cat`, and the like). A compiler call outside `make` is refused. Those commands
-  run in Claude Code's Bash sandbox (Seatbelt on macOS, `bubblewrap` and `socat`
-  on Linux), which lets them write only in the output directory and a temporary
-  directory and gives them no network. The sandbox is what confines an edited
-  `Makefile` or the solver binary itself; the command list alone would not. The
+  `./profile_bin`, plus the commands Claude Code permits on its own inside the
+  output directory (`ls`, `cat`, `grep`, a redirect to a file there, and the
+  like). A compiler or interpreter call outside `make` is refused, and so is
+  `make` behind a variable assignment (`FOO=1 make bench`). Pass `make`
+  variables as arguments instead (`make verify OMPFLAGS=-fopenmp`). Those
+  commands run in Claude Code's Bash sandbox (Seatbelt on macOS, `bubblewrap`
+  and `socat` on Linux), which lets them write only in the output directory and
+  `$TMPDIR` and gives them no network. The sandbox is what confines an edited
+  `Makefile` or the solver binary itself. The command list alone would not. The
   run fails at startup if the sandbox cannot start. The deadline hook and the
-  isolation from your own settings are those of `claude`.
+  isolation from your own settings are those of `claude`. A run leaves an empty
+  `.claude/` directory in the output directory, which you can delete.
 - `codex-sandboxed` runs `codex exec --sandbox workspace-write` in place of the
   bypass. Commands can write only in the output directory, `/tmp` and `$TMPDIR`,
   and have no network. `codex exec` never asks for approval, so a blocked command
-  fails. Reads are not restricted.
+  fails. Any command may run, not only `make`.
+
+Neither profile keeps your files private. They limit writes and network access,
+not reads:
+
+- With `codex-sandboxed`, every command can read any file you can.
+- With `claude-sandboxed`, the file tools and the shell commands Claude Code
+  inspects (`cat`, `wc`, and the like) are refused outside the output directory.
+  A `make` recipe or a compiled binary is not inspected. It can read any file you
+  can, such as `~/.ssh` or a file of API keys.
+- With both, commands inherit your environment variables, including any keys in
+  them.
+
+What a command prints goes back to the agent, and so to its model provider. The
+sandbox blocks other network access from the commands, but not that channel. To
+hide files from the commands of `claude-sandboxed`, copy its entry to
+`~/.config/fomtools/agents.yaml` and add paths under `sandbox.filesystem.denyRead`
+in its `--settings` (for example `"filesystem":{"denyRead":["~/.ssh"]}`, which
+was checked to block the read inside `make`). Denying the whole home directory
+stops `make` when the output directory is inside it. To
+keep everything else out of reach, run FOMTools in a container or a virtual
+machine.
 
 Pi and Cursor have no restricted profile. Pi can switch whole tools off
 (`--tools`), but it cannot limit what its `bash` tool runs or where it writes.
 The Cursor CLI was not available to check. To confine either one, run FOMTools
 inside a container or a virtual machine.
 
+The checks that decide the result (`make verify` and the benchmarks that compare
+two solvers) are run by FOMTools itself, outside the agent's sandbox, so the
+reported timings do not depend on the profile. The timings the agent measures for
+itself with `make bench` do run inside the sandbox. In one run on macOS they
+were within 3% of the package's.
+
 Both profiles were checked on macOS with Claude Code 2.1.330 and Codex CLI
-0.167.0. `make` built and ran a binary. A write to the home directory and a
-network request from inside `make` were refused. With Claude Code, so were
-`curl`, `cc` called directly, and a file-tool write outside the directory. One
-run of the `ista` example on the embedded C target, with code optimization off,
-passed `make verify` with each profile. Not tested: the code optimization phase,
-the OpenMP target (it runs the same `make` targets, so it is expected to work),
-Linux, and the CUDA target. The CUDA target needs `nvcc` and access to the GPU
-device, which a sandbox may block, so use the default profiles there until you
-have checked it on your machine.
+0.167.0:
+
+| Attempt | `claude-sandboxed` | `codex-sandboxed` |
+|---|---|---|
+| `make` builds and runs a binary in the output directory | allowed | allowed |
+| Inside `make`: write to a sibling directory or the home directory | denied | denied |
+| Inside `make`: write to `$TMPDIR` | allowed | allowed |
+| Inside `make`: write to `/tmp` | denied | allowed |
+| Inside `make`: network request | denied | denied |
+| Inside `make`: read `~/.ssh` or another file in the home directory | allowed | allowed |
+| Directly: `curl --version`, `cc --version`, `sh -c ...`, `FOO=1 make` | denied | not checked |
+| Directly: a network request with `curl` | denied | denied |
+| Directly: `touch` outside the directory | denied | no file created |
+| Directly: read a file outside the directory (`Read`, `Grep`, `cat`, `wc`) | denied | allowed |
+| Directly: `Write` outside the directory, or a redirect or `tee` to there | denied | not checked |
+
+One run of the `ista` example on the embedded C target passed `make verify` with
+each profile. With `claude-sandboxed`, one more run with a code optimization
+round passed too, and the agent ran `make profile` and `make bench` inside the
+sandbox. Not tested: the OpenMP target (it runs the same `make` targets, so it is
+expected to work), code optimization with `codex-sandboxed`, Linux, and the CUDA
+target. The CUDA target needs `nvcc` and access to the GPU device, which a
+sandbox may block, so use the default profiles there until you have checked it on
+your machine.
 
 ## Using the generated solver
 
