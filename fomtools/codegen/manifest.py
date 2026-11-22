@@ -95,9 +95,11 @@ def write_manifest(
 def check_manifest(out_dir, allow_unverified=False):
     """Check the sources in ``out_dir`` against its verification record.
 
-    Warns when the directory has no record (``fomtools_manifest.json``), and
-    raises ``RuntimeError`` naming the files when a recorded source is missing
-    or differs; ``allow_unverified=True`` turns that error into a warning.
+    Warns when the directory has no record (``fomtools_manifest.json``), or has
+    one but none of the recorded sources (a deployed wrapper and prebuilt
+    library). Raises ``RuntimeError`` naming the files when a recorded source is
+    missing or differs, or when the record cannot be read;
+    ``allow_unverified=True`` turns that error into a warning.
 
     Self-contained on purpose (standard library only, imports inside): the
     generated Python wrapper carries a copy of this function's source, so the
@@ -118,21 +120,39 @@ def check_manifest(out_dir, allow_unverified=False):
             stacklevel=3,
         )
         return
+    try:
+        recorded = dict(json.loads(path.read_text())["sources"]) or None
+    except (OSError, ValueError, KeyError, TypeError):
+        recorded = None  # not a record: as unverifiable as a modified source
+    if recorded and not any((out_dir / rel).is_file() for rel in recorded):
+        warnings.warn(
+            f"{out_dir} holds none of the sources recorded in fomtools_manifest.json, "
+            "so a prebuilt library cannot be checked against them. The solver is used "
+            "as it is.",
+            stacklevel=3,
+        )
+        return
     changed = []
-    for rel, digest in sorted(json.loads(path.read_text())["sources"].items()):
+    for rel, digest in sorted((recorded or {}).items()):
         source = out_dir / rel
         if not source.is_file():
             changed.append(f"{rel} (missing)")
         elif hashlib.sha256(source.read_bytes()).hexdigest() != digest:
             changed.append(rel)
-    if not changed:
+    if recorded and not changed:
         return
-    message = (
-        f"the solver in {out_dir} was modified after verification: "
-        + ", ".join(changed)
-        + " no longer match fomtools_manifest.json. Regenerate it, or pass "
-        "allow_unverified=True to use the modified sources anyway."
-    )
+    if recorded:
+        message = (
+            f"the solver in {out_dir} was modified after verification: "
+            + ", ".join(changed)
+            + " no longer match fomtools_manifest.json."
+        )
+    else:
+        message = (
+            f"fomtools_manifest.json in {out_dir} is not a readable verification "
+            "record, so the solver cannot be checked against it."
+        )
+    message += " Regenerate it, or pass allow_unverified=True to use the sources as they are."
     if not allow_unverified:
         raise RuntimeError(message)
     warnings.warn(message, stacklevel=3)

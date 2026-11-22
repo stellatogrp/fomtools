@@ -223,22 +223,22 @@ def _head_to_head_us(
     alternating order, so slow drifts (clock speed, other load) hit both alike.
     Returns the two medians and leaves ``best`` written.
     """
-    write_editable(candidate)
-    cand_bin = _build_bench(out_dir, ".bench_candidate", timeout_s)
-    write_editable(best)
-    best_bin = _build_bench(out_dir, ".bench_best", timeout_s)
     times: dict[str, list] = {"candidate": [], "best": []}
-    bins = {"candidate": cand_bin, "best": best_bin}
-    try:
+    copies = {"candidate": ".bench_candidate", "best": ".bench_best"}
+    try:  # the builds too: an interrupt during the second must not leave the first
+        write_editable(candidate)
+        cand_bin = _build_bench(out_dir, copies["candidate"], timeout_s)
+        write_editable(best)
+        best_bin = _build_bench(out_dir, copies["best"], timeout_s)
+        bins = {"candidate": cand_bin, "best": best_bin}
         for i in range(runs):
             for key in ("candidate", "best") if i % 2 == 0 else ("best", "candidate"):
                 if bins[key] is not None:
                     times[key].append(_run_bench_bin(bins[key], out_dir, timeout_s))
         return _median(times["candidate"]), _median(times["best"])
     finally:
-        for path in bins.values():
-            if path is not None:
-                path.unlink(missing_ok=True)
+        for name in copies.values():
+            (Path(out_dir) / name).unlink(missing_ok=True)
 
 
 def optimization_is_faster(
@@ -563,6 +563,7 @@ def _generate_code(
         translate = driver.run(translation_task)
     finally:
         target.remove_kernel_check_config(out_dir)
+        remove_manifest(out_dir)  # only this run's last step may leave a record
     if translate.success:
         solver = (out_dir / target.solver_source_path()).read_text()
         issues = target.translation_checks(solver, ir)
@@ -595,7 +596,9 @@ def _generate_code(
     optimizations_md = None
     kernel_checks = None
     rule_friction: list[dict] = []
-    verify_output = translate.log  # of the solver that ships
+    # Of the solver that ships, and only what verify itself printed: the agent's
+    # own text (in `translate.log`) may quote numbers that no check produced.
+    verify_output = translate.verify_output
     if code_optimization and translate.success:
         opt = run_code_optimization(
             ir,
@@ -613,8 +616,8 @@ def _generate_code(
         optimizations_md = opt.optimizations_md
         kernel_checks = opt.kernel_checks
         rule_friction = opt.rule_friction
-        verify_output = opt.verify_output
         if opt.kept:
+            verify_output = opt.verify_output
             progress.summary(name, timing, opt.verify_output, opt.applied)
     # Always persist the raw agent output, code optimization phase or not.
     _write_agent_transcripts(out_dir, translate, optimize)
@@ -973,6 +976,7 @@ def run_code_optimization(
         raise
     finally:
         write_editable(best)
+        remove_manifest(out_dir)  # none that an agent wrote while it worked
 
     if rounds:
         progress.round(rounds[-1])

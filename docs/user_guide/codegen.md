@@ -301,7 +301,8 @@ solver.update_settings(tol=1e-8, check_termination=10, max_iter=500)  # runtime
 against `fomtools_manifest.json`. A directory without one (older output, or a run
 that did not finish) loads with a warning. If a recorded source changed after
 verification they raise an error naming the files; pass `allow_unverified=True`
-to get a warning instead.
+to get a warning instead. A record that cannot be read is treated the same way.
+The wrapper and a built library deployed without the sources load with a warning.
 
 ## Performance: timing, profiling, and the code optimization phase
 

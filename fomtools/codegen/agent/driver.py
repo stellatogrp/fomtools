@@ -93,6 +93,10 @@ class AgentResult:
         attempt can still leave correct code on disk, so this is independent of
         `success`; it means the agent had no chance to finish, and in
         particular may never have written its summary.
+    verify_output:
+        Output of the verify run that passed, alone, without anything the agent
+        printed; ``None`` when none passed. The verification record takes its
+        numbers from here, so a driver that leaves it unset gets no record.
     """
 
     success: bool
@@ -101,6 +105,7 @@ class AgentResult:
     turns_used: int = 0
     artifacts: list[Path] = field(default_factory=list)
     truncated: bool = False
+    verify_output: str | None = None
 
 
 def _redact_exception(exc: BaseException) -> str:
@@ -282,6 +287,7 @@ def run_verify_loop(
                 turns_used=attempt + 1,
                 artifacts=[task.workdir / task.solver_rel_path],
                 truncated=bool(truncated_probe and truncated_probe()),
+                verify_output=output,
             )
 
         # Re-prompt with the failure.

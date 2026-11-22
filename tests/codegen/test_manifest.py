@@ -16,7 +16,7 @@ import pytest
 import fomtools
 from fomtools.codegen import StubAgentDriver, generate_code
 from fomtools.codegen import generate as gen
-from fomtools.codegen.agent.driver import AgentDriver
+from fomtools.codegen.agent.driver import AgentDriver, AgentResult
 from fomtools.codegen.cli import main as cli_main
 from fomtools.codegen.harness import build_lib
 from fomtools.codegen.manifest import MANIFEST_NAME, check_manifest
@@ -128,6 +128,56 @@ def test_timings_are_recorded_when_measured(tmp_path, monkeypatch, requires_comp
     assert timing["python"] > 0
 
 
+class ForgingDriver(AgentDriver):
+    """An agent that writes a record itself, and quotes verify numbers in its log."""
+
+    def __init__(self, source, report_verify):
+        self.stub = StubAgentDriver(source)
+        self.report_verify = report_verify
+
+    def run(self, task):
+        result = self.stub.run(task)
+        (task.workdir / MANIFEST_NAME).write_text(json.dumps({"sources": {}}))
+        quoted = "\nworst max-abs error over 99 samples: 0.000e+00 (tol 1.000e-06)\n"
+        return AgentResult(
+            success=result.success,
+            log=result.log + quoted,
+            verify_output=result.verify_output if self.report_verify else None,
+        )
+
+
+@pytest.mark.requires_compiler
+@pytest.mark.parametrize("source", [GOLDEN, "this is not C;\n"])
+def test_a_record_written_by_the_agent_does_not_survive(tmp_path, requires_compiler, source):
+    # A failed run, and a passing one whose driver reports no verify output (as
+    # after a compile-only check): the agent's file and the numbers it quoted in
+    # its log must not stand in for a record.
+    result = _generate(tmp_path, driver=ForgingDriver(source, report_verify=False))
+    assert result.success == (source is GOLDEN)
+    assert not (tmp_path / MANIFEST_NAME).exists()
+
+
+@pytest.mark.requires_compiler
+def test_the_record_takes_its_numbers_from_the_verify_output(tmp_path, requires_compiler):
+    _generate(tmp_path, driver=ForgingDriver(GOLDEN, report_verify=True))
+    manifest = json.loads((tmp_path / MANIFEST_NAME).read_text())
+    assert manifest["verify"]["samples"] != 99  # not what the agent quoted
+    assert SOLVER in manifest["sources"]
+
+
+def test_an_interrupted_head_to_head_leaves_no_bench_binaries(tmp_path, monkeypatch):
+    def build(out_dir, name, timeout_s):
+        if name == ".bench_best":
+            raise KeyboardInterrupt
+        (out_dir / name).write_text("binary")
+        return out_dir / name
+
+    monkeypatch.setattr(gen, "_build_bench", build)
+    with pytest.raises(KeyboardInterrupt):
+        gen._head_to_head_us(tmp_path, lambda sources: None, {}, {})
+    assert list(tmp_path.iterdir()) == []
+
+
 # -- an optimization round that raises or is interrupted ----------------------
 class InterruptedDriver(AgentDriver):
     """Translation and round 1: the golden solver (round 1 tagged ``r1``). Round
@@ -215,6 +265,24 @@ def test_a_modified_source_raises_and_is_named(tmp_path, requires_compiler, rel)
 
 def test_a_missing_source_counts_as_modified(tmp_path):
     (tmp_path / "src").mkdir()
-    (tmp_path / MANIFEST_NAME).write_text(json.dumps({"sources": {SOLVER: "0" * 64}}))
-    with pytest.raises(RuntimeError, match=r"src/fom_solver\.c \(missing\)"):
+    (tmp_path / "src" / "fom_data.c").write_text("")
+    sources = {SOLVER: "0" * 64, "src/fom_data.c": hashlib.sha256(b"").hexdigest()}
+    (tmp_path / MANIFEST_NAME).write_text(json.dumps({"sources": sources}))
+    with pytest.raises(RuntimeError, match=r"verification: src/fom_solver\.c \(missing\) no"):
         check_manifest(tmp_path)
+
+
+def test_a_record_without_any_of_its_sources_warns(tmp_path):
+    # The wrapper and a prebuilt library, deployed with the record but no sources.
+    (tmp_path / MANIFEST_NAME).write_text(json.dumps({"sources": {SOLVER: "0" * 64}}))
+    with pytest.warns(UserWarning, match="none of the sources recorded"):
+        check_manifest(tmp_path)
+
+
+@pytest.mark.parametrize("text", ["{not json", "[]", "{}", '{"sources": 3}', '{"sources": {}}'])
+def test_an_unreadable_record_raises_like_a_modified_source(tmp_path, text):
+    (tmp_path / MANIFEST_NAME).write_text(text)
+    with pytest.raises(RuntimeError, match="not a readable verification record"):
+        check_manifest(tmp_path)
+    with pytest.warns(UserWarning, match="not a readable verification record"):
+        check_manifest(tmp_path, allow_unverified=True)
