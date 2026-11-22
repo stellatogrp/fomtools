@@ -3,8 +3,8 @@ name: Python build and test
 on:
   push:
     branches: [main]
+  # Every PR, also one stacked on another PR's branch (base is not main).
   pull_request:
-    branches: [main]
 
 # A newer push to the same PR (often the skill-sync bot's commit) cancels the older run,
 # so superseded jobs stop holding the Gurobi license's few sessions. Runs on main finish.
