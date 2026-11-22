@@ -403,7 +403,8 @@ five pairs put the median ratio outside the noise band on a given side in fewer
 than 1 comparison in 10 (the old rule kept such a later round half the time); a
 gain of three times the run-to-run noise of one timing is detected about 9 times
 in 10. A line `not measurably faster` in the verbose output marks a rewrite whose
-median time was lower, but by less than the noise. A round with no pair of successful runs is not kept.
+median time was lower, but by less than the noise. A round with fewer than four
+pairs of successful runs is not kept: too few to estimate the noise.
 
 `OPTIMIZATIONS.md` reports each side as `median ± MAD (fastest to slowest)`, next
 to the round's gain and noise, so the decision can be read off the table.

@@ -167,6 +167,12 @@ BENCH_RUNS = 5
 #: times the noise of one timing is detected about 9 times in 10.
 NOISE_MADS = 2.0
 
+#: Fewest pairs of successful runs that count as a measurement. The MAD of one
+#: pair is 0, so the rule would decide on a single ratio, and with no real
+#: difference a later round would be kept in 50% of comparisons with one pair,
+#: 15% with two, 18% with three, 10% with four and 8% with all five (simulated).
+MIN_PAIRS = 4
+
 
 def _build_bench(
     out_dir: Path, name: str, timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S
@@ -257,7 +263,7 @@ def bench_noise(ratio: BenchStats) -> float:
 
     ``ratio`` holds the paired ratios candidate/best; the band is ``NOISE_MADS``
     times their median absolute deviation. A gain is measured only when it is
-    larger than this. Fewer than three pairs give no real estimate (one pair: 0).
+    larger than this. One pair gives 0, hence `MIN_PAIRS`.
     """
     return NOISE_MADS * ratio.mad
 
@@ -272,9 +278,10 @@ def optimization_is_faster(ratio: BenchStats | None, first_round: bool = False) 
     - in the first round the best so far is the translated solver, and the
       rewrite is kept unless it is measurably slower, ``gain >= -noise``.
 
-    Returns ``False`` if the measurement is missing.
+    Returns ``False`` if the measurement is missing or has fewer than
+    ``MIN_PAIRS`` pairs, which is too few to estimate the noise.
     """
-    if ratio is None:
+    if ratio is None or ratio.runs < MIN_PAIRS:
         return False
     gain, noise = 1.0 - ratio.median, bench_noise(ratio)
     return gain >= -noise if first_round else gain > noise
@@ -993,7 +1000,8 @@ def run_code_optimization(
                 logs.append(
                     f"[optimization round not kept: its build ({us_after} us) was not "
                     f"measurably faster than the best so far ({us_before} us): "
-                    f"gain {record.gain}, noise {record.noise}]"
+                    f"gain {record.gain}, noise {record.noise}, "
+                    f"{ratio.runs if ratio else 0} of {BENCH_RUNS} pairs]"
                 )
                 record.stop_reason = STOP_NOT_FASTER
                 break

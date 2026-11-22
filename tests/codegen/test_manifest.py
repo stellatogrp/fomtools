@@ -210,7 +210,7 @@ def test_an_interrupted_round_leaves_the_best_verified_sources(
     # Fake timings (r1 is faster than the translated solver), so round 1 is kept.
     def fake_head_to_head(out_dir, write_editable, candidate, best, **kwargs):
         write_editable(best)
-        return BenchStats.of([50.0]), BenchStats.of([100.0]), BenchStats.of([0.5])
+        return BenchStats.of([50.0] * 5), BenchStats.of([100.0] * 5), BenchStats.of([0.5] * 5)
 
     monkeypatch.setattr(gen, "_bench_mean_us", lambda out_dir, **kwargs: 100.0)
     monkeypatch.setattr(gen, "_head_to_head_us", fake_head_to_head)

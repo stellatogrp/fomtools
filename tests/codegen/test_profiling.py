@@ -169,6 +169,11 @@ def test_optimization_perf_gate_logic():
     drift = [1.0, 1.1, 1.2, 1.3, 1.4]
     assert keep([98.0 * d for d in drift], [100.0 * d for d in drift], first_round=False)
 
+    # Four pairs are a measurement, fewer are not (one pair has no spread at all).
+    assert keep([50.0] * 4, [100.0] * 4) and keep([50.0] * 4, [100.0] * 4, first_round=False)
+    for n in (1, 2, 3):
+        assert not keep([50.0] * n, [100.0] * n)
+        assert not keep([50.0] * n, [100.0] * n, first_round=False)
     assert not optimization_is_faster(None)  # missing measurement -> revert
     assert not optimization_is_faster(None, first_round=True)
 
@@ -209,6 +214,8 @@ def test_head_to_head_statistics_pair_the_runs(tmp_path, monkeypatch):
     assert (before.runs, before.median) == (4, 100.0)
     assert ratio.runs == 3 and ratio.median == pytest.approx(0.9)  # 0.9, 0.9, 1.1
     assert gen.bench_noise(ratio) == pytest.approx(0.0)
+    # Three pairs are too few to estimate the noise: the 10% gain is not kept.
+    assert not gen.optimization_is_faster(ratio) and not gen.optimization_is_faster(ratio, True)
 
     # No run of the candidate succeeds: no ratio, so the round is not kept.
     runs[".bench_candidate"], runs[".bench_best"] = iter([None] * 5), iter([100.0] * 5)
