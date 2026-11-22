@@ -50,6 +50,36 @@ def test_without_a_budget_every_attempt_runs(tmp_path):
     assert _decode_stream(None) == ""
 
 
+def _retry_prompt(tmp_path, output):
+    """The second prompt of a loop whose verify command prints ``output`` and fails."""
+    task = AgentTask(
+        workdir=Path(tmp_path),
+        solver_rel_path="src/fom_solver.c",
+        verify_cmd=[sys.executable, "-c", f"print({output!r}, end=''); raise SystemExit(1)"],
+    )
+    prompts = []
+    run_verify_loop(task, lambda prompt: prompts.append(prompt) or "attempted", max_attempts=2)
+    assert len(prompts) == 2
+    return prompts[1]
+
+
+def test_short_verify_output_appears_once_in_the_retry_prompt(tmp_path):
+    output = "error: residual 1e-2 exceeds 1e-6"
+    prompt = _retry_prompt(tmp_path, output)
+    assert prompt.count(output) == 1
+    assert "characters omitted" not in prompt
+    # Just under the limit, where the head and the tail used to overlap.
+    output = "".join(f"line {i:04d};" for i in range(800))[:8000]
+    assert _retry_prompt(tmp_path, output).count(output) == 1
+
+
+def test_long_verify_output_is_clipped_to_head_and_tail(tmp_path):
+    head, middle, tail = "H" * 4000, "M" * 1234, "T" * 4000
+    prompt = _retry_prompt(tmp_path, head + middle + tail)
+    assert head + "\n[... 1234 characters omitted ...]\n" + tail in prompt
+    assert "M" * 5 not in prompt
+
+
 def test_agent_deadline_leaves_the_grace_period():
     budget = TimeBudget.starting_now(600.0)
     assert abs(budget.agent_deadline() - (time.time() + 600 - GRACE_S)) <= 1
