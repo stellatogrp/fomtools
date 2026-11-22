@@ -8,11 +8,13 @@ and face points, each answered by the oracle like a random sample.
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from fomtools.codegen import StubAgentDriver, generate_code
+from fomtools.codegen.config import CodegenConfig
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.ir import ParamSpec
 from fomtools.codegen.manifest import MANIFEST_NAME
@@ -74,6 +76,23 @@ def test_an_infinite_bound_stands_in_as_one():
     rows = _stack(edge_param_values(params), params)
     assert np.array_equal(rows[:4], [[-1.0, 0.0], [1.0, 1.0], [0.0, 0.5], [0.0, 0.0]])
     assert np.all(np.isfinite(rows))
+
+
+def test_a_stand_in_stays_inside_a_half_infinite_box():
+    # A finite bound beyond -1 / +1: the stand-in moves one unit past it, so the
+    # samples stay in the box. Before, lo > hi and the draw raised.
+    lb, ub = np.array([2.0, -np.inf, 0.5, -np.inf]), np.array([np.inf, -3.0, np.inf, np.inf])
+    params = [_param("p0", lb, ub)]
+    rows = _stack(edge_param_values(params), params)
+    assert np.array_equal(rows[:3], [[2, -4, 0.5, -1], [3, -3, 1, 1], [2.5, -3.5, 0.75, 0]])
+    assert np.all(rows >= lb) and np.all(rows <= ub) and np.all(np.isfinite(rows))
+    # The random draws use the same box.
+    config = CodegenConfig(verify_edge_samples=False)
+    drawn = EmbeddedCTarget(config)._sample_param_values(SimpleNamespace(params=params))
+    rows = _stack(drawn, params)
+    assert len(rows) == config.num_verify_samples
+    assert np.all(rows >= lb) and np.all(rows <= ub)
+    assert np.all(rows[:, 2] <= 1.0) and np.all(rows[:, 3] >= -1.0)  # the usual stand-ins
 
 
 @pytest.mark.parametrize("dim", [1, 2, 4000])

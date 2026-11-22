@@ -35,7 +35,7 @@ from fomtools.codegen.ir import (
 )
 from fomtools.codegen.kernel_rules import strip_c_comments_and_strings
 from fomtools.codegen.objective import objective_c_params, objective_c_source
-from fomtools.codegen.oracle import ReferenceOracle, edge_param_values
+from fomtools.codegen.oracle import ReferenceOracle, edge_param_values, finite_box
 from fomtools.codegen.targets.base import TargetDescriptor, objective_violations
 
 
@@ -1584,9 +1584,7 @@ class EmbeddedCTarget(TargetDescriptor):
         for _ in range(self.config.num_verify_samples):
             pvals = {}
             for p in ir.params:
-                lo = np.where(np.isfinite(p.lb), p.lb, -1.0)
-                hi = np.where(np.isfinite(p.ub), p.ub, 1.0)
-                pvals[p.name] = rng.uniform(lo, hi)
+                pvals[p.name] = rng.uniform(*finite_box(p.lb, p.ub))
             values.append(pvals)
         if self.config.verify_edge_samples:
             values += edge_param_values(ir.params, seed=self.config.seed + 5, existing=values)
