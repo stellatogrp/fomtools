@@ -44,7 +44,7 @@ from fomtools.codegen.config import (
 from fomtools.codegen.emit import scaffold
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.generate import CodegenResult, generate_code
-from fomtools.codegen.harness import BenchResult, ProfRegion, TimingReport
+from fomtools.codegen.harness import BenchResult, BenchStats, ProfRegion, TimingReport
 from fomtools.codegen.ir import (
     FomIR,
     NonStationaryFOMError,
@@ -82,6 +82,7 @@ __all__ = [
     "CodegenResult",
     "TimingReport",
     "BenchResult",
+    "BenchStats",
     "ProfRegion",
     "FomIR",
     "NonStationaryFOMError",

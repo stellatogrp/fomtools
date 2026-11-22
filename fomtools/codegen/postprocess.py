@@ -253,24 +253,44 @@ def _kernel_check_lines(
 def _round_lines(rounds: list[dict]) -> list[str]:
     """The report's per-round table of the code optimization phase."""
 
-    def us(value) -> str:
-        return f"{value:.3f}" if value is not None else "-"
+    def us(value, stats) -> str:
+        if value is None:
+            return "-"
+        if not stats:
+            return f"{value:.3f}"
+        return f"{value:.3f} ± {stats['mad']:.3f} ({stats['min']:.3f} to {stats['max']:.3f})"
 
+    def pct(value, sign="") -> str:
+        return f"{sign}{100 * value:.1f}%" if value is not None else "-"
+
+    runs = max(
+        (s["runs"] for r in rounds for s in (r.get("before"), r.get("after")) if s), default=0
+    )
     lines = [
         "## Rounds",
         "",
-        "| round | before (us) | after (us) | gain | kept | agent (s) | outcome |",
-        "|---:|---:|---:|---:|:---:|---:|---|",
+        "| round | before (us) | after (us) | gain | noise | kept | agent (s) | outcome |",
+        "|---:|---:|---:|---:|---:|:---:|---:|---|",
     ]
     for r in rounds:
-        gain = f"{100 * r['gain']:.1f}%" if r.get("gain") is not None else "-"
         outcome = r.get("stop_reason") or "continued"
         if r.get("truncated"):
             outcome += " (agent stopped at its budget)"
         lines.append(
-            f"| {r['index']} | {us(r.get('us_before'))} | {us(r.get('us_after'))} | {gain} "
+            f"| {r['index']} | {us(r.get('us_before'), r.get('before'))} "
+            f"| {us(r.get('us_after'), r.get('after'))} | {pct(r.get('gain'))} "
+            f"| {pct(r.get('noise'), '±')} "
             f"| {'yes' if r.get('kept') else 'no'} | {r.get('agent_wall_s', 0):.0f} | {outcome} |"
         )
+    if runs:
+        lines += [
+            "",
+            f"Times are the median of up to {runs} alternating runs per side, ± their median "
+            "absolute deviation, with the fastest and slowest run. The gain is one minus the "
+            "median of the paired ratios after/before, and the noise is twice their median "
+            "absolute deviation. A round is kept when its gain exceeds the noise; round 1 is "
+            "kept unless it is slower by more than the noise.",
+        ]
     return lines + [""]
 
 

@@ -42,6 +42,7 @@ def test_round_lines_and_summary():
         OptimizationRound(1, True, True, True, us_before=100.0, us_after=40.0),
         OptimizationRound(2, True, False, False),
         OptimizationRound(3, True, True, False, us_before=40.0, us_after=45.0),
+        OptimizationRound(4, True, True, False, 40.0, 39.0, gain=0.025, noise=0.04),
     ):
         p.start(f"round {r.index}")
         p.round(r)
@@ -52,6 +53,7 @@ def test_round_lines_and_summary():
     assert "100 µs →    40 µs  █████░░░░░░░  2.50x" in text
     assert "failed verification, reverted" in text
     assert "45 µs vs 40 µs best, not faster, reverted" in text
+    assert "39 µs vs 40 µs best, not measurably faster, reverted" in text  # inside the noise
     assert "2.50x faster" in text and "• fused matvecs" in text
 
 
@@ -82,7 +84,8 @@ def test_generate_code_verbose(tmp_path, monkeypatch, capsys, requires_compiler)
     assert "✓ extract + scaffold" in out
     assert "✓ translate → C (agent)" in out and "VERIFY OK" in out
     assert "optimize · round 1" in out and "2.00x" in out
-    assert "optimize · round 2" in out and "not faster, reverted" in out
+    assert "optimize · round 2" in out
+    assert "60 µs vs 50 µs best, not faster, reverted" in out
     assert "2.00x faster" in out
 
 

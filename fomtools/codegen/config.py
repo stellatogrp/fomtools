@@ -260,8 +260,8 @@ class CodegenConfig(BaseModel):
     agent_optimize_rounds : int
         Maximum number of code optimization rounds. Default 5.
     agent_optimize_min_gain : float
-        A round that makes the solver less than this much faster (relative)
-        ends the phase. Default 0.02.
+        A round that makes the solver less than this much faster (relative),
+        or no faster than the measurement noise, ends the phase. Default 0.02.
     cg_auto_min_dim : int
         Dimension threshold for the ``AUTO`` → CG upgrade on the large-scale
         CUDA backend (see `SolveMethod`). Raise it to keep more systems
@@ -366,9 +366,11 @@ class CodegenConfig(BaseModel):
             "Maximum number of code optimization rounds. Each round is a fresh agent "
             "run on the fastest verified solver so far, told its current time and "
             "profile; the pipeline re-verifies and benchmarks it head to head "
-            "against that solver, and keeps it only if it is faster. The phase "
-            "ends early when a round fails its gates, is not faster, or gains less "
-            "than agent_optimize_min_gain. One round is the single-pass behavior."
+            "against that solver, and keeps it only if it is faster by more than "
+            "the measured noise (the first round: unless it is slower by more than "
+            "the noise). The phase ends early when a round fails its gates, is not "
+            "faster, or gains less than agent_optimize_min_gain. One round is the "
+            "single-pass behavior."
         ),
     )
     agent_optimize_min_gain: float = Field(
@@ -377,7 +379,8 @@ class CodegenConfig(BaseModel):
         description=(
             "Relative speedup below which a kept round ends the code optimization "
             "phase: a round taking the solver from t to t' continues only if "
-            "(t - t') / t >= agent_optimize_min_gain."
+            "(t - t') / t >= agent_optimize_min_gain and the gain exceeds the "
+            "measurement noise."
         ),
     )
     cg_auto_min_dim: int = Field(

@@ -155,7 +155,9 @@ class Progress:
         elif not r.kept:
             after = _us(r.us_after) if r.us_after else "not timed"
             before = f" vs {_us(r.us_before)} best" if r.us_before else ""
-            self.done(False, f"{after}{before}, not faster, reverted")
+            # A lower median that is inside the noise band is not a measured gain.
+            why = "not measurably faster" if r.gain and r.gain > 0 else "not faster"
+            self.done(False, f"{after}{before}, {why}, reverted")
         elif r.us_after is None:
             self.done(True, "VERIFY OK  (not timed)")
         else:

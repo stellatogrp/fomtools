@@ -19,11 +19,10 @@ from __future__ import annotations
 
 import difflib
 import shutil
-import statistics
 import sys
 import time
 import warnings
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from fomtools.codegen.agent.driver import AgentDriver, AgentResult, AgentTask
@@ -32,6 +31,7 @@ from fomtools.codegen.config import CodegenConfig
 from fomtools.codegen.emit import scaffold
 from fomtools.codegen.extract import extract_ir
 from fomtools.codegen.harness import (
+    BenchStats,
     TimingReport,
     build_and_verify,
     find_compiler,
@@ -160,6 +160,13 @@ def _kernel_checks(target, ir, out_dir, final, translated, verify_output) -> lis
 #: Timing runs per solver; their median is the solver's time (one run is noisy).
 BENCH_RUNS = 5
 
+#: The noise band of a head-to-head benchmark, in median absolute deviations of
+#: the paired ratios. With five pairs and no real difference, the median ratio
+#: leaves a band of 2 MADs on a given side in fewer than 1 comparison in 10
+#: (simulated with normal, heavy-tailed and spiky noise), and a gain of three
+#: times the noise of one timing is detected about 9 times in 10.
+NOISE_MADS = 2.0
+
 
 def _build_bench(
     out_dir: Path, name: str, timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S
@@ -191,11 +198,6 @@ def _run_bench_bin(
         return None
 
 
-def _median(values) -> float | None:
-    values = [v for v in values if v]
-    return statistics.median(values) if values else None
-
-
 def _bench_mean_us(
     out_dir: Path, runs: int = BENCH_RUNS, timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S
 ) -> float | None:
@@ -204,7 +206,8 @@ def _bench_mean_us(
     if path is None:
         return None
     try:
-        return _median(_run_bench_bin(path, out_dir, timeout_s) for _ in range(runs))
+        stats = BenchStats.of(_run_bench_bin(path, out_dir, timeout_s) for _ in range(runs))
+        return stats.median if stats else None
     finally:
         path.unlink(missing_ok=True)
 
@@ -216,12 +219,15 @@ def _head_to_head_us(
     best: dict,
     runs: int = BENCH_RUNS,
     timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S,
-) -> tuple[float | None, float | None]:
+) -> tuple[BenchStats | None, BenchStats | None, BenchStats | None]:
     """Per-solve times of ``candidate`` and ``best``, measured alternately.
 
     Each is built once; then the two binaries run ``runs`` times each, in
     alternating order, so slow drifts (clock speed, other load) hit both alike.
-    Returns the two medians and leaves ``best`` written.
+    Returns the statistics of the candidate's times, of the best's times, and
+    of the paired ratios candidate/best (pair ``i`` is run ``i`` of each side,
+    taken back to back; a pair with a failed run is left out). Each is ``None``
+    when it has no measurement. Leaves ``best`` written.
     """
     times: dict[str, list] = {"candidate": [], "best": []}
     copies = {"candidate": ".bench_candidate", "best": ".bench_best"}
@@ -235,25 +241,43 @@ def _head_to_head_us(
             for key in ("candidate", "best") if i % 2 == 0 else ("best", "candidate"):
                 if bins[key] is not None:
                     times[key].append(_run_bench_bin(bins[key], out_dir, timeout_s))
-        return _median(times["candidate"]), _median(times["best"])
+        ratios = [c / b for c, b in zip(times["candidate"], times["best"]) if c and b]
+        return (
+            BenchStats.of(times["candidate"]),
+            BenchStats.of(times["best"]),
+            BenchStats.of(ratios),
+        )
     finally:
         for name in copies.values():
             (Path(out_dir) / name).unlink(missing_ok=True)
 
 
-def optimization_is_faster(
-    c_optimized: float | None, c_translated: float | None, tol: float = 1.02
-) -> bool:
-    """Decide whether to keep the optimized solver based on head-to-head timing.
+def bench_noise(ratio: BenchStats) -> float:
+    """The noise band of a head-to-head benchmark, as a relative time.
 
-    Keeps the optimized solver only if it is at least as fast as the translated
-    solver within a small
-    tolerance (``tol``) that absorbs benchmark noise. Returns ``False`` if either
-    measurement is missing.
+    ``ratio`` holds the paired ratios candidate/best; the band is ``NOISE_MADS``
+    times their median absolute deviation. A gain is measured only when it is
+    larger than this. Fewer than three pairs give no real estimate (one pair: 0).
     """
-    if c_optimized is None or c_translated is None:
+    return NOISE_MADS * ratio.mad
+
+
+def optimization_is_faster(ratio: BenchStats | None, first_round: bool = False) -> bool:
+    """Decide whether to keep a rewrite based on its head-to-head timing.
+
+    ``ratio`` holds the paired ratios candidate/best (see `_head_to_head_us`).
+    With ``gain = 1 - ratio.median`` and ``noise = bench_noise(ratio)``:
+
+    - a rewrite is kept only if it is measurably faster, ``gain > noise``;
+    - in the first round the best so far is the translated solver, and the
+      rewrite is kept unless it is measurably slower, ``gain >= -noise``.
+
+    Returns ``False`` if the measurement is missing.
+    """
+    if ratio is None:
         return False
-    return c_optimized <= c_translated * tol
+    gain, noise = 1.0 - ratio.median, bench_noise(ratio)
+    return gain >= -noise if first_round else gain > noise
 
 
 def _write_agent_transcripts(out_dir: Path, translate, optimize) -> None:
@@ -653,10 +677,14 @@ def _generate_code(
 class OptimizationRound:
     """One round of the code optimization phase.
 
-    ``us_before`` and ``us_after`` are the head-to-head ``make bench`` means of
-    the best solver before the round and of the round's rewrite (``None`` when
-    not measured); ``gain`` is ``(us_before - us_after) / us_before``.
-    ``stop_reason`` is set on the round that ended the phase.
+    ``us_before`` and ``us_after`` are the head-to-head ``make bench`` times of
+    the best solver before the round and of the round's rewrite: the medians of
+    the runs summarized in ``before`` and ``after`` (``None`` when not
+    measured). ``gain`` is one minus the median of the paired ratios
+    after/before, which equals ``(us_before - us_after) / us_before`` when the
+    runs agree, and ``noise`` is the band the gain is compared with (see
+    `optimization_is_faster`). ``stop_reason`` is set on the round that ended
+    the phase.
     """
 
     index: int
@@ -669,9 +697,12 @@ class OptimizationRound:
     agent_wall_s: float = 0.0
     truncated: bool = False
     stop_reason: str | None = None
+    noise: float | None = None
+    before: BenchStats | None = None
+    after: BenchStats | None = None
 
     def as_dict(self) -> dict:
-        return dict(self.__dict__)
+        return asdict(self)
 
 
 @dataclass
@@ -749,8 +780,8 @@ def _summary_followup(
 #: Why a round ended the phase.
 STOP_NO_CHANGE = "the round left the sources unchanged"
 STOP_FAILED = "the round's sources failed verification or the kernel rules"
-STOP_NOT_FASTER = "the round's sources were not faster than the best so far"
-STOP_SMALL_GAIN = "the round gained less than agent_optimize_min_gain"
+STOP_NOT_FASTER = "the round's sources were not measurably faster than the best so far"
+STOP_SMALL_GAIN = "the round gained less than agent_optimize_min_gain or than the noise"
 STOP_MAX_ROUNDS = "the last of agent_optimize_rounds rounds"
 STOP_UNMEASURED = "no benchmark (profile off or no C compiler): one round only"
 
@@ -782,18 +813,22 @@ def run_code_optimization(
 
     1. still verify and pass the kernel rules (otherwise they are reverted to the
        best so far and the phase ends), and
-    2. be faster than the best so far, head to head (otherwise reverted, and the
-       phase ends). The first round keeps a rewrite within
-       `optimization_is_faster`'s 2% noise tolerance, as the single-pass phase
-       always has; later rounds must be strictly faster.
+    2. be faster than the best so far, head to head, by more than the measured
+       noise (otherwise reverted, and the phase ends). The first round only has
+       to be no slower than the translated solver, within the noise, as the
+       single-pass phase always has: a rewrite of the same speed is kept. Later
+       rounds must gain, so that rounds inside the noise cannot add up to a
+       slower solver. See `optimization_is_faster`.
 
-    A kept round that gains less than ``agent_optimize_min_gain`` ends the phase,
+    A kept round that gains less than ``agent_optimize_min_gain``, or no more
+    than the noise, ends the phase,
     as does the last of ``agent_optimize_rounds``. Without a benchmark
     (``profile`` off or no compiler) a correct rewrite is kept unmeasured and only
     one round runs.
 
     ``timing``, if given, gets ``c_initial_us`` / ``c_final_us`` (the translated
-    and the shipped solver, head to head) and the shipped solver's profile.
+    and the shipped solver, head to head, with their run-to-run spread in
+    ``c_initial_stats`` / ``c_final_stats``) and the shipped solver's profile.
     ``translated_verify_output`` is the translated solver's verify output, used
     for the kernel-check table when no round is kept. ``progress`` reports each
     round as it ends.
@@ -838,6 +873,8 @@ def run_code_optimization(
     best = translated
     best_us: float | None = None
     translated_us: float | None = None
+    best_stats: BenchStats | None = None
+    translated_stats: BenchStats | None = None
     best_verify_output = translated_verify_output
     best_profile: list = []
     rounds: list[OptimizationRound] = []
@@ -941,27 +978,32 @@ def run_code_optimization(
 
             # Gate 2 (performance): head to head against the best so far, measured
             # now and alternately (timings are noisy), leaving the best written.
-            us_after, us_before = _head_to_head_us(
+            after, before, ratio = _head_to_head_us(
                 out_dir, write_editable, candidate, best, timeout_s=config.check_timeout_s
             )
+            us_after = after.median if after else None
+            us_before = before.median if before else None
             if index == 1:
-                translated_us = us_before
+                translated_us, translated_stats = us_before, before
+            record.before, record.after = before, after
             record.us_before, record.us_after = us_before, us_after
-            if us_before and us_after:
-                record.gain = (us_before - us_after) / us_before
-            tol = 1.02 if index == 1 else 1.0
-            if not optimization_is_faster(us_after, us_before, tol=tol):
+            if ratio:
+                record.gain, record.noise = 1.0 - ratio.median, bench_noise(ratio)
+            if not optimization_is_faster(ratio, first_round=index == 1):
                 logs.append(
                     f"[optimization round not kept: its build ({us_after} us) was not "
-                    f"faster than the best so far ({us_before} us)]"
+                    f"measurably faster than the best so far ({us_before} us): "
+                    f"gain {record.gain}, noise {record.noise}]"
                 )
                 record.stop_reason = STOP_NOT_FASTER
                 break
             write_editable(candidate)
             ensure_summary(index, task, result, best, candidate)
             best, best_us, best_verify_output = candidate, us_after, recheck.output
+            best_stats = after
             record.kept = True
-            if record.gain is None or record.gain < config.agent_optimize_min_gain:
+            # Only the first round can be kept with a gain inside the noise.
+            if record.gain < config.agent_optimize_min_gain or record.gain <= record.noise:
                 record.stop_reason = STOP_SMALL_GAIN
                 break
             if index == n_rounds:
@@ -989,6 +1031,8 @@ def run_code_optimization(
             )
         timing.c_initial_us = translated_us
         timing.c_final_us = best_us if kept else translated_us
+        timing.c_initial_stats = translated_stats
+        timing.c_final_stats = best_stats if kept else translated_stats
         try:
             timing.profile = run_profile(out_dir, timeout_s=config.check_timeout_s)
         except Exception:
@@ -1049,9 +1093,12 @@ def run_code_optimization(
         if timing is not None:
             timing_summary = timing.summary()
         elif translated_us and final_us:
+            final_stats = best_stats if kept else translated_stats
             timing_summary = (
-                f"translated (emitted) {translated_us:9.1f} us/solve\n"
-                f"optimized            {final_us:9.1f} us/solve\n"
+                f"translated (emitted) {translated_us:9.1f} us/solve"
+                f"{'  ' + translated_stats.spread() if translated_stats else ''}\n"
+                f"optimized            {final_us:9.1f} us/solve"
+                f"{'  ' + final_stats.spread() if final_stats else ''}\n"
                 f"speedup              {translated_us / final_us:8.2f}x"
             )
         else:
