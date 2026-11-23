@@ -238,7 +238,9 @@ wrapping a known-good source) for fully deterministic, offline runs. Set
 `FOMTOOLS_CODEGEN_AGENT=0` to turn real agents off, as the test suite does.
 
 Select the agent with `FOMTOOLS_CODEGEN_BACKEND` (or `--agent` on the command
-line). Each agent uses its CLI's own default model and configuration, so it
+line). The agents run with full access by default; see
+[the restricted profiles](#what-the-agent-may-do-and-the-restricted-profiles).
+Each agent uses its CLI's own default model and configuration, so it
 follows the CLI's updates. To pick a model, set `CodegenConfig(agent_model=...)`
 (`--model` on the command line), which takes precedence over
 `FOMTOOLS_CODEGEN_MODEL`:
@@ -265,6 +267,137 @@ timings when measured, and a SHA-256 of every source a library build compiles
 (`src/`, the generated headers in `include/`, and `release/`). A new run on the
 directory removes it first, so a run that fails or is interrupted leaves none.
 An interrupted code optimization round also puts the best verified sources back.
+
+### What the agent may do, and the restricted profiles
+
+The agent runs in the output directory. All it needs is to read and edit files
+there and to run the target's `make` targets (`verify`, `bench`, `profile`) and
+the binaries they build. The default profiles do not enforce this. They turn the
+CLI's own permission checks off, so the agent can run any command and write
+anywhere you can:
+
+| Profile | Flags that grant access |
+|---|---|
+| `claude` | `--permission-mode bypassPermissions`, with the file tools and an unrestricted `Bash` |
+| `codex` | `--dangerously-bypass-approvals-and-sandbox` |
+| `pi` | `--print --approve`, with pi's unrestricted `bash` tool |
+| `cursor` | `--print --force` |
+
+Two opt-in profiles confine the agent. Select them like any other agent, with
+`--agent claude-sandboxed` or `FOMTOOLS_CODEGEN_BACKEND=codex-sandboxed`. The
+defaults are unchanged.
+
+- `claude-sandboxed` runs Claude Code with `--permission-mode acceptEdits` and
+  `--permission-prompts none`. File edits inside the output directory are
+  accepted. Anything else that would need approval is denied instead of asked.
+  `--tools` limits the built-in tools to `Read`, `Write`, `Edit`, `Bash`, `Glob`
+  and `Grep`. `Bash` runs only `make ...`, `./verify_bin`, `./bench_bin` and
+  `./profile_bin`, plus the commands Claude Code permits on its own inside the
+  output directory (`ls`, `cat`, `grep`, a redirect to a file there, and the
+  like). A compiler or interpreter call outside `make` is refused, and so is
+  `make` behind a variable assignment (`FOO=1 make bench`). Pass `make`
+  variables as arguments instead (`make verify OMPFLAGS=-fopenmp`). Those
+  commands run in Claude Code's Bash sandbox (Seatbelt on macOS, `bubblewrap`
+  and `socat` on Linux), which lets them write only in the output directory and
+  `$TMPDIR` and gives them no network. The sandbox is what confines an edited
+  `Makefile` or the solver binary itself. The command list alone would not. The
+  run fails at startup if the sandbox cannot start. The deadline hook and the
+  isolation from your own settings are those of `claude`. A run leaves an empty
+  `.claude/` directory in the output directory, which you can delete.
+- `codex-sandboxed` runs `codex exec` with a permissions profile in place of the
+  bypass. The profile extends Codex's built-in `:workspace` profile, which is
+  the `workspace-write` sandbox. Commands can write only in the output
+  directory, `/tmp` and `$TMPDIR`, and have no network. `codex exec` never asks
+  for approval, so a blocked command fails. Any command may run, not only
+  `make`.
+
+Neither profile keeps your files private. They limit writes and network access.
+Reads are limited only by a short list. Both profiles hide these well-known
+credential locations from the commands the agent runs, including a `make` recipe
+and a compiled binary:
+
+```
+~/.ssh  ~/.aws  ~/.gnupg  ~/.config/gh  ~/.config/gcloud  ~/.azure
+~/.kube  ~/.docker  ~/.netrc  ~/.npmrc  ~/.pypirc  ~/.git-credentials
+```
+
+`claude-sandboxed` passes the list as `sandbox.filesystem.denyRead` in its
+`--settings`. `codex-sandboxed` passes it as `"<path>" = "deny"` entries of its
+permissions profile. A path that does not exist on your machine is harmless. The
+agent's own login is not on the list, so it keeps working.
+
+This list is a default, and it cannot be complete. Everything else stays
+readable:
+
+- With `codex-sandboxed`, every command can read any other file you can.
+- With `claude-sandboxed`, the file tools and the shell commands Claude Code
+  inspects (`cat`, `wc`, and the like) are refused outside the output directory.
+  A `make` recipe or a compiled binary is not inspected. It can read any other
+  file you can, such as a file of API keys in your home directory, a `.env` file
+  in another project, or a browser profile.
+- With both, commands inherit your environment variables, including any keys in
+  them. The list does not change that.
+
+What a command prints goes back to the agent, and so to its model provider. The
+sandbox blocks other network access from the commands, but not that channel.
+
+To hide more files, copy the profile's entry from the packaged `agents.yaml` to
+`~/.config/fomtools/agents.yaml` under the same name, and add your paths. Your
+copy replaces the packaged entry, so keep the paths that are already there. For
+`claude-sandboxed`, add them to `denyRead` in the `--settings` JSON:
+
+```json
+"filesystem": {"denyRead": ["~/.ssh", "...", "~/my-keys.env"]}
+```
+
+For `codex-sandboxed`, add them to the `permissions.fomtools.filesystem` table:
+
+```toml
+permissions.fomtools.filesystem={"~/.ssh"="deny", ..., "~/my-keys.env"="deny"}
+```
+
+Do not deny the whole home directory with `claude-sandboxed`. That stops `make`
+when the output directory is inside it. To keep everything else out of reach, run
+FOMTools in a container or a virtual machine.
+
+Pi and Cursor have no restricted profile. Pi can switch whole tools off
+(`--tools`), but it cannot limit what its `bash` tool runs or where it writes.
+The Cursor CLI was not available to check. To confine either one, run FOMTools
+inside a container or a virtual machine.
+
+The checks that decide the result (`make verify` and the benchmarks that compare
+two solvers) are run by FOMTools itself, outside the agent's sandbox, so the
+reported timings do not depend on the profile. The timings the agent measures for
+itself with `make bench` do run inside the sandbox. In one run on macOS they
+were within 3% of the package's.
+
+Both profiles were checked on macOS with Claude Code 2.1.330 and Codex CLI
+0.167.0:
+
+| Attempt | `claude-sandboxed` | `codex-sandboxed` |
+|---|---|---|
+| `make` builds and runs a binary in the output directory | allowed | allowed |
+| Inside `make`: write to a sibling directory or the home directory | denied | denied |
+| Inside `make`: write to `$TMPDIR` | allowed | allowed |
+| Inside `make`: write to `/tmp` | denied | allowed |
+| Inside `make`: network request | denied | denied |
+| Inside `make`: list a directory on the deny list (`~/.ssh`, `~/.config/gh`, `~/.docker`) | denied | denied |
+| Inside `make`: read a file in a directory added to the deny list | denied | denied |
+| Inside `make`: read another file in the home directory | allowed | allowed |
+| Directly: `curl --version`, `cc --version`, `sh -c ...`, `FOO=1 make` | denied | not checked |
+| Directly: a network request with `curl` | denied | denied |
+| Directly: `touch` outside the directory | denied | no file created |
+| Directly: read a file outside the directory (`Read`, `Grep`, `cat`, `wc`) | denied | allowed |
+| Directly: `Write` outside the directory, or a redirect or `tee` to there | denied | not checked |
+
+One run of the `ista` example on the embedded C target passed `make verify` with
+each profile. With `claude-sandboxed`, one more run with a code optimization
+round passed too, and the agent ran `make profile` and `make bench` inside the
+sandbox. Not tested: the OpenMP target (it runs the same `make` targets, so it is
+expected to work), code optimization with `codex-sandboxed`, Linux, and the CUDA
+target. The CUDA target needs `nvcc` and access to the GPU device, which a
+sandbox may block, so use the default profiles there until you have checked it on
+your machine.
 
 ## Using the generated solver
 
