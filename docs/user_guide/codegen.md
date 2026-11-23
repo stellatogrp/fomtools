@@ -535,16 +535,22 @@ the median absolute deviation of the runs:
 
 ```
 Timing summary (per solve):
-  Python reference (before codegen):   1328.250 us
-  Generated C (translated):              1.753 us  ± 0.004 (1.749 to 1.790, 5 runs)
-  Generated C (optimized):               1.640 us  ± 0.010 (1.630 to 1.700, 5 runs)
+  Python reference (before codegen):    1.33 ms
+  Generated C (translated):             1.75 µs  ± 0.004 (1.749 to 1.790 µs, 5 runs)
+  Generated C (optimized):              1.64 µs  ± 0.010 (1.630 to 1.700 µs, 5 runs)
   Speedup from codegen (Py -> C):       757.7x
   Speedup from code optimization:       1.07x
   Total speedup (Py -> optimized C):    809.9x
 Profiling breakdown (hottest first):
-  soft_threshold              20.246 us   51.21%  (1000000 calls)
-  state_update                19.288 us   48.79%  (1000000 calls)
+  soft_threshold              20.2 µs   51.21%  (1000000 calls)
+  state_update                19.3 µs   48.79%  (1000000 calls)
 ```
+
+The attributes stay in microseconds. Printed times pick their unit (ns, µs, ms
+or s) and show three significant digits; a spread is printed in the unit of its
+median.
+The optimized solver and the two speedups that involve it are printed only
+when the code optimization phase kept a round.
 
 The generated directory also exposes `make bench` and `make profile` directly.
 
@@ -564,7 +570,7 @@ time. Output of a real run on the Lasso example (ISTA, 200 iterations, embedded 
   lasso
   translated C     1.43 µs  ██████████████████████████████
   optimized C      1.29 µs  ███████████████████████████  1.10x faster
-  NumPy           1,503 µs
+  NumPy            1.50 ms
   VERIFY OK  worst error 4.4e-16 over 8 samples
   what the agent found:
   • Ping-pong state/new_state buffers, drop per-iter copy
@@ -675,11 +681,60 @@ terminated and can fix the solver, and a benchmark or profile is reported as
 missing. A healthy check takes seconds, or a few minutes on a GPU, so the default
 only stops one that hangs.
 
+### The report card
+
+Every run that ends with a verified solver writes `report.svg` into the output
+directory: one picture of what the run measured. This is the card of the
+built-in Douglas-Rachford example (`fomtools-codegen --example dr`), translated
+with the code optimization phase off:
+
+![Report card of a code-generation run: time per solve of the NumPy reference and the translated solver on a log scale, the profile of the solver, and the acceptance check](../assets/codegen-report.svg)
+
+From top to bottom, each part drawn only when the run has its data:
+
+- **Time per solve** of the NumPy reference, the translated solver and, when an
+  optimization was kept, the optimized solver. The axis is logarithmic, since
+  the generated code is often hundreds of times faster than NumPy: each gridline
+  is a factor of 10, and equal distances are equal ratios. A logarithmic axis
+  has no zero, so each time is a dot at its position and not a bar. The numbers
+  are printed next to the dots, with the range from the fastest to the slowest
+  run when the head-to-head benchmark recorded it. With the code optimization
+  phase off, or no round kept, there is no optimized solver on the card.
+- **Optimization rounds**, one row per round on a linear axis that does not
+  start at zero: a filled disc for a kept round, a ring for a reverted one, a
+  cross for a round that failed verification, each with its time and the reason
+  (`not faster`, `inside noise`, `failed verification`). The percentage of a
+  kept round is the gain the keep rule measured (one minus the median of the
+  paired time ratios, as in the table of `OPTIMIZATIONS.md`); it can differ a
+  little from the ratio of the two printed medians. The line follows the best
+  solver so far.
+- **Where the time goes**: the profile of the shipped solver as shares of the
+  total, the five largest regions by name.
+- **Acceptance check**: the number of verify samples and the worst error against
+  the tolerance, on a logarithmic axis with one tick per decade. The check
+  passes when the error is at or below the tolerance, so `2.3e8× below
+  tolerance` means the error is that many times smaller than what is allowed.
+
+The card is a standalone SVG with no scripts or external fonts. It carries its
+own background and follows the light or dark preference of the viewer, so it can
+go into a README or a paper repository as it is. `OPTIMIZATIONS.md` shows it at
+the top. In a Jupyter or marimo notebook, a `CodegenResult` displays as the card
+with a one-line summary (`result.summary()`); a failed run displays as a
+failure message. A new run on the same directory first removes the card and
+`OPTIMIZATIONS.md` of the earlier run. To draw the card yourself, for example in
+a fixed theme:
+
+```python
+from fomtools.codegen.report_svg import result_report_svg
+
+svg = result_report_svg(result, theme="light")  # "auto" (default), "light" or "dark"
+```
+
 ### What changed, and a marker-free production build
 
 When the code optimization phase runs, two extra artifacts are written:
 
-- `OPTIMIZATIONS.md` — a durable record of the run: the timing summary, the
+- `OPTIMIZATIONS.md` — a durable record of the run: the report card, the timing summary, the
   agent's own notes, a **unified diff of every rewritten source** from the
   translated version to the optimized one, so you can see exactly what was
   changed, and a **kernel-check table** (see below). Also available

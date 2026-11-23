@@ -176,7 +176,7 @@ def test_a_gain_inside_the_noise_is_not_kept(tmp_path, monkeypatch, requires_com
     report = (tmp_path / "OPTIMIZATIONS.md").read_text()
     assert gen.STOP_NOT_FASTER in report
     assert (
-        "| 2 | 50.000 ± 0.000 (50.000 to 50.000) | 49.000 ± 1.000 (47.000 to 51.000) "
+        "| 2 | 50.0 µs ± 0.00 (50.00 to 50.00 µs) | 49.0 µs ± 1.00 (47.00 to 51.00 µs) "
         "| 2.0% | ±4.0% | no |"
     ) in report
     assert "median of up to 5 alternating runs" in report
@@ -197,8 +197,8 @@ def test_a_first_round_inside_the_noise_is_kept_and_ends_the_phase(
     assert "/* r1 */" in solver and result.optimization_kept
     # One round, so no table: the spread is in the timing section.
     report = (tmp_path / "OPTIMIZATIONS.md").read_text()
-    assert "100.000 us  ± 0.000 (100.000 to 100.000, 5 runs)" in report
-    assert "97.000 us  ± 2.000 (93.000 to 101.000, 5 runs)" in report
+    assert "100 µs  ± 0.0 (100.0 to 100.0 µs, 5 runs)" in report
+    assert "97.0 µs  ± 2.00 (93.00 to 101.00 µs, 5 runs)" in report
     assert result.timing.c_final_stats.mad == 2.0 and result.timing.c_initial_stats.runs == 5
 
 
@@ -232,12 +232,13 @@ def test_the_rounds_record_the_spread(tmp_path, monkeypatch, requires_compiler):
     unmeasured = opt.rounds[1].as_dict()  # unchanged sources: never benchmarked
     assert unmeasured["before"] is None and unmeasured["noise"] is None
     report = opt.optimizations_md.read_text()
-    assert (
-        "| 1 | 100.000 ± 2.000 (98.000 to 110.000) | 50.000 ± 0.000 (50.000 to 50.000) " in report
-    )
+    assert "| 1 | 100 µs ± 2.0 (98.0 to 110.0 µs) | 50.0 µs ± 0.00 (50.00 to 50.00 µs) " in report
     assert "| 50.0% | ±2.0% | yes |" in report
     assert "| 2 | - | - | - | - | no |" in report
-    assert "translated (emitted)     100.0 us/solve  ± 2.000 (98.000 to 110.000, 5 runs)" in report
+    assert "translated (emitted)     100 µs per solve  ± 2.0 (98.0 to 110.0 µs, 5 runs)" in report
+    # The copied card describes the translated solver: it is gone, and not linked.
+    assert (emitted / "report.svg").is_file() and not (copy / "report.svg").exists()
+    assert "report.svg" not in report
 
 
 @pytest.mark.requires_compiler

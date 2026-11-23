@@ -25,6 +25,9 @@ from fomtools.codegen.agent.prompts import (
     SUMMARY_BEGIN,
     SUMMARY_END,
 )
+from fomtools.codegen.progress import format_time
+
+OPTIMIZATIONS_NAME = "OPTIMIZATIONS.md"
 
 # One line per matrix from verify's direct check of fom_apply_<name>.
 _OPSCHECK_RE = re.compile(
@@ -254,11 +257,13 @@ def _round_lines(rounds: list[dict]) -> list[str]:
     """The report's per-round table of the code optimization phase."""
 
     def us(value, stats) -> str:
-        if value is None:
-            return "-"
-        if not stats:
-            return f"{value:.3f}"
-        return f"{value:.3f} ± {stats['mad']:.3f} ({stats['min']:.3f} to {stats['max']:.3f})"
+        if value is None or not stats:
+            return format_time(value)
+
+        def fmt(x, unit=False):
+            return format_time(x, like=value, digits=4, unit=unit)
+
+        return f"{format_time(value)} ± {fmt(stats['mad'])} ({fmt(stats['min'])} to {fmt(stats['max'], True)})"
 
     def pct(value, sign="") -> str:
         return f"{sign}{100 * value:.1f}%" if value is not None else "-"
@@ -269,7 +274,7 @@ def _round_lines(rounds: list[dict]) -> list[str]:
     lines = [
         "## Rounds",
         "",
-        "| round | before (us) | after (us) | gain | noise | kept | agent (s) | outcome |",
+        "| round | before | after | gain | noise | kept | agent (s) | outcome |",
         "|---:|---:|---:|---:|---:|:---:|---:|---|",
     ]
     for r in rounds:
@@ -360,6 +365,7 @@ def write_optimization_report(
     rewrite_collected: bool = True,
     rounds: list[dict] | None = None,
     rule_friction: list[dict] | None = None,
+    card: str | None = None,
 ) -> Path:
     """Write ``OPTIMIZATIONS.md`` recording timing, agent notes, and the diff.
 
@@ -378,10 +384,13 @@ def write_optimization_report(
     `fomtools.codegen.generate.OptimizationRound`) adds a per-round table when
     the phase ran more than one. ``rule_friction`` (see `extract_rule_friction`,
     with a ``round``) adds the table of optimizations the agent says a rule
-    blocked.
+    blocked. ``card`` is the file name of the report card (see
+    `fomtools.codegen.report_svg`) to show at the top.
     """
     out_dir = Path(out_dir)
     lines = ["# Optimization report", ""]
+    if card:
+        lines += [f"![Report card of the run]({card})", ""]
     if timing_summary:
         lines += ["## Timing", "", "```", timing_summary, "```", ""]
     status = (
@@ -425,6 +434,6 @@ def write_optimization_report(
         lines += ["_No changes to the generated sources (already optimal or unchanged)._", ""]
     if agent_notes.strip():
         lines += ["## Agent notes", "", "```", agent_notes.strip(), "```", ""]
-    path = out_dir / "OPTIMIZATIONS.md"
+    path = out_dir / OPTIMIZATIONS_NAME
     path.write_text("\n".join(lines))
     return path

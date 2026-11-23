@@ -11,6 +11,7 @@ also on error, to stop the spinner.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import sys
@@ -46,8 +47,34 @@ def bar(fraction: float, width: int = 12) -> tuple[str, str]:
     return "█" * filled, "░" * (width - filled)
 
 
-def _us(value: float) -> str:
-    return f"{value:.3g} µs" if value < 1000 else f"{value:,.0f} µs"
+_TIME_UNITS = ((1.0e6, "s"), (1.0e3, "ms"), (1.0, "µs"), (0.0, "ns"))
+
+
+def format_time(
+    us: float | None,
+    like: float | None = None,
+    digits: int = 3,
+    unit: bool = True,
+    missing: str = "-",
+) -> str:
+    """A time given in microseconds, in ns, µs, ms or s with ``digits`` significant digits.
+
+    ``format_time(0.04)`` is ``"40.0 ns"``, ``format_time(1753.2)`` is ``"1.75 ms"``.
+    ``like`` (another time, in microseconds) fixes the unit and the number of
+    decimals to its own, so a spread prints in the unit of its median:
+    ``format_time(0.004, like=1.753, digits=4, unit=False)`` is ``"0.004"``.
+    ``None`` and non-finite values give ``missing``; zero is ``"0 s"``.
+    """
+    if us is None or not math.isfinite(us):
+        return missing
+    ref = abs(like) if like and math.isfinite(like) else abs(us)
+    if not ref:
+        return "0 s" if unit else "0"
+    ref = float(f"{ref:.{digits - 1}e}")  # round first: 999.96 µs is 1.00 ms
+    scale, name = next((s, n) for s, n in _TIME_UNITS if ref >= s)
+    scale = scale or 1.0e-3
+    decimals = max(0, digits - 1 - math.floor(math.log10(ref / scale)))
+    return f"{us / scale:,.{decimals}f}" + (f" {name}" if unit else "")
 
 
 class Progress:
@@ -138,7 +165,7 @@ class Progress:
         if err:
             parts.append(f"max err {err[1]:.0e}")
         if us:
-            parts.append(_us(us))
+            parts.append(format_time(us))
             self.t0 = us
         self.done(True, "  ".join(parts))
 
@@ -153,8 +180,8 @@ class Progress:
         elif not r.correct:
             self.done(False, self._paint("failed verification, reverted", "31"))
         elif not r.kept:
-            after = _us(r.us_after) if r.us_after else "not timed"
-            before = f" vs {_us(r.us_before)} best" if r.us_before else ""
+            after = format_time(r.us_after) if r.us_after else "not timed"
+            before = f" vs {format_time(r.us_before)} best" if r.us_before else ""
             # A lower median that is inside the noise band is not a measured gain.
             why = "not measurably faster" if r.gain and r.gain > 0 else "not faster"
             self.done(False, f"{after}{before}, {why}, reverted")
@@ -164,7 +191,7 @@ class Progress:
             self.t0 = self.t0 or r.us_before or r.us_after
             full, empty = bar(r.us_after / self.t0)
             detail = (
-                f"{_us(self.t0):>8} → {_us(r.us_after):>8}  "
+                f"{format_time(self.t0):>8} → {format_time(r.us_after):>8}  "
                 f"{self._paint(full, '36')}{self._paint(empty, '2')}  "
                 f"{self._paint(f'{self.t0 / r.us_after:.2f}x', '1')}  "
                 f"{self._paint('VERIFY ✓', '32')}"
@@ -190,12 +217,12 @@ class Progress:
             for label, us in (("translated C", t0), ("optimized C", t1)):
                 code = "2" if us == t0 and t1 != t0 else "36"
                 lines.append(
-                    f"  {label:<13} {_us(us):>10}  {self._paint(bar(us / t0, width)[0], code)}"
+                    f"  {label:<13} {format_time(us):>10}  {self._paint(bar(us / t0, width)[0], code)}"
                 )
             gain = f"{t0 / t1:.2f}x faster" if t1 < t0 else f"{t0 / t1:.2f}x (within noise)"
             lines[-1] += "  " + self._paint(gain, "1;32" if t1 < t0 else "1")
         if timing and timing.python_us and t1:
-            lines.append(self._paint(f"  {'NumPy':<13} {_us(timing.python_us):>10}", "2"))
+            lines.append(self._paint(f"  {'NumPy':<13} {format_time(timing.python_us):>10}", "2"))
         err = verify_error(verify_output)
         if err:
             lines.append(

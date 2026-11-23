@@ -17,7 +17,9 @@ Flow:
 
 from __future__ import annotations
 
+import base64
 import difflib
+import html
 import shutil
 import sys
 import time
@@ -55,7 +57,13 @@ from fomtools.codegen.postprocess import (
     write_production_variant,
 )
 from fomtools.codegen.proc import DEFAULT_CHECK_TIMEOUT_S, run_check
-from fomtools.codegen.progress import Progress
+from fomtools.codegen.progress import Progress, format_time, verify_numbers
+from fomtools.codegen.report_svg import (
+    REPORT_SVG_NAME,
+    remove_report_svg,
+    result_report_svg,
+    write_report_svg,
+)
 from fomtools.codegen.targets import TargetDescriptor
 
 
@@ -78,6 +86,61 @@ class CodegenResult:
     kernel_checks: list[dict] | None = None
     #: Optimizations the agent reports a rule blocked (see `CodeOptimizationResult`).
     rule_friction: list[dict] = field(default_factory=list)
+    #: The rounds of the code optimization phase, in order.
+    rounds: list[OptimizationRound] = field(default_factory=list)
+    #: ``(samples, worst max-abs error, tolerance)`` of the shipped solver's
+    #: verify, or ``None`` when it compared nothing numerically.
+    verify: tuple[int, float, float | None] | None = None
+    #: The report card (``report.svg``) of a run that produced a verified solver.
+    report_svg: Path | None = None
+
+    def summary(self) -> str:
+        """One line: whether the run succeeded, the verify numbers and the times."""
+        name = getattr(self.ir, "name", None) or "solver"
+        if not self.success:
+            return f"{name}: code generation FAILED, no verified solver in {self.out_dir}"
+        parts = []
+        if self.verify:
+            parts.append(f"verified on {self.verify[0]} samples, worst error {self.verify[1]:.1e}")
+        else:
+            parts.append("built (verify compared nothing numerically)")
+        timing = self.timing
+        if timing and timing.c_final_us:
+            parts.append(f"{format_time(timing.c_final_us)} per solve")
+            if timing.speedup_total:
+                parts.append(f"{timing.speedup_total:,.0f}x the NumPy reference")
+        if self.optimize is not None:
+            kept = sum(1 for r in self.rounds if r.kept)
+            parts.append(
+                f"{kept} of {len(self.rounds)} optimization rounds kept"
+                if self.rounds
+                else f"optimization {'kept' if self.optimization_kept else 'not kept'}"
+            )
+        return f"{name}: " + "; ".join(parts) + f". Output in {self.out_dir}"
+
+    def _repr_html_(self) -> str:
+        """The report card and `summary` for Jupyter and marimo; never raises.
+
+        The card is embedded as an image, so its styles stay out of the page.
+        """
+        try:
+            ok = bool(self.success)
+        except Exception:  # a display hook must not break the notebook cell
+            ok = False
+        try:
+            text = html.escape(self.summary())
+        except Exception:
+            text = "code generation result" if ok else "code generation FAILED"
+        if not ok:
+            return f"<p><strong>{text}</strong></p>"
+        try:
+            card = base64.b64encode(result_report_svg(self).encode("utf-8")).decode("ascii")
+        except Exception:
+            return f"<p>{text}</p>"
+        return (
+            f'<div><img alt="{text}" style="max-width:100%;height:auto" '
+            f'src="data:image/svg+xml;base64,{card}"><p>{text}</p></div>'
+        )
 
     @property
     def success(self) -> bool:
@@ -637,6 +700,7 @@ def _generate_code(
     optimizations_md = None
     kernel_checks = None
     rule_friction: list[dict] = []
+    rounds: list[OptimizationRound] = []
     # Of the solver that ships, and only what verify itself printed: the agent's
     # own text (in `translate.log`) may quote numbers that no check produced.
     verify_output = translate.verify_output
@@ -651,6 +715,7 @@ def _generate_code(
             timing=timing,
             translated_verify_output=translate.log,
             progress=progress,
+            report_card=True,
         )
         optimize = opt.optimize
         optimization_diff = opt.diff
@@ -660,6 +725,7 @@ def _generate_code(
         if opt.kept:
             verify_output = opt.verify_output
             progress.summary(name, timing, opt.verify_output, opt.applied)
+        rounds = opt.rounds
     # Always persist the raw agent output, code optimization phase or not.
     _write_agent_transcripts(out_dir, translate, optimize)
 
@@ -675,7 +741,7 @@ def _generate_code(
         # that these sources are the verified ones (none after a compile-only check).
         write_manifest(out_dir, target, verify_output, timing)
 
-    return CodegenResult(
+    result = CodegenResult(
         ir=ir,
         out_dir=out_dir,
         target=target,
@@ -687,7 +753,13 @@ def _generate_code(
         production_path=production_path,
         kernel_checks=kernel_checks,
         rule_friction=rule_friction,
+        rounds=rounds,
+        verify=verify_numbers(verify_output) if translate.success else None,
     )
+    if translate.success:
+        # With the code optimization phase, OPTIMIZATIONS.md shows this card.
+        result.report_svg = write_report_svg(out_dir, result_report_svg(result))
+    return result
 
 
 @dataclass
@@ -815,6 +887,7 @@ def run_code_optimization(
     translated_verify_output: str | None = None,
     write_report: bool = True,
     progress: Progress | None = None,
+    report_card: bool = False,
 ) -> CodeOptimizationResult:
     """Run the code optimization phase on ``out_dir``, in rounds, and gate each one.
 
@@ -849,7 +922,8 @@ def run_code_optimization(
     ``c_initial_stats`` / ``c_final_stats``) and the shipped solver's profile.
     ``translated_verify_output`` is the translated solver's verify output, used
     for the kernel-check table when no round is kept. ``progress`` reports each
-    round as it ends.
+    round as it ends. ``report_card`` puts the report card (``report.svg``, which
+    the caller writes) at the top of ``OPTIMIZATIONS.md``.
     """
     from fomtools.codegen.agent.prompts import (
         code_optimization_continuation,
@@ -887,6 +961,7 @@ def run_code_optimization(
 
     measure = profile and find_compiler() is not None
     remove_manifest(out_dir)  # the sources are about to change; the caller records the result
+    remove_report_svg(out_dir)  # and draws the card of the result
     translated = read_editable()  # known-good fallback
     best = translated
     best_us: float | None = None
@@ -1114,9 +1189,9 @@ def run_code_optimization(
         elif translated_us and final_us:
             final_stats = best_stats if kept else translated_stats
             timing_summary = (
-                f"translated (emitted) {translated_us:9.1f} us/solve"
+                f"translated (emitted) {format_time(translated_us):>10} per solve"
                 f"{'  ' + translated_stats.spread() if translated_stats else ''}\n"
-                f"optimized            {final_us:9.1f} us/solve"
+                f"optimized            {format_time(final_us):>10} per solve"
                 f"{'  ' + final_stats.spread() if final_stats else ''}\n"
                 f"speedup              {translated_us / final_us:8.2f}x"
             )
@@ -1134,6 +1209,7 @@ def run_code_optimization(
             rewrite_collected=collected_any,
             rounds=[r.as_dict() for r in rounds],
             rule_friction=rule_friction,
+            card=REPORT_SVG_NAME if report_card else None,
         )
 
     return CodeOptimizationResult(

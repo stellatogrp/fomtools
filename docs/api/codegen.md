@@ -38,3 +38,7 @@ complete examples.
 ::: fomtools.codegen.doctor
 
 ::: fomtools.codegen.DoctorReport
+
+::: fomtools.codegen.report_svg.report_svg
+
+::: fomtools.codegen.report_svg.result_report_svg
