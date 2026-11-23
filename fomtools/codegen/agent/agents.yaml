@@ -64,10 +64,12 @@ agents:
   #   confines those commands, and so an edited Makefile or the solver itself:
   #   writes only in the output dir and $TMPDIR, no network. The run fails at
   #   startup if the sandbox cannot start, instead of running unsandboxed.
-  # Reads are not confined: the file tools are refused outside the output dir,
-  # but a `make` recipe or a binary can read any file the user can, and inherits
-  # the environment. To hide paths from them, add `sandbox.filesystem.denyRead`
-  # to the settings in a per-user copy of this entry.
+  # Reads are confined only by a list: the file tools are refused outside the
+  # output dir, but a `make` recipe or a binary can read any file the user can,
+  # except the well-known credential locations in `sandbox.filesystem.denyRead`
+  # below (the same list as in `codex-sandboxed`; keep the two in step). The
+  # list cannot be complete, and the environment is still inherited. To hide
+  # more paths, add them to `denyRead` in a per-user copy of this entry.
   claude-sandboxed:
     bin: claude
     flags:
@@ -87,7 +89,7 @@ agents:
       - "--allowedTools"
       - "Bash(make *),Bash(./verify_bin *),Bash(./bench_bin *),Bash(./profile_bin *)"
       - "--settings"
-      - '{"env":{"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS":"1"},"sandbox":{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"autoAllowBashIfSandboxed":false},"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"[ -z \"$FOMTOOLS_DEADLINE\" ] || [ \"$(date +%s)\" -lt \"$FOMTOOLS_DEADLINE\" ] || { echo \"fomtools: the time budget is spent. Stop editing and print your summary now.\" >&2; exit 2; }"}]}]}}'
+      - '{"env":{"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS":"1"},"sandbox":{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"autoAllowBashIfSandboxed":false,"filesystem":{"denyRead":["~/.ssh","~/.aws","~/.gnupg","~/.config/gh","~/.config/gcloud","~/.azure","~/.kube","~/.docker","~/.netrc","~/.npmrc","~/.pypirc","~/.git-credentials"]}},"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"[ -z \"$FOMTOOLS_DEADLINE\" ] || [ \"$(date +%s)\" -lt \"$FOMTOOLS_DEADLINE\" ] || { echo \"fomtools: the time budget is spent. Stop editing and print your summary now.\" >&2; exit 2; }"}]}]}}'
     cwd_flag: --add-dir
     sysprompt_flag: --append-system-prompt
     output_format: stream-json
@@ -117,17 +119,26 @@ agents:
     install_hint: Install the Codex CLI (https://github.com/openai/codex) and ensure `codex` is on PATH.
 
   # Codex, restricted (opt-in: `--agent codex-sandboxed`). The same entry as
-  # `codex` with the bypass replaced by the workspace-write sandbox: commands
-  # write only in the output dir, /tmp and $TMPDIR, and have no network.
-  # `codex exec` never asks for approval, so a command the sandbox blocks fails.
-  # Any command may run, and reads are not restricted.
+  # `codex` with the bypass replaced by a permissions profile, `fomtools`, that
+  # extends the built-in `:workspace` one (the workspace-write sandbox):
+  # commands write only in the output dir, /tmp and $TMPDIR, and have no
+  # network. `codex exec` never asks for approval, so a command the sandbox
+  # blocks fails. Any command may run. Reads are confined only by a list: the
+  # profile denies the well-known credential locations below (the same list as
+  # in `claude-sandboxed`; keep the two in step) and nothing else. The list
+  # cannot be complete, and the environment is still inherited. To hide more
+  # paths, add `"<path>"="deny"` entries in a per-user copy of this entry.
   codex-sandboxed:
     bin: codex
     base_args: ["exec"]
     flags:
       - "--skip-git-repo-check"
-      - "--sandbox"
-      - "workspace-write"
+      - "-c"
+      - 'default_permissions="fomtools"'
+      - "-c"
+      - 'permissions.fomtools.extends=":workspace"'
+      - "-c"
+      - 'permissions.fomtools.filesystem={"~/.ssh"="deny","~/.aws"="deny","~/.gnupg"="deny","~/.config/gh"="deny","~/.config/gcloud"="deny","~/.azure"="deny","~/.kube"="deny","~/.docker"="deny","~/.netrc"="deny","~/.npmrc"="deny","~/.pypirc"="deny","~/.git-credentials"="deny"}'
       - "--ignore-user-config"
       - "--ignore-rules"
       - "--ephemeral"

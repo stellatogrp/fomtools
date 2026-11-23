@@ -8,6 +8,8 @@ sources and no record; and every load path checks the directory against it.
 import hashlib
 import importlib.util
 import json
+import os
+import subprocess
 import warnings
 from pathlib import Path
 
@@ -19,7 +21,7 @@ from fomtools.codegen import generate as gen
 from fomtools.codegen.agent.driver import AgentDriver, AgentResult
 from fomtools.codegen.cli import main as cli_main
 from fomtools.codegen.harness import BenchStats, build_lib
-from fomtools.codegen.manifest import MANIFEST_NAME, check_manifest
+from fomtools.codegen.manifest import MANIFEST_NAME, STAMP_NAME, check_manifest
 from tests.codegen.conftest import build_ista
 
 GOLDEN = Path(__file__).parent / "golden" / "ista" / "embedded_c" / "fom_solver.c"
@@ -27,8 +29,8 @@ SOLVER = "src/fom_solver.c"
 NO_RECORD = "no verification record"
 
 
-def _generate(out_dir, driver=None, **kwargs):
-    case = build_ista(max_iters=50)
+def _generate(out_dir, driver=None, max_iters=50, **kwargs):
+    case = build_ista(max_iters=max_iters)
     return generate_code(
         case["verifier"],
         case["next_state"],
@@ -286,3 +288,69 @@ def test_an_unreadable_record_raises_like_a_modified_source(tmp_path, text):
         check_manifest(tmp_path)
     with pytest.warns(UserWarning, match="not a readable verification record"):
         check_manifest(tmp_path, allow_unverified=True)
+
+
+# -- the built library -------------------------------------------------------
+def _load_silently(out_dir):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _wrapper(out_dir).Solver()
+
+
+@pytest.mark.requires_compiler
+def test_a_library_built_before_a_regeneration_is_not_loaded(tmp_path, requires_compiler):
+    _generate(tmp_path)
+    lib = build_lib(tmp_path)
+    stamp = json.loads((tmp_path / STAMP_NAME).read_text())
+    assert stamp["sha256"] == _sha(lib) and stamp["library"] == lib.name
+    assert stamp["sources"] == json.loads((tmp_path / MANIFEST_NAME).read_text())["sources"]
+
+    _generate(tmp_path, max_iters=60)  # new verified sources, the old library still there
+    os.utime(lib)  # a fresh mtime must not hide it: the stamp compares contents
+    check_manifest(tmp_path)  # the sources themselves are fine
+    with pytest.raises(RuntimeError, match="was built from other sources: ") as err:
+        _wrapper(tmp_path).Solver()
+    assert "build_lib" in str(err.value) and "allow_unverified=True" in str(err.value)
+    with pytest.warns(UserWarning, match="was built from other sources: "):
+        _wrapper(tmp_path).Solver(allow_unverified=True)
+
+    build_lib(tmp_path)  # always rebuilds and stamps again
+    _load_silently(tmp_path)
+
+
+@pytest.mark.requires_compiler
+def test_a_hand_built_library_without_a_stamp_is_checked_by_age(tmp_path, requires_compiler):
+    _generate(tmp_path)
+    subprocess.run(["make", "lib"], cwd=tmp_path, check=True, capture_output=True)
+    assert not (tmp_path / STAMP_NAME).exists()
+    _load_silently(tmp_path)  # newer than every source
+
+    _generate(tmp_path, max_iters=60)
+    with pytest.raises(RuntimeError, match="has no build stamp and is older than "):
+        _wrapper(tmp_path).Solver()
+    with pytest.warns(UserWarning, match="has no build stamp and is older than "):
+        _wrapper(tmp_path).Solver(allow_unverified=True)
+
+    subprocess.run(["make", "lib"], cwd=tmp_path, check=True, capture_output=True)
+    _load_silently(tmp_path)
+
+
+@pytest.mark.requires_compiler
+def test_a_stamp_of_another_library_counts_as_no_stamp(tmp_path, requires_compiler):
+    _generate(tmp_path)
+    build_lib(tmp_path)
+    _generate(tmp_path, max_iters=60)
+    # Rebuilt by hand: the stamp describes the library that was replaced.
+    subprocess.run(["make", "lib"], cwd=tmp_path, check=True, capture_output=True)
+    _load_silently(tmp_path)
+
+
+@pytest.mark.requires_compiler
+@pytest.mark.filterwarnings(f"ignore:.*{NO_RECORD}")
+def test_no_stamp_is_written_or_kept_without_a_record(tmp_path, requires_compiler):
+    _generate(tmp_path)
+    build_lib(tmp_path)
+    (tmp_path / MANIFEST_NAME).unlink()
+    build_lib(tmp_path)  # no list of sources to stamp
+    assert not (tmp_path / STAMP_NAME).exists()
+    _wrapper(tmp_path).Solver()  # warned about the record; the library is not checked

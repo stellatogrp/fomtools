@@ -159,6 +159,17 @@ def test_optimization_perf_gate_logic():
     slower = [97.0, 99.0, 101.0, 103.0, 105.0]  # median 1.01, same spread
     assert keep(slower, before)  # round 1: inside the noise -> keep
     assert not keep(slower, before, first_round=False)
+    # Round 1 tolerates at most a 2% loss, however large the measured noise: the
+    # ratios below have median 1.05 and MAD 0.04, so the noise band alone (0.08)
+    # would keep this 5% regression.
+    noisy_loss = [97.0, 101.0, 105.0, 109.0, 113.0]
+    assert not keep(noisy_loss, before)
+    assert not keep([95.0, 99.0, 103.0, 107.0, 111.0], before)  # 3% loss, same spread
+    assert keep([93.0, 97.0, 101.0, 105.0, 109.0], before)  # 1% loss: under the cap -> keep
+    # An equal-speed rewrite within small noise is still kept (MAD 0.002, band 0.004).
+    assert keep([99.6, 99.8, 100.0, 100.2, 100.4], before)
+    assert keep([99.9, 100.1, 100.3, 100.5, 100.7], before)  # 0.3% loss, inside the band
+    assert not keep([100.2, 100.4, 100.6, 100.8, 101.0], before)  # 0.6% loss, outside it
     # The same spread around a 10% gain or loss is outside the band.
     assert keep([86.0, 88.0, 90.0, 92.0, 94.0], before, first_round=False)
     assert not keep([106.0, 108.0, 110.0, 112.0, 114.0], before)
