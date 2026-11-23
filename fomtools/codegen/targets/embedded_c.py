@@ -35,7 +35,7 @@ from fomtools.codegen.ir import (
 )
 from fomtools.codegen.kernel_rules import strip_c_comments_and_strings
 from fomtools.codegen.objective import objective_c_params, objective_c_source
-from fomtools.codegen.oracle import ReferenceOracle
+from fomtools.codegen.oracle import ReferenceOracle, edge_param_values, finite_box
 from fomtools.codegen.targets.base import TargetDescriptor, objective_violations
 
 
@@ -1572,16 +1572,28 @@ class EmbeddedCTarget(TargetDescriptor):
         return "\n".join(out)
 
     # -- verify ------------------------------------------------------------
-    def _sample_params(self, ir: FomIR) -> tuple[dict[str, np.ndarray], list[dict]]:
+    def _sample_param_values(self, ir: FomIR) -> list[dict[str, np.ndarray]]:
+        """Parameter values of the end-to-end check: random draws, then edge cases.
+
+        The random draws come first and from their own generator, so the edge
+        samples (`edge_param_values`) change neither their values nor their
+        indices.
+        """
         rng = np.random.default_rng(self.config.seed)
-        oracle = ReferenceOracle(ir)
-        samples = []
+        values = []
         for _ in range(self.config.num_verify_samples):
             pvals = {}
             for p in ir.params:
-                lo = np.where(np.isfinite(p.lb), p.lb, -1.0)
-                hi = np.where(np.isfinite(p.ub), p.ub, 1.0)
-                pvals[p.name] = rng.uniform(lo, hi)
+                pvals[p.name] = rng.uniform(*finite_box(p.lb, p.ub))
+            values.append(pvals)
+        if self.config.verify_edge_samples:
+            values += edge_param_values(ir.params, seed=self.config.seed + 5, existing=values)
+        return values
+
+    def _sample_params(self, ir: FomIR) -> list[dict]:
+        oracle = ReferenceOracle(ir)
+        samples = []
+        for pvals in self._sample_param_values(ir):
             res = oracle.solve(param_values=pvals)
             samples.append(
                 {

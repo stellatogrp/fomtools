@@ -11,6 +11,7 @@ example, whose sparse blocks are emitted as CSR and applied via ``fom_apply_*``.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -488,7 +489,8 @@ def test_a_routine_that_returns_nan_fails_verify(tmp_path, mpc, requires_compile
     proc = _verify(tmp_path)
     assert proc.returncode != 0 and "VERIFY OK" not in proc.stdout
     # printf spells NaN "nan" or "-nan" depending on the libc; the verdict is what counts.
-    assert "VERIFY FAILED: 8/8 samples exceed tol" in proc.stdout
+    # Every sample fails: the eight random ones and the edge cases after them.
+    assert re.search(r"VERIFY FAILED: (\d+)/\1 samples exceed tol", proc.stdout)
 
 
 def test_report_checks_the_shipped_sources_when_a_rewrite_is_reverted(

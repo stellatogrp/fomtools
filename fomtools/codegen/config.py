@@ -238,6 +238,10 @@ class CodegenConfig(BaseModel):
         by dtype (1e-10 for float64, 1e-4 for float32).
     num_verify_samples : int
         Number of random parameter instances drawn for the golden verify data.
+    verify_edge_samples : bool
+        Add up to 8 deterministic edge-case parameter instances to the verify
+        data: the lower and upper bounds, the midpoint, zero when it is inside
+        the box, mixed vertices and points on a face. Default True.
     seed : int
         RNG seed for reproducible verify-sample generation.
     agent_model : str or None
@@ -290,6 +294,19 @@ class CodegenConfig(BaseModel):
         ),
     )
     num_verify_samples: int = 8
+    verify_edge_samples: bool = Field(
+        default=True,
+        description=(
+            "Add deterministic edge-case parameter instances to the verify data, "
+            "after the num_verify_samples random ones: the all-lower-bound and "
+            "all-upper-bound vertices, the box midpoint, zero when it lies inside "
+            "the box, two mixed vertices and two points on a face of the box. "
+            "Uniform draws almost never reach the points where a projection "
+            "saturates or a soft-thresholding switches branch; these do. At most 8 "
+            "instances, whatever the parameter dimension, with repeated ones "
+            "dropped. False restores the random samples alone."
+        ),
+    )
     seed: int = 0
     agent_model: str | None = Field(
         default=None,

@@ -487,6 +487,34 @@ data cannot change:
 | `src/fom_ops.c` (matrix-vector products) | rewritten by the agent | each `fom_apply_<name>` exactly against its matrix, each `fom_fused_<block>` exactly against its members (below); each `fom_step_<block>`, `__rest` routine and `fom_iterate` exactly against its members and a reference activation |
 | `src/fom_data.c`, `src/fom_objective.c`, `include/`, `test/`, `Makefile` | package only | — |
 
+The end-to-end check solves on `num_verify_samples` (default 8) parameter vectors
+drawn uniformly from the parameter box, then on up to 8 deterministic edge cases,
+each compared with the Python reference at `tol_verify`:
+
+- the all-lower-bound vertex, the all-upper-bound vertex, and the box midpoint;
+- zero, when it lies inside the box (where soft-thresholding and ReLU switch);
+- a mixed vertex, with each coordinate at its lower or upper bound, and the
+  opposite vertex;
+- two points on a face: an interior draw with a quarter of the coordinates pinned
+  to a bound.
+
+Uniform draws almost never reach the points where a projection saturates or a
+comparison decides, so a wrong branch, `<` in place of `<=`, or a wrong bound can
+pass them; the edge cases are where it shows. An infinite bound stands in as -1
+or +1, as in the random draws, or as one unit past the finite bound on the other
+side when that bound lies beyond the stand-in. Repeated vectors are dropped (a
+parameter with `lb == ub` gives the same vertex twice), and the count does not
+grow with the parameter dimension. The reported "worst max-abs error over N
+samples" and the manifest count them, so a default run reports up to 16 samples.
+The recorded outputs on this page that show 8 predate the edge cases.
+`CodegenConfig(verify_edge_samples=False)` restores the random draws alone.
+
+A vertex of the box can be an instance with no solution. With CVXPYgen, for
+example, the box holds the propagated bounds of `q`, `b` and `u`, and its corners
+need not be feasible. The check still applies there: the reference runs the same
+iteration with the same stopping rule, and the two results are compared whether
+or not the method converged.
+
 A matrix-vector routine is a linear map, so it can be checked for **every**
 input, not just sampled ones. `make verify` runs each `fom_apply_<name>` next to a
 package-written reference (`test/ops_ref.c`) that reads the same `fom_data.c`

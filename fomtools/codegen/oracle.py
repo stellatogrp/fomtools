@@ -397,13 +397,28 @@ def check_stationary(
             )
 
 
+def finite_box(lb, ub) -> tuple[np.ndarray, np.ndarray]:
+    """The finite box the verify samples are drawn from.
+
+    An infinite bound stands in as -1 / +1. Where the finite bound on the other
+    side lies beyond that stand-in (``lb > 1`` or ``ub < -1``), the stand-in is
+    one unit past the finite bound instead, so the result is a box inside
+    ``[lb, ub]`` with ``lo <= hi``.
+    """
+    lb, ub = np.asarray(lb, dtype=float), np.asarray(ub, dtype=float)
+    lo = np.where(np.isfinite(lb), lb, np.where(ub >= -1.0, -1.0, ub - 1.0))
+    hi = np.where(np.isfinite(ub), ub, np.where(lb <= 1.0, 1.0, lb + 1.0))
+    return lo, hi
+
+
 def sample_param_values(verifier, iterates, state=None, params=None, seed: int = 0) -> dict:
     """A deterministic parameter draw keyed by parameter *leaf*.
 
     Mirrors what the emitted verify harness does: uniform inside the declared box,
-    with an infinite bound standing in as -1 / +1. A draw rather than the box
-    midpoint, because the midpoint of a symmetric box is zero, which would make a
-    soft-threshold step trivially zero and hide exactly the errors worth catching.
+    with an infinite bound standing in as -1 / +1 (`finite_box`). A draw rather
+    than the box midpoint, because the midpoint of a symmetric box is zero, which
+    would make a soft-threshold step trivially zero and hide exactly the errors
+    worth catching.
     """
     groups = normalize_iterates(verifier, iterates)
     _, _, _, _, param_leaves = resolve_structure(verifier, groups[-1], state, params)
@@ -412,10 +427,86 @@ def sample_param_values(verifier, iterates, state=None, params=None, seed: int =
     for leaf in param_leaves:
         lb = np.asarray(leaf.lb, dtype=float).reshape(-1)
         ub = np.asarray(leaf.ub, dtype=float).reshape(-1)
-        values[leaf] = rng.uniform(
-            np.where(np.isfinite(lb), lb, -1.0), np.where(np.isfinite(ub), ub, 1.0)
-        )
+        values[leaf] = rng.uniform(*finite_box(lb, ub))
     return values
+
+
+#: Most samples `edge_param_values` returns, whatever the parameter dimension.
+MAX_EDGE_SAMPLES = 8
+
+#: Face points among them.
+_EDGE_FACE_POINTS = 2
+
+
+def edge_param_values(params, seed: int = 0, existing=()) -> list[dict[str, np.ndarray]]:
+    """Deterministic parameter values at the edges of the parameter box.
+
+    Uniform draws from the interior almost never land where a piecewise affine
+    step changes branch or on an extreme point of the parameter set. These do, in
+    this order:
+
+    * the all-lower-bound vertex, the all-upper-bound vertex and the midpoint;
+    * zero, when it lies inside the box (where soft-thresholding and ReLU switch);
+    * a mixed vertex, each coordinate at its lower or upper bound, and the
+      opposite vertex, so that each coordinate is at both of its bounds;
+    * two face points: an interior draw with a quarter of the coordinates (at
+      least one) pinned to a bound.
+
+    An infinite bound stands in as in the random samples (`finite_box`). A value
+    equal to an earlier one or to one in ``existing`` is dropped, so a degenerate
+    box (``lb == ub``) yields one sample, not eight. At most `MAX_EDGE_SAMPLES`
+    values are returned, independent of the parameter dimension.
+
+    Parameters
+    ----------
+    params : sequence of ParamSpec
+        The solve-time parameters (``ir.params``).
+    seed : int
+        Seed of the mixed vertices and face points.
+    existing : sequence of dict
+        Parameter values already in the sample set, keyed by parameter name.
+
+    Returns
+    -------
+    list of dict
+        Parameter values keyed by parameter name.
+    """
+    dim = sum(p.dim for p in params)
+    if dim == 0:
+        return []
+    lb = np.concatenate([np.broadcast_to(np.asarray(p.lb, float), (p.dim,)) for p in params])
+    ub = np.concatenate([np.broadcast_to(np.asarray(p.ub, float), (p.dim,)) for p in params])
+    lo, hi = finite_box(lb, ub)
+
+    candidates = [lo, hi, 0.5 * lo + 0.5 * hi]
+    if np.all((lb <= 0.0) & (ub >= 0.0)):
+        candidates.append(np.zeros(dim))
+    rng = np.random.default_rng(seed)
+    # A random vertex and its opposite: each coordinate is at both of its bounds.
+    upper = rng.integers(0, 2, size=dim) == 1
+    candidates += [np.where(upper, hi, lo), np.where(upper, lo, hi)]
+    for _ in range(_EDGE_FACE_POINTS):
+        point = rng.uniform(lo, hi)
+        pinned = rng.choice(dim, size=max(1, dim // 4), replace=False)
+        upper = rng.integers(0, 2, size=pinned.size) == 1
+        point[pinned] = np.where(upper, hi[pinned], lo[pinned])
+        candidates.append(point)
+
+    def key(vec):
+        return (np.asarray(vec, float) + 0.0).tobytes()  # + 0.0: -0.0 and 0.0 are one point
+
+    seen = {key(np.concatenate([np.ravel(e[p.name]) for p in params])) for e in existing}
+    out = []
+    for vec in candidates:
+        if key(vec) in seen:
+            continue
+        seen.add(key(vec))
+        values, offset = {}, 0
+        for p in params:
+            values[p.name] = vec[offset : offset + p.dim] + 0.0
+            offset += p.dim
+        out.append(values)
+    return out
 
 
 def check_unrolled(
