@@ -222,12 +222,23 @@ fomtools-codegen --module mymodule.py --out out/custom --driver agent
 # Options:
 #   --scaffold-only    Emit everything except the solver body
 #   --no-roll          Keep a recorded run unrolled
+#   --version V        embedded (default) or large_scale
+#   --backend B        c (default), openmp, or cuda
+#   --solve-method M   auto (default), ldlt, lu, or cg (cg: large-scale, SPD only)
+#   --max-iter N       Iteration horizon (default 1000)
 #   --tol T            Stop on the inf-norm change (add --objective to stop on the
 #                      verified objective; --check-termination N sets the period)
 #   --dtype float32    Emit float32 instead of float64
-#   --no-code-optimization / --no-profile   Skip the optimization phase / timing
+#   --code-optimization / --no-code-optimization   Run / skip the optimization phase
+#                      (default: on for --driver agent)
+#   --no-profile       Skip timing
+#   --translate-timeout S   Translation-phase budget in seconds (default 600)
+#   --optimize-timeout S    Budget per optimization round (default 7200)
+#   --optimize-rounds N     Max optimization rounds (default 5)
+#   --optimize-min-gain F   Stop when a round gains less than F (default 0.02)
 #   --driver stub      No model; pair with --golden <solver source>
 #   --agent NAME       Select the agent backend
+#   --model NAME       Model for the agent CLI (default: FOMTOOLS_CODEGEN_MODEL)
 ```
 
 ### Custom module format
