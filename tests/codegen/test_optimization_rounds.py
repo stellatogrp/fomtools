@@ -43,14 +43,14 @@ def _fake_timing(monkeypatch, times):
     """``times`` maps marker -> fake bench us (the unmarked translated solver is
     ``times["translated"]``); profiling is skipped."""
 
-    def fake_bench(out_dir):
+    def fake_bench(out_dir, **kwargs):
         text = (Path(out_dir) / "src" / "fom_solver.c").read_text()
         for marker, us in times.items():
             if f"/* {marker} */" in text:
                 return us
         return times["translated"]
 
-    def fake_head_to_head(out_dir, write_editable, candidate, best):
+    def fake_head_to_head(out_dir, write_editable, candidate, best, **kwargs):
         write_editable(candidate)
         after = fake_bench(out_dir)
         write_editable(best)
@@ -58,7 +58,7 @@ def _fake_timing(monkeypatch, times):
 
     monkeypatch.setattr(gen, "_bench_mean_us", fake_bench)
     monkeypatch.setattr(gen, "_head_to_head_us", fake_head_to_head)
-    monkeypatch.setattr(gen, "run_profile", lambda out_dir: [])
+    monkeypatch.setattr(gen, "run_profile", lambda out_dir, **kwargs: [])
 
 
 def _run(tmp_path, monkeypatch, script, times, **config):

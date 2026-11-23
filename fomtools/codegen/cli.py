@@ -68,6 +68,7 @@ def _build_config(args) -> CodegenConfig:
             for field, value in (
                 ("agent_timeout_s", args.translate_timeout),
                 ("agent_optimize_timeout_s", args.optimize_timeout),
+                ("check_timeout_s", args.check_timeout),
                 ("agent_model", args.model),
                 ("agent_optimize_rounds", args.optimize_rounds),
                 ("agent_optimize_min_gain", args.optimize_min_gain),
@@ -170,6 +171,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         metavar="SECONDS",
         help="wall-clock budget of one code optimization round (default: 7200)",
+    )
+    p.add_argument(
+        "--check-timeout",
+        type=int,
+        metavar="SECONDS",
+        help="limit of each build, verify, benchmark or profile run (default: 1800)",
     )
     p.add_argument(
         "--optimize-rounds",

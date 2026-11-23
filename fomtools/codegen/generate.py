@@ -20,7 +20,6 @@ from __future__ import annotations
 import difflib
 import shutil
 import statistics
-import subprocess
 import sys
 import time
 import warnings
@@ -54,6 +53,7 @@ from fomtools.codegen.postprocess import (
     write_optimization_report,
     write_production_variant,
 )
+from fomtools.codegen.proc import DEFAULT_CHECK_TIMEOUT_S, run_check
 from fomtools.codegen.progress import Progress
 from fomtools.codegen.targets import TargetDescriptor
 
@@ -160,13 +160,17 @@ def _kernel_checks(target, ir, out_dir, final, translated, verify_output) -> lis
 BENCH_RUNS = 5
 
 
-def _build_bench(out_dir: Path, name: str) -> Path | None:
+def _build_bench(
+    out_dir: Path, name: str, timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S
+) -> Path | None:
     """Build ``bench_bin`` from the current sources and keep a copy as ``name``.
 
-    ``make bench`` also runs the binary once, which serves as a warmup.
+    ``make bench`` also runs the binary once, which serves as a warmup. Each
+    build and each timing run is ended after ``timeout_s`` seconds and then
+    counts as failed (``None``), here and in the helpers below.
     """
     try:
-        run_bench(out_dir)
+        run_bench(out_dir, timeout_s=timeout_s)
         dst = Path(out_dir) / name
         shutil.copy2(Path(out_dir) / "bench_bin", dst)
         return dst
@@ -174,8 +178,10 @@ def _build_bench(out_dir: Path, name: str) -> Path | None:
         return None
 
 
-def _run_bench_bin(path: Path, out_dir: Path) -> float | None:
-    proc = subprocess.run([str(path)], cwd=str(out_dir), capture_output=True, text=True)
+def _run_bench_bin(
+    path: Path, out_dir: Path, timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S
+) -> float | None:
+    proc = run_check([str(path)], out_dir, timeout_s)
     if proc.returncode != 0:
         return None
     try:
@@ -189,19 +195,26 @@ def _median(values) -> float | None:
     return statistics.median(values) if values else None
 
 
-def _bench_mean_us(out_dir: Path, runs: int = BENCH_RUNS) -> float | None:
+def _bench_mean_us(
+    out_dir: Path, runs: int = BENCH_RUNS, timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S
+) -> float | None:
     """Per-solve time of the current sources: the median of ``runs`` bench runs."""
-    path = _build_bench(out_dir, ".bench_current")
+    path = _build_bench(out_dir, ".bench_current", timeout_s)
     if path is None:
         return None
     try:
-        return _median(_run_bench_bin(path, out_dir) for _ in range(runs))
+        return _median(_run_bench_bin(path, out_dir, timeout_s) for _ in range(runs))
     finally:
         path.unlink(missing_ok=True)
 
 
 def _head_to_head_us(
-    out_dir: Path, write_editable, candidate: dict, best: dict, runs: int = BENCH_RUNS
+    out_dir: Path,
+    write_editable,
+    candidate: dict,
+    best: dict,
+    runs: int = BENCH_RUNS,
+    timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S,
 ) -> tuple[float | None, float | None]:
     """Per-solve times of ``candidate`` and ``best``, measured alternately.
 
@@ -210,16 +223,16 @@ def _head_to_head_us(
     Returns the two medians and leaves ``best`` written.
     """
     write_editable(candidate)
-    cand_bin = _build_bench(out_dir, ".bench_candidate")
+    cand_bin = _build_bench(out_dir, ".bench_candidate", timeout_s)
     write_editable(best)
-    best_bin = _build_bench(out_dir, ".bench_best")
+    best_bin = _build_bench(out_dir, ".bench_best", timeout_s)
     times: dict[str, list] = {"candidate": [], "best": []}
     bins = {"candidate": cand_bin, "best": best_bin}
     try:
         for i in range(runs):
             for key in ("candidate", "best") if i % 2 == 0 else ("best", "candidate"):
                 if bins[key] is not None:
-                    times[key].append(_run_bench_bin(bins[key], out_dir))
+                    times[key].append(_run_bench_bin(bins[key], out_dir, timeout_s))
         return _median(times["candidate"]), _median(times["best"])
     finally:
         for path in bins.values():
@@ -538,6 +551,7 @@ def _generate_code(
         instructions=translation_instructions(ir, target),
         phase="translation",
         restore_hook=restore_deterministic_files,
+        check_timeout_s=config.check_timeout_s,
     )
     # `make verify` also holds the translated solver to the kernel rule that has
     # no baseline (it reads no matrix data: every product goes through a checked
@@ -566,10 +580,10 @@ def _generate_code(
             timing.python_us = time_python_oracle(ir, sample)
         except Exception:
             timing.python_us = None
-        timing.c_initial_us = _bench_mean_us(out_dir)
+        timing.c_initial_us = _bench_mean_us(out_dir, timeout_s=config.check_timeout_s)
         timing.c_final_us = timing.c_initial_us  # updated after code optimization
         try:
-            timing.profile = run_profile(out_dir)
+            timing.profile = run_profile(out_dir, timeout_s=config.check_timeout_s)
         except Exception:
             timing.profile = []
     progress.translated(translate.success, translate.log, timing and timing.c_initial_us)
@@ -845,6 +859,7 @@ def run_code_optimization(
             bench_cmd=["make", "bench"],
             restore_hook=restore_all_but_editable,
             extra={"editable_paths": editable},
+            check_timeout_s=config.check_timeout_s,
         )
         # While the agent works, `make verify` also applies the kernel rules, so it
         # sees a violation as it makes it; the gate below applies them again and
@@ -912,7 +927,9 @@ def run_code_optimization(
 
         # Gate 2 (performance): head to head against the best so far, measured
         # now and alternately (timings are noisy), leaving the best written.
-        us_after, us_before = _head_to_head_us(out_dir, write_editable, candidate, best)
+        us_after, us_before = _head_to_head_us(
+            out_dir, write_editable, candidate, best, timeout_s=config.check_timeout_s
+        )
         if index == 1:
             translated_us = us_before
         record.us_before, record.us_after = us_before, us_after
@@ -937,7 +954,7 @@ def run_code_optimization(
             record.stop_reason = STOP_MAX_ROUNDS
             break
         try:
-            best_profile = run_profile(out_dir)
+            best_profile = run_profile(out_dir, timeout_s=config.check_timeout_s)
         except Exception:
             best_profile = []
 
@@ -948,11 +965,13 @@ def run_code_optimization(
 
     if timing is not None and measure:
         if translated_us is None:  # no round reached the benchmark
-            translated_us = timing.c_initial_us or _bench_mean_us(out_dir)
+            translated_us = timing.c_initial_us or _bench_mean_us(
+                out_dir, timeout_s=config.check_timeout_s
+            )
         timing.c_initial_us = translated_us
         timing.c_final_us = best_us if kept else translated_us
         try:
-            timing.profile = run_profile(out_dir)
+            timing.profile = run_profile(out_dir, timeout_s=config.check_timeout_s)
         except Exception:
             pass
     final_us = (best_us if kept else translated_us) if measure else None

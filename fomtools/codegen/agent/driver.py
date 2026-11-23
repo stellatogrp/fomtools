@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from fomtools.codegen.proc import DEFAULT_CHECK_TIMEOUT_S, run_check
+
 
 @dataclass
 class AgentTask:
@@ -50,6 +52,9 @@ class AgentTask:
     extra:
         Free-form dictionary for backend-specific extra data. ``timeout_s``
         there replaces the phase's wall-clock budget for this task.
+    check_timeout_s:
+        Seconds after which a run of ``verify_cmd`` is ended, with everything it
+        started, and counted as a failure (`CodegenConfig.check_timeout_s`).
     """
 
     workdir: Path
@@ -60,6 +65,7 @@ class AgentTask:
     bench_cmd: list[str] | None = None
     restore_hook: Callable[[], None] | None = None
     extra: dict = field(default_factory=dict)
+    check_timeout_s: float | None = DEFAULT_CHECK_TIMEOUT_S
 
 
 @dataclass
@@ -95,21 +101,6 @@ class AgentResult:
     turns_used: int = 0
     artifacts: list[Path] = field(default_factory=list)
     truncated: bool = False
-
-
-def _decode_stream(stream) -> str:
-    """Decode a captured subprocess stream that may be bytes, str, or absent.
-
-    ``subprocess.run`` populates ``TimeoutExpired.stdout`` with whatever it
-    captured before killing the child, but skips the text decoding it would have
-    applied on the normal path — so the timeout branch sees ``bytes`` even under
-    ``text=True``.
-    """
-    if stream is None:
-        return ""
-    if isinstance(stream, bytes):
-        return stream.decode("utf-8", errors="replace")
-    return str(stream)
 
 
 def _redact_exception(exc: BaseException) -> str:
@@ -278,9 +269,9 @@ def run_verify_loop(
 
         if task.restore_hook is not None:
             task.restore_hook()
-        verify = subprocess.run(
-            task.verify_cmd, cwd=str(task.workdir), capture_output=True, text=True
-        )
+        # A verify that does not return is ended at its limit and is a failed
+        # attempt like any other; its output ends with a note saying so.
+        verify = run_check(task.verify_cmd, task.workdir, task.check_timeout_s)
         output = verify.stdout + verify.stderr
         log_parts.append(output)
         if verify.returncode == 0:

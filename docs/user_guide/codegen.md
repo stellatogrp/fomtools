@@ -381,6 +381,7 @@ Each agent phase runs under a budget, set per run on `CodegenConfig`:
 | `agent_optimize_timeout_s` | 7200 s (2 h) | wall-clock time of one code optimization round |
 | `agent_optimize_rounds` | 5 | maximum number of code optimization rounds |
 | `agent_optimize_min_gain` | 0.02 | a round gaining less than this (relative) ends the phase |
+| `check_timeout_s` | 1800 s (30 min) | wall-clock time of each build, verify, benchmark, or profile run by the package |
 
 The code optimization phase runs in rounds. Each round is a fresh agent run on
 the fastest verified solver so far, told its current time and profile. After each
@@ -419,6 +420,15 @@ an agent you add can do the same. When the budget runs out the agent is stopped,
 benchmarked as usual, and the report says so (in that case the agent may not have
 written its own summary). For reference, a CUDA CG solve stopped at 30 minutes
 had already gone from 2.05 s to 0.114 s per solve and was still improving.
+
+The checks the package runs itself (`make verify`, the benchmark, the profile)
+are outside the agent budgets and have their own limit, `check_timeout_s`
+(`--check-timeout`). They build and run code the agent wrote, which may loop
+forever. A check still running at the limit is stopped together with everything
+it started, and counts as failed: the agent is told that the verify was
+terminated and can fix the solver, and a benchmark or profile is reported as
+missing. A healthy check takes seconds, or a few minutes on a GPU, so the default
+only stops one that hangs.
 
 ### What changed, and a marker-free production build
 
@@ -804,8 +814,8 @@ both side by side is the quickest way to see what declaring a coefficient buys.
 `--scaffold-only` emits everything except the solver body (useful to inspect the
 spec and data before invoking the agent). `--no-roll` keeps a recorded run
 unrolled even when it could be rolled back up. `--translate-timeout`,
-`--optimize-timeout` (seconds), `--optimize-rounds` and
-`--optimize-min-gain` set the agent's budgets for this run ([above](#time-budgets)),
+`--optimize-timeout`, `--check-timeout` (seconds), `--optimize-rounds` and
+`--optimize-min-gain` set the budgets for this run ([above](#time-budgets)),
 and `--agent` and `--model` select the agent and its model. `--tol` alone stops on the
 infinity-norm change; with `--objective` it stops on the verification objective
 the module set on its recording, and `--check-termination N` sets the interval.
