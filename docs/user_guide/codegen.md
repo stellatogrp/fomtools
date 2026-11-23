@@ -258,6 +258,7 @@ test/      SPEC.md, spec.json, data.npz, verify_main.c, verify_data.h
 python/    fom_solver.py   (ctypes wrapper)
 Makefile   (make verify / make lib)
 fomtools_manifest.json   (verification record, written when the run verified)
+libfomsolver.build.json  (build stamp, written by build_lib next to the library)
 ```
 
 `fomtools_manifest.json` records the fomtools version, the target and dtype, the
@@ -437,6 +438,17 @@ verification they raise an error naming the files; pass `allow_unverified=True`
 to get a warning instead. A record that cannot be read is treated the same way.
 The wrapper and a built library deployed without the sources load with a warning.
 
+`Solver()` also checks that the library it loads was built from those sources, so
+a `libfomsolver` left over from before a regeneration is not used silently.
+`build_lib` always rebuilds, and writes `libfomsolver.build.json` next to the
+library: the hash of the library and of the sources it compiled. With that stamp
+the comparison is by content. A library built by hand with `make lib` has no
+stamp. It loads without a warning unless a recorded source is newer than the
+library file, which is the only evidence left. A stale library raises an error
+that names the sources; rebuild it with `build_lib` or `make lib`, or pass
+`allow_unverified=True` to get a warning instead. A directory without a
+verification record has no list of sources, so its library is not checked.
+
 ## Performance: timing, profiling, and the code optimization phase
 
 Pass `code_optimization=True, profile=True` (the default for the `fomtools-codegen`
@@ -526,8 +538,12 @@ is one minus their median. The *noise* is twice their median absolute deviation
 
 | round | the rewrite is kept if | why |
 |---|---|---|
-| 1 | `gain >= -noise` | the translated solver is the baseline: a rewrite of the same speed is kept, a measurably slower one is not |
+| 1 | `gain >= -min(noise, 0.02)` | the translated solver is the baseline: a rewrite of the same speed is kept, a measurably slower one is not, and neither is one more than 2% slower |
 | 2 and later | `gain > noise` | each round must be a measured gain, so that rounds inside the noise cannot add up to a slower solver |
+
+The 2% cap in round 1 bounds the loss that noisy timings can let through. A
+band that only follows the noise would keep a rewrite that is really 5% slower
+in about 1 comparison in 4 when single timings vary by 2%.
 
 A rewrite that is not kept, or fails verification, is reverted, and the phase
 ends. A kept round whose gain is below `agent_optimize_min_gain`, or inside the

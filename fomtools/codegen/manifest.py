@@ -7,6 +7,11 @@ is built from. `check_manifest` compares the directory against it wherever a
 generated solver is built or loaded for use, so a solver that was edited, left
 half-written by an interrupted run, or never verified is not used silently.
 
+`fomtools.codegen.harness.build_lib` also writes ``libfomsolver.build.json``
+next to the library it built: the hash of that library and of the sources it
+was compiled from. `check_library` uses it so that a library built from other
+sources (before a regeneration, say) is not loaded silently.
+
 The file is removed when a new run starts on the directory (`remove_manifest`,
 from `fomtools.codegen.emit.scaffold`), so only a run that finished and verified
 leaves one.
@@ -22,6 +27,11 @@ from pathlib import Path
 from fomtools.codegen.progress import verify_numbers
 
 MANIFEST_NAME = "fomtools_manifest.json"
+STAMP_NAME = "libfomsolver.build.json"
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def manifest_sources(out_dir: str | Path, target) -> list[str]:
@@ -81,15 +91,35 @@ def write_manifest(
     }
     if any(measured.values()):
         manifest["timing_us"] = measured
-    manifest["sources"] = {
-        rel: hashlib.sha256((out_dir / rel).read_bytes()).hexdigest()
-        for rel in manifest_sources(out_dir, target)
-    }
-    path = out_dir / MANIFEST_NAME
+    manifest["sources"] = {rel: _sha256(out_dir / rel) for rel in manifest_sources(out_dir, target)}
+    return _write_json(out_dir / MANIFEST_NAME, manifest)
+
+
+def _write_json(path: Path, content: dict) -> Path:
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(manifest, indent=2) + "\n")
+    tmp.write_text(json.dumps(content, indent=2) + "\n")
     os.replace(tmp, path)  # atomic: a reader sees the old record or the new one
     return path
+
+
+def write_library_stamp(out_dir: str | Path, library: str | Path) -> Path | None:
+    """Record next to ``library`` which sources in ``out_dir`` it was just built from.
+
+    The sources are the ones the verification record lists, hashed as they are
+    on disk now. Without a readable record there is no list of sources, so no
+    stamp is written (an old one is removed) and ``None`` is returned.
+    """
+    out_dir, library = Path(out_dir), Path(library)
+    stamp = library.with_name(STAMP_NAME)
+    try:
+        recorded = list(json.loads((out_dir / MANIFEST_NAME).read_text())["sources"])
+    except (OSError, ValueError, KeyError, TypeError):
+        stamp.unlink(missing_ok=True)
+        return None
+    sources = {rel: _sha256(out_dir / rel) for rel in recorded if (out_dir / rel).is_file()}
+    return _write_json(
+        stamp, {"library": library.name, "sha256": _sha256(library), "sources": sources}
+    )
 
 
 def check_manifest(out_dir, allow_unverified=False):
@@ -153,6 +183,72 @@ def check_manifest(out_dir, allow_unverified=False):
             "record, so the solver cannot be checked against it."
         )
     message += " Regenerate it, or pass allow_unverified=True to use the sources as they are."
+    if not allow_unverified:
+        raise RuntimeError(message)
+    warnings.warn(message, stacklevel=3)
+
+
+def check_library(out_dir, library, allow_unverified=False):
+    """Check that the built ``library`` comes from the sources now in ``out_dir``.
+
+    `check_manifest` covers the sources; this covers the library that is loaded
+    in their place. The sources are the ones ``fomtools_manifest.json`` lists.
+
+    - A library with a build stamp (``libfomsolver.build.json`` next to it,
+      written by `fomtools.codegen.harness.build_lib`, and carrying the hash of
+      this very library) is compared by content: the source hashes in the stamp
+      against the sources on disk.
+    - A library without one (built by hand with ``make lib``, or rebuilt by hand
+      after the stamp was written) cannot be compared by content. It is accepted
+      unless a listed source is newer than it.
+
+    A stale library raises ``RuntimeError``; ``allow_unverified=True`` turns that
+    into a warning. Nothing is checked when the library does not exist yet, or
+    when the directory has no readable record or none of its sources:
+    `check_manifest` has reported those.
+
+    Self-contained for the same reason as `check_manifest`.
+    """
+    import hashlib
+    import json
+    import warnings
+    from pathlib import Path
+
+    def sha256(path):
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    out_dir, library = Path(out_dir), Path(library)
+    if not library.is_file():
+        return
+    try:
+        recorded = list(json.loads((out_dir / "fomtools_manifest.json").read_text())["sources"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return
+    present = [rel for rel in recorded if (out_dir / rel).is_file()]
+    if not present:
+        return
+    try:
+        stamp = json.loads(library.with_name("libfomsolver.build.json").read_text())
+        built_from = dict(stamp["sources"]) if stamp["sha256"] == sha256(library) else None
+    except (OSError, ValueError, KeyError, TypeError):
+        built_from = None  # no stamp for this library
+    if built_from is not None:
+        current = {rel: sha256(out_dir / rel) for rel in present}
+        stale = sorted(
+            rel for rel in {*current, *built_from} if current.get(rel) != built_from.get(rel)
+        )
+        reason = "was built from other sources: " + ", ".join(stale) + " changed since the build"
+    else:
+        built_at = library.stat().st_mtime_ns
+        stale = sorted(rel for rel in present if (out_dir / rel).stat().st_mtime_ns > built_at)
+        reason = "has no build stamp and is older than " + ", ".join(stale)
+    if not stale:
+        return
+    message = (
+        f"the library {library} {reason}. Rebuild it with "
+        "fomtools.codegen.harness.build_lib (or `make lib`), or pass "
+        "allow_unverified=True to load it as it is."
+    )
     if not allow_unverified:
         raise RuntimeError(message)
     warnings.warn(message, stacklevel=3)

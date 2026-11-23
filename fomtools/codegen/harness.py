@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from fomtools.codegen.manifest import check_manifest
+from fomtools.codegen.manifest import check_manifest, write_library_stamp
 from fomtools.codegen.proc import DEFAULT_CHECK_TIMEOUT_S, run_check
 from fomtools.codegen.targets import TargetDescriptor
 
@@ -282,7 +282,10 @@ def build_lib(
     The sources are first checked against the directory's verification record
     (`fomtools.codegen.manifest.check_manifest`): a directory without one
     warns, and one whose sources changed since they were verified raises unless
-    ``allow_unverified`` is set. A build still going after ``timeout_s`` seconds
+    ``allow_unverified`` is set. The library is always rebuilt, and a stamp
+    of the sources it was built from is written next to it
+    (`fomtools.codegen.manifest.write_library_stamp`), which the generated
+    wrapper checks before loading it. A build still going after ``timeout_s`` seconds
     is ended and raises like any other failure.
     """
     workdir = Path(workdir)
@@ -293,5 +296,6 @@ def build_lib(
     for name in ("libfomsolver.dylib", "libfomsolver.so"):
         cand = workdir / name
         if cand.exists():
+            write_library_stamp(workdir, cand)
             return cand
     raise RuntimeError("library build reported success but no library file was found")
