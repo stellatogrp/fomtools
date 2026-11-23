@@ -7,20 +7,18 @@ rest of the pipeline (and tests) need not shell out directly.
 from __future__ import annotations
 
 import re
-import shutil
 import statistics
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from fomtools.codegen.manifest import check_manifest, write_library_stamp
-from fomtools.codegen.proc import DEFAULT_CHECK_TIMEOUT_S, run_check
+from fomtools.codegen.proc import (
+    DEFAULT_CHECK_TIMEOUT_S,
+    find_compiler,  # noqa: F401  (resolved in `proc`, imported from here by callers)
+    run_check,
+)
 from fomtools.codegen.targets import TargetDescriptor
-
-
-def find_compiler() -> str | None:
-    """Return an available C compiler executable, or ``None``."""
-    return shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
 
 
 @dataclass

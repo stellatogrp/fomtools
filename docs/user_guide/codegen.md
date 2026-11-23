@@ -15,6 +15,58 @@ what the emitted project contains. The
 brief, the [tutorials](../tutorials/codegen.md) work through five complete
 examples, and [the API page](../api/codegen.md) documents each symbol.
 
+## Check your setup
+
+A run needs a C compiler, `make`, and an installed, signed-in agent CLI. The
+OpenMP and CUDA targets need more. One command reports what this machine has:
+
+```
+fomtools-codegen --doctor
+```
+
+```
+Build tools
+  ✓ C compiler          Apple clang version 21.0.0 (clang-2100.3.34.2)  (/usr/bin/cc)
+  ✓ make                GNU Make 3.81  (/usr/bin/make)
+  ○ OpenMP              /usr/bin/cc does not build with -fopenmp (...); the OpenMP target then builds single-threaded. ...
+
+Agents
+  ✓ claude (default)    2.1.330 (Claude Code)  (~/.local/bin/claude)
+  ○ cursor              `cursor-agent` not found. Install the Cursor CLI ...
+
+Targets
+  ✓ embedded C          ready
+  ✓ large-scale OpenMP  ready (single-threaded build only)
+  ○ large-scale CUDA    cannot run: no nvcc
+```
+
+`✓` is found, `○` is missing or unusable but optional (the line says what needs
+it), `!` is found but its `--version` failed, and `✗` is missing and required.
+The report also lists the Python extras, `nvcc`, the GPU and cuDSS, and every
+agent backend, including your own from `agents.yaml`. The exit status is nonzero
+only without a C compiler or `make`. It takes no other argument, except that
+`--agent NAME` marks that backend as the default.
+
+The compiler is the one the generated Makefiles use: `$CC` when it is set, else
+`cc`. On a machine with neither, FOMTools falls back to `gcc`, then `clang`, and
+runs every `make` of a run with `CC` set to it. The report says so, since a
+`make` you run yourself in the output directory then needs the same `CC`. A `CC`
+that does not resolve is an error, with no fallback. The check runs each program with `--version`, builds one small OpenMP
+file in a temporary directory, and asks `nvidia-smi` for devices. It never calls
+a model, so it cannot tell whether an agent is signed in. For `claude-sandboxed`
+on Linux it also looks for `bubblewrap` and `socat`, without starting the
+sandbox.
+
+From Python or a notebook:
+
+```python
+from fomtools.codegen import doctor
+
+report = doctor()
+print(report)  # the same text
+report.ok, report.targets, report.agents
+```
+
 ## Defining the FOM
 
 The Python snippets below reuse the imports and problem data in the first block.
