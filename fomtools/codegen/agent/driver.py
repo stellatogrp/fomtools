@@ -173,6 +173,18 @@ class AgentDriver(ABC):
         """
 
 
+def _clip_output(output: str, keep: int = 4000) -> str:
+    """Return ``output`` whole, or its first and last ``keep`` characters around a marker.
+
+    Output of at most ``2 * keep`` characters is returned unchanged, so the head
+    and the tail never overlap.
+    """
+    if len(output) <= 2 * keep:
+        return output
+    omitted = len(output) - 2 * keep
+    return f"{output[:keep]}\n[... {omitted} characters omitted ...]\n{output[-keep:]}"
+
+
 def run_verify_loop(
     task: AgentTask,
     invoke_agent: Callable[[str], str],
@@ -285,9 +297,7 @@ def run_verify_loop(
         prompt = (
             task.instructions
             + "\n\nThe verify command FAILED with this output:\n"
-            + output[:4000]
-            + "..."
-            + output[-4000:]
+            + _clip_output(output)
             + "\nFix "
             + ", ".join(
                 f"`{rel}`" for rel in task.extra.get("editable_paths", (task.solver_rel_path,))
