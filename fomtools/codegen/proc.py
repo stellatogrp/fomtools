@@ -3,12 +3,16 @@
 These commands build and run agent-written code, which may never return. Each
 runs in its own session, so at the limit the whole process group is ended:
 ``make``, the compiler it started, and the solver binary.
+
+The C compiler is also resolved here (`find_compiler`), since every process the
+package starts must build with the same one (`build_env`).
 """
 
 from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import time
@@ -19,6 +23,45 @@ DEFAULT_CHECK_TIMEOUT_S = 1800
 
 #: Exit status reported for a check that was ended at its limit (as ``timeout(1)``).
 TIMEOUT_RETURNCODE = 124
+
+
+#: Compilers tried, in this order, when ``$CC`` is unset and ``cc`` is not on PATH.
+FALLBACK_COMPILERS = ("gcc", "clang")
+
+
+def fallback_compiler() -> str | None:
+    """The compiler used in place of a missing ``cc``, or ``None`` when none is needed.
+
+    A bare ``make`` builds with ``$CC``, else ``cc`` (``CC ?= cc``). Only with
+    ``$CC`` unset and no ``cc`` on PATH is another compiler looked for: the first
+    of `FALLBACK_COMPILERS` that is on PATH. A ``$CC`` that does not resolve gets
+    no fallback, since it is what the user asked for.
+    """
+    if os.environ.get("CC", "").split() or shutil.which("cc"):
+        return None
+    return next((path for path in map(shutil.which, FALLBACK_COMPILERS) if path), None)
+
+
+def find_compiler() -> str | None:
+    """The C compiler the package builds with, or ``None``.
+
+    ``$CC`` when it is set, else ``cc``, else `fallback_compiler`. The first two
+    are what a bare ``make`` uses; `build_env` hands the third to ``make``.
+    """
+    words = os.environ.get("CC", "").split() or ["cc"]
+    return shutil.which(words[0]) or fallback_compiler()
+
+
+def build_env(env: dict[str, str] | None = None) -> dict[str, str] | None:
+    """``env`` (``None``: this process's) with ``CC`` set to `fallback_compiler`.
+
+    Returned unchanged when no fallback is taken, so that ``make`` reads ``$CC``
+    or its own default as usual.
+    """
+    cc = fallback_compiler()
+    if cc is None:
+        return env
+    return {**(os.environ if env is None else env), "CC": cc}
 
 
 def decode_stream(stream) -> str:
@@ -42,8 +85,11 @@ def popen_in_session(cmd: list[str], **kwargs) -> subprocess.Popen:
     Its own session, so `kill_group` ends it together with what it started. The
     child inherits this thread's signal mask, and some imports block SIGINT and
     SIGTERM (``import cvxpygen`` does), so it is started with an empty mask and
-    can still be interrupted and asked to stop.
+    can still be interrupted and asked to stop. Its environment is `build_env`,
+    so a ``make`` it runs, or that an agent it starts runs, builds with the
+    compiler `find_compiler` returned.
     """
+    kwargs["env"] = build_env(kwargs.get("env"))
     unmask = hasattr(signal, "pthread_sigmask")
     mask = signal.pthread_sigmask(signal.SIG_SETMASK, ()) if unmask else None
     try:

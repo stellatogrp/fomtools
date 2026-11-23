@@ -179,11 +179,19 @@ def test_compiler_is_the_one_make_uses(machine, monkeypatch):
     assert report.get("C compiler").detail.startswith("CC=no-such-cc not found (required")
 
     monkeypatch.delenv("CC")
-    machine.tools.discard("cc")  # gcc alone: `make` still calls cc
+    machine.tools.discard("cc")  # gcc alone: a bare `make` would call cc, so fomtools sets CC
+    report = doctor()
+    detail = report.get("C compiler").detail
+    assert find_compiler() == "/fake/bin/gcc" and report.ok
+    assert detail.startswith("gcc 1.2.3  (/fake/bin/gcc)  (fallback: no `cc` on PATH")
+    assert "CC=/fake/bin/gcc" in detail
+    assert next(c for c in machine.calls[::-1] if "openmp_probe.c" in c)[0] == "/fake/bin/gcc"
+    assert report.targets["embedded C"]
+
+    machine.tools.discard("gcc")
     report = doctor()
     assert find_compiler() is None and not report.ok
-    assert "`gcc` is installed" in report.get("C compiler").detail
-    assert "CC=gcc" in report.get("C compiler").detail
+    assert report.get("C compiler").detail == "not found (required): no `cc`, `gcc`, `clang`"
 
 
 def test_openmp_probe_that_times_out_or_cannot_start(machine, monkeypatch):

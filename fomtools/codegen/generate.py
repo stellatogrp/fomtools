@@ -230,6 +230,13 @@ BENCH_RUNS = 5
 #: times the noise of one timing is detected about 9 times in 10.
 NOISE_MADS = 2.0
 
+#: Largest loss, as a relative time, that the first round tolerates: the noise
+#: band of that round is capped here. A band that only follows the measured
+#: noise keeps a real regression when the timings are noisy (with a run-to-run
+#: noise of 2% per timing, a 5% slower rewrite in 23% of comparisons, against 3%
+#: with a fixed 2% tolerance, simulated). The cap is that old fixed tolerance.
+FIRST_ROUND_MAX_LOSS = 0.02
+
 #: Fewest pairs of successful runs that count as a measurement. The MAD of one
 #: pair is 0, so the rule would decide on a single ratio, and with no real
 #: difference a later round would be kept in 50% of comparisons with one pair,
@@ -339,7 +346,10 @@ def optimization_is_faster(ratio: BenchStats | None, first_round: bool = False) 
 
     - a rewrite is kept only if it is measurably faster, ``gain > noise``;
     - in the first round the best so far is the translated solver, and the
-      rewrite is kept unless it is measurably slower, ``gain >= -noise``.
+      rewrite is kept unless it is measurably slower,
+      ``gain >= -min(noise, FIRST_ROUND_MAX_LOSS)``. The cap bounds the loss
+      that a noisy measurement can let through: a rewrite whose median is more
+      than 2% slower is reverted however large the noise.
 
     Returns ``False`` if the measurement is missing or has fewer than
     ``MIN_PAIRS`` pairs, which is too few to estimate the noise.
@@ -347,7 +357,7 @@ def optimization_is_faster(ratio: BenchStats | None, first_round: bool = False) 
     if ratio is None or ratio.runs < MIN_PAIRS:
         return False
     gain, noise = 1.0 - ratio.median, bench_noise(ratio)
-    return gain >= -noise if first_round else gain > noise
+    return gain >= -min(noise, FIRST_ROUND_MAX_LOSS) if first_round else gain > noise
 
 
 def _write_agent_transcripts(out_dir: Path, translate, optimize) -> None:
@@ -895,8 +905,9 @@ def run_code_optimization(
        best so far and the phase ends), and
     2. be faster than the best so far, head to head, by more than the measured
        noise (otherwise reverted, and the phase ends). The first round only has
-       to be no slower than the translated solver, within the noise, as the
-       single-pass phase always has: a rewrite of the same speed is kept. Later
+       to be no slower than the translated solver, within the noise and at
+       most 2% (`FIRST_ROUND_MAX_LOSS`), as the single-pass phase always has:
+       a rewrite of the same speed is kept. Later
        rounds must gain, so that rounds inside the noise cannot add up to a
        slower solver. See `optimization_is_faster`.
 
