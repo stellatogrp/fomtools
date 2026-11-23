@@ -207,6 +207,8 @@ def test_a_hung_bench_binary_counts_as_a_failed_run(tmp_path):
     assert time.monotonic() - start < 10
 
 
+# A hand-written directory: `build_lib` says it has no verification record.
+@pytest.mark.filterwarnings("ignore:.*has no verification record:UserWarning")
 def test_hung_make_targets_fail_instead_of_hanging(tmp_path):
     import shutil
     import time

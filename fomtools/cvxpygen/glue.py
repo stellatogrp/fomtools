@@ -40,15 +40,7 @@ def cmake_solver_sources(target) -> list[str]:
     embedded / OpenMP). The bridge stays host C on every backend: it only calls
     the (``extern "C"``) ABI and touches the host-side workspace arrays.
     """
-    rel = [
-        target.solver_source_path(),
-        "src/fom_data.c",
-        target.linsolve_source_path(),
-        target.ops_source_path(),
-    ]
-    if target.objective_source_path() not in rel:  # its own file except on CUDA
-        rel.append(target.objective_source_path())
-    rel.append("src/cpg_fom_bridge.c")
+    rel = [*target.library_source_paths(), "src/cpg_fom_bridge.c"]
     return [f"${{CMAKE_CURRENT_SOURCE_DIR}}/{r}" for r in rel]
 
 

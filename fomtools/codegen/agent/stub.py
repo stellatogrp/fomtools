@@ -98,4 +98,11 @@ class StubAgentDriver(AgentDriver):
             task.restore_hook()
         proc = run_check(task.verify_cmd, task.workdir, task.check_timeout_s)
         log = proc.stdout + proc.stderr
-        return AgentResult(success=proc.returncode == 0, log=log, turns_used=1, artifacts=[target])
+        ok = proc.returncode == 0
+        return AgentResult(
+            success=ok,
+            log=log,
+            turns_used=1,
+            artifacts=[target],
+            verify_output=log if ok else None,
+        )

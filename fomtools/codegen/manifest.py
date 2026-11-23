@@ -1,0 +1,254 @@
+"""The verification record of a generated solver directory.
+
+A successful `fomtools.codegen.generate_code` run ends by writing
+``fomtools_manifest.json`` into the output directory: what was generated, the
+numbers of the passing verify, and a SHA-256 of every source the solver library
+is built from. `check_manifest` compares the directory against it wherever a
+generated solver is built or loaded for use, so a solver that was edited, left
+half-written by an interrupted run, or never verified is not used silently.
+
+`fomtools.codegen.harness.build_lib` also writes ``libfomsolver.build.json``
+next to the library it built: the hash of that library and of the sources it
+was compiled from. `check_library` uses it so that a library built from other
+sources (before a regeneration, say) is not loaded silently.
+
+The file is removed when a new run starts on the directory (`remove_manifest`,
+from `fomtools.codegen.emit.scaffold`), so only a run that finished and verified
+leaves one.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+
+from fomtools.codegen.progress import verify_numbers
+
+MANIFEST_NAME = "fomtools_manifest.json"
+STAMP_NAME = "libfomsolver.build.json"
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def manifest_sources(out_dir: str | Path, target) -> list[str]:
+    """Relative paths of the files in ``out_dir`` that a library build compiles.
+
+    The sources of ``make lib`` (`TargetDescriptor.library_source_paths`), the
+    generated headers they include (``include/fom_*``), and the marker-free
+    copies under ``release/`` that ``make release`` compiles instead.
+    """
+    out_dir = Path(out_dir)
+    rels = [
+        *target.library_source_paths(),
+        *(f"include/{p.name}" for p in sorted((out_dir / "include").glob("fom_*"))),
+        *(f"release/{Path(rel).name}" for rel in target.optimization_editable_paths()),
+    ]
+    return [rel for rel in rels if (out_dir / rel).is_file()]
+
+
+def remove_manifest(out_dir: str | Path) -> None:
+    """Drop the verification record: the directory is about to change."""
+    (Path(out_dir) / MANIFEST_NAME).unlink(missing_ok=True)
+
+
+def write_manifest(
+    out_dir: str | Path, target, verify_output: str | None, timing=None
+) -> Path | None:
+    """Record that the sources now in ``out_dir`` passed verify.
+
+    ``verify_output`` is the verify output of those sources. Without the line
+    that reports the comparison against the oracle (the CUDA target's
+    compile-only check prints none) nothing was verified numerically, so no
+    record is written and ``None`` is returned. ``timing`` (a `TimingReport`)
+    adds the measured per-solve times.
+    """
+    out_dir = Path(out_dir)
+    numbers = verify_numbers(verify_output)
+    if numbers is None:
+        return None
+    from fomtools import __version__
+
+    samples, max_abs_error, tolerance = numbers
+    manifest = {
+        "fomtools_version": __version__,
+        "target": target.name,
+        "dtype": target.config.dtype,
+        "verify": {
+            "command": " ".join(target.verify_command()),
+            "samples": samples,
+            "max_abs_error": max_abs_error,
+            "tolerance": tolerance,
+        },
+    }
+    measured = {
+        "python": timing.python_us if timing else None,
+        "translated": timing.c_initial_us if timing else None,
+        "final": timing.c_final_us if timing else None,
+    }
+    if any(measured.values()):
+        manifest["timing_us"] = measured
+    manifest["sources"] = {rel: _sha256(out_dir / rel) for rel in manifest_sources(out_dir, target)}
+    return _write_json(out_dir / MANIFEST_NAME, manifest)
+
+
+def _write_json(path: Path, content: dict) -> Path:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(content, indent=2) + "\n")
+    os.replace(tmp, path)  # atomic: a reader sees the old record or the new one
+    return path
+
+
+def write_library_stamp(out_dir: str | Path, library: str | Path) -> Path | None:
+    """Record next to ``library`` which sources in ``out_dir`` it was just built from.
+
+    The sources are the ones the verification record lists, hashed as they are
+    on disk now. Without a readable record there is no list of sources, so no
+    stamp is written (an old one is removed) and ``None`` is returned.
+    """
+    out_dir, library = Path(out_dir), Path(library)
+    stamp = library.with_name(STAMP_NAME)
+    try:
+        recorded = list(json.loads((out_dir / MANIFEST_NAME).read_text())["sources"])
+    except (OSError, ValueError, KeyError, TypeError):
+        stamp.unlink(missing_ok=True)
+        return None
+    sources = {rel: _sha256(out_dir / rel) for rel in recorded if (out_dir / rel).is_file()}
+    return _write_json(
+        stamp, {"library": library.name, "sha256": _sha256(library), "sources": sources}
+    )
+
+
+def check_manifest(out_dir, allow_unverified=False):
+    """Check the sources in ``out_dir`` against its verification record.
+
+    Warns when the directory has no record (``fomtools_manifest.json``), or has
+    one but none of the recorded sources (a deployed wrapper and prebuilt
+    library). Raises ``RuntimeError`` naming the files when a recorded source is
+    missing or differs, or when the record cannot be read;
+    ``allow_unverified=True`` turns that error into a warning.
+
+    Self-contained on purpose (standard library only, imports inside): the
+    generated Python wrapper carries a copy of this function's source, so the
+    wrapper runs the same check without needing fomtools installed.
+    """
+    import hashlib
+    import json
+    import warnings
+    from pathlib import Path
+
+    out_dir = Path(out_dir)
+    path = out_dir / "fomtools_manifest.json"
+    if not path.is_file():
+        warnings.warn(
+            f"{out_dir} has no verification record (fomtools_manifest.json): it was "
+            "generated by an older fomtools, built by hand, or its code-generation run "
+            "did not finish and verify. The solver is used as it is.",
+            stacklevel=3,
+        )
+        return
+    try:
+        recorded = dict(json.loads(path.read_text())["sources"]) or None
+    except (OSError, ValueError, KeyError, TypeError):
+        recorded = None  # not a record: as unverifiable as a modified source
+    if recorded and not any((out_dir / rel).is_file() for rel in recorded):
+        warnings.warn(
+            f"{out_dir} holds none of the sources recorded in fomtools_manifest.json, "
+            "so a prebuilt library cannot be checked against them. The solver is used "
+            "as it is.",
+            stacklevel=3,
+        )
+        return
+    changed = []
+    for rel, digest in sorted((recorded or {}).items()):
+        source = out_dir / rel
+        if not source.is_file():
+            changed.append(f"{rel} (missing)")
+        elif hashlib.sha256(source.read_bytes()).hexdigest() != digest:
+            changed.append(rel)
+    if recorded and not changed:
+        return
+    if recorded:
+        message = (
+            f"the solver in {out_dir} was modified after verification: "
+            + ", ".join(changed)
+            + " no longer match fomtools_manifest.json."
+        )
+    else:
+        message = (
+            f"fomtools_manifest.json in {out_dir} is not a readable verification "
+            "record, so the solver cannot be checked against it."
+        )
+    message += " Regenerate it, or pass allow_unverified=True to use the sources as they are."
+    if not allow_unverified:
+        raise RuntimeError(message)
+    warnings.warn(message, stacklevel=3)
+
+
+def check_library(out_dir, library, allow_unverified=False):
+    """Check that the built ``library`` comes from the sources now in ``out_dir``.
+
+    `check_manifest` covers the sources; this covers the library that is loaded
+    in their place. The sources are the ones ``fomtools_manifest.json`` lists.
+
+    - A library with a build stamp (``libfomsolver.build.json`` next to it,
+      written by `fomtools.codegen.harness.build_lib`, and carrying the hash of
+      this very library) is compared by content: the source hashes in the stamp
+      against the sources on disk.
+    - A library without one (built by hand with ``make lib``, or rebuilt by hand
+      after the stamp was written) cannot be compared by content. It is accepted
+      unless a listed source is newer than it.
+
+    A stale library raises ``RuntimeError``; ``allow_unverified=True`` turns that
+    into a warning. Nothing is checked when the library does not exist yet, or
+    when the directory has no readable record or none of its sources:
+    `check_manifest` has reported those.
+
+    Self-contained for the same reason as `check_manifest`.
+    """
+    import hashlib
+    import json
+    import warnings
+    from pathlib import Path
+
+    def sha256(path):
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    out_dir, library = Path(out_dir), Path(library)
+    if not library.is_file():
+        return
+    try:
+        recorded = list(json.loads((out_dir / "fomtools_manifest.json").read_text())["sources"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return
+    present = [rel for rel in recorded if (out_dir / rel).is_file()]
+    if not present:
+        return
+    try:
+        stamp = json.loads(library.with_name("libfomsolver.build.json").read_text())
+        built_from = dict(stamp["sources"]) if stamp["sha256"] == sha256(library) else None
+    except (OSError, ValueError, KeyError, TypeError):
+        built_from = None  # no stamp for this library
+    if built_from is not None:
+        current = {rel: sha256(out_dir / rel) for rel in present}
+        stale = sorted(
+            rel for rel in {*current, *built_from} if current.get(rel) != built_from.get(rel)
+        )
+        reason = "was built from other sources: " + ", ".join(stale) + " changed since the build"
+    else:
+        built_at = library.stat().st_mtime_ns
+        stale = sorted(rel for rel in present if (out_dir / rel).stat().st_mtime_ns > built_at)
+        reason = "has no build stamp and is older than " + ", ".join(stale)
+    if not stale:
+        return
+    message = (
+        f"the library {library} {reason}. Rebuild it with "
+        "fomtools.codegen.harness.build_lib (or `make lib`), or pass "
+        "allow_unverified=True to load it as it is."
+    )
+    if not allow_unverified:
+        raise RuntimeError(message)
+    warnings.warn(message, stacklevel=3)

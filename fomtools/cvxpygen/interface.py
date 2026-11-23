@@ -37,6 +37,7 @@ from fomtools.codegen.config import Backend, CodegenConfig, TerminationKind, Ver
 from fomtools.codegen.extract import normalize_iterates
 from fomtools.codegen.generate import CodegenResult
 from fomtools.codegen.generate import generate_code as fomtools_generate_code
+from fomtools.codegen.manifest import check_manifest
 from fomtools.codegen.targets import get_target
 from fomtools.cvxpygen.builders import ScheduledFomSpec, fom_kind, resolve_builder
 from fomtools.cvxpygen.glue import cmake_solver_sources, emit_bridge, write_solver_cmake_stub
@@ -451,6 +452,9 @@ class FomtoolsInterface(QPCanonMixin, SolverInterface):
         if license_src.is_file():
             shutil.copyfile(license_src, solver_code_dir / "LICENSE")
 
+        # cvxpygen compiles these sources into its extension next: same check as
+        # every other load path (a compile-only CUDA check leaves no record).
+        check_manifest(solver_code_dir)
         _RESULT.set(result)
 
 
