@@ -16,7 +16,7 @@ from pathlib import Path
 
 from fomtools.codegen.config import CodegenConfig
 from fomtools.codegen.ir import FomIR
-from fomtools.codegen.manifest import check_manifest
+from fomtools.codegen.manifest import check_library, check_manifest
 
 
 def emit_wrapper(ir: FomIR, out_dir: str | Path, config: CodegenConfig) -> Path:
@@ -43,8 +43,8 @@ def _render(ir: FomIR, config: CodegenConfig) -> str:
 
     param_names = [p.name for p in ir.params]
     param_dims = {p.name: p.dim for p in ir.params}
-    # The one check every load path runs, copied in so the wrapper stays standalone.
-    check_source = inspect.getsource(check_manifest)
+    # The checks every load path runs, copied in so the wrapper stays standalone.
+    check_source = inspect.getsource(check_manifest) + "\n\n" + inspect.getsource(check_library)
 
     return f'''"""Auto-generated ctypes wrapper for the `{ir.name}` solver.
 
@@ -118,12 +118,16 @@ class Solver:
     """Thin handle around the generated C solver.
 
     The sources next to this wrapper are checked against the directory's
-    verification record before the library is loaded: see ``check_manifest``.
+    verification record, and the library against those sources, before the
+    library is loaded: see ``check_manifest`` and ``check_library``.
     """
 
     def __init__(self, lib_path=None, allow_unverified=False):
-        check_manifest(Path(__file__).resolve().parent.parent, allow_unverified)
-        self._lib = ctypes.CDLL(lib_path or _default_lib_path())
+        out_dir = Path(__file__).resolve().parent.parent
+        lib_path = lib_path or _default_lib_path()
+        check_manifest(out_dir, allow_unverified)
+        check_library(out_dir, lib_path, allow_unverified)
+        self._lib = ctypes.CDLL(lib_path)
         self._lib.fom_set_default_settings.argtypes = [ctypes.POINTER(FomSettings)]
         self._lib.fom_setup.argtypes = [ctypes.POINTER(FomWorkspace), ctypes.POINTER(FomSettings)]
         self._lib.fom_update_params.argtypes = [
