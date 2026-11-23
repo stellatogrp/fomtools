@@ -343,13 +343,16 @@ files the agent may rewrite, and how each is checked, are described
 `result.timing` (a `TimingReport`) holds `python_us`, `c_initial_us`,
 `c_final_us`, the speedup factors (`speedup_codegen`, `speedup_optimization`,
 `speedup_total`), and the final `profile` breakdown, and `.summary()` formats
-them, e.g.:
+them. The two C times come from the head-to-head benchmark described
+[below](#the-performance-gate); `c_initial_stats` and `c_final_stats` hold their
+run-to-run spread, printed as `± MAD (fastest to slowest, runs)`, where MAD is
+the median absolute deviation of the runs:
 
 ```
 Timing summary (per solve):
   Python reference (before codegen):   1328.250 us
-  Generated C (translated):              1.753 us
-  Generated C (optimized):               1.640 us
+  Generated C (translated):              1.753 us  ± 0.004 (1.749 to 1.790, 5 runs)
+  Generated C (optimized):               1.640 us  ± 0.010 (1.630 to 1.700, 5 runs)
   Speedup from codegen (Py -> C):       757.7x
   Speedup from code optimization:       1.07x
   Total speedup (Py -> optimized C):    809.9x
@@ -387,12 +390,40 @@ time. Output of a real run on the Lasso example (ISTA, 200 iterations, embedded 
   • ...
 ```
 
+#### The performance gate
+
 Each round is timed head to head against the best solver so far: both are built
-once, then run five times each in alternating order, and the medians are compared.
+once, then run five times each in alternating order.
 One `make bench` warms up for 20 ms and then times full solves for 100 ms, so even
 a microsecond solve is timed over many thousands of runs. The times printed for a
-round can still differ from earlier lines by a few percent. A rewrite that is not
-faster, or fails verification, is reverted.
+round can still differ from earlier lines by a few percent.
+
+Run `i` of the rewrite and run `i` of the best solver are taken back to back, so
+they form a pair, and the gate works on the five ratios rewrite/best. The *gain*
+is one minus their median. The *noise* is twice their median absolute deviation
+(MAD), a spread that one or two slow runs do not move. Then
+
+| round | the rewrite is kept if | why |
+|---|---|---|
+| 1 | `gain >= -min(noise, 0.02)` | the translated solver is the baseline: a rewrite of the same speed is kept, a measurably slower one is not, and neither is one more than 2% slower |
+| 2 and later | `gain > noise` | each round must be a measured gain, so that rounds inside the noise cannot add up to a slower solver |
+
+The 2% cap in round 1 bounds the loss that noisy timings can let through. A
+band that only follows the noise would keep a rewrite that is really 5% slower
+in about 1 comparison in 4 when single timings vary by 2%.
+
+A rewrite that is not kept, or fails verification, is reverted, and the phase
+ends. A kept round whose gain is below `agent_optimize_min_gain`, or inside the
+noise (possible in round 1 only), also ends the phase. With no real difference,
+five pairs put the median ratio outside the noise band on a given side in fewer
+than 1 comparison in 10 (the old rule kept such a later round half the time); a
+gain of three times the run-to-run noise of one timing is detected about 9 times
+in 10. A line `not measurably faster` in the verbose output marks a rewrite whose
+median time was lower, but by less than the noise. A round with fewer than four
+pairs of successful runs is not kept: too few to estimate the noise.
+
+`OPTIMIZATIONS.md` reports each side as `median ± MAD (fastest to slowest)`, next
+to the round's gain and noise, so the decision can be read off the table.
 The portable region profiler (`include/fom_profile.h`) is compiled in only for
 `make profile` (`-DFOM_PROFILE`); its `FOM_PROF_BEGIN/END` macros are no-ops in
 the shipped `make verify` / `make lib` builds, so profiling never affects the
@@ -414,8 +445,10 @@ The code optimization phase runs in rounds. Each round is a fresh agent run on
 the fastest verified solver so far, told its current time and profile. After each
 round the pipeline re-verifies the rewrite (including the kernel rules) and
 benchmarks it head to head against that solver. A round that fails, is not
-faster, or gains less than `agent_optimize_min_gain` ends the phase; a failing or
-slower one is reverted first. `OPTIMIZATIONS.md` lists the rounds.
+faster by more than the measurement noise, or gains less than
+`agent_optimize_min_gain` ends the phase; a failing or not faster one is reverted
+first (see [the performance gate](#the-performance-gate)). `OPTIMIZATIONS.md`
+lists the rounds.
 
 Each round's summary also lists, under `Blocked by rules:`, the optimizations
 the agent considered but did not make because a rule forbade them, with the rule

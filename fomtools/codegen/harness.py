@@ -62,6 +62,45 @@ class BenchResult:
 
 
 @dataclass
+class BenchStats:
+    """Summary of repeated timings of one solver (per-solve times, in microseconds).
+
+    ``mad`` is the median absolute deviation from the median: the robust
+    run-to-run spread. With the usual five runs one or two slow runs (another
+    process, a clock-speed change) are common; they inflate a standard deviation
+    or a range but leave the MAD alone, and unlike an interquartile range the
+    MAD of five values does not depend on an interpolation convention.
+
+    The same shape summarizes the paired ratios candidate/best of a head-to-head
+    benchmark (see `fomtools.codegen.generate.optimization_is_faster`).
+    """
+
+    runs: int
+    median: float
+    min: float
+    max: float
+    mad: float
+
+    @classmethod
+    def of(cls, values) -> "BenchStats | None":
+        """Statistics of ``values``; failed runs (``None``) are left out.
+
+        Returns ``None`` when no run succeeded. One run has ``mad == 0``.
+        """
+        values = [v for v in values if v]
+        if not values:
+            return None
+        median = statistics.median(values)
+        mad = statistics.median(abs(v - median) for v in values)
+        return cls(len(values), median, min(values), max(values), mad)
+
+    def spread(self) -> str:
+        """``± MAD (min to max, n runs)``, to print next to the median."""
+        runs = "1 run" if self.runs == 1 else f"{self.runs} runs"
+        return f"± {self.mad:.3f} ({self.min:.3f} to {self.max:.3f}, {runs})"
+
+
+@dataclass
 class ProfRegion:
     """One row of the profiling breakdown."""
 
@@ -77,12 +116,17 @@ class TimingReport:
 
     All C times are per-solve means in microseconds; the Python time is the
     per-solve median of the reference oracle (the pre-codegen way to run the FOM).
+    ``c_initial_stats`` and ``c_final_stats`` hold the run-to-run spread of the
+    two C times when they come from a head-to-head benchmark of the code
+    optimization phase (``None`` otherwise).
     """
 
     python_us: float | None = None
     c_initial_us: float | None = None
     c_final_us: float | None = None
     profile: list[ProfRegion] = field(default_factory=list)
+    c_initial_stats: BenchStats | None = None
+    c_final_stats: BenchStats | None = None
 
     @property
     def speedup_codegen(self) -> float | None:
@@ -110,10 +154,13 @@ class TimingReport:
         lines = ["Timing summary (per solve):"]
         if self.python_us is not None:
             lines.append(f"  Python reference (before codegen): {self.python_us:10.3f} us")
-        if self.c_initial_us is not None:
-            lines.append(f"  Generated C (translated):         {self.c_initial_us:10.3f} us")
-        if self.c_final_us is not None:
-            lines.append(f"  Generated C (optimized):          {self.c_final_us:10.3f} us")
+        for label, us, stats in (
+            ("Generated C (translated):", self.c_initial_us, self.c_initial_stats),
+            ("Generated C (optimized): ", self.c_final_us, self.c_final_stats),
+        ):
+            if us is not None:
+                spread = f"  {stats.spread()}" if stats else ""
+                lines.append(f"  {label}         {us:10.3f} us{spread}")
         if self.speedup_codegen:
             lines.append(f"  Speedup from codegen (Py -> C):    {self.speedup_codegen:8.1f}x")
         if self.speedup_optimization:
